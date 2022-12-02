@@ -1,0 +1,9 @@
+brace_style = "SameLineWhere"
+fn_args_layout = "Compressed"
+fn_single_line = true
+match_arm_blocks = false
+trailing_semicolon = false
+use_field_init_shorthand = true
+where_single_line = true
+use_small_heuristics = "Max"
+tab_spaces = 2
