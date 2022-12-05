@@ -1,8 +1,9 @@
-use crate::{types::*, MizPath, RequirementIndexes};
+use crate::{types::*, CmpStyle, MizPath, RequirementIndexes};
 use enum_map::Enum;
 use quick_xml::events::{BytesStart, Event};
 use std::{
-  collections::HashMap,
+  cell::RefCell,
+  collections::{BTreeMap, HashMap},
   fs::File,
   io::{self, BufRead},
   io::{BufReader, Read},
@@ -20,6 +21,9 @@ impl MizPath {
   pub fn read_ere(&self, idx: &mut RequirementIndexes) -> io::Result<()> {
     let mut r = BufReader::new(self.open("ere")?);
     let mut buf = String::new();
+    r.read_line(&mut buf).unwrap();
+    assert!(buf.trim_end() == "0");
+    buf.clear();
     for (_, val) in &mut idx.fwd {
       r.read_line(&mut buf).unwrap();
       *val = buf.trim_end().parse().unwrap();
@@ -31,8 +35,8 @@ impl MizPath {
 
   pub fn read_ref(&self, refs: &mut References) -> io::Result<()> {
     let mut r = BufReader::new(self.open("ref")?);
-    fn parse_one(
-      r: &mut impl BufRead, buf: &mut String, map: &mut HashMap<(u32, u32), u32>,
+    fn parse_one<T: Idx>(
+      r: &mut impl BufRead, buf: &mut String, map: &mut HashMap<(ArticleId, T), u32>,
     ) -> io::Result<()> {
       let mut c = [0];
       loop {
@@ -43,7 +47,7 @@ impl MizPath {
         r.read_line(buf).unwrap();
         let mut it = buf.split_whitespace();
         let [x1, x2, y] = [(); 3].map(|_| it.next().unwrap().parse().unwrap());
-        assert!(map.insert((x1, x2), y).is_none());
+        assert!(map.insert((ArticleId(x1), T::from_usize(x2 as usize)), y).is_none());
         buf.clear();
       }
     }
@@ -55,10 +59,32 @@ impl MizPath {
   }
 }
 
-struct XmlReader {
+enum MaybeMut<'a, T> {
+  Mut(&'a mut T),
+  Not(&'a T),
+  None,
+}
+impl<'a, T> From<&'a T> for MaybeMut<'a, T> {
+  fn from(v: &'a T) -> Self { Self::Not(v) }
+}
+impl<'a, T> From<&'a mut T> for MaybeMut<'a, T> {
+  fn from(v: &'a mut T) -> Self { Self::Mut(v) }
+}
+impl<'a, T> MaybeMut<'a, T> {
+  fn get(&self) -> Option<&T> {
+    match self {
+      MaybeMut::Mut(t) => Some(t),
+      MaybeMut::Not(t) => Some(t),
+      MaybeMut::None => None,
+    }
+  }
+}
+
+struct XmlReader<'a> {
   r: quick_xml::Reader<BufReader<File>>,
   /// false = InMMLFileObj or InEnvFileObj, true = InVRFFileObj
   two_clusters: bool,
+  ctx: MaybeMut<'a, Constructors>,
 }
 
 impl MizPath {
@@ -67,7 +93,9 @@ impl MizPath {
   // }
 
   /// two_clusters: false = InMMLFileObj or InEnvFileObj, true = InVRFFileObj
-  fn open_xml(&self, ext: &str, two_clusters: bool) -> io::Result<(XmlReader, Vec<u8>)> {
+  fn open_xml<'a>(
+    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, two_clusters: bool,
+  ) -> io::Result<(XmlReader<'a>, Vec<u8>)> {
     let mut r = quick_xml::Reader::from_reader(BufReader::new(self.open(ext)?));
     let mut buf = vec![];
     r.trim_text(true);
@@ -75,39 +103,43 @@ impl MizPath {
     r.check_end_names(true);
     assert!(matches!(r.read_event(&mut buf).unwrap(), Event::Decl(_)));
     assert!(matches!(r.read_event(&mut buf).unwrap(), Event::PI(_)));
-    Ok((XmlReader { r, two_clusters }, buf))
+    Ok((XmlReader { r, two_clusters, ctx: ctx.into() }, buf))
   }
 
   pub fn read_atr(&self, constrs: &mut Constructors) -> io::Result<()> {
-    let (mut r, mut buf) = self.open_xml("atr", false)?;
+    let (mut r, mut buf) = self.open_xml(constrs, "atr", false)?;
     let buf = &mut buf;
     assert!(matches!(r.read_event(buf), Event::Start(e) if e.local_name() == b"Constructors"));
     while let Event::Start(e) = r.read_event(buf) {
       let attrs = r.parse_constructor_attrs(&e);
-      constrs.push(r.parse_constructor_body(buf, attrs));
+      let constr = r.parse_constructor_body(buf, attrs);
+      let MaybeMut::Mut(constrs) = &mut r.ctx else { unreachable!() };
+      constrs.push(constr);
     }
     assert!(matches!(r.read_event(buf), Event::Eof));
     Ok(())
   }
 
   pub fn read_ecl(&self, ctx: &Constructors, clusters: &mut Clusters) -> io::Result<()> {
-    let (mut r, mut buf) = self.open_xml("ecl", false)?;
+    let (mut r, mut buf) = self.open_xml(ctx, "ecl", false)?;
     assert!(matches!(r.read_event(&mut buf),
       Event::Start(e) if e.local_name() == b"Registrations"));
     while let Event::Start(e) = r.read_event(&mut buf) {
       match r.parse_cluster_attrs(&e) {
         (aid, ClusterKind::R) => clusters.registered.push(r.parse_rcluster(&mut buf, aid)),
-        (aid, ClusterKind::F) => clusters.functor.push(r.parse_fcluster(&mut buf, aid)),
+        (aid, ClusterKind::F) => clusters.functor.vec.0.push(r.parse_fcluster(&mut buf, aid)),
         (aid, ClusterKind::C) => clusters.conditional.push(ctx, r.parse_ccluster(&mut buf, aid)),
       }
     }
     assert!(matches!(r.read_event(&mut buf), Event::Eof));
-    clusters.functor.sort_by(|a, b| FunctorCluster::cmp_term(&a.term, ctx, &b.term));
+    clusters.functor.sort_all(|a, b| FunctorCluster::cmp_term(&a.term, ctx, &b.term));
     Ok(())
   }
 
-  pub fn read_definitions(&self, ext: &str, defs: &mut Vec<Definiens>) -> io::Result<()> {
-    let (mut r, mut buf) = match self.open_xml(ext, false) {
+  pub fn read_definitions(
+    &self, ctx: &Constructors, ext: &str, defs: &mut Vec<Definiens>,
+  ) -> io::Result<()> {
+    let (mut r, mut buf) = match self.open_xml(ctx, ext, false) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
       r => r?,
     };
@@ -121,8 +153,8 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_epr(&self, props: &mut Vec<Property>) -> io::Result<()> {
-    let (mut r, mut buf) = match self.open_xml("epr", false) {
+  pub fn read_epr(&self, ctx: &Constructors, props: &mut Vec<Property>) -> io::Result<()> {
+    let (mut r, mut buf) = match self.open_xml(ctx, "epr", false) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
       r => r?,
     };
@@ -138,8 +170,8 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_eid(&self, ids: &mut Vec<Identify>) -> io::Result<()> {
-    let (mut r, mut buf) = match self.open_xml("eid", false) {
+  pub fn read_eid(&self, ctx: &Constructors, ids: &mut Vec<Identify>) -> io::Result<()> {
+    let (mut r, mut buf) = match self.open_xml(ctx, "eid", false) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
       r => r?,
     };
@@ -155,8 +187,8 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_erd(&self, reds: &mut Vec<Reduction>) -> io::Result<()> {
-    let (mut r, mut buf) = match self.open_xml("erd", false) {
+  pub fn read_erd(&self, ctx: &Constructors, reds: &mut Vec<Reduction>) -> io::Result<()> {
+    let (mut r, mut buf) = match self.open_xml(ctx, "erd", false) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
       r => r?,
     };
@@ -172,8 +204,10 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_eth(&self, refs: &References, libs: &mut Libraries) -> io::Result<()> {
-    let (mut r, mut buf) = match self.open_xml("eth", false) {
+  pub fn read_eth(
+    &self, ctx: &Constructors, refs: &References, libs: &mut Libraries,
+  ) -> io::Result<()> {
+    let (mut r, mut buf) = match self.open_xml(ctx, "eth", false) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
       r => r?,
     };
@@ -192,15 +226,15 @@ impl MizPath {
         }
       }
       match kind {
-        b'T' if refs.thm.contains_key(&(lib_nr, thm_nr)) => {
+        b'T' if refs.thm.contains_key(&(lib_nr, ThmId(thm_nr))) => {
           let th = r.parse_formula(buf).unwrap();
           r.end_tag(buf);
-          libs.ord_thm.insert((lib_nr, thm_nr), th);
+          libs.thm.insert((lib_nr, ThmId(thm_nr)), th);
         }
-        b'D' if refs.def.contains_key(&(lib_nr, thm_nr)) => {
+        b'D' if refs.def.contains_key(&(lib_nr, DefId(thm_nr))) => {
           let th = r.parse_formula(buf).unwrap();
           r.end_tag(buf);
-          libs.def_thm.insert((lib_nr, thm_nr), th);
+          libs.def.insert((lib_nr, DefId(thm_nr)), th);
         }
         b'T' | b'D' => r.read_to_end(b"Theorem", buf),
         _ => panic!("unknown theorem kind"),
@@ -210,8 +244,10 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_esh(&self, refs: &References, libs: &mut Libraries) -> io::Result<()> {
-    let (mut r, mut buf) = match self.open_xml("esh", false) {
+  pub fn read_esh(
+    &self, ctx: &Constructors, refs: &References, libs: &mut Libraries,
+  ) -> io::Result<()> {
+    let (mut r, mut buf) = match self.open_xml(ctx, "esh", false) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
       r => r?,
     };
@@ -230,12 +266,13 @@ impl MizPath {
       }
       if refs.sch.contains_key(&(lib_nr, sch_nr)) {
         let tys = r.parse_arg_types(buf);
-        let mut props = vec![];
+        let thesis = r.parse_formula(buf).unwrap();
+        let mut prems = vec![];
         while let Some(f) = r.parse_formula(buf) {
-          props.push(f)
+          prems.push(f)
         }
-        assert!(lib_nr > 0);
-        libs.ord_sch.insert((lib_nr, sch_nr), Scheme { tys, props: props.into() });
+        assert!(lib_nr != ArticleId::SELF);
+        libs.sch.insert((lib_nr, sch_nr), Scheme { tys, prems: prems.into(), thesis });
       } else {
         r.read_to_end(b"Scheme", buf)
       }
@@ -245,7 +282,7 @@ impl MizPath {
   }
 
   pub fn read_xml(&self) -> io::Result<Vec<Item>> {
-    let (mut r, mut buf) = self.open_xml("xml", true)?;
+    let (mut r, mut buf) = self.open_xml(MaybeMut::None, "xml", true)?;
     assert!(matches!(r.read_event(&mut buf), Event::Start(e) if e.local_name() == b"Article"));
     let mut p = ArticleParser { r, buf };
     let items = p.parse_items();
@@ -254,7 +291,7 @@ impl MizPath {
   }
 }
 
-impl XmlReader {
+impl XmlReader<'_> {
   fn get_attr<F: FromStr>(&self, value: &[u8]) -> F {
     self.r.decode_without_bom(value).unwrap().parse().ok().unwrap()
   }
@@ -299,6 +336,9 @@ impl XmlReader {
     let mut attrs = vec![];
     while let Some(attr) = self.parse_attr(buf) {
       attrs.push(attr)
+    }
+    if let Some(ctx) = self.ctx.get() {
+      attrs.sort_by(|a, b| a.cmp(ctx, b, CmpStyle::Strict));
     }
     Attrs::Consistent(attrs)
   }
@@ -445,7 +485,7 @@ impl XmlReader {
         b"kind" => kind = attr.value[0],
         b"nr" => abs_nr = self.get_attr(&attr.value),
         b"aid" => article = Article::from_bytes(&attr.value),
-        b"redefnr" => redefines = self.get_attr::<u32>(&attr.value) - 1,
+        b"redefnr" => redefines = self.get_attr(&attr.value),
         b"superfluous" => superfluous = self.get_attr(&attr.value),
         b"structmodeaggrnr" => aggr = self.get_attr(&attr.value),
         b"aggregbase" => base = self.get_attr(&attr.value),
@@ -474,7 +514,7 @@ impl XmlReader {
     };
     macro_rules! constructor {
       ($id:ident) => {{
-        let redefines = $id(redefines);
+        let redefines = redefines.checked_sub(1).map($id);
         Constructor { article, abs_nr, primary, redefines, superfluous, properties, arg1, arg2 }
       }};
     }
@@ -540,10 +580,10 @@ impl XmlReader {
     }
     match constr_kind {
       0 => None,
-      b'R' => Some(ConstrKind::Pred { nr: PredId(constr_nr) }),
-      b'V' => Some(ConstrKind::Attr { nr: AttrId(constr_nr) }),
-      b'K' => Some(ConstrKind::Functor { nr: FuncId(constr_nr) }),
-      b'M' => Some(ConstrKind::Mode { nr: ModeId(constr_nr) }),
+      b'R' => Some(ConstrKind::Pred(PredId(constr_nr))),
+      b'V' => Some(ConstrKind::Attr(AttrId(constr_nr))),
+      b'K' => Some(ConstrKind::Func(FuncId(constr_nr))),
+      b'M' => Some(ConstrKind::Mode(ModeId(constr_nr))),
       c => panic!("bad constr kind {}", c),
     }
   }
@@ -1012,8 +1052,8 @@ impl TryFrom<Elem> for Formula {
   }
 }
 
-struct ArticleParser {
-  r: XmlReader,
+struct ArticleParser<'a> {
+  r: XmlReader<'a>,
   buf: Vec<u8>,
 }
 
@@ -1082,7 +1122,7 @@ impl From<ArticleElem> for Item {
   }
 }
 
-impl ArticleParser {
+impl ArticleParser<'_> {
   pub fn parse_item(&mut self) -> Option<Item> {
     match self.parse_elem() {
       e @ (ArticleElem::Item(_) | ArticleElem::AuxiliaryItem(_) | ArticleElem::Canceled(_)) =>
@@ -1203,10 +1243,6 @@ impl ArticleParser {
           refs: self.parse_references(),
         })
       }
-      b"ErrorInf" => {
-        self.r.end_tag(&mut self.buf);
-        Justification::Error
-      }
       b"Proof" => {
         let (start, label) = self.r.get_pos_and_label(&e);
         let thesis = self.parse_block_thesis().unwrap();
@@ -1222,10 +1258,9 @@ impl ArticleParser {
     }
   }
 
-  fn parse_simple_justification(&mut self) -> Option<Inference> {
+  fn parse_simple_justification(&mut self) -> Inference {
     match self.parse_justification() {
-      Justification::Simple(just) => Some(just),
-      Justification::Error => None,
+      Justification::Simple(just) => just,
       _ => panic!("expected simple justification"),
     }
   }
@@ -1287,6 +1322,7 @@ impl ArticleParser {
     if let Event::Start(e) = self.r.read_event(&mut self.buf) {
       match e.local_name() {
         b"Section" => {
+          // note: unattested in MML
           self.r.end_tag(&mut self.buf);
           ArticleElem::Item(Item::Section)
         }
@@ -1361,8 +1397,8 @@ impl ArticleParser {
           ArticleElem::Item(Item::Reservation { ids, ty })
         }
         b"SchemeBlock" => {
-          let (start, label) = self.r.get_pos_and_label(&e);
-          let sch_nr = self.r.get_attr(&e.try_get_attribute(b"schemenr").unwrap().unwrap().value);
+          let start = self.r.get_pos_and_label(&e).0;
+          let nr = self.r.get_attr(&e.try_get_attribute(b"schemenr").unwrap().unwrap().value);
           let mut decls = vec![];
           loop {
             if let Event::Start(e) = self.r.read_event(&mut self.buf) {
@@ -1387,12 +1423,12 @@ impl ArticleParser {
           while let Some(prop) = self.r.parse_proposition(&mut self.buf, true) {
             prems.push(prop);
           }
-          let thesis = self.r.parse_proposition(&mut self.buf, false);
+          let thesis = self.r.parse_proposition(&mut self.buf, false).unwrap();
           let just = self.parse_justification();
           let end = self.parse_end_pos();
           self.r.end_tag(&mut self.buf);
-          let bl = SchemeBlock { pos: (start, end), label, sch_nr, decls, prems, thesis, just };
-          ArticleElem::Item(Item::Scheme(Box::new(bl)))
+          let bl = SchemeBlock { pos: (start, end), nr: SchId(nr), decls, prems, thesis, just };
+          ArticleElem::Item(Item::Scheme(bl))
         }
         b"CaseBlock" => {
           let attrs = self.r.get_pos_and_label(&e);
@@ -1434,7 +1470,8 @@ impl ArticleParser {
         }
         b"Definiens" => {
           let attrs = self.r.parse_definiens_attrs(e);
-          ArticleElem::Item(Item::Definiens(self.r.parse_definiens_body(&mut self.buf, attrs)))
+          let df = self.r.parse_definiens_body(&mut self.buf, attrs);
+          ArticleElem::Item(Item::Definiens(df))
         }
         b"Proposition" => {
           let (pos, label) = self.r.get_pos_and_label(&e);

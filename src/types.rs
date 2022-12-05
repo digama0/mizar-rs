@@ -38,7 +38,7 @@ impl<A: ?Sized + Clone> CowBox<'_, A> {
 }
 
 /// A trait for newtyped integers, that can be used as index types in vectors and sets.
-pub trait Idx: Copy + Eq {
+pub trait Idx: Copy + Eq + std::hash::Hash + Ord {
   /// Convert from `T` to `usize`
   fn into_usize(self) -> usize;
   /// Convert from `usize` to `T`
@@ -55,6 +55,10 @@ pub trait Idx: Copy + Eq {
 impl Idx for usize {
   fn into_usize(self) -> usize { self }
   fn from_usize(n: usize) -> Self { n }
+}
+impl Idx for u32 {
+  fn into_usize(self) -> usize { self as _ }
+  fn from_usize(n: usize) -> Self { n as _ }
 }
 
 /// A vector indexed by a custom indexing type `I`, usually a newtyped integer.
@@ -165,10 +169,11 @@ impl<I: Idx, T> Index<Range<I>> for IdxVec<I, T> {
   }
 }
 
+#[macro_export]
 macro_rules! mk_id {
   ($($id:ident,)*) => {
     $(
-      #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
+      #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
       pub struct $id(pub u32);
       impl Idx for $id {
         fn from_usize(n: usize) -> Self { Self(n as u32) }
@@ -185,6 +190,7 @@ macro_rules! mk_id {
   };
 }
 
+#[derive(Clone)]
 pub struct SortedIdxVec<I, T> {
   pub vec: IdxVec<I, T>,
   pub sorted: Vec<I>,
@@ -201,16 +207,17 @@ impl<I, T> Default for SortedIdxVec<I, T> {
   fn default() -> Self { Self { vec: Default::default(), sorted: Default::default() } }
 }
 
-impl<I, T: std::fmt::Debug> std::fmt::Debug for SortedIdxVec<I, T> {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.vec.fmt(f) }
+impl<I: Idx, T: std::fmt::Debug> std::fmt::Debug for SortedIdxVec<I, T> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_list().entries(self.sorted.iter().map(|&i| &self.vec[i])).finish()
+  }
 }
 
 impl<I: Idx, T> SortedIdxVec<I, T> {
   pub fn find_index(&self, p: impl Fn(&T) -> Ordering) -> Result<I, usize> {
     let i = self.sorted.partition_point(|&i| p(&self.vec[i]) == Ordering::Less);
-    let idx = I::from_usize(i);
-    let Some(a) = self.vec.0.get(i) else { return Err(i) };
-    let Ordering::Equal = p(a) else { return Err(i) };
+    let Some(&idx) = self.sorted.get(i) else { return Err(i) };
+    let Ordering::Equal = p(&self.vec[idx]) else { return Err(i) };
     Ok(idx)
   }
 
@@ -219,11 +226,24 @@ impl<I: Idx, T> SortedIdxVec<I, T> {
     Some((i, &self.vec[i]))
   }
 
+  pub fn sort_all(&mut self, f: impl Fn(&T, &T) -> Ordering) {
+    self.sorted = (0..self.vec.len()).map(Idx::from_usize).collect();
+    self.sorted.sort_by(|&a, &b| f(&self.vec[a], &self.vec[b]));
+  }
+
   /// Assumes `idx` is the sorted index of `t` (as returned by `find_idx`)
   pub fn insert_at(&mut self, idx: usize, t: T) -> I {
     let i = self.vec.push(t);
     self.sorted.insert(idx, i);
     i
+  }
+
+  pub fn truncate(&mut self, len: usize) {
+    if len < self.0.len() {
+      self.vec.0.truncate(len);
+      self.sorted.retain(|t| Idx::into_usize(*t) < len);
+      assert!(self.sorted.len() == len)
+    }
   }
 }
 
@@ -247,11 +267,12 @@ mk_id! {
   ThmId,
   SchId,
 }
+impl ArticleId {
+  pub const SELF: ArticleId = ArticleId(0);
+}
 
 #[derive(Copy, Clone, Debug, Enum)]
 pub enum Requirement {
-  /// Sentinel value
-  None,
   Any,
   SetMode,
   EqualsTo,
@@ -382,7 +403,7 @@ impl std::fmt::Debug for Term {
       Self::Qua { value, ty } => write!(f, "({:?} qua {:?})", value, ty),
       Self::Choice { ty } => write!(f, "(the {:?})", ty),
       Self::Fraenkel { args, scope, compr } =>
-        write!(f, "{{{:?} where {:?} : {:?}}}", args, scope, compr),
+        write!(f, "{{{:?} where {:?} : {:?}}}", scope, args, compr),
       Self::It => write!(f, "it"),
     }
   }
@@ -431,6 +452,8 @@ impl Type {
   pub fn new(kind: TypeKind) -> Self {
     Self { kind, attrs: Default::default(), args: Box::new([]) }
   }
+
+  /// precondition: the type has kind Struct
   pub fn struct_id(&self) -> StructId {
     match self.kind {
       TypeKind::Mode(_) => panic!("not a struct"),
@@ -441,9 +464,8 @@ impl Type {
 
 impl std::fmt::Debug for Type {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    if !matches!(&self.attrs.0, Attrs::Consistent(x) if x.is_empty()) {
-      write!(f, "{:?}", self.attrs.0)?
-    }
+    write!(f, "{:?}", self.attrs.0)?;
+    // write!(f, "|{:?}", self.attrs.1)?;
     write!(f, "{:?}", self.kind)?;
     if !self.args.is_empty() {
       write!(f, "{:?}", self.args)?;
@@ -573,7 +595,7 @@ impl Attrs {
 impl std::fmt::Debug for Attrs {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
-      Attrs::Inconsistent => "F+".fmt(f),
+      Attrs::Inconsistent => write!(f, "F+"),
       Attrs::Consistent(attrs) => {
         for a in attrs {
           write!(f, "{:?}+", a)?
@@ -700,7 +722,7 @@ pub struct Constructor<I> {
   /// number of constructor in article
   pub abs_nr: u32,
   pub primary: Box<[Type]>,
-  pub redefines: I,
+  pub redefines: Option<I>,
   pub superfluous: u8,
   pub properties: PropertySet,
   pub arg1: u32,
@@ -708,16 +730,6 @@ pub struct Constructor<I> {
 }
 impl<I, V: VisitMut> Visitable<V> for Constructor<I> {
   fn visit(&mut self, v: &mut V) { self.primary.visit(v) }
-}
-
-impl<I: Idx> Constructor<I> {
-  pub fn redefines(&self) -> Option<I> {
-    if self.redefines.into_usize() == 0 {
-      None
-    } else {
-      Some(self.redefines)
-    }
-  }
 }
 
 #[derive(Clone, Debug)]
@@ -798,15 +810,27 @@ impl<V: VisitMut> Visitable<V> for Constructors {
 }
 
 impl Constructors {
-  pub fn push(&mut self, c: ConstructorDef) {
+  pub fn push(&mut self, c: ConstructorDef) -> ConstrKind {
     match c {
-      ConstructorDef::Mode(c) => self.mode.0.push(c),
-      ConstructorDef::StructMode(c) => self.struct_mode.0.push(c),
-      ConstructorDef::Attr(c) => self.attribute.0.push(c),
-      ConstructorDef::Pred(c) => self.predicate.0.push(c),
-      ConstructorDef::Func(c) => self.functor.0.push(c),
-      ConstructorDef::Sel(c) => self.selector.0.push(c),
-      ConstructorDef::Aggr(c) => self.aggregate.0.push(c),
+      ConstructorDef::Mode(c) => ConstrKind::Mode(self.mode.push(c)),
+      ConstructorDef::StructMode(c) => ConstrKind::Struct(self.struct_mode.push(c)),
+      ConstructorDef::Attr(c) => ConstrKind::Attr(self.attribute.push(c)),
+      ConstructorDef::Pred(c) => ConstrKind::Pred(self.predicate.push(c)),
+      ConstructorDef::Func(c) => ConstrKind::Func(self.functor.push(c)),
+      ConstructorDef::Sel(c) => ConstrKind::Sel(self.selector.push(c)),
+      ConstructorDef::Aggr(c) => ConstrKind::Aggr(self.aggregate.push(c)),
+    }
+  }
+
+  pub fn visit_at<V: VisitMut>(&mut self, v: &mut V, k: ConstrKind) {
+    match k {
+      ConstrKind::Mode(k) => self.mode[k].visit(v),
+      ConstrKind::Struct(k) => self.struct_mode[k].visit(v),
+      ConstrKind::Attr(k) => self.attribute[k].visit(v),
+      ConstrKind::Pred(k) => self.predicate[k].visit(v),
+      ConstrKind::Func(k) => self.functor[k].visit(v),
+      ConstrKind::Sel(k) => self.selector[k].visit(v),
+      ConstrKind::Aggr(k) => self.aggregate[k].visit(v),
     }
   }
 }
@@ -814,15 +838,9 @@ impl Constructors {
 #[derive(Clone, Debug, Default)]
 pub struct Clusters {
   pub registered: Vec<RegisteredCluster>,
-  pub functor: Vec<FunctorCluster>,
+  /// sorted by |a, b| FunctorCluster::cmp_term(&a.term, ctx, &b.term)
+  pub functor: SortedIdxVec<usize, FunctorCluster>,
   pub conditional: ConditionalClusters,
-}
-impl<V: VisitMut> Visitable<V> for Clusters {
-  fn visit(&mut self, v: &mut V) {
-    self.registered.visit(v);
-    self.functor.visit(v);
-    self.conditional.visit(v);
-  }
 }
 
 #[derive(Clone)]
@@ -922,8 +940,8 @@ impl FunctorCluster {
   pub fn cmp_term(this: &Term, ctx: &Constructors, other: &Term) -> std::cmp::Ordering {
     match (this, other) {
       (&Term::Functor { nr: n1, .. }, &Term::Functor { nr: n2, .. }) => {
-        let n1 = ctx.functor[n1].redefines().unwrap_or(n1);
-        let n2 = ctx.functor[n2].redefines().unwrap_or(n2);
+        let n1 = ctx.functor[n1].redefines.unwrap_or(n1);
+        let n2 = ctx.functor[n2].redefines.unwrap_or(n2);
         n1.cmp(&n2)
       }
       (Term::Functor { .. }, _) => std::cmp::Ordering::Greater,
@@ -965,19 +983,25 @@ impl ConditionalClusters {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ConstrKind {
-  Pred { nr: PredId },
-  Attr { nr: AttrId },
-  Functor { nr: FuncId },
-  Mode { nr: ModeId },
+  Mode(ModeId),
+  Struct(StructId),
+  Attr(AttrId),
+  Pred(PredId),
+  Func(FuncId),
+  Sel(SelId),
+  Aggr(AggrId),
 }
 
 impl ConstrKind {
   pub fn discr(&self) -> u8 {
     match self {
-      ConstrKind::Pred { .. } => b'R',
-      ConstrKind::Attr { .. } => b'V',
-      ConstrKind::Functor { .. } => b'K',
-      ConstrKind::Mode { .. } => b'M',
+      ConstrKind::Mode(_) => b'M',
+      ConstrKind::Struct(_) => b'S',
+      ConstrKind::Pred(_) => b'R',
+      ConstrKind::Attr(_) => b'V',
+      ConstrKind::Func(_) => b'K',
+      ConstrKind::Sel(_) => b'U',
+      ConstrKind::Aggr(_) => b'G',
     }
   }
 }
@@ -1126,18 +1150,9 @@ pub enum IdentifyKind {
 impl<V: VisitMut> Visitable<V> for IdentifyKind {
   fn visit(&mut self, v: &mut V) {
     match self {
-      IdentifyKind::Func { lhs, rhs } => {
-        lhs.visit(v);
-        rhs.visit(v)
-      }
-      IdentifyKind::Attr { lhs, rhs } => {
-        lhs.visit(v);
-        rhs.visit(v)
-      }
-      IdentifyKind::Pred { lhs, rhs } => {
-        lhs.visit(v);
-        rhs.visit(v)
-      }
+      IdentifyKind::Func { lhs, rhs } => (lhs, rhs).visit(v),
+      IdentifyKind::Attr { lhs, rhs } => (lhs, rhs).visit(v),
+      IdentifyKind::Pred { lhs, rhs } => (lhs, rhs).visit(v),
     }
   }
 }
@@ -1169,6 +1184,7 @@ pub struct Reduction {
   pub terms: [Term; 2],
 }
 
+#[derive(Debug)]
 pub struct EqualsDef {
   pub primary: Box<[Type]>,
   pub expansion: Term,
@@ -1182,28 +1198,29 @@ pub struct PropList {
   labeled: IdxVec<LabelId, u32>,
 }
 
-type DefRef = (ArticleId, DefId);
 type ThmRef = (ArticleId, ThmId);
+type DefRef = (ArticleId, DefId);
 type SchRef = (ArticleId, SchId);
 
 #[derive(Default, Debug)]
 pub struct References {
-  pub sch: HashMap<(u32, u32), u32>,
-  pub thm: HashMap<(u32, u32), u32>,
-  pub def: HashMap<(u32, u32), u32>,
+  pub thm: HashMap<ThmRef, u32>,
+  pub def: HashMap<DefRef, u32>,
+  pub sch: HashMap<SchRef, u32>,
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct Scheme {
   pub tys: Box<[Type]>,
-  pub props: Box<[Formula]>,
+  pub prems: Box<[Formula]>,
+  pub thesis: Formula,
 }
 
 #[derive(Default, Debug)]
 pub struct Libraries {
-  pub ord_thm: HashMap<(u32, u32), Formula>,
-  pub def_thm: HashMap<(u32, u32), Formula>,
-  pub ord_sch: HashMap<(u32, u32), Scheme>,
+  pub thm: BTreeMap<ThmRef, Formula>,
+  pub def: BTreeMap<DefRef, Formula>,
+  pub sch: BTreeMap<SchRef, Scheme>,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -1218,10 +1235,18 @@ impl std::fmt::Debug for Position {
   }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum SchemeDecl {
   Func { args: Box<[Type]>, ty: Type },
   Pred { args: Box<[Type]> },
+}
+impl<V: VisitMut> Visitable<V> for SchemeDecl {
+  fn visit(&mut self, v: &mut V) {
+    match self {
+      SchemeDecl::Func { args, ty } => (args, ty).visit(v),
+      SchemeDecl::Pred { args } => args.visit(v),
+    }
+  }
 }
 
 #[derive(Debug)]
@@ -1266,7 +1291,6 @@ pub enum Justification {
     items: Vec<(Item, Option<Thesis>)>,
   },
   SkippedProof,
-  Error,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1290,6 +1314,15 @@ pub enum ClusterDeclKind {
   R(RegisteredCluster),
   F(FunctorCluster),
   C(ConditionalCluster),
+}
+impl<V: VisitMut> Visitable<V> for ClusterDeclKind {
+  fn visit(&mut self, v: &mut V) {
+    match self {
+      ClusterDeclKind::R(c) => c.visit(v),
+      ClusterDeclKind::F(c) => c.visit(v),
+      ClusterDeclKind::C(c) => c.visit(v),
+    }
+  }
 }
 
 #[derive(Debug)]
@@ -1349,22 +1382,9 @@ impl<V: VisitMut> Visitable<V> for Proposition {
 }
 #[derive(Debug)]
 pub enum PrivateStatement {
-  Proposition {
-    prop: Proposition,
-    just: Justification,
-  },
-  IterEquality {
-    start: Position,
-    label: Option<LabelId>,
-    lhs: Term,
-    steps: Vec<(Term, Option<Inference>)>,
-  },
-  Now {
-    pos: (Position, Position),
-    label: Option<LabelId>,
-    thesis: Formula,
-    items: Box<[Item]>,
-  },
+  Proposition { prop: Proposition, just: Justification },
+  IterEquality { start: Position, label: Option<LabelId>, lhs: Term, steps: Vec<(Term, Inference)> },
+  Now { pos: (Position, Position), label: Option<LabelId>, thesis: Formula, items: Box<[Item]> },
 }
 
 #[derive(Debug)]
@@ -1448,11 +1468,10 @@ pub struct Correctness {
 #[derive(Debug)]
 pub struct SchemeBlock {
   pub pos: (Position, Position),
-  pub label: Option<LabelId>,
-  pub sch_nr: u32,
+  pub nr: SchId,
   pub decls: Vec<SchemeDecl>,
   pub prems: Vec<Proposition>,
-  pub thesis: Option<Proposition>,
+  pub thesis: Proposition,
   pub just: Justification,
 }
 
@@ -1490,7 +1509,7 @@ pub struct PerCases {
   pub thesis: Option<Thesis>,
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum BlockKind {
   Definition,
   Registration,
@@ -1513,7 +1532,7 @@ pub enum Item {
   PerCases(PerCases),
   AuxiliaryItem(AuxiliaryItem),
   Registration(Registration),
-  Scheme(Box<SchemeBlock>),
+  Scheme(SchemeBlock),
   Theorem {
     prop: Proposition,
     just: Justification,
