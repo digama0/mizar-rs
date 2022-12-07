@@ -780,7 +780,7 @@ impl XmlReader<'_> {
         }
         b"LocusVar" => Elem::Term(Term::Locus { nr: LocusId(parse_var!() - 1) }),
         b"Var" => Elem::Term(Term::Bound { nr: BoundId(parse_var!() - 1) }),
-        b"Const" => Elem::Term(Term::Constant { nr: ConstantId(parse_var!() - 1) }),
+        b"Const" => Elem::Term(Term::Constant { nr: ConstId(parse_var!() - 1) }),
         // b"InfConst" => Elem::Term(Term::Infer { nr: InferId(parse_var!() - 1) }),
         // b"FreeVar" => Elem::Term(Term::FreeVar { nr: parse_var!() - 1 }),
         b"Num" => Elem::Term(Term::Numeral { nr: parse_var!() }),
@@ -866,17 +866,17 @@ impl XmlReader<'_> {
           Elem::Formula(Formula::PrivPred { nr, args: args.into(), value })
         }
         b"For" => {
-          let mut var_id = 0;
-          for attr in e.attributes() {
-            let attr = attr.unwrap();
-            if let b"vid" = attr.key {
-              var_id = self.get_attr(&attr.value)
-            }
-          }
+          // let mut var_id = 0;
+          // for attr in e.attributes() {
+          //   let attr = attr.unwrap();
+          //   if let b"vid" = attr.key {
+          //     var_id = self.get_attr(&attr.value)
+          //   }
+          // }
           let dom = Box::new(self.parse_type(buf).unwrap());
           let scope = Box::new(self.parse_formula(buf).unwrap());
           self.end_tag(buf);
-          Elem::Formula(Formula::ForAll { var_id, dom, scope })
+          Elem::Formula(Formula::ForAll { dom, scope })
         }
         b"Is" => {
           let term = Box::new(self.parse_term(buf).unwrap());

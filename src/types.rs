@@ -256,7 +256,8 @@ mk_id! {
   SelId,
   AggrId,
   BoundId,
-  ConstantId,
+  ConstId,
+  FVarId,
   InferId,
   SchFuncId,
   PrivFuncId,
@@ -266,6 +267,7 @@ mk_id! {
   DefId,
   ThmId,
   SchId,
+  AtomId,
 }
 impl ArticleId {
   pub const SELF: ArticleId = ArticleId(0);
@@ -347,28 +349,75 @@ impl<V, A: Visitable<V>, B: Visitable<V>> Visitable<V> for (A, B) {
 #[derive(Clone)]
 pub enum Term {
   // Locus numbers are shifted from mizar to start at 0
-  Locus { nr: LocusId },
+  Locus {
+    nr: LocusId,
+  },
   // Bound var numbers are shifted from mizar to start at 0
-  Bound { nr: BoundId },
+  Bound {
+    nr: BoundId,
+  },
   // Constant numbers are shifted from mizar to start at 0
-  Constant { nr: ConstantId },
+  Constant {
+    nr: ConstId,
+  },
   // This is not read during deserialization
-  EqConst { nr: u32 },
+  EqConst {
+    nr: u32,
+  },
   // Used for inference, but unattested in mizar imports
-  Infer { nr: InferId },
-  SchemeFunctor { nr: SchFuncId, args: Box<[Term]> },
-  Aggregate { nr: AggrId, args: Box<[Term]> },
-  PrivFunc { nr: PrivFuncId, args: Box<[Term]>, value: Box<Term> },
-  Functor { nr: FuncId, args: Box<[Term]> },
-  Numeral { nr: u32 },
-  Selector { nr: SelId, args: Box<[Term]> },
-  FreeVar { nr: u32 },
-  LambdaVar { nr: u32 },
-  Qua { value: Box<Term>, ty: Box<Type> },
-  Choice { ty: Box<Type> },
-  Fraenkel { args: Box<[(u32, Type)]>, scope: Box<Term>, compr: Box<Formula> },
+  Infer {
+    nr: InferId,
+  },
+  SchemeFunctor {
+    nr: SchFuncId,
+    args: Box<[Term]>,
+  },
+  Aggregate {
+    nr: AggrId,
+    args: Box<[Term]>,
+  },
+  PrivFunc {
+    nr: PrivFuncId,
+    args: Box<[Term]>,
+    value: Box<Term>,
+  },
+  Functor {
+    nr: FuncId,
+    args: Box<[Term]>,
+  },
+  /// Invariant: nr != 0. Zero is not a numeral (!),
+  /// it is a `Functor` using Requirement::ZeroNumber
+  Numeral {
+    nr: u32,
+  },
+  Selector {
+    nr: SelId,
+    args: Box<[Term]>,
+  },
+  FreeVar {
+    nr: FVarId,
+  },
+  LambdaVar {
+    nr: u32,
+  },
+  Qua {
+    value: Box<Term>,
+    ty: Box<Type>,
+  },
+  Choice {
+    ty: Box<Type>,
+  },
+  Fraenkel {
+    args: Box<[(u32, Type)]>,
+    scope: Box<Term>,
+    compr: Box<Formula>,
+  },
   // Should not appear in checker imports
   It,
+}
+
+impl Default for Term {
+  fn default() -> Self { Self::It }
 }
 
 impl Term {
@@ -398,7 +447,7 @@ impl std::fmt::Debug for Term {
       Self::Functor { nr, args } => Self::debug_args("F", nr.0, args, f),
       Self::Numeral { nr } => nr.fmt(f),
       Self::Selector { nr, args } => Self::debug_args("Sel", nr.0, args, f),
-      Self::FreeVar { nr } => write!(f, "v{}", nr),
+      Self::FreeVar { nr } => write!(f, "v{}", nr.0),
       Self::LambdaVar { nr } => write!(f, "l{}", nr),
       Self::Qua { value, ty } => write!(f, "({:?} qua {:?})", value, ty),
       Self::Choice { ty } => write!(f, "(the {:?})", ty),
@@ -437,7 +486,7 @@ impl Term {
   }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Type {
   /// The kind of type (either Mode or Struct), and the id
   pub kind: TypeKind,
@@ -484,6 +533,10 @@ pub enum TypeKind {
   Mode(ModeId),
 }
 
+impl Default for TypeKind {
+  fn default() -> Self { Self::Mode(ModeId(0)) }
+}
+
 impl std::fmt::Debug for TypeKind {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match *self {
@@ -512,18 +565,55 @@ impl TypeKind {
 
 #[derive(Clone)]
 pub enum Formula {
-  SchemePred { nr: u32, args: Box<[Term]> },
-  Pred { nr: PredId, args: Box<[Term]> },
-  Attr { nr: AttrId, args: Box<[Term]> },
-  PrivPred { nr: u32, args: Box<[Term]>, value: Box<Formula> },
-  // aka Qual
-  Is { term: Box<Term>, ty: Box<Type> },
-  Neg { f: Box<Formula> },
-  And { args: Vec<Formula> },
-  ForAll { var_id: u32, dom: Box<Type>, scope: Box<Formula> },
-  FlexAnd { orig: Box<[Formula; 2]>, terms: Box<[Term; 2]>, expansion: Box<Formula> },
+  SchemePred {
+    nr: u32,
+    args: Box<[Term]>,
+  },
+  Pred {
+    nr: PredId,
+    args: Box<[Term]>,
+  },
+  Attr {
+    nr: AttrId,
+    args: Box<[Term]>,
+  },
+  PrivPred {
+    nr: u32,
+    args: Box<[Term]>,
+    value: Box<Formula>,
+  },
+  /// ikFrmQual
+  Is {
+    term: Box<Term>,
+    ty: Box<Type>,
+  },
+  Neg {
+    /// Invariant: the formula is not Neg
+    f: Box<Formula>,
+  },
+  /// ikFrmConj
+  And {
+    /// Invariant: args.len() > 1 and does not contain And expressions
+    args: Vec<Formula>,
+  },
+  /// ikFrmUniv
+  ForAll {
+    dom: Box<Type>,
+    scope: Box<Formula>,
+  },
+  /// ikFrmFlexConj
+  FlexAnd {
+    orig: Box<[Formula; 2]>,
+    terms: Box<[Term; 2]>,
+    expansion: Box<Formula>,
+  },
+  /// ikFrmVerum
   True,
   Thesis,
+}
+
+impl Default for Formula {
+  fn default() -> Self { Self::True }
 }
 
 impl<V: VisitMut> Visitable<V> for Formula {
@@ -538,22 +628,19 @@ impl std::fmt::Debug for Formula {
       Self::Attr { nr, args } => Term::debug_args("A", nr.0, args, f),
       Self::PrivPred { nr, args, value } => Term::debug_args("$P", *nr, args, f),
       Self::Is { term, ty } => write!(f, "({:?} is {:?})", term, ty),
-      Self::Neg { f: fmla } => write!(f, "!{:?}", fmla),
+      Self::Neg { f: fmla } => write!(f, "¬{:?}", fmla),
       Self::And { args } => match &**args {
-        [] => write!(f, "false"),
-        [fmla] => write!(f, "&[{:?}]", fmla),
+        [] | [_] => unreachable!(),
         [fs @ .., fmla] => {
           write!(f, "(")?;
           for fm in fs {
-            write!(f, "{:?} && ", fm)?
+            write!(f, "{:?} ∧ ", fm)?
           }
           write!(f, "{:?})", fmla)
         }
       },
-      Self::ForAll { var_id, dom, scope } =>
-        write!(f, "for {:?}: {:?} holds {:?}", var_id, dom, scope),
-      Self::FlexAnd { orig, terms, expansion } =>
-        write!(f, "{:?} && ... && {:?}", orig[0], orig[1]),
+      Self::ForAll { dom, scope } => write!(f, "∀ {:?}, {:?}", dom, scope),
+      Self::FlexAnd { orig, terms, expansion } => write!(f, "{:?} ∧ ... ∧ {:?}", orig[0], orig[1]),
       Self::True => write!(f, "true"),
       Self::Thesis => write!(f, "thesis"),
     }
@@ -574,6 +661,50 @@ impl Formula {
       Formula::FlexAnd { .. } => b'b',
       Formula::True => b'%',
       Formula::Thesis => b'$',
+    }
+  }
+
+  pub fn mk_neg(self) -> Self {
+    match self {
+      Formula::Neg { f } => *f,
+      _ => Formula::Neg { f: Box::new(self) },
+    }
+  }
+
+  pub fn maybe_neg(self, pos: bool) -> Self {
+    if pos {
+      self
+    } else {
+      self.mk_neg()
+    }
+  }
+
+  // postcondition: the things pushed to vec are not And expressions
+  pub fn append_conjuncts_to(self, vec: &mut Vec<Formula>) {
+    match self {
+      Formula::True => {}
+      Formula::And { mut args } => vec.append(&mut args),
+      f => vec.push(f),
+    }
+  }
+
+  // Precondition: the args are not And expressions
+  pub fn mk_and(args: Vec<Formula>) -> Formula {
+    match args.len() {
+      0 => Formula::True,
+      1 => { args }.pop().unwrap(),
+      _ => Formula::And { args },
+    }
+  }
+
+  /// * pos = true: constructs self && vec[0] && ... && vec[n-1]
+  /// * pos = false: constructs self || vec[0] || ... || vec[n-1]
+  pub fn conjdisj_many(&mut self, pos: bool, vec: Vec<Formula>) {
+    if !vec.is_empty() {
+      let mut conjs = vec![];
+      std::mem::take(self).maybe_neg(pos).append_conjuncts_to(&mut conjs);
+      vec.into_iter().for_each(|f| f.maybe_neg(pos).append_conjuncts_to(&mut conjs));
+      *self = Formula::mk_and(conjs).maybe_neg(pos);
     }
   }
 }
@@ -1044,6 +1175,7 @@ impl<V: VisitMut, T: Visitable<V>> Visitable<V> for DefCase<T> {
 
 #[derive(Clone, Debug)]
 pub struct DefBody<T> {
+  /// nPartialDefinientia
   pub cases: Box<[DefCase<T>]>,
   pub otherwise: Option<T>,
 }

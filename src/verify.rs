@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::{types::*, *};
+use crate::{checker::Checker, types::*, *};
 
 enum PendingDef {
   Constr(ConstrKind),
@@ -13,10 +13,15 @@ pub struct Verifier {
   pub libs: Libraries,
   article: Article,
   treat_thm_as_axiom: bool,
+  /// EqDefinientia
   pub equalities: Vec<Definiens>,
+  /// ExDefinientia
   pub expansions: Vec<Definiens>,
+  /// gPropertiesList
   pub properties: Vec<Property>,
-  pub identifications: Vec<Identify>,
+  /// gIdentifications
+  pub identify: Vec<Identify>,
+  /// gReductions
   pub reductions: Vec<Reduction>,
   pub equals: BTreeMap<ConstrKind, Vec<EqualsDef>>,
   pub func_ids: BTreeMap<ConstrKind, Vec<usize>>,
@@ -24,6 +29,7 @@ pub struct Verifier {
   labels: IdxVec<LabelId, Option<usize>>,
   pending_defs: Vec<PendingDef>,
   items: usize,
+  inference_nr: usize,
 }
 
 impl Verifier {
@@ -44,7 +50,7 @@ impl Verifier {
       equalities: Default::default(),
       expansions: Default::default(),
       properties: Default::default(),
-      identifications: Default::default(),
+      identify: Default::default(),
       reductions: Default::default(),
       equals: Default::default(),
       func_ids: Default::default(),
@@ -52,6 +58,7 @@ impl Verifier {
       labels: Default::default(),
       pending_defs: Default::default(),
       items: 0,
+      inference_nr: 0,
     }
   }
 
@@ -62,7 +69,7 @@ impl Verifier {
   }
 
   pub fn intern_const(&self) -> InternConst<'_> {
-    InternConst::new(&self.g, &self.lc, &self.equals, &self.identifications, &self.func_ids)
+    InternConst::new(&self.g, &self.lc, &self.equals, &self.identify, &self.func_ids)
   }
 
   fn push_prop(&mut self, label: Option<LabelId>, prop: Formula) {
@@ -394,7 +401,29 @@ impl Verifier {
 
   fn read_inference(&mut self, thesis: &Formula, it: &Inference) {
     match it.kind {
-      InferenceKind::By { linked } => stat("by"),
+      InferenceKind::By { linked } => {
+        let neg_thesis = thesis.clone().mk_neg();
+        let mut premises = vec![&neg_thesis];
+        if linked {
+          premises.push(self.props.last().unwrap());
+        }
+        premises.extend(it.refs.iter().map(|r| match r.kind {
+          ReferenceKind::Priv(lab) => &self.props[self.labels[lab].unwrap()],
+          ReferenceKind::Thm(thm) => &self.libs.thm[&thm],
+          ReferenceKind::Def(def) => &self.libs.def[&def],
+        }));
+        Checker {
+          g: &mut self.g,
+          lc: &mut self.lc,
+          expansions: &self.expansions,
+          equals: &self.equals,
+          identify: &self.identify,
+          func_ids: &self.func_ids,
+          idx: self.inference_nr,
+        }
+        .justify(premises);
+        self.inference_nr += 1;
+      }
       InferenceKind::From { sch } => stat("from"),
     }
   }
