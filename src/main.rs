@@ -4,6 +4,7 @@
 use crate::types::*;
 use crate::verify::Verifier;
 use enum_map::EnumMap;
+use equate::EqTerm;
 use itertools::EitherOrBoth;
 use once_cell::sync::Lazy;
 use std::cell::RefCell;
@@ -17,6 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Mutex;
 
 mod checker;
+mod equate;
 mod parser;
 mod retain_mut_from;
 mod types;
@@ -64,14 +66,13 @@ impl std::fmt::Debug for RequirementIndexes {
 
 impl RequirementIndexes {
   pub fn init_rev(&mut self) {
+    assert_eq!(self.fwd[Requirement::Any], ModeId::ANY.0 + 1);
     for (req, &val) in &self.fwd {
       self.rev[val as usize] = Some(req);
     }
   }
 
   pub fn get(&self, req: Requirement) -> Option<u32> { self.fwd[req].checked_sub(1) }
-
-  pub fn any(&self) -> ModeId { ModeId(self.get(Requirement::Any).unwrap()) }
   pub fn set(&self) -> ModeId { ModeId(self.get(Requirement::SetMode).unwrap()) }
   pub fn zero(&self) -> Option<AttrId> { self.get(Requirement::Zero).map(AttrId) }
   pub fn zero_number(&self) -> Option<FuncId> { self.get(Requirement::ZeroNumber).map(FuncId) }
@@ -89,7 +90,7 @@ impl Global {
   fn type_reachable(&self, wider: &Type, narrower: &Type) -> bool {
     // vprintln!("TypReachable {wider:?} -> {narrower:?}");
     if let (TypeKind::Mode(_), TypeKind::Mode(w_mode)) = (narrower.kind, wider.kind) {
-      if w_mode == self.reqs.any() {
+      if w_mode == ModeId::ANY {
         return true
       }
       let mode = self.constrs.mode[w_mode].redefines.unwrap_or(w_mode);
@@ -217,6 +218,10 @@ impl Term {
     }
   }
 
+  pub fn adjusted_nr(nr: FuncId, ctx: &Constructors) -> FuncId {
+    ctx.functor[nr].c.redefines.unwrap_or(nr)
+  }
+
   fn skip_priv_func(&self) -> &Self {
     let mut t = self;
     while let Term::PrivFunc { value, .. } = t {
@@ -228,7 +233,7 @@ impl Term {
   /// SizeOfTrm(fTrm:TrmPtr)
   fn size(&self) -> u32 {
     match self {
-      Term::SchemeFunctor { args, .. }
+      Term::SchFunc { args, .. }
       | Term::Aggregate { args, .. }
       | Term::Functor { args, .. }
       | Term::Selector { args, .. } => args.iter().map(|t| t.size()).sum::<u32>() + 1,
@@ -257,14 +262,15 @@ impl Term {
       }
     };
     this.discr().cmp(&other.discr()).then_with(|| match (this, other) {
-      (Locus { nr: LocusId(n1) }, Locus { nr: LocusId(n2) })
-      | (Bound { nr: BoundId(n1) }, Bound { nr: BoundId(n2) })
-      | (Constant { nr: ConstId(n1) }, Constant { nr: ConstId(n2) })
-      | (Infer { nr: InferId(n1) }, Infer { nr: InferId(n2) })
-      | (FreeVar { nr: FVarId(n1) }, FreeVar { nr: FVarId(n2) })
-      | (LambdaVar { nr: n1 }, LambdaVar { nr: n2 })
-      | (EqConst { nr: n1 }, EqConst { nr: n2 })
-      | (Numeral { nr: n1 }, Numeral { nr: n2 }) => n1.cmp(n2),
+      (Locus(LocusId(n1)), Locus(LocusId(n2)))
+      | (Bound(BoundId(n1)), Bound(BoundId(n2)))
+      | (Constant(ConstId(n1)), Constant(ConstId(n2)))
+      | (Infer(InferId(n1)), Infer(InferId(n2)))
+      | (FreeVar(FVarId(n1)), FreeVar(FVarId(n2)))
+      | (LambdaVar(n1), LambdaVar(n2))
+      | (EqClass(EqClassId(n1)), EqClass(EqClassId(n2)))
+      | (EqMark(EqMarkId(n1)), EqMark(EqMarkId(n2)))
+      | (Numeral(n1), Numeral(n2)) => n1.cmp(n2),
       (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) => match style {
         CmpStyle::Strict | CmpStyle::Alt =>
           n1.cmp(n2).then_with(|| Term::cmp_list(ctx, args1, args2, style)),
@@ -274,10 +280,7 @@ impl Term {
           n1.cmp(&n2).then_with(|| Term::cmp_list(ctx, args1, args2, style))
         }
       },
-      (
-        SchemeFunctor { nr: SchFuncId(n1), args: args1 },
-        SchemeFunctor { nr: SchFuncId(n2), args: args2 },
-      )
+      (SchFunc { nr: SchFuncId(n1), args: args1 }, SchFunc { nr: SchFuncId(n2), args: args2 })
       | (Aggregate { nr: AggrId(n1), args: args1 }, Aggregate { nr: AggrId(n2), args: args2 })
       | (
         PrivFunc { nr: PrivFuncId(n1), args: args1, .. },
@@ -291,7 +294,7 @@ impl Term {
         Fraenkel { args: args2, scope: sc2, compr: c2 },
       ) => sc1.cmp(ctx, sc2, style).then_with(|| {
         c1.cmp(ctx, c2, style)
-          .then_with(|| cmp_list(args1, args2, |ty1, ty2| ty1.1.cmp(ctx, &ty2.1, style)))
+          .then_with(|| cmp_list(args1, args2, |ty1, ty2| ty1.cmp(ctx, ty2, style)))
       }),
       (It, It) => Ordering::Equal,
       (Qua { value: val1, ty: ty1 }, Qua { value: val2, ty: ty2 }) =>
@@ -378,7 +381,7 @@ impl Type {
   fn widening(&self, g: &Global) -> Option<Box<Self>> {
     match self.kind {
       TypeKind::Mode(n) => {
-        if n == g.reqs.any() {
+        if n == ModeId::ANY {
           return None
         }
         let cnst = &g.constrs.mode[n];
@@ -424,8 +427,8 @@ impl Type {
             }
             TypeKind::Struct(_) if n == g.reqs.set() =>
               return Some(CowBox::Owned(Box::new(Type::new(g.reqs.set().into())))),
-            TypeKind::Struct(_) if n == g.reqs.any() =>
-              return Some(CowBox::Owned(Box::new(Type::new(g.reqs.any().into())))),
+            TypeKind::Struct(_) if n == ModeId::ANY =>
+              return Some(CowBox::Owned(Box::new(Type::new(ModeId::ANY.into())))),
             _ => return None,
           }
         }
@@ -470,7 +473,7 @@ impl Type {
           let Some(w2) = w.widening(g) else { break };
           w = CowBox::Owned(w2)
         }
-        matches!(w.kind, TypeKind::Struct(_)) && (n == g.reqs.set() || n == g.reqs.any())
+        matches!(w.kind, TypeKind::Struct(_)) && (n == g.reqs.set() || n == ModeId::ANY)
       }
       TypeKind::Struct(_) => {
         let Some(w) = other.widening(g) else { return false };
@@ -571,15 +574,17 @@ trait Equate {
     use Term::*;
     // vprintln!("{t1:?} =? {t2:?}");
     match (t1, t2) {
-      (&Locus { nr }, _) if self.locus_var_left(g, lc, nr, t2) => true,
-      (&Locus { nr: LocusId(n1) }, &Locus { nr: LocusId(n2) }) if self.eq_locus_var(n1, n2) => true,
-      (Bound { nr: BoundId(n1) }, Bound { nr: BoundId(n2) })
-      | (Constant { nr: ConstId(n1) }, Constant { nr: ConstId(n2) })
-      | (FreeVar { nr: FVarId(n1) }, FreeVar { nr: FVarId(n2) })
-      | (LambdaVar { nr: n1 }, LambdaVar { nr: n2 })
-      | (EqConst { nr: n1 }, EqConst { nr: n2 })
-      | (Numeral { nr: n1 }, Numeral { nr: n2 }) => n1 == n2,
-      (Infer { nr: n1 }, Infer { nr: n2 }) if n1 == n2 => true,
+      (&Locus(nr), _) if self.locus_var_left(g, lc, nr, t2) => true,
+      (&Locus(LocusId(n1)), &Locus(LocusId(n2))) if self.eq_locus_var(n1, n2) => true,
+      (Bound(BoundId(n1)), Bound(BoundId(n2)))
+      | (Constant(ConstId(n1)), Constant(ConstId(n2)))
+      | (FreeVar(FVarId(n1)), FreeVar(FVarId(n2)))
+      | (LambdaVar(n1), LambdaVar(n2))
+      | (EqClass(EqClassId(n1)), EqClass(EqClassId(n2)))
+      | (Numeral(n1), Numeral(n2)) => n1 == n2,
+      (EqMark(EqMarkId(n1)), EqMark(EqMarkId(n2))) | (Infer(InferId(n1)), Infer(InferId(n2)))
+        if n1 == n2 =>
+        true,
       (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) =>
         if n1 == n2 {
           self.eq_terms(g, lc, args1, args2)
@@ -588,10 +593,7 @@ trait Equate {
           let (n2, args2) = Term::adjust(*n2, args2, &g.constrs);
           n1 == n2 && self.eq_terms(g, lc, args1, args2)
         },
-      (
-        SchemeFunctor { nr: SchFuncId(n1), args: args1 },
-        SchemeFunctor { nr: SchFuncId(n2), args: args2 },
-      )
+      (SchFunc { nr: SchFuncId(n1), args: args1 }, SchFunc { nr: SchFuncId(n2), args: args2 })
       | (Aggregate { nr: AggrId(n1), args: args1 }, Aggregate { nr: AggrId(n2), args: args2 })
       | (
         PrivFunc { nr: PrivFuncId(n1), args: args1, .. },
@@ -605,13 +607,15 @@ trait Equate {
         Fraenkel { args: args2, scope: sc2, compr: c2 },
       ) =>
         args1.len() == args2.len()
-          && args1.iter().zip(&**args2).all(|(ty1, ty2)| self.eq_type(g, lc, &ty1.1, &ty2.1))
+          && args1.iter().zip(&**args2).all(|(ty1, ty2)| self.eq_type(g, lc, ty1, ty2))
           && self.eq_term(g, lc, sc1, sc2)
           && self.eq_formula(g, lc, c1, c2),
       (It, It) => true,
       (Qua { .. }, Qua { .. }) => panic!("invalid qua"),
-      (_, &Infer { nr }) => self.eq_term(g, lc, t1, &lc.infer_const.borrow()[nr].def),
-      (&Infer { nr }, _) => self.eq_term(g, lc, &lc.infer_const.borrow()[nr].def, t2),
+      (_, &Infer(nr)) => self.eq_term(g, lc, t1, &lc.infer_const.borrow()[nr].def),
+      (&Infer(nr), _) => self.eq_term(g, lc, &lc.infer_const.borrow()[nr].def, t2),
+      (_, &EqMark(nr)) => self.eq_term(g, lc, t1, &lc.marks[nr].0),
+      (&EqMark(nr), _) => self.eq_term(g, lc, &lc.marks[nr].0, t2),
       (PrivFunc { .. }, _) | (_, PrivFunc { .. }) =>
         self.eq_term(g, lc, t1.skip_priv_func(), t2.skip_priv_func()),
       _ => false,
@@ -758,15 +762,16 @@ macro_rules! mk_visit {
       fn super_visit_term(&mut self, tm: &$($mutbl)? Term, depth: u32) {
         if self.abort() { return }
         match tm {
-          Term::Locus { .. }
-          | Term::Bound { .. }
-          | Term::Constant { .. }
-          | Term::EqConst { .. }
-          | Term::Infer { .. }
-          | Term::FreeVar { .. }
-          | Term::LambdaVar { .. }
+          Term::Locus(_)
+          | Term::Bound(_)
+          | Term::Constant(_)
+          | Term::EqClass(_)
+          | Term::EqMark(_)
+          | Term::Infer(_)
+          | Term::FreeVar(_)
+          | Term::LambdaVar(_)
           | Term::It => {}
-          Term::SchemeFunctor { args, .. }
+          Term::SchFunc { args, .. }
           | Term::Aggregate { args, .. }
           | Term::Functor { args, .. }
           | Term::Selector { args, .. } => self.visit_terms(args, depth),
@@ -782,7 +787,7 @@ macro_rules! mk_visit {
           Term::Choice { ty } => self.visit_type(ty, depth),
           Term::Fraenkel { args, scope, compr } => {
             let mut depth = depth;
-            for (_, ty) in &$($mutbl)? **args {
+            for ty in &$($mutbl)? **args {
               self.visit_type(ty, depth);
               depth += 1;
             }
@@ -875,15 +880,15 @@ struct OnVarMut<F: FnMut(&mut u32, u32)>(F);
 impl<F: FnMut(&mut u32, u32)> VisitMut for OnVarMut<F> {
   fn visit_term(&mut self, tm: &mut Term, depth: u32) {
     self.super_visit_term(tm, depth);
-    if let Term::Bound { nr: BoundId(nr) } = tm {
+    if let Term::Bound(BoundId(nr)) = tm {
       self.0(nr, depth)
     }
   }
 }
 
-struct CheckBound(bool, u32);
+pub struct CheckBound(bool, u32);
 impl CheckBound {
-  fn get(base: u32, f: impl FnOnce(&mut Self)) -> bool {
+  pub fn get(base: u32, f: impl FnOnce(&mut Self)) -> bool {
     let mut cb = Self(false, base);
     f(&mut cb);
     cb.0
@@ -893,7 +898,7 @@ impl Visit for CheckBound {
   fn abort(&self) -> bool { self.0 }
   fn visit_term(&mut self, tm: &Term, depth: u32) {
     self.super_visit_term(tm, depth);
-    if let Term::Bound { nr: BoundId(nr) } = *tm {
+    if let Term::Bound(BoundId(nr)) = *tm {
       self.0 |= nr < self.1
     }
   }
@@ -935,7 +940,7 @@ fn inst<'a, T: Clone + Visitable<Inst<'a>>>(
 impl VisitMut for Inst<'_> {
   fn visit_term(&mut self, tm: &mut Term, depth: u32) {
     match *tm {
-      Term::Locus { nr } => {
+      Term::Locus(nr) => {
         *tm = self.subst[nr.0 as usize].clone();
         OnVarMut(|nr, depth| {
           if *nr >= self.base {
@@ -1022,33 +1027,33 @@ impl Term {
   /// GetTrmType(self = fTrm)
   fn get_type(&self, g: &Global, lc: &LocalContext) -> Box<Type> {
     // vprintln!("GetTrmType {self:?}");
-    if matches!(self, Term::Functor { .. } | Term::Selector { .. } | Term::Aggregate { .. }) {
-      let cache = lc.term_cache.borrow();
-      if let Ok(i) = cache.find(&g.constrs, self) {
-        return cache.terms[i].1.clone()
+    match self {
+      Term::Functor { .. } | Term::Selector { .. } | Term::Aggregate { .. } => {
+        let cache = lc.term_cache.borrow();
+        if let Ok(i) = cache.find(&g.constrs, self) {
+          return cache.terms[i].1.clone()
+        }
+        drop(cache);
+        let i = TermCollection::insert(g, lc, self);
+        lc.term_cache.borrow().terms[i].1.clone()
       }
-      drop(cache);
-      let i = TermCollection::insert(g, lc, self);
-      lc.term_cache.borrow().terms[i].1.clone()
-    } else {
-      self.get_type_uncached(g, lc)
+      &Term::EqMark(m) => lc.marks[m].0.get_type(g, lc),
+      _ => self.get_type_uncached(g, lc),
     }
   }
 
   /// CopyTrmType(self = fTrm)
   fn get_type_uncached(&self, g: &Global, lc: &LocalContext) -> Box<Type> {
     let ty = match *self {
-      Term::Bound { nr } => lc.bound_var[nr].clone(),
-      Term::Constant { nr } => {
-        let mut ty = lc.fixed_var[nr].ty.clone();
+      Term::Bound(nr) => lc.bound_var[nr].clone(),
+      Term::Constant(nr) => {
         let base = lc.bound_var.len() as u32;
-        OnVarMut(|nr, _| *nr += base).visit_type(&mut ty, 0);
-        ty
+        lc.fixed_var[nr].ty.visit_cloned(&mut OnVarMut(|nr, _| *nr += base))
       }
-      Term::Infer { nr } => lc.infer_const.borrow()[nr].ty.clone(),
-      Term::Numeral { .. } => Box::new(g.nonzero_type.clone()),
-      Term::Locus { nr } => Box::new(lc.locus_ty[nr].clone()),
-      Term::SchemeFunctor { nr, .. } => Box::new(lc.sch_func_ty[nr].clone()),
+      Term::Infer(nr) => lc.infer_const.borrow()[nr].ty.clone(),
+      Term::Numeral(_) => Box::new(g.nonzero_type.clone()),
+      Term::Locus(nr) => Box::new(lc.locus_ty[nr].clone()),
+      Term::SchFunc { nr, .. } => Box::new(lc.sch_func_ty[nr].clone()),
       Term::PrivFunc { nr, ref args, .. } =>
         Box::new(lc.priv_func[nr].ty.visit_cloned(&mut Inst::new(args))),
       Term::Functor { nr, ref args } => g.constrs.functor[nr].ty.visit_cloned(&mut Inst::new(args)),
@@ -1059,9 +1064,9 @@ impl Term {
       Term::Fraenkel { .. } => Box::new(Type::new(TypeKind::Mode(g.reqs.set()))),
       Term::It => lc.it_type.as_ref().unwrap().clone(),
       Term::Choice { ref ty } | Term::Qua { ref ty, .. } => ty.clone(),
-      Term::EqConst { .. } => unreachable!("get_type_uncached(EqConst)"),
-      Term::FreeVar { .. } => unreachable!("get_type_uncached(FreeVar)"),
-      Term::LambdaVar { .. } => unreachable!("get_type_uncached(LambdaVar)"),
+      Term::EqMark(m) => lc.marks[m].0.get_type_uncached(g, lc),
+      Term::EqClass(_) | Term::FreeVar(_) | Term::LambdaVar(_) =>
+        unreachable!("get_type_uncached(EqClass | FreeVar | LambdaVar)"),
     };
     // vprintln!("[{:?}] get_type {:?} -> {:?}", lc.infer_const.borrow().len(), self, ty);
     ty
@@ -1441,7 +1446,7 @@ impl Attrs {
           fn abort(&self) -> bool { self.0 }
           fn visit_term(&mut self, tm: &Term, depth: u32) {
             match tm {
-              Term::Locus { .. } => self.0 = true,
+              Term::Locus(_) => self.0 = true,
               _ => self.super_visit_term(tm, depth),
             }
           }
@@ -1688,7 +1693,7 @@ impl Definiens {
     let primary = self.primary.split_last().unwrap().1.to_vec().into(); // TODO: is this an unwrap?
     let expansion = ow.clone();
     let essential = self.essential.split_last().unwrap().1.to_vec().into(); // TODO: is this an unwrap?
-    let args = self.essential.iter().map(|&nr| Term::Locus { nr }).collect();
+    let args = self.essential.iter().map(|&nr| Term::Locus(nr)).collect();
     Some(EqualsDef { primary, expansion, pattern: (nr, args), essential })
   }
 
@@ -1806,7 +1811,7 @@ impl<'a> InternConst<'a> {
           nr
         }
       };
-      *tm = Term::Infer { nr };
+      *tm = Term::Infer(nr);
     }
   }
 
@@ -1831,7 +1836,7 @@ impl<'a> InternConst<'a> {
       this.visit_term(&mut tm, 0);
       this.equals_expansion_level -= 1;
       this.infer_consts.remove(&nr);
-      let Term::Infer { nr } = tm else { unreachable!("{:?}", tm) };
+      let Term::Infer(nr) = tm else { unreachable!("{:?}", tm) };
       eq.insert(nr);
     };
     if let Some(eq_defs) = self.equals.get(&ConstrKind::Func(nr)) {
@@ -1873,28 +1878,26 @@ impl VisitMut for InternConst<'_> {
     let only_constants = std::mem::replace(&mut self.only_constants, true);
     let equals_expansion_level = std::mem::replace(&mut self.equals_expansion_level, 0);
     match tm {
-      Term::Locus { .. } | Term::Bound { .. } | Term::FreeVar { .. } | Term::LambdaVar { .. } =>
+      Term::Locus(_) | Term::Bound(_) | Term::FreeVar(_) | Term::LambdaVar(_) =>
         self.only_constants = false,
-      &mut Term::Constant { nr } => {
+      &mut Term::Constant(nr) => {
         let mut eq = BTreeSet::new();
         if let Some(fv) = &self.lc.fixed_var[nr].def {
           let mut fv = (**fv).clone();
           ExpandPrivFunc { ctx: &self.g.constrs }.visit_term(&mut fv, depth);
           self.visit_term(&mut fv, depth);
           if self.only_constants {
-            let Term::Infer { nr } = fv else { unreachable!() };
+            let Term::Infer(nr) = fv else { unreachable!() };
             eq.insert(nr);
           }
           self.only_constants = true;
         }
         self.collect_infer_const(tm, depth);
-        let Term::Infer { nr } = *tm else { unreachable!() };
+        let Term::Infer(nr) = *tm else { unreachable!() };
         self.lc.infer_const.borrow_mut()[nr].eq_const.extend(eq);
       }
-      Term::Infer { .. } => {}
-      Term::SchemeFunctor { args, .. }
-      | Term::Aggregate { args, .. }
-      | Term::Selector { args, .. } => {
+      Term::Infer(_) => {}
+      Term::SchFunc { args, .. } | Term::Aggregate { args, .. } | Term::Selector { args, .. } => {
         self.visit_terms(args, depth);
         self.collect_infer_const(tm, depth)
       }
@@ -1907,11 +1910,11 @@ impl VisitMut for InternConst<'_> {
         if self.only_constants {
           let ic = self.lc.infer_const.borrow();
           match ic.find_index(|a| a.def.cmp(&self.g.constrs, tm, CmpStyle::Strict)) {
-            Ok(nr) => *tm = Term::Infer { nr },
+            Ok(nr) => *tm = Term::Infer(nr),
             _ => {
               drop(ic);
               self.collect_infer_const(tm, depth);
-              let Term::Infer { nr } = *tm else { unreachable!() };
+              let Term::Infer(nr) = *tm else { unreachable!() };
               self.equals_expansion_level = equals_expansion_level;
               let tm = self.lc.infer_const.borrow()[nr].def.clone();
               let eq = self.collect_equals_const(&tm, depth);
@@ -1920,14 +1923,14 @@ impl VisitMut for InternConst<'_> {
           }
         }
       }
-      Term::Numeral { .. } => self.collect_infer_const(tm, depth),
+      Term::Numeral(_) => self.collect_infer_const(tm, depth),
       Term::Choice { ty } => {
         self.visit_type(ty, depth);
         self.collect_infer_const(tm, depth)
       }
       Term::Fraenkel { args, scope, compr } => {
         let mut i = depth;
-        for (_, ty) in &mut **args {
+        for ty in &mut **args {
           self.visit_type(ty, i);
           i += 1;
         }
@@ -1939,8 +1942,8 @@ impl VisitMut for InternConst<'_> {
           self.collect_infer_const(tm, depth)
         }
       }
-      Term::EqConst { .. } | Term::It | Term::Qua { .. } =>
-        unreachable!("CollectConst::visit_term(EqConst | It | Qua)"),
+      Term::EqClass(_) | Term::EqMark(_) | Term::It | Term::Qua { .. } =>
+        unreachable!("CollectConst::visit_term(EqConst | EqMark | It | Qua)"),
     }
     self.only_constants &= only_constants;
     self.equals_expansion_level = equals_expansion_level;
@@ -1961,7 +1964,7 @@ impl LocalContext {
 impl VisitMut for ExpandConsts<'_> {
   /// ExpandInferConsts
   fn visit_term(&mut self, tm: &mut Term, depth: u32) {
-    if let Term::Infer { nr } = *tm {
+    if let Term::Infer(nr) = *tm {
       *tm = (*self.0[nr].def).clone();
       OnVarMut(|v, _| *v += depth).visit_term(tm, depth)
     }
@@ -1978,7 +1981,7 @@ impl Renumber {
 impl VisitMut for Renumber {
   fn visit_term(&mut self, tm: &mut Term, depth: u32) {
     self.super_visit_term(tm, depth);
-    if let Term::Infer { nr } = tm {
+    if let Term::Infer(nr) = tm {
       if let Some(&nr2) = self.0.get(nr) {
         *nr = nr2;
       }
@@ -2004,9 +2007,9 @@ struct Assignment {
   // numeric_value: Option<Complex>,
 }
 impl<V: VisitMut> Visitable<V> for Assignment {
-  fn visit(&mut self, v: &mut V) {
-    self.def.visit(v);
-    self.ty.visit(v);
+  fn visit_d(&mut self, v: &mut V, d: u32) {
+    self.def.visit_d(v, d);
+    self.ty.visit_d(v, d);
   }
 }
 
@@ -2047,6 +2050,8 @@ pub struct LocalContext {
   term_cache: RefCell<TermCollection>,
   /// ItTyp
   it_type: Option<Box<Type>>,
+  /// Not in mizar, used in equalizer for TrmInfo marks
+  marks: IdxVec<EqMarkId, (Term, EqTermId)>,
 }
 
 impl LocalContext {
@@ -2101,8 +2106,8 @@ impl LocalContext {
           fn visit_term(&mut self, tm: &Term, depth: u32) {
             self.super_visit_term(tm, depth);
             match tm {
-              Term::Constant { nr } => self.found |= nr.0 >= self.num_consts,
-              Term::Infer { nr } => self.found |= self.has_local_const.contains(nr),
+              Term::Constant(nr) => self.found |= nr.0 >= self.num_consts,
+              Term::Infer(nr) => self.found |= self.has_local_const.contains(nr),
               _ => {}
             }
           }
@@ -2170,7 +2175,7 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
     Type {
       kind: TypeKind::Mode(element),
       attrs: Default::default(),
-      args: Box::new([Term::Functor { nr: omega, args: Box::new([]) }]),
+      args: vec![Term::Functor { nr: omega, args: Box::new([]) }],
     }
   } else {
     Type::new(reqs.set().into())
@@ -2250,8 +2255,8 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
   // InLibraries
   path.read_eth(&v.g.constrs, &refs, &mut v.libs).unwrap();
   let mut cc = InternConst::new(&v.g, &v.lc, &v.equals, &v.identify, &v.func_ids);
-  v.libs.thm.values_mut().for_each(|f| cc.visit_formula(f, 0));
-  v.libs.def.values_mut().for_each(|f| cc.visit_formula(f, 0));
+  v.libs.thm.values_mut().for_each(|f| f.visit(&mut cc));
+  v.libs.def.values_mut().for_each(|f| f.visit(&mut cc));
   const ONLY_THEOREMS: bool = true;
   if !ONLY_THEOREMS {
     path.read_esh(&v.g.constrs, &refs, &mut v.libs).unwrap();
@@ -2286,7 +2291,7 @@ pub fn stat(s: &'static str) {
 #[macro_export]
 macro_rules! vprintln {
   ($($args:tt)*) => {
-    if verbose() {
+    if $crate::verbose() {
       eprintln!($($args)*)
     }
   };

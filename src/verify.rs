@@ -1,6 +1,7 @@
+use crate::checker::Checker;
+use crate::types::*;
+use crate::*;
 use std::collections::HashSet;
-
-use crate::{checker::Checker, types::*, *};
 
 enum PendingDef {
   Constr(ConstrKind),
@@ -74,10 +75,10 @@ impl Verifier {
 
   fn push_prop(&mut self, label: Option<LabelId>, prop: Formula) {
     // eprintln!("push_prop {:?}", label);
-    self.props.push(prop);
     if let Some(label) = label {
       assert_eq!(label, self.labels.push(Some(self.props.len())));
     }
+    self.props.push(prop);
   }
 
   fn read_proposition(&mut self, prop: &Proposition) {
@@ -214,6 +215,7 @@ impl Verifier {
               }
             });
           }
+          this.read_just_prop(prop, just)
         });
         self.push_prop(*label, self.intern(block_thesis))
       }
@@ -299,7 +301,7 @@ impl Verifier {
               drop(ic);
               if let Some(mut t) = func.expand_if_equal(&self.g, &self.lc, args, 0) {
                 t.visit(&mut self.intern_const());
-                let Term::Infer { nr } = t else { unreachable!() };
+                let Term::Infer(nr) = t else { unreachable!() };
                 self.lc.infer_const.borrow_mut().0[i].eq_const.insert(nr);
               }
             }
@@ -420,6 +422,7 @@ impl Verifier {
           identify: &self.identify,
           func_ids: &self.func_ids,
           idx: self.inference_nr,
+          pos: it.pos,
         }
         .justify(premises);
         self.inference_nr += 1;
@@ -439,7 +442,7 @@ impl Verifier {
       fn visit_term(&mut self, tm: &Term, depth: u32) {
         self.super_visit_term(tm, depth);
         // Term::PrivFunc { nr, args, value } => self.2 &= nr.0 < self.0,
-        if let Term::Infer { nr } = tm {
+        if let Term::Infer(nr) = tm {
           self.1 &= nr.0 < self.0
         }
       }

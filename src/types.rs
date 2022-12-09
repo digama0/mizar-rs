@@ -1,11 +1,9 @@
 use crate::VisitMut;
 use enum_map::{Enum, EnumMap};
-use std::{
-  cmp::Ordering,
-  collections::{BTreeMap, BTreeSet, HashMap},
-  marker::PhantomData,
-  ops::{Index, IndexMut, Range},
-};
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::marker::PhantomData;
+use std::ops::{Index, IndexMut, Range};
 
 #[derive(Clone)]
 pub enum CowBox<'a, A: ?Sized> {
@@ -122,6 +120,28 @@ impl<I, T> IdxVec<I, T> {
     let id = self.peek();
     self.0.push(val);
     id
+  }
+
+  /// Grow the vector until it is long enough that `vec[idx]` will work.
+  pub fn extend_to_include(&mut self, idx: I)
+  where
+    I: Idx,
+    T: Default,
+  {
+    let n = I::into_usize(idx) + 1;
+    if self.0.len() < n {
+      self.0.resize_with(n, T::default)
+    }
+  }
+
+  /// Get the element with index `idx`, extending the vector if necessary.
+  pub fn get_mut_extending(&mut self, idx: I) -> &mut T
+  where
+    I: Idx,
+    T: Default,
+  {
+    self.extend_to_include(idx);
+    &mut self[idx]
   }
 
   /// An iterator including the indexes, like `iter().enumerate()`, as `BlockId`s.
@@ -259,6 +279,9 @@ mk_id! {
   ConstId,
   FVarId,
   InferId,
+  EqClassId,
+  EqTermId,
+  EqMarkId,
   SchFuncId,
   PrivFuncId,
   LocusId,
@@ -271,6 +294,11 @@ mk_id! {
 }
 impl ArticleId {
   pub const SELF: ArticleId = ArticleId(0);
+}
+
+impl ModeId {
+  // Every mizar file needs this one and it needs to be mode 0
+  pub const ANY: ModeId = ModeId(0);
 }
 
 #[derive(Copy, Clone, Debug, Enum)]
@@ -312,63 +340,60 @@ pub enum Requirement {
 }
 
 pub trait Visitable<V> {
-  fn visit(&mut self, v: &mut V);
-  fn visit_cloned(&self, v: &mut V) -> Self
+  fn visit_d(&mut self, v: &mut V, depth: u32);
+  fn visit(&mut self, v: &mut V) { self.visit_d(v, 0) }
+  fn visit_cloned_d(&self, v: &mut V, depth: u32) -> Self
   where Self: Clone {
     let mut t = self.clone();
-    t.visit(v);
+    t.visit_d(v, depth);
     t
+  }
+  fn visit_cloned(&self, v: &mut V) -> Self
+  where Self: Clone {
+    self.visit_cloned_d(v, 0)
   }
 }
 
 impl<V, T: Visitable<V>> Visitable<V> for &mut T {
-  fn visit(&mut self, v: &mut V) { (**self).visit(v) }
+  fn visit_d(&mut self, v: &mut V, d: u32) { (**self).visit_d(v, d) }
 }
 impl<V, T: Visitable<V>> Visitable<V> for Box<T> {
-  fn visit(&mut self, v: &mut V) { (**self).visit(v) }
+  fn visit_d(&mut self, v: &mut V, d: u32) { (**self).visit_d(v, d) }
 }
 impl<V, T: Visitable<V>> Visitable<V> for Box<[T]> {
-  fn visit(&mut self, v: &mut V) { self.iter_mut().for_each(|t| t.visit(v)) }
+  fn visit_d(&mut self, v: &mut V, d: u32) { self.iter_mut().for_each(|t| t.visit_d(v, d)) }
 }
 impl<V, T: Visitable<V>> Visitable<V> for Option<T> {
-  fn visit(&mut self, v: &mut V) { self.iter_mut().for_each(|t| t.visit(v)) }
+  fn visit_d(&mut self, v: &mut V, d: u32) { self.iter_mut().for_each(|t| t.visit_d(v, d)) }
 }
 impl<V, T: Visitable<V>> Visitable<V> for Vec<T> {
-  fn visit(&mut self, v: &mut V) { self.iter_mut().for_each(|t| t.visit(v)) }
+  fn visit_d(&mut self, v: &mut V, d: u32) { self.iter_mut().for_each(|t| t.visit_d(v, d)) }
 }
 impl<I, V, T: Visitable<V>> Visitable<V> for IdxVec<I, T> {
-  fn visit(&mut self, v: &mut V) { self.0.visit(v) }
+  fn visit_d(&mut self, v: &mut V, d: u32) { self.0.visit_d(v, d) }
 }
 impl<V, A: Visitable<V>, B: Visitable<V>> Visitable<V> for (A, B) {
-  fn visit(&mut self, v: &mut V) {
-    self.0.visit(v);
-    self.1.visit(v)
+  fn visit_d(&mut self, v: &mut V, d: u32) {
+    self.0.visit_d(v, d);
+    self.1.visit_d(v, d)
   }
 }
 
 #[derive(Clone)]
 pub enum Term {
-  // Locus numbers are shifted from mizar to start at 0
-  Locus {
-    nr: LocusId,
-  },
-  // Bound var numbers are shifted from mizar to start at 0
-  Bound {
-    nr: BoundId,
-  },
-  // Constant numbers are shifted from mizar to start at 0
-  Constant {
-    nr: ConstId,
-  },
-  // This is not read during deserialization
-  EqConst {
-    nr: u32,
-  },
-  // Used for inference, but unattested in mizar imports
-  Infer {
-    nr: InferId,
-  },
-  SchemeFunctor {
+  /// Locus numbers are shifted from mizar to start at 0
+  Locus(LocusId),
+  /// Bound var numbers are shifted from mizar to start at 0
+  Bound(BoundId),
+  /// Constant numbers are shifted from mizar to start at 0
+  Constant(ConstId),
+  /// ikEqConst: This is used by the equalizer, it is not read in
+  EqClass(EqClassId),
+  /// Not in mizar. Used for term sharing in the equalizer
+  EqMark(EqMarkId),
+  /// Used for term sharing in the verifier, but not used in mizar imports
+  Infer(InferId),
+  SchFunc {
     nr: SchFuncId,
     args: Box<[Term]>,
   },
@@ -387,19 +412,13 @@ pub enum Term {
   },
   /// Invariant: nr != 0. Zero is not a numeral (!),
   /// it is a `Functor` using Requirement::ZeroNumber
-  Numeral {
-    nr: u32,
-  },
+  Numeral(u32),
   Selector {
     nr: SelId,
     args: Box<[Term]>,
   },
-  FreeVar {
-    nr: FVarId,
-  },
-  LambdaVar {
-    nr: u32,
-  },
+  FreeVar(FVarId),
+  LambdaVar(u32),
   Qua {
     value: Box<Term>,
     ty: Box<Type>,
@@ -408,7 +427,7 @@ pub enum Term {
     ty: Box<Type>,
   },
   Fraenkel {
-    args: Box<[(u32, Type)]>,
+    args: Box<[Type]>,
     scope: Box<Term>,
     compr: Box<Formula>,
   },
@@ -431,24 +450,36 @@ impl Term {
     }
     s.finish()
   }
+
+  pub fn args(&self) -> Option<&[Term]> {
+    match self {
+      Term::SchFunc { args, .. }
+      | Term::Aggregate { args, .. }
+      | Term::PrivFunc { args, .. }
+      | Term::Functor { args, .. }
+      | Term::Selector { args, .. } => Some(args),
+      _ => None,
+    }
+  }
 }
 
 impl std::fmt::Debug for Term {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
-      Self::Locus { nr } => write!(f, "k{}", nr.0),
-      Self::Bound { nr } => write!(f, "b{}", nr.0),
-      Self::Constant { nr } => write!(f, "c{}", nr.0),
-      Self::EqConst { nr } => write!(f, "e{}", nr),
-      Self::Infer { nr } => write!(f, "?{}", nr.0),
-      Self::SchemeFunctor { nr, args } => Self::debug_args("S", nr.0, args, f),
+      Self::Locus(nr) => write!(f, "k{}", nr.0),
+      Self::Bound(nr) => write!(f, "b{}", nr.0),
+      Self::Constant(nr) => write!(f, "c{}", nr.0),
+      Self::EqClass(nr) => write!(f, "e{}", nr.0),
+      Self::EqMark(nr) => write!(f, "i{}", nr.0),
+      Self::Infer(nr) => write!(f, "?{}", nr.0),
+      Self::SchFunc { nr, args } => Self::debug_args("S", nr.0, args, f),
       Self::Aggregate { nr, args } => Self::debug_args("G", nr.0, args, f),
       Self::PrivFunc { nr, args, .. } => Self::debug_args("$F", nr.0, args, f),
       Self::Functor { nr, args } => Self::debug_args("F", nr.0, args, f),
-      Self::Numeral { nr } => nr.fmt(f),
+      Self::Numeral(nr) => nr.fmt(f),
       Self::Selector { nr, args } => Self::debug_args("Sel", nr.0, args, f),
-      Self::FreeVar { nr } => write!(f, "v{}", nr.0),
-      Self::LambdaVar { nr } => write!(f, "l{}", nr),
+      Self::FreeVar(nr) => write!(f, "v{}", nr.0),
+      Self::LambdaVar(nr) => write!(f, "l{}", nr),
       Self::Qua { value, ty } => write!(f, "({:?} qua {:?})", value, ty),
       Self::Choice { ty } => write!(f, "(the {:?})", ty),
       Self::Fraenkel { args, scope, compr } =>
@@ -459,25 +490,26 @@ impl std::fmt::Debug for Term {
 }
 
 impl<V: VisitMut> Visitable<V> for Term {
-  fn visit(&mut self, v: &mut V) { v.visit_term(self, 0) }
+  fn visit_d(&mut self, v: &mut V, d: u32) { v.visit_term(self, d) }
 }
 
 impl Term {
   pub fn discr(&self) -> u8 {
     match self {
-      Term::Locus { .. } => b'A',
-      Term::Bound { .. } => b'B',
-      Term::Constant { .. } => b'C',
-      Term::Infer { .. } => b'D',
-      Term::EqConst { .. } => b'E',
-      Term::SchemeFunctor { .. } => b'F',
+      Term::Locus(_) => b'A',
+      Term::Bound(_) => b'B',
+      Term::Constant(_) => b'C',
+      Term::Infer(_) => b'D',
+      Term::EqClass(..) => b'E',
+      Term::EqMark(_) => b'M', // NEW
+      Term::SchFunc { .. } => b'F',
       Term::Aggregate { .. } => b'G',
       Term::PrivFunc { .. } => b'H',
       Term::Functor { .. } => b'K',
-      Term::Numeral { .. } => b'N',
+      Term::Numeral(_) => b'N',
       Term::Selector { .. } => b'U',
-      Term::FreeVar { .. } => b'X',
-      Term::LambdaVar { .. } => b'Z',
+      Term::FreeVar(_) => b'X',
+      Term::LambdaVar(_) => b'Z',
       Term::Qua { .. } => 213,
       Term::Choice { .. } => 216,
       Term::Fraenkel { .. } => 232,
@@ -494,13 +526,14 @@ pub struct Type {
   /// the second is the attributes calculated by the system ("upper cluster")
   pub attrs: (Attrs, Attrs),
   /// The mode arguments (ModArgs)
-  pub args: Box<[Term]>,
+  pub args: Vec<Term>,
 }
 
 impl Type {
-  pub fn new(kind: TypeKind) -> Self {
-    Self { kind, attrs: Default::default(), args: Box::new([]) }
+  pub const fn new(kind: TypeKind) -> Self {
+    Self { kind, attrs: (Attrs::EMPTY, Attrs::EMPTY), args: vec![] }
   }
+  pub const ANY: Type = Type::new(TypeKind::Mode(ModeId::ANY));
 
   /// precondition: the type has kind Struct
   pub fn struct_id(&self) -> StructId {
@@ -524,7 +557,7 @@ impl std::fmt::Debug for Type {
 }
 
 impl<V: VisitMut> Visitable<V> for Type {
-  fn visit(&mut self, v: &mut V) { v.visit_type(self, 0) }
+  fn visit_d(&mut self, v: &mut V, d: u32) { v.visit_type(self, d) }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -575,6 +608,7 @@ pub enum Formula {
   },
   Attr {
     nr: AttrId,
+    /// Invariant: args is not empty
     args: Box<[Term]>,
   },
   PrivPred {
@@ -617,7 +651,7 @@ impl Default for Formula {
 }
 
 impl<V: VisitMut> Visitable<V> for Formula {
-  fn visit(&mut self, v: &mut V) { v.visit_formula(self, 0) }
+  fn visit_d(&mut self, v: &mut V, d: u32) { v.visit_formula(self, d) }
 }
 
 impl std::fmt::Debug for Formula {
@@ -716,6 +750,8 @@ pub enum Attrs {
 }
 
 impl Attrs {
+  pub const EMPTY: Attrs = Self::Consistent(vec![]);
+
   pub fn attrs(&self) -> &[Attr] {
     match self {
       Attrs::Inconsistent => &[],
@@ -738,11 +774,11 @@ impl std::fmt::Debug for Attrs {
 }
 
 impl Default for Attrs {
-  fn default() -> Self { Self::Consistent(vec![]) }
+  fn default() -> Self { Self::EMPTY }
 }
 
 impl<V: VisitMut> Visitable<V> for Attrs {
-  fn visit(&mut self, v: &mut V) { v.visit_attrs(self, 0) }
+  fn visit_d(&mut self, v: &mut V, d: u32) { v.visit_attrs(self, d) }
 }
 
 #[derive(Clone)]
@@ -765,7 +801,7 @@ impl std::fmt::Debug for Attr {
   }
 }
 impl<V: VisitMut> Visitable<V> for Attr {
-  fn visit(&mut self, v: &mut V) { self.args.visit(v) }
+  fn visit_d(&mut self, v: &mut V, d: u32) { self.args.visit_d(v, d) }
 }
 
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
@@ -860,7 +896,7 @@ pub struct Constructor<I> {
   pub arg2: u32,
 }
 impl<I, V: VisitMut> Visitable<V> for Constructor<I> {
-  fn visit(&mut self, v: &mut V) { self.primary.visit(v) }
+  fn visit_d(&mut self, v: &mut V, d: u32) { self.primary.visit_d(v, d) }
 }
 
 #[derive(Clone, Debug)]
@@ -874,9 +910,9 @@ impl<I> std::ops::Deref for TyConstructor<I> {
   fn deref(&self) -> &Self::Target { &self.c }
 }
 impl<I, V: VisitMut> Visitable<V> for TyConstructor<I> {
-  fn visit(&mut self, v: &mut V) {
-    self.c.visit(v);
-    self.ty.visit(v)
+  fn visit_d(&mut self, v: &mut V, d: u32) {
+    self.c.visit_d(v, d);
+    self.ty.visit_d(v, d)
   }
 }
 
@@ -894,9 +930,9 @@ impl std::ops::Deref for StructMode {
   fn deref(&self) -> &Self::Target { &self.c }
 }
 impl<V: VisitMut> Visitable<V> for StructMode {
-  fn visit(&mut self, v: &mut V) {
-    self.c.visit(v);
-    self.prefixes.visit(v)
+  fn visit_d(&mut self, v: &mut V, d: u32) {
+    self.c.visit_d(v, d);
+    self.prefixes.visit_d(v, d)
   }
 }
 
@@ -907,7 +943,7 @@ pub struct Aggregate {
   pub coll: Box<[u32]>,
 }
 impl<V: VisitMut> Visitable<V> for Aggregate {
-  fn visit(&mut self, v: &mut V) { self.c.visit(v) }
+  fn visit_d(&mut self, v: &mut V, d: u32) { self.c.visit_d(v, d) }
 }
 
 impl std::ops::Deref for Aggregate {
@@ -929,14 +965,14 @@ pub struct Constructors {
   pub aggregate: IdxVec<AggrId, Aggregate>,
 }
 impl<V: VisitMut> Visitable<V> for Constructors {
-  fn visit(&mut self, v: &mut V) {
-    self.mode.visit(v);
-    self.struct_mode.visit(v);
-    self.attribute.visit(v);
-    self.predicate.visit(v);
-    self.functor.visit(v);
-    self.selector.visit(v);
-    self.aggregate.visit(v);
+  fn visit_d(&mut self, v: &mut V, d: u32) {
+    self.mode.visit_d(v, d);
+    self.struct_mode.visit_d(v, d);
+    self.attribute.visit_d(v, d);
+    self.predicate.visit_d(v, d);
+    self.functor.visit_d(v, d);
+    self.selector.visit_d(v, d);
+    self.aggregate.visit_d(v, d);
   }
 }
 
@@ -986,9 +1022,9 @@ pub struct Cluster {
   pub abs_nr: u32,
 }
 impl<V: VisitMut> Visitable<V> for Cluster {
-  fn visit(&mut self, v: &mut V) {
-    self.primary.visit(v);
-    self.consequent.visit(v);
+  fn visit_d(&mut self, v: &mut V, d: u32) {
+    self.primary.visit_d(v, d);
+    self.consequent.visit_d(v, d);
   }
 }
 
@@ -1018,9 +1054,9 @@ impl std::ops::DerefMut for RegisteredCluster {
   fn deref_mut(&mut self) -> &mut Self::Target { &mut self.cl }
 }
 impl<V: VisitMut> Visitable<V> for RegisteredCluster {
-  fn visit(&mut self, v: &mut V) {
-    self.cl.visit(v);
-    self.ty.visit(v);
+  fn visit_d(&mut self, v: &mut V, d: u32) {
+    self.cl.visit_d(v, d);
+    self.ty.visit_d(v, d);
   }
 }
 
@@ -1038,10 +1074,10 @@ impl std::ops::DerefMut for ConditionalCluster {
   fn deref_mut(&mut self) -> &mut Self::Target { &mut self.cl }
 }
 impl<V: VisitMut> Visitable<V> for ConditionalCluster {
-  fn visit(&mut self, v: &mut V) {
-    self.cl.visit(v);
-    self.ty.visit(v);
-    self.antecedent.visit(v);
+  fn visit_d(&mut self, v: &mut V, d: u32) {
+    self.cl.visit_d(v, d);
+    self.ty.visit_d(v, d);
+    self.antecedent.visit_d(v, d);
   }
 }
 
@@ -1060,10 +1096,10 @@ impl std::ops::DerefMut for FunctorCluster {
   fn deref_mut(&mut self) -> &mut Self::Target { &mut self.cl }
 }
 impl<V: VisitMut> Visitable<V> for FunctorCluster {
-  fn visit(&mut self, v: &mut V) {
-    self.cl.visit(v);
-    self.ty.visit(v);
-    self.term.visit(v);
+  fn visit_d(&mut self, v: &mut V, d: u32) {
+    self.cl.visit_d(v, d);
+    self.ty.visit_d(v, d);
+    self.term.visit_d(v, d);
   }
 }
 
@@ -1095,7 +1131,7 @@ impl std::ops::DerefMut for ConditionalClusters {
   fn deref_mut(&mut self) -> &mut Self::Target { &mut self.vec }
 }
 impl<V: VisitMut> Visitable<V> for ConditionalClusters {
-  fn visit(&mut self, v: &mut V) { self.vec.visit(v); }
+  fn visit_d(&mut self, v: &mut V, d: u32) { self.vec.visit_d(v, d); }
 }
 
 impl ConditionalClusters {
@@ -1145,7 +1181,7 @@ pub struct ConstrDescr {
   pub primary: Box<[Type]>,
 }
 impl<V: VisitMut> Visitable<V> for ConstrDescr {
-  fn visit(&mut self, v: &mut V) { self.primary.visit(v) }
+  fn visit_d(&mut self, v: &mut V, d: u32) { self.primary.visit_d(v, d) }
 }
 
 #[derive(Clone, Debug)]
@@ -1158,7 +1194,7 @@ impl std::ops::Deref for ConstrDef {
   fn deref(&self) -> &Self::Target { &self.descr }
 }
 impl<V: VisitMut> Visitable<V> for ConstrDef {
-  fn visit(&mut self, v: &mut V) { self.descr.visit(v) }
+  fn visit_d(&mut self, v: &mut V, d: u32) { self.descr.visit_d(v, d) }
 }
 
 #[derive(Clone, Debug)]
@@ -1167,9 +1203,9 @@ pub struct DefCase<T> {
   pub guard: Formula,
 }
 impl<V: VisitMut, T: Visitable<V>> Visitable<V> for DefCase<T> {
-  fn visit(&mut self, v: &mut V) {
-    self.case.visit(v);
-    self.guard.visit(v)
+  fn visit_d(&mut self, v: &mut V, d: u32) {
+    self.case.visit_d(v, d);
+    self.guard.visit_d(v, d)
   }
 }
 
@@ -1180,9 +1216,9 @@ pub struct DefBody<T> {
   pub otherwise: Option<T>,
 }
 impl<V: VisitMut, T: Visitable<V>> Visitable<V> for DefBody<T> {
-  fn visit(&mut self, v: &mut V) {
-    self.cases.visit(v);
-    self.otherwise.visit(v)
+  fn visit_d(&mut self, v: &mut V, d: u32) {
+    self.cases.visit_d(v, d);
+    self.otherwise.visit_d(v, d)
   }
 }
 
@@ -1192,10 +1228,10 @@ pub enum DefValue {
   Formula(DefBody<Formula>),
 }
 impl<V: VisitMut> Visitable<V> for DefValue {
-  fn visit(&mut self, v: &mut V) {
+  fn visit_d(&mut self, v: &mut V, d: u32) {
     match self {
-      DefValue::Term(body) => body.visit(v),
-      DefValue::Formula(body) => body.visit(v),
+      DefValue::Term(body) => body.visit_d(v, d),
+      DefValue::Formula(body) => body.visit_d(v, d),
     }
   }
 }
@@ -1220,15 +1256,15 @@ pub enum ConstructorDef {
   Aggr(Aggregate),
 }
 impl<V: VisitMut> Visitable<V> for ConstructorDef {
-  fn visit(&mut self, v: &mut V) {
+  fn visit_d(&mut self, v: &mut V, d: u32) {
     match self {
-      ConstructorDef::Mode(c) => c.visit(v),
-      ConstructorDef::StructMode(c) => c.visit(v),
-      ConstructorDef::Attr(c) => c.visit(v),
-      ConstructorDef::Pred(c) => c.visit(v),
-      ConstructorDef::Func(c) => c.visit(v),
-      ConstructorDef::Sel(c) => c.visit(v),
-      ConstructorDef::Aggr(c) => c.visit(v),
+      ConstructorDef::Mode(c) => c.visit_d(v, d),
+      ConstructorDef::StructMode(c) => c.visit_d(v, d),
+      ConstructorDef::Attr(c) => c.visit_d(v, d),
+      ConstructorDef::Pred(c) => c.visit_d(v, d),
+      ConstructorDef::Func(c) => c.visit_d(v, d),
+      ConstructorDef::Sel(c) => c.visit_d(v, d),
+      ConstructorDef::Aggr(c) => c.visit_d(v, d),
     }
   }
 }
@@ -1248,10 +1284,10 @@ impl std::ops::Deref for Definiens {
 }
 
 impl<V: VisitMut> Visitable<V> for Definiens {
-  fn visit(&mut self, v: &mut V) {
-    self.c.visit(v);
-    self.assumptions.visit(v);
-    self.value.visit(v)
+  fn visit_d(&mut self, v: &mut V, d: u32) {
+    self.c.visit_d(v, d);
+    self.assumptions.visit_d(v, d);
+    self.value.visit_d(v, d)
   }
 }
 
@@ -1264,9 +1300,9 @@ pub struct Property {
   pub kind: PropertyKind,
 }
 impl<V: VisitMut> Visitable<V> for Property {
-  fn visit(&mut self, v: &mut V) {
-    self.primary.visit(v);
-    self.ty.visit(v);
+  fn visit_d(&mut self, v: &mut V, d: u32) {
+    self.primary.visit_d(v, d);
+    self.ty.visit_d(v, d);
   }
 }
 
@@ -1280,11 +1316,11 @@ pub enum IdentifyKind {
   Pred { lhs: Formula, rhs: Formula },
 }
 impl<V: VisitMut> Visitable<V> for IdentifyKind {
-  fn visit(&mut self, v: &mut V) {
+  fn visit_d(&mut self, v: &mut V, d: u32) {
     match self {
-      IdentifyKind::Func { lhs, rhs } => (lhs, rhs).visit(v),
-      IdentifyKind::Attr { lhs, rhs } => (lhs, rhs).visit(v),
-      IdentifyKind::Pred { lhs, rhs } => (lhs, rhs).visit(v),
+      IdentifyKind::Func { lhs, rhs } => (lhs, rhs).visit_d(v, d),
+      IdentifyKind::Attr { lhs, rhs } => (lhs, rhs).visit_d(v, d),
+      IdentifyKind::Pred { lhs, rhs } => (lhs, rhs).visit_d(v, d),
     }
   }
 }
@@ -1373,10 +1409,10 @@ pub enum SchemeDecl {
   Pred { args: Box<[Type]> },
 }
 impl<V: VisitMut> Visitable<V> for SchemeDecl {
-  fn visit(&mut self, v: &mut V) {
+  fn visit_d(&mut self, v: &mut V, d: u32) {
     match self {
-      SchemeDecl::Func { args, ty } => (args, ty).visit(v),
-      SchemeDecl::Pred { args } => args.visit(v),
+      SchemeDecl::Func { args, ty } => (args, ty).visit_d(v, d),
+      SchemeDecl::Pred { args } => args.visit_d(v, d),
     }
   }
 }
@@ -1448,11 +1484,11 @@ pub enum ClusterDeclKind {
   C(ConditionalCluster),
 }
 impl<V: VisitMut> Visitable<V> for ClusterDeclKind {
-  fn visit(&mut self, v: &mut V) {
+  fn visit_d(&mut self, v: &mut V, d: u32) {
     match self {
-      ClusterDeclKind::R(c) => c.visit(v),
-      ClusterDeclKind::F(c) => c.visit(v),
-      ClusterDeclKind::C(c) => c.visit(v),
+      ClusterDeclKind::R(c) => c.visit_d(v, d),
+      ClusterDeclKind::F(c) => c.visit_d(v, d),
+      ClusterDeclKind::C(c) => c.visit_d(v, d),
     }
   }
 }
@@ -1510,7 +1546,7 @@ impl std::fmt::Debug for Proposition {
   }
 }
 impl<V: VisitMut> Visitable<V> for Proposition {
-  fn visit(&mut self, v: &mut V) { self.f.visit(v) }
+  fn visit_d(&mut self, v: &mut V, d: u32) { self.f.visit_d(v, d) }
 }
 #[derive(Debug)]
 pub enum PrivateStatement {

@@ -1,13 +1,17 @@
-use std::{
-  borrow::Cow, cmp::Ordering, collections::BTreeMap, marker::PhantomData, ops::ControlFlow,
-};
-
-use itertools::EitherOrBoth;
-
+use crate::equate::Equalizer;
+use crate::retain_mut_from::RetainMutFrom;
+use crate::types::*;
+use crate::verify::Verifier;
 use crate::{
-  inst, retain_mut_from::RetainMutFrom, types::*, verify::Verifier, vprintln, Equate,
-  ExpandPrivFunc, FixedVar, Global, InternConst, LocalContext, OnVarMut, Subst, VisitMut,
+  inst, set_verbose, vprintln, Equate, ExpandPrivFunc, FixedVar, Global, InternConst, LocalContext,
+  OnVarMut, Subst, VisitMut,
 };
+use itertools::EitherOrBoth;
+use std::borrow::Cow;
+use std::cmp::Ordering;
+use std::collections::BTreeMap;
+use std::marker::PhantomData;
+use std::ops::ControlFlow;
 
 pub struct Checker<'a> {
   pub g: &'a mut Global,
@@ -17,67 +21,83 @@ pub struct Checker<'a> {
   pub identify: &'a [Identify],
   pub func_ids: &'a BTreeMap<ConstrKind, Vec<usize>>,
   pub idx: usize,
+  pub pos: Position,
 }
 
 impl<'a> Checker<'a> {
+  fn as_mut(&mut self) -> Checker<'_> {
+    Checker {
+      g: self.g,
+      lc: self.lc,
+      expansions: self.expansions,
+      equals: self.equals,
+      identify: self.identify,
+      func_ids: self.func_ids,
+      idx: self.idx,
+      pos: self.pos,
+    }
+  }
+
   fn intern_const(&self) -> InternConst<'_> {
     InternConst::new(self.g, self.lc, self.equals, self.identify, self.func_ids)
   }
 
   pub fn justify(&mut self, premises: Vec<&'a Formula>) {
+    // set_verbose(self.idx >= 69);
     self.lc.term_cache.get_mut().open_scope();
     let infer_const = self.lc.infer_const.borrow().len();
     let fixed_var = self.lc.fixed_var.len();
 
-    let basic: IdxVec<AtomId, Formula> = Default::default();
-    let normal_form = self.precheck(premises);
+    // eprintln!();
+    let mut conjs = vec![];
+    for f in premises {
+      // eprintln!("input: {f:?}");
+      let mut f = f.clone();
+      Expand { g: self.g, lc: self.lc, expansions: self.expansions }.expand(&mut f, true);
+      f.distribute_quantifiers(&self.g.constrs, 0);
+      // eprintln!("distributed: {f:?}");
+      f.append_conjuncts_to(&mut conjs);
+    }
+    let mut check_f = Formula::mk_and(conjs);
+    // eprintln!("checking {} @ {:?}:\n  {check_f:?}", self.idx, self.pos);
 
+    self.open_quantifiers::<ConstId>(&mut check_f, true);
+    // eprintln!("opened {} @ {:?}:\n  {check_f:?}", self.idx, self.pos);
+
+    check_f.visit(&mut self.intern_const());
+    // eprintln!("interned {} @ {:?}:\n  {check_f:?}", self.idx, self.pos);
+
+    let mut atoms = Atoms::default();
+    let Dnf::Or(normal_form) = atoms.normalize(self.g, self.lc, check_f, true)
+    else { panic!("it is not true") };
+    // for (i, a) in atoms.0.enum_iter() {
+    //   vprintln!("atom {i:?}: {a:?}");
+    // }
     self.g.recursive_round_up = true;
     for f in normal_form {
+      // vprintln!("falsifying: {f:?}");
       let sat = (|| {
-        self.equate(f)?;
+        Equalizer::new(self.as_mut()).equate(&atoms, f)?;
         self.pre_unification()?;
         let unifier = self.unifier();
         unifier.unify(self)
       })();
-      assert!(sat.is_break(), "failed to justify");
+      assert!(sat.is_err(), "failed to justify");
     }
-
     self.g.recursive_round_up = false;
     self.lc.fixed_var.0.truncate(fixed_var);
     self.lc.infer_const.get_mut().truncate(infer_const);
     self.lc.term_cache.get_mut().close_scope();
   }
 
-  fn precheck(&mut self, premises: Vec<&'a Formula>) -> Vec<BTreeMap<AtomId, bool>> {
-    let fixed_var = self.lc.fixed_var.len();
-    let mut conjs = vec![];
-    for f in premises {
-      let mut f = f.clone();
-      Expand { g: self.g, lc: self.lc, expansions: self.expansions }.expand(&mut f, true);
-      f.distribute_quantifiers(&self.g.constrs, 0);
-      f.append_conjuncts_to(&mut conjs);
-    }
-    let mut check_f = Formula::mk_and(conjs);
-    eprintln!("check formula: {check_f:?}");
+  fn pre_unification(&self) -> OrUnsat<()> { Ok(()) }
 
-    self.open_quantifiers::<ConstId>(&mut check_f, true);
-    check_f.visit(&mut self.intern_const());
-
-    let mut atoms = Atoms::default();
-    let normal_form = atoms.normalize(self.g, self.lc, check_f, true);
-
-    todo!()
-  }
-
-  // Break means unsat
-  fn equate(&self, f: BTreeMap<AtomId, bool>) -> ControlFlow<()> { todo!() }
-
-  // Break means unsat
-  fn pre_unification(&self) -> ControlFlow<()> { todo!() }
-
-  fn unifier(&self) -> Unifier { todo!() }
+  fn unifier(&self) -> Unifier { Unifier {} }
 }
+
+#[derive(Copy, Clone, Debug)]
+pub struct Unsat;
+pub type OrUnsat<T> = Result<T, Unsat>;
 
 struct Expand<'a> {
   g: &'a Global,
@@ -161,10 +181,10 @@ impl Expand<'_> {
         zero = Some(terms[0].clone());
         0
       }
-      Term::Numeral { nr } => *nr,
+      Term::Numeral(nr) => *nr,
       _ => return,
     };
-    let Term::Numeral { nr: right } = terms[1] else { return };
+    let Term::Numeral(right) = terms[1] else { return };
     if right.saturating_sub(left) <= 100 {
       let Formula::ForAll { scope, .. } = expansion else { unreachable!() };
       let Formula::Neg { f } = &**scope else { unreachable!() };
@@ -178,13 +198,13 @@ impl Expand<'_> {
           /// ReplacePlaceHolderByConjunctNumber
           fn visit_term(&mut self, tm: &mut Term, depth: u32) {
             match tm {
-              Term::Bound { nr: BoundId(0) } => *tm = self.0.clone(),
-              Term::Bound { nr } => nr.0 -= 1,
+              Term::Bound(BoundId(0)) => *tm = self.0.clone(),
+              Term::Bound(nr) => nr.0 -= 1,
               _ => self.super_visit_term(tm, depth),
             }
           }
         }
-        let mut inst = Inst0(if i == 0 { zero.clone().unwrap() } else { Term::Numeral { nr: i } });
+        let mut inst = Inst0(if i == 0 { zero.clone().unwrap() } else { Term::Numeral(i) });
         let mut tm = scope.clone();
         inst.visit_formula(&mut tm, 0);
         tm.maybe_neg(!pos).append_conjuncts_to(conjs);
@@ -211,46 +231,53 @@ impl Expand<'_> {
 
 impl Formula {
   fn distribute_quantifiers(&mut self, ctx: &Constructors, depth: u32) {
-    match self {
-      Formula::Neg { f: arg } => {
-        arg.distribute_quantifiers(ctx, depth);
-        *self = std::mem::take(arg).mk_neg();
-      }
-      Formula::And { args } => {
-        let mut conjs = vec![];
-        for mut f in std::mem::take(args) {
-          f.distribute_quantifiers(ctx, depth);
-          f.append_conjuncts_to(&mut conjs)
+    loop {
+      match self {
+        Formula::Neg { f: arg } => {
+          arg.distribute_quantifiers(ctx, depth);
+          *self = std::mem::take(arg).mk_neg();
         }
-        *self = Formula::mk_and(conjs)
-      }
-      Formula::ForAll { dom, scope, .. } => {
-        ExpandPrivFunc { ctx }.visit_type(dom, depth);
-        scope.distribute_quantifiers(ctx, depth + 1);
-        if let Formula::And { args } = &mut **scope {
-          for f in args {
-            let mut nontrivial = false;
-            f.visit(&mut OnVarMut(|nr, _| nontrivial |= *nr == depth));
-            if nontrivial {
-              *f = Formula::ForAll { dom: dom.clone(), scope: Box::new(std::mem::take(f)) }
-            } else {
-              f.visit(&mut OnVarMut(|nr, _| {
-                if *nr > depth {
-                  *nr -= 1
-                }
-              }))
+        Formula::And { args } => {
+          let mut conjs = vec![];
+          for mut f in std::mem::take(args) {
+            f.distribute_quantifiers(ctx, depth);
+            f.append_conjuncts_to(&mut conjs)
+          }
+          *self = Formula::mk_and(conjs)
+        }
+        Formula::ForAll { dom, scope, .. } => {
+          ExpandPrivFunc { ctx }.visit_type(dom, depth);
+          scope.distribute_quantifiers(ctx, depth + 1);
+          if let Formula::And { args } = &mut **scope {
+            for f in args {
+              let mut nontrivial = false;
+              f.visit(&mut OnVarMut(|nr, _| nontrivial |= *nr == depth));
+              if nontrivial {
+                *f = Formula::ForAll { dom: dom.clone(), scope: Box::new(std::mem::take(f)) }
+              } else {
+                f.visit(&mut OnVarMut(|nr, _| {
+                  if *nr > depth {
+                    *nr -= 1
+                  }
+                }))
+              }
             }
+            *self = std::mem::take(scope);
           }
         }
+        Formula::PrivPred { args, value, .. } => {
+          *self = std::mem::take(value);
+          continue
+        }
+        Formula::SchemePred { .. }
+        | Formula::Pred { .. }
+        | Formula::Attr { .. }
+        | Formula::Is { .. }
+        | Formula::FlexAnd { .. }
+        | Formula::True
+        | Formula::Thesis => ExpandPrivFunc { ctx }.visit_formula(self, depth),
       }
-      Formula::PrivPred { args, value, .. } => value.distribute_quantifiers(ctx, depth),
-      Formula::SchemePred { .. }
-      | Formula::Pred { .. }
-      | Formula::Attr { .. }
-      | Formula::Is { .. }
-      | Formula::FlexAnd { .. }
-      | Formula::True
-      | Formula::Thesis => ExpandPrivFunc { ctx }.visit_formula(self, depth),
+      break
     }
   }
 }
@@ -262,7 +289,7 @@ trait VarKind: Idx {
 }
 
 impl VarKind for ConstId {
-  fn mk_var(n: u32) -> Term { Term::Constant { nr: ConstId(n) } }
+  fn mk_var(n: u32) -> Term { Term::Constant(ConstId(n)) }
   fn base(lc: &LocalContext) -> u32 { lc.fixed_var.len() as u32 }
   fn push_var(lc: &mut LocalContext, ty: Box<Type>) {
     lc.fixed_var.push(FixedVar { ty, def: None });
@@ -291,7 +318,7 @@ impl<V: VarKind> SetVar<V> {
 impl<V: VarKind> VisitMut for SetVar<V> {
   fn visit_term(&mut self, tm: &mut Term, depth: u32) {
     match tm {
-      Term::Bound { nr } =>
+      Term::Bound(nr) =>
         if nr.0 >= self.depth {
           nr.0 -= self.depth
         } else {
@@ -329,9 +356,9 @@ impl<'a> Checker<'a> {
         }
         Formula::ForAll { dom, scope } =>
           if !pos {
+            let mut set_var = SetVar::<V>::new(self.lc, 1);
             self.new_var::<V>(std::mem::take(dom));
             let mut f = std::mem::take(scope);
-            let mut set_var = SetVar::<V>::new(self.lc, 1);
             while let Formula::ForAll { mut dom, scope } = *f {
               set_var.visit_type(&mut dom, set_var.depth);
               self.new_var::<V>(dom);
@@ -357,7 +384,7 @@ impl<'a> Checker<'a> {
 }
 
 #[derive(Default)]
-struct Atoms(IdxVec<AtomId, Formula>);
+pub struct Atoms(pub IdxVec<AtomId, Formula>);
 
 impl Atoms {
   fn find(&self, g: &Global, lc: &LocalContext, f: &Formula) -> Option<AtomId> {
@@ -376,7 +403,24 @@ impl Atoms {
 /// `{a: true, b: false, c: true}` represents `a /\ ~b /\ c`.
 /// Invariant: the map is not empty when in a `DNF`.
 #[derive(Clone)]
-struct Conjunct(BTreeMap<AtomId, bool>);
+pub struct Conjunct(pub BTreeMap<AtomId, bool>);
+
+impl std::fmt::Debug for Conjunct {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let mut it = self.0.iter();
+    if let Some((a, &b)) = it.next() {
+      if b {
+        write!(f, "{}a{:?}", if b { "" } else { "¬" }, a)?;
+      }
+      for (a, &b) in it {
+        write!(f, " ∧ {}a{:?}", if b { "" } else { "¬" }, a)?;
+      }
+      Ok(())
+    } else {
+      write!(f, "false")
+    }
+  }
+}
 
 impl Conjunct {
   fn single(a: AtomId, pos: bool) -> Self { Self(std::iter::once((a, pos)).collect()) }
@@ -486,5 +530,5 @@ impl Atoms {
 
 struct Unifier {}
 impl Unifier {
-  fn unify(&self, ck: &mut Checker) -> ControlFlow<()> { todo!() }
+  fn unify(&self, ck: &mut Checker) -> OrUnsat<()> { Err(Unsat) }
 }

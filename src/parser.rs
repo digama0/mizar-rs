@@ -1,14 +1,12 @@
-use crate::{types::*, CmpStyle, MizPath, RequirementIndexes};
+use crate::types::*;
+use crate::{CmpStyle, MizPath, RequirementIndexes};
 use enum_map::Enum;
 use quick_xml::events::{BytesStart, Event};
-use std::{
-  cell::RefCell,
-  collections::{BTreeMap, HashMap},
-  fs::File,
-  io::{self, BufRead},
-  io::{BufReader, Read},
-  str::FromStr,
-};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
+use std::fs::File;
+use std::io::{self, BufRead, BufReader, Read};
+use std::str::FromStr;
 
 // /// Parser for the Mizar ad-hoc (non-XML) formats
 // pub struct AdHocReader(BufReader<File>);
@@ -742,7 +740,7 @@ impl XmlReader<'_> {
           }
           // FIXME: if !g.rounded_up_clusters and we use InEnvFileObj
           // then we have to round up upper here
-          Elem::Type(Type { kind, attrs: (lower, upper), args: args.into() })
+          Elem::Type(Type { kind, attrs: (lower, upper), args })
         }
         b"Properties" => {
           let mut args = (0, 0, PropertySet::default());
@@ -778,17 +776,17 @@ impl XmlReader<'_> {
           }
           Elem::Fields(fields.into())
         }
-        b"LocusVar" => Elem::Term(Term::Locus { nr: LocusId(parse_var!() - 1) }),
-        b"Var" => Elem::Term(Term::Bound { nr: BoundId(parse_var!() - 1) }),
-        b"Const" => Elem::Term(Term::Constant { nr: ConstId(parse_var!() - 1) }),
+        b"LocusVar" => Elem::Term(Term::Locus(LocusId(parse_var!() - 1))),
+        b"Var" => Elem::Term(Term::Bound(BoundId(parse_var!() - 1))),
+        b"Const" => Elem::Term(Term::Constant(ConstId(parse_var!() - 1))),
         // b"InfConst" => Elem::Term(Term::Infer { nr: InferId(parse_var!() - 1) }),
         // b"FreeVar" => Elem::Term(Term::FreeVar { nr: parse_var!() - 1 }),
-        b"Num" => Elem::Term(Term::Numeral { nr: parse_var!() }),
+        b"Num" => Elem::Term(Term::Numeral(parse_var!())),
         b"Func" => {
           let (kind, nr) = self.get_basic_attrs(&e);
           let args = self.parse_term_list(buf);
           match kind {
-            b'F' => Elem::Term(Term::SchemeFunctor { nr: SchFuncId(nr - 1), args }),
+            b'F' => Elem::Term(Term::SchFunc { nr: SchFuncId(nr - 1), args }),
             b'G' => Elem::Term(Term::Aggregate { nr: AggrId(nr - 1), args }),
             b'K' => Elem::Term(Term::Functor { nr: FuncId(nr - 1), args }),
             b'U' => Elem::Term(Term::Selector { nr: SelId(nr - 1), args }),
@@ -805,7 +803,7 @@ impl XmlReader<'_> {
           let mut args = vec![];
           let scope = loop {
             match self.parse_elem(buf) {
-              Elem::Type(ty) => args.push((0, ty)),
+              Elem::Type(ty) => args.push(ty),
               Elem::Term(scope) => break Box::new(scope),
               _ => panic!("expected scope term"),
             }
