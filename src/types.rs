@@ -1,5 +1,6 @@
 use crate::VisitMut;
 use enum_map::{Enum, EnumMap};
+use paste::paste;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::marker::PhantomData;
@@ -296,47 +297,94 @@ impl ArticleId {
   pub const SELF: ArticleId = ArticleId(0);
 }
 
+const MAX_FUNC_NUM: usize = 1500;
+
+pub struct RequirementIndexes {
+  pub fwd: EnumMap<Requirement, u32>,
+  pub rev: [Option<Requirement>; MAX_FUNC_NUM],
+}
+
+impl Default for RequirementIndexes {
+  fn default() -> Self { Self { fwd: Default::default(), rev: [None; MAX_FUNC_NUM] } }
+}
+
+impl std::fmt::Debug for RequirementIndexes {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.fwd.fmt(f) }
+}
+
+macro_rules! mk_requirements {
+  ($($id:ident: $ty:ty,)*) => {
+    #[derive(Copy, Clone, Debug, Enum)]
+    pub enum Requirement {
+      $($id,)*
+    }
+    paste! {
+      impl RequirementIndexes {
+        $(
+          pub fn [<$id:snake>](&self) -> Option<$ty> { self.get(Requirement::$id).map($ty) }
+        )*
+      }
+    }
+  }
+}
+mk_requirements! {
+  Any: ModeId,
+  SetMode: ModeId,
+  EqualsTo: PredId,
+  BelongsTo: PredId,
+  Empty: AttrId,
+  EmptySet: FuncId,
+  Element: ModeId,
+  PowerSet: FuncId,
+  Inclusion: PredId,
+  SubDomElem: ModeId,
+  RealDom: FuncId,
+  NatDom: FuncId,
+  RealAdd: FuncId,
+  RealMult: FuncId,
+  LessOrEqual: PredId,
+  Succ: FuncId,
+  Union: FuncId,
+  Intersection: FuncId,
+  Subtraction: FuncId,
+  SymmetricDifference: FuncId,
+  Meets: PredId,
+  RealNeg: FuncId,
+  RealInv: FuncId,
+  RealDiff: FuncId,
+  RealDiv: FuncId,
+  Real: AttrId,
+  Positive: AttrId,
+  Negative: AttrId,
+  Natural: AttrId,
+  ImaginaryUnit: FuncId,
+  Complex: AttrId,
+  Omega: FuncId,
+  ZeroNumber: FuncId,
+  Zero: AttrId,
+}
+
 impl ModeId {
   // Every mizar file needs this one and it needs to be mode 0
   pub const ANY: ModeId = ModeId(0);
+  // Every mizar file needs this one and it needs to be mode 1
+  pub const SET: ModeId = ModeId(1);
 }
 
-#[derive(Copy, Clone, Debug, Enum)]
-pub enum Requirement {
-  Any,
-  SetMode,
-  EqualsTo,
-  BelongsTo,
-  Empty,
-  EmptySet,
-  Element,
-  PowerSet,
-  Inclusion,
-  SubDomElem,
-  RealDom,
-  NatDom,
-  RealAdd,
-  RealMult,
-  LessOrEqual,
-  Succ,
-  Union,
-  Intersection,
-  Subtraction,
-  SymmetricDifference,
-  Meets,
-  RealNeg,
-  RealInv,
-  RealDiff,
-  RealDiv,
-  Real,
-  Positive,
-  Negative,
-  Natural,
-  ImaginaryUnit,
-  Complex,
-  Omega,
-  ZeroNumber,
-  Zero,
+impl RequirementIndexes {
+  pub fn init_rev(&mut self) {
+    assert_eq!(self.fwd[Requirement::Any], ModeId::ANY.0 + 1);
+    assert_eq!(self.fwd[Requirement::SetMode], ModeId::SET.0 + 1);
+    for (req, &val) in &self.fwd {
+      self.rev[val as usize] = Some(req);
+    }
+  }
+
+  pub fn get(&self, req: Requirement) -> Option<u32> { self.fwd[req].checked_sub(1) }
+
+  pub fn mk_eq(&self, t1: Term, t2: Term) -> Formula {
+    Formula::Pred { nr: self.equals_to().unwrap(), args: Box::new([t1, t2]) }
+  }
 }
 
 pub trait Visitable<V> {
@@ -534,6 +582,7 @@ impl Type {
     Self { kind, attrs: (Attrs::EMPTY, Attrs::EMPTY), args: vec![] }
   }
   pub const ANY: Type = Type::new(TypeKind::Mode(ModeId::ANY));
+  pub const SET: Type = Type::new(TypeKind::Mode(ModeId::SET));
 
   /// precondition: the type has kind Struct
   pub fn struct_id(&self) -> StructId {
@@ -902,7 +951,7 @@ impl<I, V: VisitMut> Visitable<V> for Constructor<I> {
 #[derive(Clone, Debug)]
 pub struct TyConstructor<I> {
   pub c: Constructor<I>,
-  pub ty: Box<Type>,
+  pub ty: Type,
 }
 
 impl<I> std::ops::Deref for TyConstructor<I> {
@@ -921,8 +970,8 @@ pub struct StructMode {
   pub c: Constructor<StructId>,
   // These are guaranteed to be struct types
   pub prefixes: Box<[Type]>,
-  pub aggr: u32,
-  pub fields: Box<[u32]>,
+  pub aggr: Option<AggrId>,
+  pub fields: Box<[SelId]>,
 }
 
 impl std::ops::Deref for StructMode {
@@ -940,7 +989,7 @@ impl<V: VisitMut> Visitable<V> for StructMode {
 pub struct Aggregate {
   pub c: TyConstructor<AggrId>,
   pub base: u32,
-  pub coll: Box<[u32]>,
+  pub coll: Box<[SelId]>,
 }
 impl<V: VisitMut> Visitable<V> for Aggregate {
   fn visit_d(&mut self, v: &mut V, d: u32) { self.c.visit_d(v, d) }

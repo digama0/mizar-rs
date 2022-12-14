@@ -49,42 +49,6 @@ impl MizPath {
   }
 }
 
-const MAX_FUNC_NUM: usize = 1500;
-
-pub struct RequirementIndexes {
-  fwd: EnumMap<Requirement, u32>,
-  rev: [Option<Requirement>; MAX_FUNC_NUM],
-}
-
-impl Default for RequirementIndexes {
-  fn default() -> Self { Self { fwd: Default::default(), rev: [None; MAX_FUNC_NUM] } }
-}
-
-impl std::fmt::Debug for RequirementIndexes {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.fwd.fmt(f) }
-}
-
-impl RequirementIndexes {
-  pub fn init_rev(&mut self) {
-    assert_eq!(self.fwd[Requirement::Any], ModeId::ANY.0 + 1);
-    for (req, &val) in &self.fwd {
-      self.rev[val as usize] = Some(req);
-    }
-  }
-
-  pub fn get(&self, req: Requirement) -> Option<u32> { self.fwd[req].checked_sub(1) }
-  pub fn set(&self) -> ModeId { ModeId(self.get(Requirement::SetMode).unwrap()) }
-  pub fn zero(&self) -> Option<AttrId> { self.get(Requirement::Zero).map(AttrId) }
-  pub fn zero_number(&self) -> Option<FuncId> { self.get(Requirement::ZeroNumber).map(FuncId) }
-  pub fn element(&self) -> Option<ModeId> { self.get(Requirement::Element).map(ModeId) }
-  pub fn omega(&self) -> Option<FuncId> { self.get(Requirement::Omega).map(FuncId) }
-  pub fn positive(&self) -> Option<AttrId> { self.get(Requirement::Positive).map(AttrId) }
-  pub fn equals_to(&self) -> Option<PredId> { self.get(Requirement::EqualsTo).map(PredId) }
-  pub fn mk_eq(&self, t1: Term, t2: Term) -> Formula {
-    Formula::Pred { nr: self.equals_to().unwrap(), args: Box::new([t1, t2]) }
-  }
-}
-
 impl Global {
   /// TypReachable(fWider = wider, fNarrower = narrower)
   fn type_reachable(&self, wider: &Type, narrower: &Type) -> bool {
@@ -157,6 +121,11 @@ impl Global {
     round_up_constrs! { mode, functor, selector };
     lc.term_cache.borrow_mut().terms = vec![];
     self.rounded_up_clusters = true;
+  }
+
+  /// MotherStructNr
+  fn parent_struct(&self, sel: SelId) -> StructId {
+    self.constrs.struct_mode.enum_iter().find(|c| c.1.fields.contains(&sel)).unwrap().0
   }
 }
 
@@ -306,6 +275,27 @@ impl Term {
   fn cmp_list(ctx: &Constructors, tms1: &[Term], tms2: &[Term], style: CmpStyle) -> Ordering {
     cmp_list(tms1, tms2, |tm1, tm2| tm1.cmp(ctx, tm2, style))
   }
+
+  /// ReconSelectTrm
+  fn mk_select(g: &Global, nr: SelId, arg: &Term, ty: &Type) -> Term {
+    let TypeKind::Struct(s) = ty.kind else { panic!() };
+    let mut args =
+      Type::new(g.parent_struct(nr).into()).widening_of(g, ty).unwrap().to_owned().args;
+    args.push(arg.clone());
+    Self::Selector { nr, args: args.into() }
+  }
+
+  /// ReconAggregTrm
+  fn mk_aggr(g: &Global, s: StructId, arg: &Term, ty: &Type) -> Term {
+    assert!(!g.constrs.struct_mode[s].fields.is_empty());
+    let nr = g.constrs.struct_mode[s].aggr.unwrap();
+    let ty = &*Type::new(s.into()).widening_of(g, ty).unwrap();
+    let mut args = ty.args.clone();
+    for &sel in &*g.constrs.aggregate[nr].coll {
+      args.push(Self::mk_select(g, sel, arg, ty));
+    }
+    Term::Aggregate { nr, args: args.into() }
+  }
 }
 
 struct WideningStruct<'a> {
@@ -387,13 +377,9 @@ impl Type {
         let cnst = &g.constrs.mode[n];
         let mut ty = cnst.ty.visit_cloned(&mut Inst::new(&self.args));
         ty.attrs.1 = self.attrs.1.clone_allowed(&g.constrs, n, &self.args);
-        Some(ty)
+        Some(Box::new(ty))
       }
-      TypeKind::Struct(_) => Some(Box::new(Type {
-        kind: g.reqs.set().into(), // should be any()?
-        attrs: Default::default(),
-        args: Default::default(),
-      })),
+      TypeKind::Struct(_) => Some(Box::new(Type::SET)), // should be ANY? (comment from original)
     }
   }
 
@@ -425,10 +411,8 @@ impl Type {
               }
               ty = CowBox::Owned(ty.widening(g)?);
             }
-            TypeKind::Struct(_) if n == g.reqs.set() =>
-              return Some(CowBox::Owned(Box::new(Type::new(g.reqs.set().into())))),
-            TypeKind::Struct(_) if n == ModeId::ANY =>
-              return Some(CowBox::Owned(Box::new(Type::new(ModeId::ANY.into())))),
+            TypeKind::Struct(_) if n == ModeId::SET || n == ModeId::ANY =>
+              return Some(CowBox::Owned(Box::new(Type::new(n.into())))),
             _ => return None,
           }
         }
@@ -473,7 +457,7 @@ impl Type {
           let Some(w2) = w.widening(g) else { break };
           w = CowBox::Owned(w2)
         }
-        matches!(w.kind, TypeKind::Struct(_)) && (n == g.reqs.set() || n == ModeId::ANY)
+        matches!(w.kind, TypeKind::Struct(_)) && (n == ModeId::SET || n == ModeId::ANY)
       }
       TypeKind::Struct(_) => {
         let Some(w) = other.widening(g) else { return false };
@@ -558,6 +542,7 @@ impl Formula {
 
 trait Equate {
   const ADJUST_LEFT: bool = true;
+  const IGNORE_MARKS: bool = true;
 
   fn locus_var_left(&mut self, _g: &Global, _lc: &LocalContext, _nr: LocusId, _t2: &Term) -> bool {
     false
@@ -574,6 +559,7 @@ trait Equate {
     use Term::*;
     // vprintln!("{t1:?} =? {t2:?}");
     match (t1, t2) {
+      (&EqMark(nr), _) if !Self::IGNORE_MARKS => matches!(*t2, Term::EqMark(nr2) if nr == nr2),
       (&Locus(nr), _) if self.locus_var_left(g, lc, nr, t2) => true,
       (&Locus(LocusId(n1)), &Locus(LocusId(n2))) if self.eq_locus_var(n1, n2) => true,
       (Bound(BoundId(n1)), Bound(BoundId(n2)))
@@ -964,7 +950,7 @@ impl Term {
   /// RoundUpTrmType(fTrm = self)
   fn round_up_type<'a>(&self, g: &Global, lc: &'a LocalContext) -> CowBox<'a, Type> {
     let tm = self.skip_priv_func();
-    let ty = tm.get_type_uncached(g, lc);
+    let ty = Box::new(tm.get_type_uncached(g, lc));
     tm.round_up_type_from(g, lc, CowBox::Owned(ty))
   }
 
@@ -1025,7 +1011,7 @@ impl Term {
   }
 
   /// GetTrmType(self = fTrm)
-  fn get_type(&self, g: &Global, lc: &LocalContext) -> Box<Type> {
+  fn get_type(&self, g: &Global, lc: &LocalContext) -> Type {
     // vprintln!("GetTrmType {self:?}");
     match self {
       Term::Functor { .. } | Term::Selector { .. } | Term::Aggregate { .. } => {
@@ -1043,7 +1029,7 @@ impl Term {
   }
 
   /// CopyTrmType(self = fTrm)
-  fn get_type_uncached(&self, g: &Global, lc: &LocalContext) -> Box<Type> {
+  fn get_type_uncached(&self, g: &Global, lc: &LocalContext) -> Type {
     let ty = match *self {
       Term::Bound(nr) => lc.bound_var[nr].clone(),
       Term::Constant(nr) => {
@@ -1051,19 +1037,18 @@ impl Term {
         lc.fixed_var[nr].ty.visit_cloned(&mut OnVarMut(|nr, _| *nr += base))
       }
       Term::Infer(nr) => lc.infer_const.borrow()[nr].ty.clone(),
-      Term::Numeral(_) => Box::new(g.nonzero_type.clone()),
-      Term::Locus(nr) => Box::new(lc.locus_ty[nr].clone()),
-      Term::SchFunc { nr, .. } => Box::new(lc.sch_func_ty[nr].clone()),
-      Term::PrivFunc { nr, ref args, .. } =>
-        Box::new(lc.priv_func[nr].ty.visit_cloned(&mut Inst::new(args))),
+      Term::Numeral(_) => g.nonzero_type.clone(),
+      Term::Locus(nr) => lc.locus_ty[nr].clone(),
+      Term::SchFunc { nr, .. } => lc.sch_func_ty[nr].clone(),
+      Term::PrivFunc { nr, ref args, .. } => lc.priv_func[nr].ty.visit_cloned(&mut Inst::new(args)),
       Term::Functor { nr, ref args } => g.constrs.functor[nr].ty.visit_cloned(&mut Inst::new(args)),
       Term::Selector { nr, ref args } =>
         g.constrs.selector[nr].ty.visit_cloned(&mut Inst::new(args)),
       Term::Aggregate { nr, ref args } =>
         g.constrs.aggregate[nr].ty.visit_cloned(&mut Inst::new(args)),
-      Term::Fraenkel { .. } => Box::new(Type::new(TypeKind::Mode(g.reqs.set()))),
-      Term::It => lc.it_type.as_ref().unwrap().clone(),
-      Term::Choice { ref ty } | Term::Qua { ref ty, .. } => ty.clone(),
+      Term::Fraenkel { .. } => Type::SET,
+      Term::It => (**lc.it_type.as_ref().unwrap()).clone(),
+      Term::Choice { ref ty } | Term::Qua { ref ty, .. } => (**ty).clone(),
       Term::EqMark(m) => lc.marks[m].0.get_type_uncached(g, lc),
       Term::EqClass(_) | Term::FreeVar(_) | Term::LambdaVar(_) =>
         unreachable!("get_type_uncached(EqClass | FreeVar | LambdaVar)"),
@@ -1076,7 +1061,7 @@ impl Term {
 #[derive(Default)]
 struct TermCollection {
   scope: u32,
-  terms: Vec<(Term, Box<Type>, u32)>,
+  terms: Vec<(Term, Type, u32)>,
 }
 
 impl TermCollection {
@@ -1094,13 +1079,13 @@ impl TermCollection {
     self.terms.binary_search_by(|a| a.0.cmp(ctx, tm, CmpStyle::Alt))
   }
 
-  fn insert_raw(&mut self, ctx: &Constructors, tm: Term, ty: Box<Type>) -> usize {
+  fn insert_raw(&mut self, ctx: &Constructors, tm: Term, ty: Type) -> usize {
     let i = self.find(ctx, &tm).unwrap_err();
     self.terms.insert(i, (tm, ty, self.scope));
     i
   }
 
-  fn get_mut(&mut self, ctx: &Constructors, tm: &Term) -> &mut (Term, Box<Type>, u32) {
+  fn get_mut(&mut self, ctx: &Constructors, tm: &Term) -> &mut (Term, Type, u32) {
     let i = self.find(ctx, tm).unwrap();
     &mut self.terms[i]
   }
@@ -1136,13 +1121,13 @@ impl TermCollection {
     let mut i = lc.term_cache.borrow_mut().insert_raw(&g.constrs, tm.clone(), ty);
 
     // clone the type so that we don't hold on to the cache for the next bit
-    let ty = lc.term_cache.borrow().terms[i].1.clone();
+    let ty = Box::new(lc.term_cache.borrow().terms[i].1.clone());
     // Round up the type using the term we inserted
     let mut ty = tm.round_up_type_from(g, lc, CowBox::Owned(ty)).to_owned();
     // 2. Put the new type into the cache.
     // (Yes, stuff between (1) and (2) can see the term with the unrounded type...)
     // also clone the type *again*
-    lc.term_cache.borrow_mut().get_mut(&g.constrs, tm).1 = ty.clone();
+    lc.term_cache.borrow_mut().get_mut(&g.constrs, tm).1 = (*ty).clone();
 
     // Round up the type using its own attributes
     ty.round_up_with_self(g, lc);
@@ -1152,7 +1137,7 @@ impl TermCollection {
     // This index has a very limited shelf life
     let i = cache.find(&g.constrs, tm).unwrap();
     // 3. Put the newer type into the cache.
-    cache.terms[i].1 = ty;
+    cache.terms[i].1 = *ty;
 
     // Note: the original source doesn't do the two clones above,
     // but that's definitely a segfault hazard.
@@ -1255,7 +1240,7 @@ impl Subst {
       let wty = if g.recursive_round_up {
         tm.round_up_type(g, lc)
       } else {
-        CowBox::Owned(tm.get_type(g, lc))
+        CowBox::Owned(Box::new(tm.get_type(g, lc)))
       };
       // vprintln!("main {i:?}, subst = {:?} : {subst_ty:?}, wty = {wty:?}", self.subst_term);
       // Are the attributes of tys[i] all contained in wty's?
@@ -1491,6 +1476,18 @@ impl Attrs {
         Err(i) => this.insert(i, item),
       }
     }
+  }
+
+  /// MAttrCollection.Insert(self = self, aItem = item)
+  pub fn find(&self, ctx: &Constructors, item: &Attr) -> Option<&Attr> {
+    let Self::Consistent(this) = self else { return None };
+    Some(&this[this.binary_search_by(|attr| attr.cmp_abs(ctx, item, CmpStyle::Strict)).ok()?])
+  }
+
+  pub fn find0(&self, ctx: &Constructors, nr: AttrId) -> Option<&Attr> {
+    let Self::Consistent(this) = self else { return None };
+    assert!(&ctx.attribute[nr].c.redefines.is_none());
+    Some(&this[this.binary_search_by(|attr| attr.adjust(ctx).0.cmp(&nr)).ok()?])
   }
 
   fn reinsert_all(&mut self, ctx: &Constructors, mut f: impl FnMut(&mut Attr)) {
@@ -1797,17 +1794,17 @@ impl<'a> InternConst<'a> {
         Ok(nr) => nr,
         Err(i) => {
           drop(ic);
-          let mut ty = tm.round_up_type(self.g, self.lc).to_owned();
+          let mut ty = *tm.round_up_type(self.g, self.lc).to_owned();
           ty.round_up_with_self(self.g, self.lc);
-          let def = Box::new(std::mem::replace(tm, Term::It));
+          let def = std::mem::take(tm);
           // TODO: numeric_value
           ic = self.lc.infer_const.borrow_mut();
           let nr = ic.insert_at(i, Assignment { def, ty, eq_const: Default::default() });
           // eprintln!("insert ?{nr:?} : {:?} := {:?}", ic[nr].ty, ic[nr].def);
-          let mut ty = (*ic[nr].ty).clone();
+          let mut ty = ic[nr].ty.clone();
           drop(ic);
           self.visit_type(&mut ty, depth);
-          *self.lc.infer_const.borrow_mut()[nr].ty = ty;
+          self.lc.infer_const.borrow_mut()[nr].ty = ty;
           nr
         }
       };
@@ -1965,7 +1962,7 @@ impl VisitMut for ExpandConsts<'_> {
   /// ExpandInferConsts
   fn visit_term(&mut self, tm: &mut Term, depth: u32) {
     if let Term::Infer(nr) = *tm {
-      *tm = (*self.0[nr].def).clone();
+      *tm = self.0[nr].def.clone();
       OnVarMut(|v, _| *v += depth).visit_term(tm, depth)
     }
     self.super_visit_term(tm, depth);
@@ -1992,7 +1989,7 @@ impl VisitMut for Renumber {
 #[derive(Debug)]
 struct FixedVar {
   // ident: u32,
-  ty: Box<Type>,
+  ty: Type,
   // exp: bool,
   def: Option<Box<Term>>,
   // skel_const: u32,
@@ -2001,8 +1998,8 @@ struct FixedVar {
 #[derive(Debug)]
 struct Assignment {
   /// Must be Term::Functor
-  def: Box<Term>,
-  ty: Box<Type>,
+  def: Term,
+  ty: Type,
   eq_const: BTreeSet<InferId>,
   // numeric_value: Option<Complex>,
 }
@@ -2037,7 +2034,7 @@ pub struct LocalContext {
   // FIXME: this is non-owning in mizar
   locus_ty: IdxVec<LocusId, Type>,
   /// BoundVarNbr, BoundVar
-  bound_var: IdxVec<BoundId, Box<Type>>,
+  bound_var: IdxVec<BoundId, Type>,
   /// FixedVar
   fixed_var: IdxVec<ConstId, FixedVar>,
   /// InferConstDef
@@ -2178,7 +2175,7 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
       args: vec![Term::Functor { nr: omega, args: Box::new([]) }],
     }
   } else {
-    Type::new(reqs.set().into())
+    Type::SET
   };
   let mut v = Verifier::new(reqs, nonzero_type, path.0);
   path.read_atr(&mut v.g.constrs).unwrap();

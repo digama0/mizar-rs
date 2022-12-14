@@ -8,14 +8,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
 use std::str::FromStr;
 
-// /// Parser for the Mizar ad-hoc (non-XML) formats
-// pub struct AdHocReader(BufReader<File>);
-
 impl MizPath {
-  // pub fn open_adhoc(&self, ext: &str) -> io::Result<AdHocReader> {
-  //   Ok(AdHocReader(BufReader::new(self.open(ext)?)))
-  // }
-
   pub fn read_ere(&self, idx: &mut RequirementIndexes) -> io::Result<()> {
     let mut r = BufReader::new(self.open("ere")?);
     let mut buf = String::new();
@@ -519,11 +512,12 @@ impl XmlReader<'_> {
     let kind = match kind {
       b'M' => {
         let c = constructor!(ModeId);
-        ConstructorDef::Mode(TyConstructor { c, ty: Box::new(self.parse_type(buf).unwrap()) })
+        ConstructorDef::Mode(TyConstructor { c, ty: self.parse_type(buf).unwrap() })
       }
       b'L' => {
         let c = constructor!(StructId);
         let mut prefixes = vec![];
+        let aggr = aggr.checked_sub(1).map(AggrId);
         let fields = loop {
           match self.parse_elem(buf) {
             Elem::Type(ty) => {
@@ -538,21 +532,21 @@ impl XmlReader<'_> {
       }
       b'V' => {
         let c = constructor!(AttrId);
-        ConstructorDef::Attr(TyConstructor { c, ty: Box::new(self.parse_type(buf).unwrap()) })
+        ConstructorDef::Attr(TyConstructor { c, ty: self.parse_type(buf).unwrap() })
       }
       b'R' => ConstructorDef::Pred(constructor!(PredId)),
       b'K' => {
         let c = constructor!(FuncId);
-        ConstructorDef::Func(TyConstructor { c, ty: Box::new(self.parse_type(buf).unwrap()) })
+        ConstructorDef::Func(TyConstructor { c, ty: self.parse_type(buf).unwrap() })
       }
       b'U' => {
         let c = constructor!(SelId);
-        ConstructorDef::Sel(TyConstructor { c, ty: Box::new(self.parse_type(buf).unwrap()) })
+        ConstructorDef::Sel(TyConstructor { c, ty: self.parse_type(buf).unwrap() })
       }
       b'G' | b'J' => {
         let c = constructor!(AggrId);
         ConstructorDef::Aggr(Aggregate {
-          c: TyConstructor { c, ty: Box::new(self.parse_type(buf).unwrap()) },
+          c: TyConstructor { c, ty: self.parse_type(buf).unwrap() },
           base,
           coll: match self.parse_elem(buf) {
             Elem::Fields(args) => args,
@@ -1011,7 +1005,7 @@ enum Elem {
   Formula(Formula),
   Properties((u32, u32, PropertySet)),
   ArgTypes(Box<[Type]>),
-  Fields(Box<[u32]>),
+  Fields(Box<[SelId]>),
   Essentials(Box<[LocusId]>),
   DefMeaning(DefValue),
   PartialDef(Box<(Elem, Formula)>),

@@ -86,7 +86,7 @@ impl Verifier {
   }
 
   fn push_fixed_var(&mut self, ty: &Type) {
-    self.lc.fixed_var.push(FixedVar { ty: Box::new(self.intern(ty)), def: None });
+    self.lc.fixed_var.push(FixedVar { ty: self.intern(ty), def: None });
   }
 
   fn read_fixed_vars(&mut self, vars: &[Type]) {
@@ -201,7 +201,7 @@ impl Verifier {
       Item::Assume(intro) => intro.iter().for_each(|prop| self.read_proposition(prop)),
       Item::Take(_) => {}
       Item::TakeAsVar(ty, tm) => {
-        let fv = FixedVar { ty: Box::new(self.intern(ty)), def: Some(Box::new(self.intern(tm))) };
+        let fv = FixedVar { ty: self.intern(ty), def: Some(Box::new(self.intern(tm))) };
         self.lc.fixed_var.push(fv);
       }
       Item::PerCases(PerCases { pos, label, block_thesis, cases, prop, just, thesis }) => {
@@ -294,7 +294,7 @@ impl Verifier {
         loop {
           let mut ic = self.lc.infer_const.borrow_mut();
           let Some(asgn) = ic.0.get_mut(i) else { break };
-          if let Term::Functor { nr, args } = &*asgn.def {
+          if let Term::Functor { nr, args } = &asgn.def {
             let (nr, args) = Term::adjust(*nr, args, &self.g.constrs);
             if f == nr {
               let args = &args.to_owned();
@@ -353,7 +353,7 @@ impl Verifier {
       AuxiliaryItem::Set { ty, .. } => self.push_fixed_var(ty),
       AuxiliaryItem::Reconsider { terms, prop, just } => {
         for (ty, tm) in terms {
-          let fv = FixedVar { ty: Box::new(self.intern(ty)), def: Some(Box::new(self.intern(tm))) };
+          let fv = FixedVar { ty: self.intern(ty), def: Some(Box::new(self.intern(tm))) };
           self.lc.fixed_var.push(fv);
         }
         self.read_just_prop(prop, just);
@@ -421,6 +421,7 @@ impl Verifier {
           equals: &self.equals,
           identify: &self.identify,
           func_ids: &self.func_ids,
+          reductions: &self.reductions,
           idx: self.inference_nr,
           pos: it.pos,
         }

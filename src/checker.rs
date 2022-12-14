@@ -20,6 +20,7 @@ pub struct Checker<'a> {
   pub equals: &'a BTreeMap<ConstrKind, Vec<EqualsDef>>,
   pub identify: &'a [Identify],
   pub func_ids: &'a BTreeMap<ConstrKind, Vec<usize>>,
+  pub reductions: &'a [Reduction],
   pub idx: usize,
   pub pos: Position,
 }
@@ -33,6 +34,7 @@ impl<'a> Checker<'a> {
       equals: self.equals,
       identify: self.identify,
       func_ids: self.func_ids,
+      reductions: self.reductions,
       idx: self.idx,
       pos: self.pos,
     }
@@ -77,7 +79,7 @@ impl<'a> Checker<'a> {
     for f in normal_form {
       // vprintln!("falsifying: {f:?}");
       let sat = (|| {
-        Equalizer::new(self.as_mut()).equate(&atoms, f)?;
+        Equalizer::new(self).equate(&atoms, f)?;
         self.pre_unification()?;
         let unifier = self.unifier();
         unifier.unify(self)
@@ -118,7 +120,7 @@ impl Expand<'_> {
         *f = Formula::mk_and(new_args)
       }
       Formula::ForAll { dom, scope } if !pos => {
-        self.lc.bound_var.push((*dom).clone());
+        self.lc.bound_var.push((**dom).clone());
         self.expand(scope, pos);
         self.lc.bound_var.0.pop().unwrap();
       }
@@ -285,15 +287,13 @@ impl Formula {
 trait VarKind: Idx {
   fn mk_var(n: u32) -> Term;
   fn base(lc: &LocalContext) -> u32;
-  fn push_var(lc: &mut LocalContext, ty: Box<Type>);
+  fn push_var(lc: &mut LocalContext, ty: Type);
 }
 
 impl VarKind for ConstId {
   fn mk_var(n: u32) -> Term { Term::Constant(ConstId(n)) }
   fn base(lc: &LocalContext) -> u32 { lc.fixed_var.len() as u32 }
-  fn push_var(lc: &mut LocalContext, ty: Box<Type>) {
-    lc.fixed_var.push(FixedVar { ty, def: None });
-  }
+  fn push_var(lc: &mut LocalContext, ty: Type) { lc.fixed_var.push(FixedVar { ty, def: None }); }
 }
 // impl VarKind for FVarId {
 //   fn mk_var(n: u32) -> Term { Term::FreeVar { nr: FVarId(n) } }
@@ -330,7 +330,7 @@ impl<V: VarKind> VisitMut for SetVar<V> {
 }
 
 impl<'a> Checker<'a> {
-  fn new_var<V: VarKind>(&mut self, mut ty: Box<Type>) {
+  fn new_var<V: VarKind>(&mut self, mut ty: Type) {
     ty.visit(&mut self.intern_const());
     V::push_var(self.lc, ty)
   }
@@ -357,11 +357,11 @@ impl<'a> Checker<'a> {
         Formula::ForAll { dom, scope } =>
           if !pos {
             let mut set_var = SetVar::<V>::new(self.lc, 1);
-            self.new_var::<V>(std::mem::take(dom));
+            self.new_var::<V>(std::mem::take(&mut **dom));
             let mut f = std::mem::take(scope);
             while let Formula::ForAll { mut dom, scope } = *f {
               set_var.visit_type(&mut dom, set_var.depth);
-              self.new_var::<V>(dom);
+              self.new_var::<V>(*dom);
               set_var.depth += 1;
               f = scope
             }
@@ -387,11 +387,11 @@ impl<'a> Checker<'a> {
 pub struct Atoms(pub IdxVec<AtomId, Formula>);
 
 impl Atoms {
-  fn find(&self, g: &Global, lc: &LocalContext, f: &Formula) -> Option<AtomId> {
+  pub fn find(&self, g: &Global, lc: &LocalContext, f: &Formula) -> Option<AtomId> {
     self.0.enum_iter().find(|(_, atom)| ().eq_formula(g, lc, f, atom)).map(|p| p.0)
   }
 
-  fn insert(&mut self, g: &Global, lc: &LocalContext, f: Cow<'_, Formula>) -> AtomId {
+  pub fn insert(&mut self, g: &Global, lc: &LocalContext, f: Cow<'_, Formula>) -> AtomId {
     match self.find(g, lc, &f) {
       Some(i) => i,
       None => self.0.push(f.into_owned()),
@@ -403,9 +403,9 @@ impl Atoms {
 /// `{a: true, b: false, c: true}` represents `a /\ ~b /\ c`.
 /// Invariant: the map is not empty when in a `DNF`.
 #[derive(Clone)]
-pub struct Conjunct(pub BTreeMap<AtomId, bool>);
+pub struct Conjunct<K, V>(pub BTreeMap<K, V>);
 
-impl std::fmt::Debug for Conjunct {
+impl<K: std::fmt::Debug> std::fmt::Debug for Conjunct<K, bool> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     let mut it = self.0.iter();
     if let Some((a, &b)) = it.next() {
@@ -422,8 +422,9 @@ impl std::fmt::Debug for Conjunct {
   }
 }
 
-impl Conjunct {
-  fn single(a: AtomId, pos: bool) -> Self { Self(std::iter::once((a, pos)).collect()) }
+impl<K: Ord + Clone, V: PartialEq + Clone> Conjunct<K, V> {
+  /// InitSingle
+  pub fn single(k: K, v: V) -> Self { Self(std::iter::once((k, v)).collect()) }
 
   /// NatFunc.WeakerThan
   /// True if every atom in other is present in self with the same polarity.
@@ -436,9 +437,9 @@ impl Conjunct {
   /// If it returns Err, then the conjunction is unsatisfiable
   /// and `self` is left in indeterminate state.
   fn mk_and(&mut self, other: &Self) -> Result<(), ()> {
-    for (&k, &v) in &other.0 {
-      if let Some(v1) = self.0.insert(k, v) {
-        if v1 != v {
+    for (k, v) in &other.0 {
+      if let Some(v1) = self.0.insert(k.clone(), v.clone()) {
+        if v1 != *v {
           return Err(())
         }
       }
@@ -447,26 +448,28 @@ impl Conjunct {
   }
 }
 
-enum Dnf {
+pub enum Dnf<K, V> {
   /// The constant true is represented specially, although we could use `Or([[]])`
   /// to represent it (that is, the singleton of the empty map).
   True,
   /// A collection of conjunctions connected by OR.
-  Or(Vec<Conjunct>),
+  Or(Vec<Conjunct<K, V>>),
 }
 
-impl Dnf {
+impl<K: Ord + Clone, V: PartialEq + Clone> Dnf<K, V> {
+  pub const FALSE: Dnf<K, V> = Dnf::Or(vec![]);
+
   /// * pos = true: PreInstCollection.InitTop
   /// * pos = false: PreInstCollection.InitBottom
-  fn mk_bool(pos: bool) -> Self {
+  pub fn mk_bool(pos: bool) -> Self {
     if pos {
       Self::True
     } else {
-      Self::Or(vec![])
+      Self::FALSE
     }
   }
 
-  fn insert_and_absorb(this: &mut Vec<Conjunct>, conj: Conjunct) {
+  pub fn insert_and_absorb(this: &mut Vec<Conjunct<K, V>>, conj: Conjunct<K, V>) {
     for (i, conj1) in this.iter_mut().enumerate() {
       if conj.weaker_than(conj1) {
         return
@@ -480,14 +483,14 @@ impl Dnf {
   }
 
   /// PreInstCollection.JoinWith
-  fn mk_and(&mut self, other: Self) {
+  pub fn mk_and(&mut self, other: Self) {
     let Dnf::Or(this) = self else { *self = other; return };
     let Dnf::Or(other) = other else { return };
     other.into_iter().for_each(|disj| Self::insert_and_absorb(this, disj));
   }
 
   /// PreInstCollection.UnionWith
-  fn mk_or(&mut self, other: &Self) {
+  pub fn mk_or(&mut self, other: &Self) {
     let Dnf::Or(this) = self else { return };
     let Dnf::Or(other) = other else { *self = Dnf::True; return };
     if let [conj2] = &**other {
@@ -507,7 +510,9 @@ impl Dnf {
 }
 
 impl Atoms {
-  fn normalize(&mut self, g: &Global, lc: &LocalContext, f: Formula, pos: bool) -> Dnf {
+  fn normalize(
+    &mut self, g: &Global, lc: &LocalContext, f: Formula, pos: bool,
+  ) -> Dnf<AtomId, bool> {
     match f {
       Formula::Neg { f } => self.normalize(g, lc, *f, !pos),
       Formula::And { args } => {
