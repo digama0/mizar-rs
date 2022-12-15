@@ -1,5 +1,6 @@
 #![allow(clippy::needless_range_loop)]
 #![allow(unused)]
+#![deny(unused_must_use)]
 
 use crate::types::*;
 use crate::verify::Verifier;
@@ -503,9 +504,14 @@ impl Formula {
           t1.cmp(ctx, t2, style).then_with(|| ty1.cmp(ctx, ty2, style)),
         (And { args: args1 }, And { args: args2 }) =>
           args1.len().cmp(&args2.len()).then_with(|| Formula::cmp_list(ctx, args1, args2, style)),
-        (SchemePred { nr: n1, args: args1 }, SchemePred { nr: n2, args: args2 })
-        | (PrivPred { nr: n1, args: args1, .. }, PrivPred { nr: n2, args: args2, .. }) =>
-          n1.cmp(n2).then_with(|| Term::cmp_list(ctx, args1, args2, style)),
+        (
+          SchPred { nr: SchPredId(n1), args: args1 },
+          SchPred { nr: SchPredId(n2), args: args2 },
+        )
+        | (
+          PrivPred { nr: PrivPredId(n1), args: args1, .. },
+          PrivPred { nr: PrivPredId(n2), args: args2, .. },
+        ) => n1.cmp(n2).then_with(|| Term::cmp_list(ctx, args1, args2, style)),
         (Attr { nr: n1, args: args1 }, Attr { nr: n2, args: args2 }) => match style {
           CmpStyle::Strict | CmpStyle::Alt =>
             n1.cmp(n2).then_with(|| Term::cmp_list(ctx, args1, args2, style)),
@@ -672,9 +678,11 @@ trait Equate {
       (Is { term: t1, ty: ty1 }, Is { term: t2, ty: ty2 }) =>
         self.eq_term(g, lc, t1, t2) && self.eq_type(g, lc, ty1, ty2),
       (And { args: args1 }, And { args: args2 }) => self.eq_and(g, lc, args1, args2),
-      (SchemePred { nr: n1, args: args1 }, SchemePred { nr: n2, args: args2 })
-      | (PrivPred { nr: n1, args: args1, .. }, PrivPred { nr: n2, args: args2, .. }) =>
-        n1 == n2 && self.eq_terms(g, lc, args1, args2),
+      (SchPred { nr: SchPredId(n1), args: args1 }, SchPred { nr: SchPredId(n2), args: args2 })
+      | (
+        PrivPred { nr: PrivPredId(n1), args: args1, .. },
+        PrivPred { nr: PrivPredId(n2), args: args2, .. },
+      ) => n1 == n2 && self.eq_terms(g, lc, args1, args2),
       (Attr { nr: n1, args: args1 }, Attr { nr: n2, args: args2 }) => {
         let (n1, args1) = Formula::adjust_attr(*n1, args1, &g.constrs);
         let (n2, args2) = Formula::adjust_attr(*n2, args2, &g.constrs);
@@ -820,7 +828,7 @@ macro_rules! mk_visit {
       fn super_visit_formula(&mut self, f: &$($mutbl)? Formula, depth: u32) {
         if self.abort() { return }
         match f {
-          Formula::SchemePred { args, .. }
+          Formula::SchPred { args, .. }
           | Formula::Pred { args, .. }
           | Formula::Attr { args, .. } => self.visit_terms(args, depth),
           Formula::PrivPred { args, value, .. } => {
@@ -1466,35 +1474,45 @@ impl Attrs {
   }
 
   /// MAttrCollection.Insert(self = self, aItem = item)
-  pub fn insert(&mut self, ctx: &Constructors, item: Attr) {
-    if let Self::Consistent(this) = self {
-      match this.binary_search_by(|attr| attr.cmp_abs(ctx, &item, CmpStyle::Strict)) {
-        Ok(i) =>
-          if this[i].pos != item.pos {
-            *self = Self::Inconsistent
-          },
-        Err(i) => this.insert(i, item),
+  /// returns true if self changed
+  pub fn insert(&mut self, ctx: &Constructors, item: Attr) -> bool {
+    let Self::Consistent(this) = self else { return false };
+    match this.binary_search_by(|attr| attr.cmp_abs(ctx, &item, CmpStyle::Strict)) {
+      Ok(i) =>
+        if this[i].pos != item.pos {
+          *self = Self::Inconsistent;
+          true
+        } else {
+          false
+        },
+      Err(i) => {
+        this.insert(i, item);
+        true
       }
     }
   }
 
-  /// MAttrCollection.Insert(self = self, aItem = item)
+  /// MAttrCollection.GetAttr(self = self, aAttrNr = item.nr, aAttrArgs = item.args)
   pub fn find(&self, ctx: &Constructors, item: &Attr) -> Option<&Attr> {
     let Self::Consistent(this) = self else { return None };
     Some(&this[this.binary_search_by(|attr| attr.cmp_abs(ctx, item, CmpStyle::Strict)).ok()?])
   }
 
-  pub fn find0(&self, ctx: &Constructors, nr: AttrId) -> Option<&Attr> {
+  pub fn find0_abs(&self, ctx: &Constructors, nr: AttrId) -> Option<&Attr> {
     let Self::Consistent(this) = self else { return None };
     assert!(&ctx.attribute[nr].c.redefines.is_none());
     Some(&this[this.binary_search_by(|attr| attr.adjust(ctx).0.cmp(&nr)).ok()?])
+  }
+
+  pub fn find0(&self, ctx: &Constructors, nr: AttrId, pos: bool) -> bool {
+    self.find0_abs(ctx, nr).map_or(false, |attr| attr.pos == pos)
   }
 
   fn reinsert_all(&mut self, ctx: &Constructors, mut f: impl FnMut(&mut Attr)) {
     if let Attrs::Consistent(attrs1) = self {
       for mut attr in std::mem::take(attrs1) {
         f(&mut attr);
-        self.insert(ctx, attr)
+        self.insert(ctx, attr);
       }
     }
   }
@@ -2182,11 +2200,11 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
   path.read_ecl(&v.g.constrs, &mut v.g.clusters).unwrap();
   let mut attrs = Attrs::default();
   if let Some(zero) = v.g.reqs.zero() {
-    attrs.push(Attr { nr: zero, pos: false, args: Box::new([]) })
+    attrs.push(Attr::new0(zero, false))
   }
   if has_omega {
     if let Some(positive) = v.g.reqs.positive() {
-      attrs.push(Attr { nr: positive, pos: true, args: Box::new([]) })
+      attrs.push(Attr::new0(positive, true))
     }
   }
   attrs.round_up_with(&v.g, &v.lc, &v.g.nonzero_type);
@@ -2195,19 +2213,19 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
   v.g.round_up_clusters(&mut v.lc);
 
   // LoadEqualities
-  path.read_definitions(&v.g.constrs, "dfe", &mut v.equalities);
+  path.read_definitions(&v.g.constrs, "dfe", &mut v.equalities).unwrap();
 
   // LoadExpansions
-  path.read_definitions(&v.g.constrs, "dfx", &mut v.expansions);
+  path.read_definitions(&v.g.constrs, "dfx", &mut v.expansions).unwrap();
 
   // LoadPropertiesReg
-  path.read_epr(&v.g.constrs, &mut v.properties);
+  path.read_epr(&v.g.constrs, &mut v.properties).unwrap();
 
   // LoadIdentify
-  path.read_eid(&v.g.constrs, &mut v.identify);
+  path.read_eid(&v.g.constrs, &mut v.identify).unwrap();
 
   // LoadReductions
-  path.read_erd(&v.g.constrs, &mut v.reductions);
+  path.read_erd(&v.g.constrs, &mut v.reductions).unwrap();
 
   for df in &v.equalities {
     if let Some(func) = df.equals_expansion() {

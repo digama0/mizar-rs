@@ -273,6 +273,8 @@ mk_id! {
   StructId,
   AttrId,
   PredId,
+  SchPredId,
+  PrivPredId,
   FuncId,
   SelId,
   AggrId,
@@ -321,6 +323,7 @@ macro_rules! mk_requirements {
     impl RequirementIndexes {
       paste! {
         $(
+          $(#[$attr])*
           pub fn [<$id:snake>](&self) -> Option<$ty> { self.get(Requirement::$id).map($ty) }
         )*
       }
@@ -345,7 +348,7 @@ mk_requirements! {
   EmptySet: FuncId,
   /// mode `Element of A`
   Element: ModeId,
-  /// functor `boole A`
+  /// functor `bool A`
   PowerSet: FuncId,
   /// predicate `A c= B`
   Inclusion: PredId,
@@ -414,7 +417,7 @@ impl RequirementIndexes {
     assert_eq!(self.fwd[Requirement::SetMode], ModeId::SET.0 + 1);
     Self::on_func_ids(|req| {
       if let Some(r) = self.get(req) {
-        self.rev.get_mut_extending(FuncId(r)).insert(req);
+        *self.rev.get_mut_extending(FuncId(r)) = Some(req);
       }
     })
   }
@@ -686,8 +689,8 @@ impl TypeKind {
 
 #[derive(Clone)]
 pub enum Formula {
-  SchemePred {
-    nr: u32,
+  SchPred {
+    nr: SchPredId,
     args: Box<[Term]>,
   },
   Pred {
@@ -700,7 +703,7 @@ pub enum Formula {
     args: Box<[Term]>,
   },
   PrivPred {
-    nr: u32,
+    nr: PrivPredId,
     args: Box<[Term]>,
     value: Box<Formula>,
   },
@@ -745,10 +748,10 @@ impl<V: VisitMut> Visitable<V> for Formula {
 impl std::fmt::Debug for Formula {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
-      Self::SchemePred { nr, args } => Term::debug_args("SP", *nr, args, f),
+      Self::SchPred { nr, args } => Term::debug_args("SP", nr.0, args, f),
       Self::Pred { nr, args } => Term::debug_args("P", nr.0, args, f),
       Self::Attr { nr, args } => Term::debug_args("A", nr.0, args, f),
-      Self::PrivPred { nr, args, value } => Term::debug_args("$P", *nr, args, f),
+      Self::PrivPred { nr, args, value } => Term::debug_args("$P", nr.0, args, f),
       Self::Is { term, ty } => write!(f, "({:?} is {:?})", term, ty),
       Self::Neg { f: fmla } => write!(f, "¬{:?}", fmla),
       Self::And { args } => match &**args {
@@ -772,7 +775,7 @@ impl std::fmt::Debug for Formula {
 impl Formula {
   pub fn discr(&self) -> u8 {
     match self {
-      Formula::SchemePred { .. } => b'P',
+      Formula::SchPred { .. } => b'P',
       Formula::Pred { .. } => b'R',
       Formula::Attr { .. } => b'V',
       Formula::PrivPred { .. } => b'S',
@@ -874,6 +877,10 @@ pub struct Attr {
   pub nr: AttrId,
   pub pos: bool,
   pub args: Box<[Term]>,
+}
+
+impl Attr {
+  pub fn new0(nr: AttrId, pos: bool) -> Self { Self { nr, pos, args: Box::new([]) } }
 }
 
 impl std::fmt::Debug for Attr {

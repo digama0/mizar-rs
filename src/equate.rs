@@ -40,10 +40,10 @@ impl Attrs {
       Attrs::Consistent(attrs) => Ok(attrs),
     }
   }
-  fn try_insert(&mut self, ctx: &Constructors, item: Attr) -> OrUnsat<()> {
-    self.insert(ctx, item);
+  fn try_insert(&mut self, ctx: &Constructors, item: Attr) -> OrUnsat<bool> {
+    let changed = self.insert(ctx, item);
     self.try_attrs()?;
-    Ok(())
+    Ok(changed)
   }
 }
 
@@ -180,7 +180,7 @@ impl Equalizer<'_> {
           .is_subset_of(&eq_term.supercluster, |a1, a2| ().eq_attr(self.g, self.lc, a1, a2))
         {
           for attr in new.attrs.1.try_attrs().unwrap() {
-            eq_term.supercluster.try_insert(&self.g.constrs, attr.clone())?
+            eq_term.supercluster.try_insert(&self.g.constrs, attr.clone())?;
           }
         }
         return Ok(())
@@ -260,6 +260,18 @@ impl<'a> Equalizer<'a> {
   }
 }
 
+macro_rules! y_try {
+  ($self:expr, $e:expr) => {
+    match $e {
+      Ok(e) => e,
+      Err(Unsat) => {
+        $self.unsat = Err(Unsat);
+        return
+      }
+    }
+  };
+}
+
 impl<'a, 'b> Y<'a, 'b> {
   fn visit_args(&mut self, tms: &mut [Term], depth: u32) -> bool {
     self.visit_terms(tms, depth);
@@ -299,11 +311,11 @@ impl VisitMut for Y<'_, '_> {
           *tm = Term::EqMark(em);
         } else {
           let (m, et) = self.new_eq_class(tm);
-          self.eq.infers.get_mut_extending(nr).insert(self.eq.terms[et].mark);
+          *self.eq.infers.get_mut_extending(nr) = Some(self.eq.terms[et].mark);
           // TODO: numeric_value
           let mut ty = self.lc.infer_const.get_mut()[nr].ty.clone();
           ExpandPrivFunc { ctx: &self.g.constrs }.visit_type(&mut ty, depth);
-          self.insert_type(ty, et, depth);
+          y_try!(self, self.insert_type(ty, et, depth));
           *tm = Term::EqMark(self.terms[et].mark);
         }
         return
@@ -327,7 +339,7 @@ impl VisitMut for Y<'_, '_> {
         *tm = Term::Functor { nr: nr2, args: args2.to_vec().into() };
         let (m, et) = self.new_eq_class(tm);
         self.constrs.functor.insert(nr2, m);
-        self.insert_type(ty, et, depth);
+        y_try!(self, self.insert_type(ty, et, depth));
         if self.g.reqs.zero_number() == Some(Term::adjusted_nr(nr2, &self.g.constrs)) {
           // TODO: numeric_value
         }
@@ -410,7 +422,7 @@ impl VisitMut for Y<'_, '_> {
       | Term::It => unreachable!(),
     };
     let mut ty = tm.get_type_uncached(self.g, self.lc);
-    self.insert_type(ty, et, depth);
+    y_try!(self, self.insert_type(ty, et, depth));
     *tm = Term::EqMark(self.terms[et].mark);
     // vprintln!("y term {depth} -> {tm:?} -> {:?}", tm.mark().map(|m| &self.lc.marks[m]));
   }
@@ -1116,15 +1128,44 @@ impl<'a> Equalizer<'a> {
     }
   }
 
-  /// RenumEqClasses
-  fn renum_eq_classes(&mut self) -> OrUnsat<()> {
-    // TODO
+  fn insert_non_attr0(&mut self, et1: EqTermId, et2: EqTermId, nr: AttrId) -> OrUnsat<()> {
+    if self.terms[et1].supercluster.find0(&self.g.constrs, nr, true) {
+      self.terms[et2].supercluster.try_insert(&self.g.constrs, Attr::new0(nr, false))?;
+    }
     Ok(())
   }
 
-  /// ContradictionVerify
-  fn contradiction_verify(&mut self) -> OrUnsat<()> {
-    // TODO
+  fn check_neg_attr(&self, nr: AttrId, args: &[Term]) -> OrUnsat<()> {
+    let (last, args1) = args.split_last().unwrap();
+    if let Some(attr) = self.terms[self.lc.marks[last.mark().unwrap()].1]
+      .supercluster
+      .find(&self.g.constrs, &Attr { nr, pos: true, args: args1.to_vec().into() })
+    {
+      if attr.pos {
+        return Err(Unsat)
+      }
+    }
+    Ok(())
+  }
+
+  fn match_formulas(&self, neg: &Formula, pos_bas: &Atoms) -> OrUnsat<()> {
+    for pos in &pos_bas.0 .0 {
+      match (neg, pos) {
+        (
+          Formula::Attr { nr: AttrId(n1), args: args1 },
+          Formula::Attr { nr: AttrId(n2), args: args2 },
+        )
+        | (
+          Formula::SchPred { nr: SchPredId(n1), args: args1 },
+          Formula::SchPred { nr: SchPredId(n2), args: args2 },
+        )
+        | (
+          Formula::PrivPred { nr: PrivPredId(n1), args: args1, .. },
+          Formula::PrivPred { nr: PrivPredId(n2), args: args2, .. },
+        ) if n1 == n2 && EqMarks.eq_terms(self.g, self.lc, args1, args2) => return Err(Unsat),
+        _ => {}
+      }
+    }
     Ok(())
   }
 
@@ -1140,7 +1181,7 @@ impl<'a> Equalizer<'a> {
             Formula::Is { term, ty } if pos => {
               let x_type = self.y(|y| (**ty).visit_cloned(y))?;
               let x_term = self.y(|y| (**term).visit_cloned(y))?;
-              self.insert_type(x_type, self.lc.marks[x_term.mark().unwrap()].1, 0);
+              self.insert_type(x_type, self.lc.marks[x_term.mark().unwrap()].1, 0)?;
             }
             Formula::Attr { mut nr, args } => {
               let mut args = self.y(|y| args.visit_cloned(y))?.into_vec();
@@ -1212,12 +1253,8 @@ impl<'a> Equalizer<'a> {
       let empty = self.g.reqs.empty().unwrap();
       for (i, ets) in self.terms.enum_iter() {
         assert!(!ets.eq_class.is_empty()); // TODO: is this true?
-        if !ets.eq_class.is_empty() {
-          if let Some(attr) = ets.supercluster.find0(&self.g.constrs, empty) {
-            if attr.pos {
-              to_y_term.push((i, Term::Functor { nr: empty_set, args: Box::new([]) }))
-            }
-          }
+        if !ets.eq_class.is_empty() && ets.supercluster.find0(&self.g.constrs, empty, true) {
+          to_y_term.push((i, Term::Functor { nr: empty_set, args: Box::new([]) }))
         }
       }
       self.drain_pending(&mut to_y_term, &mut eq_pendings)?;
@@ -1226,12 +1263,8 @@ impl<'a> Equalizer<'a> {
       let zero = self.g.reqs.zero().unwrap();
       for (i, ets) in self.terms.enum_iter() {
         assert!(!ets.eq_class.is_empty()); // TODO: is this true?
-        if !ets.eq_class.is_empty() {
-          if let Some(attr) = ets.supercluster.find0(&self.g.constrs, zero) {
-            if attr.pos {
-              to_y_term.push((i, Term::Functor { nr: zero_number, args: Box::new([]) }))
-            }
-          }
+        if !ets.eq_class.is_empty() && ets.supercluster.find0(&self.g.constrs, zero, true) {
+          to_y_term.push((i, Term::Functor { nr: zero_number, args: Box::new([]) }))
         }
       }
       self.drain_pending(&mut to_y_term, &mut eq_pendings)?;
@@ -1268,7 +1301,7 @@ impl<'a> Equalizer<'a> {
     let mut eqs = Equals::default();
     self.drain_pending(&mut to_y_term, &mut eqs)?;
 
-    self.process_reductions();
+    self.process_reductions()?;
 
     // InitSuperClusterForComplex
     if self.g.reqs.complex().is_some() {
@@ -1311,8 +1344,300 @@ impl<'a> Equalizer<'a> {
         break
       }
     }
-    self.renum_eq_classes()?;
-    self.contradiction_verify()?;
+
+    // RenumEqClasses
+    let mut eq_class = EqClassId::default();
+    for etm in &mut self.terms.0 {
+      if !etm.eq_class.is_empty() {
+        etm.id = eq_class.fresh();
+        self.lc.marks[etm.mark].0 = Term::EqClass(etm.id)
+      }
+    }
+    for etm in &self.terms.0 {
+      let et = self.lc.marks[etm.mark].1;
+      let Term::EqClass(ec) = self.lc.marks[self.terms[et].mark].0 else { unreachable!() };
+      self.lc.marks[etm.mark].0 = Term::EqClass(ec);
+    }
+    for etm in &mut self.terms.0 {
+      if !etm.eq_class.is_empty() {
+        let Attrs::Consistent(sc) = std::mem::take(&mut etm.supercluster) else { unreachable!() };
+        for a in sc {
+          etm.supercluster.try_insert(&self.g.constrs, a)?;
+        }
+      }
+    }
+
+    /// ContradictionVerify
+    for neg in &neg_bas.0 .0 {
+      match neg {
+        Formula::Attr { mut nr, args } => self.check_neg_attr(nr, args)?,
+        Formula::Pred { mut nr, args } => {
+          let c = &self.g.constrs.predicate[nr];
+          if c.properties.get(PropertyKind::Reflexivity)
+            && self.lc.marks[args[c.arg1 as usize].mark().unwrap()].1
+              == self.lc.marks[args[c.arg2 as usize].mark().unwrap()].1
+          {
+            return Err(Unsat)
+          }
+        }
+        _ => {}
+      }
+      match neg {
+        Formula::Attr { .. }
+        | Formula::SchPred { .. }
+        | Formula::PrivPred { .. }
+        | Formula::Pred { .. } => {
+          if pos_bas.0 .0.iter().any(|pos| EqMarks.eq_formula(self.g, self.lc, pos, neg)) {
+            return Err(Unsat)
+          }
+        }
+        Formula::Is { term, ty } => {
+          for ty2 in &self.terms[self.lc.marks[term.mark().unwrap()].1].ty_class {
+            if EqMarks.eq_radices(self.g, self.lc, ty2, ty) {
+              return Err(Unsat)
+            }
+          }
+        }
+        _ => {}
+      }
+    }
+
+    for neg in &neg_bas.0 .0 {
+      if let Formula::Pred { mut nr, args } = neg {
+        let c = &self.g.constrs.predicate[nr];
+        if c.properties.get(PropertyKind::Reflexivity) {
+          let et1 = self.lc.marks[args[c.arg1 as usize].mark().unwrap()].1;
+          let et2 = self.lc.marks[args[c.arg2 as usize].mark().unwrap()].1;
+          if let Some(empty) = self.g.reqs.empty() {
+            // a != b, a is empty => b is non empty
+            self.insert_non_attr0(et1, et2, empty)?;
+            // a != b, b is empty => a is non empty
+            self.insert_non_attr0(et2, et1, empty)?;
+          }
+          if let Some(zero) = self.g.reqs.zero() {
+            // a != b, a is zero => b is non zero
+            self.insert_non_attr0(et1, et2, zero)?;
+            // a != b, b is zero => a is non zero
+            self.insert_non_attr0(et2, et1, zero)?;
+          }
+        }
+      }
+    }
+
+    loop {
+      let mut added = false;
+      for pos in &pos_bas.0 .0 {
+        if let Formula::Pred { mut nr, args } = pos {
+          let (nr, args) = Formula::adjust_pred(nr, args, &self.g.constrs);
+          if self.g.reqs.less_or_equal() == Some(nr) {
+            let [arg1, arg2] = args else { unreachable!() };
+            let et1 = self.lc.marks[arg1.mark().unwrap()].1;
+            let et2 = self.lc.marks[arg2.mark().unwrap()].1;
+            if let (Some(positive), Some(negative)) =
+              (self.g.reqs.positive(), self.g.reqs.negative())
+            {
+              // a <= b, a is positive => b is positive
+              let pos1 = self.terms[et1].supercluster.find0(&self.g.constrs, positive, true);
+              added |= pos1
+                && self.terms[et2]
+                  .supercluster
+                  .try_insert(&self.g.constrs, Attr::new0(positive, true))?;
+              // a <= b, b is negative => a is negative
+              let neg2 = self.terms[et2].supercluster.find0(&self.g.constrs, negative, true);
+              added |= neg2
+                && self.terms[et1]
+                  .supercluster
+                  .try_insert(&self.g.constrs, Attr::new0(negative, true))?;
+              // a <= b, a is non negative => b is non negative
+              let nonneg1 = self.terms[et1].supercluster.find0(&self.g.constrs, negative, false);
+              added |= nonneg1
+                && self.terms[et2]
+                  .supercluster
+                  .try_insert(&self.g.constrs, Attr::new0(negative, false))?;
+              // a <= b, b is non positive => a is non positive
+              let nonpos2 = self.terms[et2].supercluster.find0(&self.g.constrs, positive, false);
+              added |= nonpos2
+                && self.terms[et1]
+                  .supercluster
+                  .try_insert(&self.g.constrs, Attr::new0(positive, false))?;
+              if let Some(zero) = self.g.reqs.zero() {
+                // a <= b, a is non negative, b is non zero => b is positive
+                if nonneg1 && self.terms[et2].supercluster.find0(&self.g.constrs, zero, false) {
+                  added |= self.terms[et2]
+                    .supercluster
+                    .try_insert(&self.g.constrs, Attr::new0(positive, true))?;
+                }
+                // a <= b, b is non positive, a is non zero => a is negative
+                if nonpos2 && self.terms[et1].supercluster.find0(&self.g.constrs, zero, false) {
+                  added |= self.terms[et2]
+                    .supercluster
+                    .try_insert(&self.g.constrs, Attr::new0(negative, true))?;
+                }
+              }
+            } else if self.g.reqs.belongs_to() == Some(nr) {
+              let [arg1, arg2] = args else { unreachable!() };
+              let et1 = self.lc.marks[arg1.mark().unwrap()].1;
+              let et2 = self.lc.marks[arg2.mark().unwrap()].1;
+              if let Some(empty) = self.g.reqs.empty() {
+                // A in B => B is non empty
+                self.terms[et2]
+                  .supercluster
+                  .try_insert(&self.g.constrs, Attr::new0(empty, false))?;
+              }
+              if let Some(element) = self.g.reqs.element() {
+                // A in B => A: Element of B
+                let ty = Type { args: vec![arg2.clone()], ..Type::new(element.into()) };
+                self.insert_type(ty, et1, 0)?;
+              }
+            } else if self.g.reqs.inclusion() == Some(nr) {
+              if let (Some(element), Some(pw)) = (self.g.reqs.element(), self.g.reqs.power_set()) {
+                let [arg1, arg2] = args else { unreachable!() };
+                // A c= B => A: Element of bool B
+                let mut tm = Term::Functor { nr: pw, args: Box::new([arg2.clone()]) };
+                self.y(|y| y.visit_term(&mut tm, 0))?;
+                let ty = Type { args: vec![tm], ..Type::new(element.into()) };
+                self.insert_type(ty, self.lc.marks[arg1.mark().unwrap()].1, 0)?;
+              }
+            }
+          }
+        }
+      }
+      if !added {
+        break
+      }
+    }
+
+    // for _ in 0..pos_bas.0.len() {
+    for pos2 in &pos_bas.0 .0 {
+      if let Formula::Pred { mut nr, args } = pos2 {
+        let (nr, args) = Formula::adjust_pred(nr, args, &self.g.constrs);
+        if self.g.reqs.belongs_to() == Some(nr) {
+          let [arg1, arg2] = args else { unreachable!() };
+          let et2 = self.lc.marks[arg2.mark().unwrap()].1;
+          let mut to_push = vec![];
+          for ty in &self.terms[et2].ty_class {
+            if let TypeKind::Mode(n) = ty.kind {
+              let (n, args) = Type::adjust(n, args, &self.g.constrs);
+              if self.g.reqs.element() == Some(n) {
+                let [arg3] = args else { unreachable!() };
+                for &m in &self.terms[self.lc.marks[arg3.mark().unwrap()].1].eq_class {
+                  if let Term::Functor { mut nr, args } = &self.lc.marks[m].0 {
+                    if self.g.reqs.power_set() == Some(nr) {
+                      let [arg4] = &**args else { unreachable!() };
+                      let et4 = self.lc.marks[arg4.mark().unwrap()].1;
+                      // a in b, b: Element of bool C => C is non empty, a: Element of C
+                      to_push.push(arg4.mark().unwrap());
+                    }
+                  }
+                }
+              }
+            }
+          }
+          if let Some(empty) = self.g.reqs.empty() {
+            for &m in &to_push {
+              let et = self.lc.marks[m].1;
+              self.terms[et].supercluster.try_insert(&self.g.constrs, Attr::new0(empty, false))?;
+            }
+          }
+          if let Some(element) = self.g.reqs.element() {
+            let et1 = self.lc.marks[arg1.mark().unwrap()].1;
+            for &m in &to_push {
+              let ty = Type { args: vec![Term::EqMark(m)], ..Type::new(element.into()) };
+              self.insert_type(ty, et1, 0)?
+            }
+          }
+        }
+      }
+    }
+
+    loop {
+      let mut added = false;
+      for neg in &neg_bas.0 .0 {
+        match neg {
+          Formula::Attr { mut nr, args } => {
+            self.check_neg_attr(nr, args)?;
+            self.match_formulas(neg, &pos_bas)?
+          }
+          Formula::SchPred { .. } | Formula::PrivPred { .. } =>
+            self.match_formulas(neg, &pos_bas)?,
+          Formula::Pred { mut nr, args } => {
+            let (nr, args) = Formula::adjust_pred(nr, args, &self.g.constrs);
+            if self.g.reqs.less_or_equal() == Some(nr) {
+              let [arg1, arg2] = args else { unreachable!() };
+              let et1 = self.lc.marks[arg1.mark().unwrap()].1;
+              let et2 = self.lc.marks[arg2.mark().unwrap()].1;
+              if let (Some(positive), Some(negative)) =
+                (self.g.reqs.positive(), self.g.reqs.negative())
+              {
+                // b < a, a is non positive => b is negative
+                added |= self.terms[et1].supercluster.find0(&self.g.constrs, positive, false)
+                  && self.terms[et2]
+                    .supercluster
+                    .try_insert(&self.g.constrs, Attr::new0(negative, true))?;
+                // b < a, b is non negative => a is positive
+                added |= self.terms[et2].supercluster.find0(&self.g.constrs, negative, false)
+                  && self.terms[et1]
+                    .supercluster
+                    .try_insert(&self.g.constrs, Attr::new0(positive, true))?;
+              }
+              // TODO: numeric_value
+            } else if self.g.reqs.belongs_to() == Some(nr) {
+              if let Some(element) = self.g.reqs.element() {
+                let [arg1, arg2] = args else { unreachable!() };
+                let et1 = self.lc.marks[arg1.mark().unwrap()].1;
+                let et2 = self.lc.marks[arg2.mark().unwrap()].1;
+                if let Some(empty) = self.g.reqs.empty() {
+                  if self.terms[et2].supercluster.find0(&self.g.constrs, empty, false) {
+                    let ty = Type { args: vec![arg2.clone()], ..Type::new(element.into()) };
+                    // B is non empty, A: Element of B => A in B
+                    if self.terms[et1].ty_class.iter().any(|ty2| {
+                      ty2.decreasing_attrs(&ty, |a1, a2| EqMarks.eq_attr(self.g, self.lc, a1, a2))
+                        && EqMarks.eq_radices(self.g, self.lc, &ty, ty2)
+                    }) {
+                      return Err(Unsat)
+                    }
+                  }
+                }
+              }
+            } else if self.g.reqs.inclusion() == Some(nr) {
+              if let (Some(element), Some(pw)) = (self.g.reqs.element(), self.g.reqs.power_set()) {
+                let [arg1, arg2] = args else { unreachable!() };
+                let et1 = self.lc.marks[arg1.mark().unwrap()].1;
+                let mut tm = Term::Functor { nr: pw, args: Box::new([arg2.clone()]) };
+                self.y(|y| y.visit_term(&mut tm, 0))?;
+                let ty = Type { args: vec![tm], ..Type::new(element.into()) };
+                // A: Element of bool B => A c= B
+                if self.terms[et1].ty_class.iter().any(|ty2| {
+                  ty2.decreasing_attrs(&ty, |a1, a2| EqMarks.eq_attr(self.g, self.lc, a1, a2))
+                    && EqMarks.eq_radices(self.g, self.lc, &ty, ty2)
+                }) {
+                  return Err(Unsat)
+                }
+              }
+            }
+            for pos in &pos_bas.0 .0 {
+              if EqMarks.eq_formula(self.g, self.lc, neg, pos) {
+                return Err(Unsat)
+              }
+            }
+          }
+          Formula::Is { term, ty } => {
+            let et = self.lc.marks[term.mark().unwrap()].1;
+            if self.terms[et]
+              .ty_class
+              .iter()
+              .any(|ty2| EqMarks.eq_radices(self.g, self.lc, ty, ty2))
+            {
+              return Err(Unsat)
+            }
+          }
+          _ => {}
+        }
+      }
+      if !added {
+        break
+      }
+    }
 
     Ok(())
   }

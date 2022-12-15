@@ -838,7 +838,7 @@ impl XmlReader<'_> {
           nr -= 1;
           let args = self.parse_term_list(buf);
           Elem::Formula(match kind {
-            b'P' => Formula::SchemePred { nr, args },
+            b'P' => Formula::SchPred { nr: SchPredId(nr), args },
             b'R' => Formula::Pred { nr: PredId(nr), args },
             b'V' => Formula::Attr { nr: AttrId(nr), args },
             _ => panic!("unknown predicate kind"),
@@ -855,7 +855,7 @@ impl XmlReader<'_> {
             }
           };
           self.end_tag(buf);
-          Elem::Formula(Formula::PrivPred { nr, args: args.into(), value })
+          Elem::Formula(Formula::PrivPred { nr: PrivPredId(nr), args: args.into(), value })
         }
         b"For" => {
           // let mut var_id = 0;

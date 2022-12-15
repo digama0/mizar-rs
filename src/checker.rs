@@ -161,7 +161,7 @@ impl Expand<'_> {
           self.expand_flex(terms, expansion, &mut conjs, pos);
           *f = Formula::mk_and(conjs).maybe_neg(pos)
         },
-      Formula::SchemePred { .. }
+      Formula::SchPred { .. }
       | Formula::PrivPred { .. }
       | Formula::Is { .. }
       | Formula::ForAll { .. }
@@ -271,7 +271,7 @@ impl Formula {
           *self = std::mem::take(value);
           continue
         }
-        Formula::SchemePred { .. }
+        Formula::SchPred { .. }
         | Formula::Pred { .. }
         | Formula::Attr { .. }
         | Formula::Is { .. }
@@ -369,7 +369,7 @@ impl<'a> Checker<'a> {
             *fmla = *f;
             continue
           },
-        Formula::SchemePred { .. }
+        Formula::SchPred { .. }
         | Formula::Pred { .. }
         | Formula::Attr { .. }
         | Formula::PrivPred { .. }
