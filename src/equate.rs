@@ -49,12 +49,13 @@ impl Attrs {
 
 #[derive(Default)]
 struct ConstrMaps {
-  priv_func: ConstrMap<PrivFuncId>,
   functor: ConstrMap<FuncId>,
-  selector: ConstrMap<SelId>,
   aggregate: ConstrMap<AggrId>,
-  fraenkel: Vec<EqMarkId>,
+  selector: ConstrMap<SelId>,
+  priv_func: ConstrMap<PrivFuncId>,
+  sch_func: ConstrMap<SchFuncId>,
   choice: Vec<EqMarkId>,
+  fraenkel: Vec<EqMarkId>,
 }
 
 pub struct Equalizer<'a> {
@@ -68,6 +69,7 @@ pub struct Equalizer<'a> {
   next_eq_class: EqClassId,
   allowed_ccl: Vec<Attrs>,
   allowed_fcl: Vec<Attrs>,
+  clash: bool,
 }
 
 struct CheckE<'a> {
@@ -242,6 +244,20 @@ impl<'a> Equalizer<'a> {
     y.unsat?;
     Ok(r)
   }
+
+  fn prep_binder(
+    &mut self, tm: &mut Term, depth: u32, coll: fn(&mut ConstrMaps) -> &mut Vec<EqMarkId>,
+  ) -> Option<Result<EqTermId, usize>> {
+    if CheckBound::get(depth, |cb| cb.visit_term(tm, depth)) {
+      return None
+    }
+    OnVarMut(|n, _| *n -= depth).visit_term(tm, depth);
+    let vec = coll(&mut self.constrs);
+    match vec.binary_search_by(|&m| self.lc.marks[m].0.cmp(&self.g.constrs, tm, CmpStyle::Red)) {
+      Ok(i) => Some(Ok(self.lc.marks[vec[i]].1)),
+      Err(i) => Some(Err(i)),
+    }
+  }
 }
 
 impl<'a, 'b> Y<'a, 'b> {
@@ -253,16 +269,9 @@ impl<'a, 'b> Y<'a, 'b> {
   fn add_binder_into(
     &mut self, tm: &mut Term, depth: u32, coll: fn(&mut ConstrMaps) -> &mut Vec<EqMarkId>,
   ) -> Option<EqTermId> {
-    if CheckBound::get(depth, |cb| cb.visit_term(tm, depth)) {
-      return None
-    }
-    OnVarMut(|n, _| *n -= depth).visit_term(tm, depth);
-    let vec = coll(&mut self.eq.constrs);
-    match vec
-      .binary_search_by(|&m| self.eq.lc.marks[m].0.cmp(&self.eq.g.constrs, tm, CmpStyle::Red))
-    {
+    match self.prep_binder(tm, depth, coll)? {
       Ok(i) => {
-        *tm = Term::EqMark(self.eq.terms[self.eq.lc.marks[vec[i]].1].mark);
+        *tm = Term::EqMark(self.terms[i].mark);
         None
       }
       Err(i) => {
@@ -404,6 +413,126 @@ impl VisitMut for Y<'_, '_> {
     self.insert_type(ty, et, depth);
     *tm = Term::EqMark(self.terms[et].mark);
     // vprintln!("y term {depth} -> {tm:?} -> {:?}", tm.mark().map(|m| &self.lc.marks[m]));
+  }
+}
+
+impl Equalizer<'_> {
+  fn yy_binder(
+    &mut self, mut term: Term, fi: EqTermId, coll: fn(&mut ConstrMaps) -> &mut Vec<EqMarkId>,
+  ) -> EqTermId {
+    match self.prep_binder(&mut term, 0, coll) {
+      None => fi,
+      Some(Ok(et)) => et,
+      Some(Err(i)) => {
+        let et = self.lc.marks[self.terms[fi].mark].1;
+        let m = self.lc.marks.push((term, fi));
+        self.terms[et].eq_class.push(m);
+        coll(&mut self.constrs).insert(i, m);
+        fi
+      }
+    }
+  }
+
+  /// YYTerm(fTrm = term, fi = fi)
+  fn yy_term(&mut self, mut term: Term, mut fi: EqTermId) -> OrUnsat<EqTermId> {
+    macro_rules! func_like {
+      ($k:ident: $nr:expr, $args:expr) => {{
+        self.y(|y| y.visit_terms($args, 0))?;
+        if let Some(m) = self.constrs.$k.find(self.g, self.lc, $nr, $args) {
+          return Ok(self.lc.marks[m].1)
+        }
+        let et = self.lc.marks[self.terms[fi].mark].1;
+        let m = self.lc.marks.push((term, fi));
+        self.terms[et].eq_class.push(m);
+        self.constrs.$k.insert($nr, m);
+        Ok(fi)
+      }};
+    }
+    match &mut term {
+      Term::Numeral(n) => {
+        for (i, etm) in self.terms.enum_iter() {
+          // TODO: numeric_value
+        }
+        // TODO: numeric_value
+        Ok(fi)
+      }
+      Term::Functor { mut nr, args } => {
+        self.y(|y| y.visit_terms(args, 0))?;
+        let c = &self.g.constrs.functor[nr];
+        let (nr1, args1) = Term::adjust(nr, args, &self.g.constrs);
+        if let Some(m) = self.constrs.functor.find(self.g, self.lc, nr1, args1) {
+          return Ok(self.lc.marks[m].1)
+        }
+        let comm_args = if c.properties.get(PropertyKind::Commutativity) {
+          let mut args = args.clone();
+          args.swap(c.arg1 as usize, c.arg2 as usize);
+          if let Some(m) = self.constrs.functor.find(self.g, self.lc, nr1, &args) {
+            return Ok(self.lc.marks[m].1)
+          }
+          Some(args)
+        } else {
+          None
+        };
+        // TODO: ImaginaryUnit, ZeroNumber
+        let et = self.lc.marks[self.terms[fi].mark].1;
+        let m = self.lc.marks.push((Term::Functor { nr: nr1, args: args1.to_vec().into() }, fi));
+        self.constrs.functor.insert(nr1, m);
+        self.terms[et].eq_class.push(m);
+        if let Some(args) = comm_args {
+          let (nr2, args2) = Term::adjust(nr, &args, &self.g.constrs);
+          let m = self.lc.marks.push((Term::Functor { nr: nr2, args: args2.to_vec().into() }, fi));
+          self.constrs.functor.insert(nr2, m);
+          self.terms[et].eq_class.push(m);
+        }
+        Ok(fi)
+      }
+      Term::SchFunc { mut nr, args } => func_like!(sch_func: nr, args),
+      Term::PrivFunc { mut nr, args, .. } => func_like!(priv_func: nr, args),
+      Term::Selector { mut nr, args } => func_like!(selector: nr, args),
+      Term::Aggregate { mut nr, args } => {
+        self.y(|y| y.visit_terms(args, 0))?;
+        if let Some(vec) = self.constrs.aggregate.0.get(&nr) {
+          let base = self.g.constrs.aggregate[nr].base as usize;
+          let args = &args[base..];
+          for &m in vec {
+            if ().eq_terms(self.g, self.lc, args, &self.lc.marks[m].0.args().unwrap()[base..]) {
+              return Ok(self.lc.marks[m].1)
+            }
+          }
+        }
+        let et = self.lc.marks[self.terms[fi].mark].1;
+        let m = self.lc.marks.push((term, fi));
+        self.terms[et].eq_class.push(m);
+        self.constrs.aggregate.insert(nr, m);
+        Ok(fi)
+      }
+      Term::Fraenkel { args, scope, compr } => {
+        self.y(|y| {
+          let mut depth = 0;
+          for ty in &mut **args {
+            y.visit_type(ty, depth);
+            depth += 1;
+          }
+          y.visit_term(scope, depth);
+          y.visit_formula(compr, depth)
+        })?;
+        Ok(self.yy_binder(term, fi, |c| &mut c.fraenkel))
+      }
+      Term::Choice { ty } => {
+        self.y(|y| y.visit_type(ty, 0))?;
+        Ok(self.yy_binder(term, fi, |c| &mut c.choice))
+      }
+      Term::Infer(_) | Term::Constant(_) => Ok(fi),
+      Term::Locus(_)
+      | Term::Bound(_)
+      | Term::EqClass(_)
+      | Term::EqMark(_)
+      | Term::Infer(_)
+      | Term::FreeVar(_)
+      | Term::LambdaVar(_)
+      | Term::Qua { .. }
+      | Term::It => unreachable!(),
+    }
   }
 }
 
@@ -610,6 +739,13 @@ impl Instantiate<'_> {
   fn inst_fcluster(&mut self, cl: &FunctorCluster) { todo!() }
 }
 
+struct Polynomials;
+
+fn is_empty_set(g: &Global, lc: &LocalContext, terms: &[EqMarkId]) -> bool {
+  let empty = g.reqs.empty_set().unwrap();
+  terms.iter().any(|&m| matches!(lc.marks[m].0, Term::Functor { nr, .. } if nr == empty))
+}
+
 impl<'a> Equalizer<'a> {
   pub fn new(ck: &'a mut Checker<'_>) -> Self {
     Self {
@@ -622,6 +758,7 @@ impl<'a> Equalizer<'a> {
       next_eq_class: Default::default(),
       allowed_ccl: Default::default(),
       allowed_fcl: Default::default(),
+      clash: false,
     }
   }
 
@@ -668,7 +805,7 @@ impl<'a> Equalizer<'a> {
       Ordering::Equal => return Ok(()),
       Ordering::Greater => (x, y),
     };
-    let mut clash = true;
+    self.clash = true;
     // TODO: numeric_value
     for &m in &self.terms[from].eq_class {
       let m = self.terms[self.lc.marks[m].1].mark;
@@ -768,6 +905,229 @@ impl<'a> Equalizer<'a> {
     Ok(())
   }
 
+  /// ClearPolynomialValues
+  fn clear_polynomial_values(&mut self) -> OrUnsat<()> {
+    // TODO
+    Ok(())
+  }
+
+  /// EquatePolynomials
+  fn equate_polynomials(&mut self) -> OrUnsat<()> {
+    // TODO
+    Ok(())
+  }
+
+  /// ProcessLinearEquations
+  fn process_linear_equations(&mut self, eqs: &mut Equals) -> OrUnsat<Polynomials> {
+    let mut polys = Polynomials;
+    if !eqs.0.is_empty() {
+      // TODO
+    }
+    Ok(polys)
+  }
+
+  /// Identities(aArithmIncl = arith)
+  fn identities(&mut self, arith: bool) -> OrUnsat<()> {
+    let mut to_union = vec![];
+    loop {
+      for marks in self.constrs.aggregate.0.values() {
+        let mut iter = marks.iter().copied();
+        while let Some(m1) = iter.next() {
+          let et1 = self.lc.marks[self.terms[self.lc.marks[m1].1].mark].1;
+          if let Some(m2) =
+            iter.clone().find(|&m| self.lc.marks[self.terms[self.lc.marks[m].1].mark].1 == et1)
+          {
+            let Term::Aggregate { nr, args: args1 } = &self.lc.marks[m1].0 else { unreachable!() };
+            let Term::Aggregate { args: args2, .. } = &self.lc.marks[m2].0 else { unreachable!() };
+            let base = self.g.constrs.aggregate[*nr].base as usize;
+            assert!(args1.len() == args2.len());
+            for (a1, a2) in args1.iter().zip(&**args2).skip(base) {
+              let m1 = self.lc.marks[a1.mark().unwrap()].1;
+              let m2 = self.lc.marks[a2.mark().unwrap()].1;
+              if m1 != m2 {
+                to_union.push((m1, m2))
+              }
+            }
+          }
+        }
+      }
+      for (x, y) in to_union.drain(..) {
+        self.union_terms(x, y)?;
+      }
+
+      for (&i, marks) in &self.constrs.functor.0 {
+        let c = &self.g.constrs.functor[i];
+        if c.properties.get(PropertyKind::Idempotence) {
+          for &m in marks {
+            let (Term::Functor { ref args, .. }, et) = self.lc.marks[m] else { unreachable!() };
+            let et1 = self.lc.marks[args[c.arg1 as usize].mark().unwrap()].1;
+            let et2 = self.lc.marks[args[c.arg2 as usize].mark().unwrap()].1;
+            if self.lc.marks[self.terms[et1].mark].1 == self.lc.marks[self.terms[et2].mark].1 {
+              to_union.push((self.lc.marks[self.terms[et].mark].1, et1))
+            }
+          }
+        }
+        if c.properties.get(PropertyKind::Involutiveness)
+          && (arith || !(self.g.reqs.real_neg() == Some(i) || self.g.reqs.real_inv() == Some(i)))
+        {
+          for &m in marks {
+            let (Term::Functor { ref args, .. }, et) = self.lc.marks[m] else { unreachable!() };
+            assert!(c.arg1 as usize + 1 == args.len());
+            let et1 = self.lc.marks[args[c.arg1 as usize].mark().unwrap()].1;
+            let args1 = &args[..c.arg1 as usize];
+            for &m2 in &self.terms[self.lc.marks[self.terms[et1].mark].1].eq_class {
+              if let Term::Functor { nr, args: ref args2 } = self.lc.marks[m2].0 {
+                if nr == i && EqMarks.eq_terms(self.g, self.lc, args1, &args2[..c.arg1 as usize]) {
+                  let et2 = self.lc.marks[args2[c.arg1 as usize].mark().unwrap()].1;
+                  to_union.push((self.lc.marks[self.terms[et].mark].1, et2))
+                }
+              }
+            }
+          }
+        }
+        match self.g.reqs.rev.get(i).copied().flatten() {
+          Some(Requirement::Union) =>
+            for &m in marks {
+              let (Term::Functor { ref args, .. }, et) = self.lc.marks[m] else { unreachable!() };
+              let et1 = self.lc.marks[args[0].mark().unwrap()].1;
+              if is_empty_set(self.g, self.lc, &self.terms[et1].eq_class) {
+                let et2 = self.lc.marks[args[1].mark().unwrap()].1;
+                to_union.push((self.lc.marks[self.terms[et].mark].1, et2))
+              }
+            },
+          Some(Requirement::Intersection) =>
+            for &m in marks {
+              let (Term::Functor { ref args, .. }, et) = self.lc.marks[m] else { unreachable!() };
+              let et1 = self.lc.marks[args[0].mark().unwrap()].1;
+              if is_empty_set(self.g, self.lc, &self.terms[et1].eq_class) {
+                to_union.push((self.lc.marks[self.terms[et].mark].1, et1))
+              }
+            },
+          Some(Requirement::Subtraction) =>
+            for &m in marks {
+              let (Term::Functor { ref args, .. }, et) = self.lc.marks[m] else { unreachable!() };
+              let et1 = self.lc.marks[args[0].mark().unwrap()].1;
+              if is_empty_set(self.g, self.lc, &self.terms[et1].eq_class) || {
+                let et2 = self.lc.marks[args[1].mark().unwrap()].1;
+                is_empty_set(self.g, self.lc, &self.terms[et2].eq_class)
+              } {
+                to_union.push((self.lc.marks[self.terms[et].mark].1, et1))
+              }
+            },
+          Some(Requirement::SymmetricDifference) =>
+            for &m in marks {
+              let (Term::Functor { ref args, .. }, et) = self.lc.marks[m] else { unreachable!() };
+              let et2 = self.lc.marks[args[1].mark().unwrap()].1;
+              if is_empty_set(self.g, self.lc, &self.terms[et2].eq_class) {
+                let et1 = self.lc.marks[args[0].mark().unwrap()].1;
+                to_union.push((self.lc.marks[self.terms[et].mark].1, et1))
+              }
+            },
+          // Some(Requirement::Succ) => todo!(), // TODO: numbers
+          // Some(Requirement::RealAdd) if arith => todo!(),
+          // Some(Requirement::RealMult) if arith => todo!(),
+          // Some(Requirement::RealNeg) if arith => todo!(),
+          // Some(Requirement::RealInv) if arith => todo!(),
+          // Some(Requirement::RealDiff) if arith => todo!(),
+          // Some(Requirement::RealDiv) if arith => todo!(),
+          _ => {}
+        }
+      }
+      for (x, y) in to_union.drain(..) {
+        self.union_terms(x, y)?;
+      }
+
+      if !self.clash {
+        return Ok(())
+      }
+
+      loop {
+        self.clash = false;
+        let mut f = |vec: &Vec<EqMarkId>| {
+          for (m1, m2) in vec.iter().copied().tuple_combinations() {
+            let (ref tm1, et1) = self.lc.marks[m1];
+            let (ref tm2, et2) = self.lc.marks[m2];
+            if et1 != et2 {
+              match (tm1, tm2) {
+                (
+                  Term::Functor { nr: mut nr1, args: args1 },
+                  Term::Functor { nr: mut nr2, args: args2 },
+                ) => {
+                  let (nr1, args1) = Term::adjust(nr1, args1, &self.g.constrs);
+                  let (nr2, args2) = Term::adjust(nr2, args2, &self.g.constrs);
+                  if EqMarks.eq_terms(self.g, self.lc, args1, args2) {
+                    to_union.push((et1, et2))
+                  }
+                }
+                (Term::SchFunc { args: args1, .. }, Term::SchFunc { args: args2, .. })
+                | (Term::PrivFunc { args: args1, .. }, Term::PrivFunc { args: args2, .. }) =>
+                  if EqMarks.eq_terms(self.g, self.lc, args1, args2) {
+                    to_union.push((et1, et2))
+                  },
+                (Term::Aggregate { args: args1, .. }, Term::Aggregate { mut nr, args: args2 }) => {
+                  let base = self.g.constrs.aggregate[nr].base as usize;
+                  if EqMarks.eq_terms(self.g, self.lc, &args1[base..], &args2[base..]) {
+                    to_union.push((et1, et2))
+                  }
+                }
+                (Term::Selector { args: args1, .. }, Term::Selector { args: args2, .. }) =>
+                  if EqMarks.eq_term(self.g, self.lc, args1.last().unwrap(), args2.last().unwrap())
+                  {
+                    to_union.push((et1, et2))
+                  },
+                (
+                  Term::Fraenkel { args: args1, scope: sc1, compr: compr1 },
+                  Term::Fraenkel { args: args2, scope: sc2, compr: compr2 },
+                ) =>
+                  if args1.len() == args2.len()
+                    && args1
+                      .iter()
+                      .zip(&**args2)
+                      .all(|(ty1, ty2)| EqMarks.eq_type(self.g, self.lc, ty1, ty2))
+                    && EqMarks.eq_term(self.g, self.lc, sc1, sc2)
+                    && EqMarks.eq_formula(self.g, self.lc, compr1, compr2)
+                  {
+                    to_union.push((et1, et2))
+                  },
+                (Term::Choice { ty: ty1 }, Term::Choice { ty: ty2 }) =>
+                  if EqMarks.eq_type(self.g, self.lc, ty1, ty2) {
+                    to_union.push((et1, et2))
+                  },
+                _ => unreachable!(),
+              }
+            }
+          }
+        };
+        self.constrs.functor.0.values().for_each(&mut f);
+        self.constrs.aggregate.0.values().for_each(&mut f);
+        self.constrs.selector.0.values().for_each(&mut f);
+        self.constrs.priv_func.0.values().for_each(&mut f);
+        self.constrs.sch_func.0.values().for_each(&mut f);
+        f(&self.constrs.fraenkel);
+        f(&self.constrs.choice);
+        for (x, y) in to_union.drain(..) {
+          self.union_terms(x, y)?;
+        }
+        if !self.clash {
+          break
+        }
+      }
+      self.process_reductions()?;
+    }
+  }
+
+  /// RenumEqClasses
+  fn renum_eq_classes(&mut self) -> OrUnsat<()> {
+    // TODO
+    Ok(())
+  }
+
+  /// ContradictionVerify
+  fn contradiction_verify(&mut self) -> OrUnsat<()> {
+    // TODO
+    Ok(())
+  }
+
   pub fn equate(&mut self, atoms: &Atoms, conj: Conjunct<AtomId, bool>) -> OrUnsat<()> {
     self.lc.marks.0.clear();
     let mut eqs = Equals::default();
@@ -824,19 +1184,28 @@ impl<'a> Equalizer<'a> {
     self.add_symm(&pos_bas, &mut neg_bas, PropertyKind::Asymmetry);
     self.add_symm(&neg_bas, &mut pos_bas, PropertyKind::Connectedness);
 
-    let mut eq_pendings = Equals::default();
     let mut to_y_term = vec![];
+    let mut to_yy_term = vec![];
     for (i, ets) in self.terms.enum_iter() {
       let mut j = 0;
       for &m in &ets.eq_class {
         if let Term::Infer(id) = self.lc.marks[m].0 {
-          for &z in &self.lc.infer_const.get_mut()[id].eq_const {
+          let asgn = &self.lc.infer_const.get_mut()[id];
+          for &z in &asgn.eq_const {
             to_y_term.push((i, Term::Infer(z)));
           }
+          let mut tm = asgn.def.clone();
+          ExpandPrivFunc { ctx: &self.g.constrs }.visit_term(&mut tm, 0);
+          to_yy_term.push((i, tm))
         }
       }
     }
+    let mut eq_pendings = Equals::default();
     self.drain_pending(&mut to_y_term, &mut eq_pendings)?;
+    let mut settings = Equals::default();
+    for (i, mut tm) in to_yy_term {
+      settings.insert(i, self.yy_term(tm, i)?)
+    }
 
     // InitEmptyInEqClass
     if let Some(empty_set) = self.g.reqs.empty_set() {
@@ -898,11 +1267,52 @@ impl<'a> Equalizer<'a> {
     }
     let mut eqs = Equals::default();
     self.drain_pending(&mut to_y_term, &mut eqs)?;
+
+    self.process_reductions();
+
+    // InitSuperClusterForComplex
+    if self.g.reqs.complex().is_some() {
+      // TODO: complex
+    }
+
+    // UnionEqualsForNonComplex
     for (x, y) in eqs.0 {
       self.union_terms(x, y)?
     }
 
-    self.process_reductions();
+    // InitPolynomialValues
+    if self.g.reqs.complex().is_some() {
+      // TODO: complex
+    }
+
+    // SubstituteSettings
+    for (x, y) in settings.0 {
+      // TODO: polynomial_values
+      self.union_terms(x, y)?
+    }
+
+    self.clear_polynomial_values()?;
+    // TODO: EquatePolynomialValues
+    self.equate_polynomials()?;
+    self.clear_polynomial_values()?;
+
+    let polys = self.process_linear_equations(&mut eq_pendings)?;
+
+    for (x, y) in eq_pendings.0 {
+      // TODO: polynomial_values
+      self.union_terms(x, y)?
+    }
+    self.equate_polynomials()?;
+    loop {
+      self.clear_polynomial_values()?;
+      self.identities(true)?;
+      self.equate_polynomials()?;
+      if !self.clash {
+        break
+      }
+    }
+    self.renum_eq_classes()?;
+    self.contradiction_verify()?;
 
     Ok(())
   }

@@ -297,15 +297,13 @@ impl ArticleId {
   pub const SELF: ArticleId = ArticleId(0);
 }
 
-const MAX_FUNC_NUM: usize = 1500;
-
 pub struct RequirementIndexes {
   pub fwd: EnumMap<Requirement, u32>,
-  pub rev: [Option<Requirement>; MAX_FUNC_NUM],
+  pub rev: IdxVec<FuncId, Option<Requirement>>,
 }
 
 impl Default for RequirementIndexes {
-  fn default() -> Self { Self { fwd: Default::default(), rev: [None; MAX_FUNC_NUM] } }
+  fn default() -> Self { Self { fwd: Default::default(), rev: IdxVec::new() } }
 }
 
 impl std::fmt::Debug for RequirementIndexes {
@@ -313,54 +311,93 @@ impl std::fmt::Debug for RequirementIndexes {
 }
 
 macro_rules! mk_requirements {
-  ($($id:ident: $ty:ty,)*) => {
+  (@is_func FuncId) => { true };
+  (@is_func $_:tt) => { false };
+  ($($(#[$attr:meta])* $id:ident: $ty:tt,)*) => {
     #[derive(Copy, Clone, Debug, Enum)]
     pub enum Requirement {
-      $($id,)*
+      $($(#[$attr])* $id,)*
     }
-    paste! {
-      impl RequirementIndexes {
+    impl RequirementIndexes {
+      paste! {
         $(
           pub fn [<$id:snake>](&self) -> Option<$ty> { self.get(Requirement::$id).map($ty) }
         )*
+      }
+      pub fn on_func_ids(mut f: impl FnMut(Requirement)) {
+        $(if mk_requirements!(@is_func $ty) { f(Requirement::$id) })*
       }
     }
   }
 }
 mk_requirements! {
+  /// mode `object`
   Any: ModeId,
+  /// mode `set`
   SetMode: ModeId,
+  /// predicate `a = b`
   EqualsTo: PredId,
+  /// predicate `a in b`
   BelongsTo: PredId,
+  /// attribute `x is empty`
   Empty: AttrId,
+  /// functor `{}`
   EmptySet: FuncId,
+  /// mode `Element of A`
   Element: ModeId,
+  /// functor `boole A`
   PowerSet: FuncId,
+  /// predicate `A c= B`
   Inclusion: PredId,
+  /// mode `Subset of A`
   SubDomElem: ModeId,
+  /// functor `REAL`
   RealDom: FuncId,
+  /// functor `NAT`
   NatDom: FuncId,
+  /// functor `x + y`
   RealAdd: FuncId,
+  /// functor `x * y`
   RealMult: FuncId,
+  /// predicate `x <= y`
   LessOrEqual: PredId,
+  /// functor `succ x`
   Succ: FuncId,
+  /// functor `A (\/) B`
   Union: FuncId,
+  /// functor `A (/\) B`
   Intersection: FuncId,
+  /// functor `A (\) B`
   Subtraction: FuncId,
+  /// functor `A (\+\) B`
   SymmetricDifference: FuncId,
+  /// predicate `A meets B`
   Meets: PredId,
+  /// functor `-x`
   RealNeg: FuncId,
+  /// functor `x"`
   RealInv: FuncId,
+  /// functor `x - y`
   RealDiff: FuncId,
+  /// functor `x / y`
   RealDiv: FuncId,
+  /// attribute `x is real`
   Real: AttrId,
+  /// attribute `x is positive`
   Positive: AttrId,
+  /// attribute `x is negative`
   Negative: AttrId,
+  /// attribute `x is natural`
   Natural: AttrId,
+  /// functor `<i>`
   ImaginaryUnit: FuncId,
+  /// attribute `x is complex`
   Complex: AttrId,
+  /// functor `omega`
   Omega: FuncId,
+  /// functor `0`
   ZeroNumber: FuncId,
+  /// attribute `x is zero`
   Zero: AttrId,
 }
 
@@ -375,9 +412,11 @@ impl RequirementIndexes {
   pub fn init_rev(&mut self) {
     assert_eq!(self.fwd[Requirement::Any], ModeId::ANY.0 + 1);
     assert_eq!(self.fwd[Requirement::SetMode], ModeId::SET.0 + 1);
-    for (req, &val) in &self.fwd {
-      self.rev[val as usize] = Some(req);
-    }
+    Self::on_func_ids(|req| {
+      if let Some(r) = self.get(req) {
+        self.rev.get_mut_extending(FuncId(r)).insert(req);
+      }
+    })
   }
 
   pub fn get(&self, req: Requirement) -> Option<u32> { self.fwd[req].checked_sub(1) }
@@ -878,18 +917,33 @@ impl Article {
 
 #[derive(Copy, Clone, Debug, Enum)]
 pub enum PropertyKind {
+  /// Applicable to PredId. Means: `∀ x y, P[x, y] -> P[y, x]`
   Symmetry,
+  /// Applicable to PredId. Means: `∀ x, P[x, x]`
   Reflexivity,
+  /// Applicable to PredId. Means: `∀ x, !P[x, x]`
   Irreflexivity,
+  /// unused
   Associativity,
+  /// unused
   Transitivity,
+  /// Applicable to FuncId. Means: `∀ x y, F(x, y) = F(y, x)`
   Commutativity,
+  /// Applicable to PredId. Means: `∀ x y, !P[x, y] -> P[y, x]`
   Connectedness,
+  /// Applicable to PredId. Means: `∀ x y, P[x, y] -> !P[y, x]`
   Asymmetry,
+  /// Applicable to FuncId. Means: `∀ x, F(x, x) = x`
   Idempotence,
+  /// Applicable to FuncId. Means: `∀ x, F(F(x)) = x`
   Involutiveness,
+  /// Applicable to FuncId. Means: `∀ x, F(F(x)) = F(x)`
   Projectivity,
+  /// Applicable to ModeId. Means: `∃ S:set, ∀ x:M, x ∈ S`
   Sethood,
+  /// Special property for AttrId, not in source text.
+  /// Means "not strict", where "strict" is an adjective on structure types
+  /// meaning no additional fields are present.
   Abstractness,
 }
 
