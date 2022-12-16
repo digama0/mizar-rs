@@ -402,7 +402,7 @@ impl Atoms {
 /// A conjunction is a map from atoms to true or false, so
 /// `{a: true, b: false, c: true}` represents `a /\ ~b /\ c`.
 /// Invariant: the map is not empty when in a `DNF`.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Conjunct<K, V>(pub BTreeMap<K, V>);
 
 impl<K: std::fmt::Debug> std::fmt::Debug for Conjunct<K, bool> {

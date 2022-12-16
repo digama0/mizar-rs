@@ -47,6 +47,11 @@ impl Attrs {
   }
 }
 
+struct AllowedClusters {
+  ccl: Vec<(usize, Attrs)>,
+  fcl: Vec<(usize, Attrs)>,
+}
+
 #[derive(Default)]
 struct ConstrMaps {
   functor: ConstrMap<FuncId>,
@@ -67,8 +72,6 @@ pub struct Equalizer<'a> {
   /// TrmS
   terms: IdxVec<EqTermId, EqTerm>,
   next_eq_class: EqClassId,
-  allowed_ccl: Vec<Attrs>,
-  allowed_fcl: Vec<Attrs>,
   clash: bool,
 }
 
@@ -598,7 +601,7 @@ struct Instantiate<'a> {
 
 impl Instantiate<'_> {
   /// InstantiateTerm(fCluster = self.subst, eTrm = tgt, aTrm = src)
-  fn inst_term(&mut self, src: &Term, tgt: &Term) -> Dnf<LocusId, EqClassId> {
+  fn inst_term(&self, src: &Term, tgt: &Term) -> Dnf<LocusId, EqClassId> {
     match (tgt.unmark(self.lc), src) {
       (Term::Numeral(n), Term::Numeral(n2)) if n == n2 => Dnf::True,
       (Term::Functor { nr: n1, args: args1 }, Term::Functor { nr: n2, args: args2 }) => {
@@ -687,7 +690,7 @@ impl Instantiate<'_> {
     }
   }
 
-  fn inst_terms(&mut self, args1: &[Term], args2: &[Term]) -> Dnf<LocusId, EqClassId> {
+  fn inst_terms(&self, args1: &[Term], args2: &[Term]) -> Dnf<LocusId, EqClassId> {
     assert!(args1.len() == args2.len());
     let mut res = Dnf::True;
     for (a, b) in args1.iter().zip(args2) {
@@ -697,7 +700,7 @@ impl Instantiate<'_> {
   }
 
   /// InstantiateType(cCluster = self.subst, enr = et, aTyp = ty)
-  fn inst_type(&mut self, ty: &Type, et: EqTermId) -> Dnf<LocusId, EqClassId> {
+  fn inst_type(&self, ty: &Type, et: EqTermId) -> Dnf<LocusId, EqClassId> {
     let et = self.lc.marks[self.terms[et].mark].1;
     let mut res = Dnf::FALSE;
     match ty.kind {
@@ -729,7 +732,7 @@ impl Instantiate<'_> {
     res
   }
 
-  fn and_inst_attrs(&mut self, attrs: &Attrs, et: EqTermId, res: &mut Dnf<LocusId, EqClassId>) {
+  fn and_inst_attrs(&self, attrs: &Attrs, et: EqTermId, res: &mut Dnf<LocusId, EqClassId>) {
     let Attrs::Consistent(attrs) = attrs else { unreachable!() };
     let Attrs::Consistent(sc) = &self.terms[et].supercluster else { unreachable!() };
     for a1 in attrs {
@@ -748,7 +751,11 @@ impl Instantiate<'_> {
     }
   }
 
-  fn inst_fcluster(&mut self, cl: &FunctorCluster) { todo!() }
+  fn inst_fcluster(&self, cl: &FunctorCluster) { todo!() }
+  fn inst_ccluster(&self, cl: &ConditionalCluster) -> Dnf<LocusId, EqClassId> {
+    //
+    todo!()
+  }
 }
 
 struct Polynomials;
@@ -756,6 +763,14 @@ struct Polynomials;
 fn is_empty_set(g: &Global, lc: &LocalContext, terms: &[EqMarkId]) -> bool {
   let empty = g.reqs.empty_set().unwrap();
   terms.iter().any(|&m| matches!(lc.marks[m].0, Term::Functor { nr, .. } if nr == empty))
+}
+
+impl Attrs {
+  fn try_enlarge_by(&mut self, ctx: &Constructors, other: &Attrs) -> OrUnsat<bool> {
+    let c = self.attrs().len();
+    self.enlarge_by(ctx, other, Attr::clone);
+    Ok(self.try_attrs()?.len() != c)
+  }
 }
 
 impl<'a> Equalizer<'a> {
@@ -768,8 +783,6 @@ impl<'a> Equalizer<'a> {
       constrs: Default::default(),
       terms: Default::default(),
       next_eq_class: Default::default(),
-      allowed_ccl: Default::default(),
-      allowed_fcl: Default::default(),
       clash: false,
     }
   }
@@ -882,6 +895,24 @@ impl<'a> Equalizer<'a> {
         })
       }),
       _ => None,
+    }
+  }
+
+  fn locate_attrs(&self, inst: &Conjunct<LocusId, EqClassId>, attrs: &Attrs) -> Attrs {
+    match attrs {
+      Attrs::Inconsistent => Attrs::Inconsistent,
+      Attrs::Consistent(attrs) => {
+        let mut res = vec![];
+        for attr in attrs {
+          if let Some(args) =
+            attr.args.iter().map(|tm| self.locate_term(inst, tm).map(Term::EqMark)).collect()
+          {
+            res.push(Attr { nr: attr.nr, pos: attr.pos, args })
+          }
+        }
+        res.sort_by(|a1, a2| a1.cmp_abs(&self.g.constrs, a2, CmpStyle::Strict));
+        Attrs::Consistent(res)
+      }
     }
   }
 
@@ -1169,6 +1200,70 @@ impl<'a> Equalizer<'a> {
     Ok(())
   }
 
+  fn depends_on(&self, etm: &EqTerm, tgt: EqTermId) -> bool {
+    assert!(!self.terms[tgt].eq_class.is_empty());
+    !etm.eq_class.is_empty() && {
+      struct CheckEqTerm<'a> {
+        marks: &'a IdxVec<EqMarkId, (Term, EqTermId)>,
+        terms: &'a IdxVec<EqTermId, EqTerm>,
+        tgt: EqTermId,
+        found: bool,
+      }
+      impl Visit for CheckEqTerm<'_> {
+        fn abort(&self) -> bool { self.found }
+        fn visit_term(&mut self, tm: &Term, depth: u32) {
+          match *tm {
+            Term::EqClass(_) => self.found = true,
+            Term::EqMark(m) => {
+              let (ref tm, et) = self.marks[m];
+              if matches!(tm, Term::EqClass(_)) {
+                self.found |= self.marks[self.terms[et].mark].1 == self.tgt
+              } else {
+                self.super_visit_term(tm, depth);
+              }
+            }
+            _ => self.super_visit_term(tm, depth),
+          }
+        }
+      }
+
+      let mut ck = CheckEqTerm { marks: &self.lc.marks, terms: &self.terms, tgt, found: false };
+      for &m in &etm.eq_class {
+        ck.visit_term(&Term::EqMark(m), 0)
+      }
+      ck.visit_types(&etm.ty_class, 0);
+      ck.visit_attrs(&etm.supercluster, 0);
+      ck.found
+    }
+  }
+
+  fn dependent_classes(&self, et: EqTermId, etm: &EqTerm) -> BTreeSet<EqTermId> {
+    let mut set = BTreeSet::new();
+    if !etm.eq_class.is_empty() {
+      set.extend(self.terms.enum_iter().filter(|p| self.depends_on(p.1, et)).map(|p| p.0));
+    }
+    set
+  }
+
+  fn round_up_one_supercluster(
+    &mut self, et: EqTermId, attrs: &Attrs, inst: &Dnf<LocusId, EqClassId>,
+  ) -> OrUnsat<bool> {
+    match inst {
+      Dnf::True => {
+        let attrs = self.locate_attrs(&Conjunct::default(), attrs);
+        self.terms[et].supercluster.try_enlarge_by(&self.g.constrs, &attrs)
+      }
+      Dnf::Or(conjs) => {
+        let mut added = false;
+        for conj in conjs {
+          let attrs = self.locate_attrs(conj, attrs);
+          added |= self.terms[et].supercluster.try_enlarge_by(&self.g.constrs, &attrs)?;
+        }
+        Ok(added)
+      }
+    }
+  }
+
   pub fn equate(&mut self, atoms: &Atoms, conj: Conjunct<AtomId, bool>) -> OrUnsat<()> {
     self.lc.marks.0.clear();
     let mut eqs = Equals::default();
@@ -1210,16 +1305,6 @@ impl<'a> Equalizer<'a> {
         }
       }
     }
-
-    // InitAllowedClusters
-    self.allowed_ccl = (self.g.clusters.conditional.iter())
-      .map(|cl| self.filter_allowed(&cl.consequent.1))
-      .filter(|attrs| !attrs.attrs().is_empty())
-      .collect();
-    self.allowed_fcl = (self.g.clusters.functor.vec.0.iter())
-      .map(|cl| self.filter_allowed(&cl.consequent.1))
-      .filter(|attrs| !attrs.attrs().is_empty())
-      .collect();
 
     let [mut neg_bas, mut pos_bas] = bas.into_array();
     self.add_symm(&pos_bas, &mut neg_bas, PropertyKind::Asymmetry);
@@ -1639,6 +1724,65 @@ impl<'a> Equalizer<'a> {
       }
     }
 
+    let mut deps: IdxVec<EqTermId, _> =
+      self.terms.enum_iter().map(|(i, etm)| self.dependent_classes(i, etm)).collect();
+    let mut eq_stack: BTreeSet<EqTermId> =
+      self.terms.enum_iter().filter(|p| !p.1.eq_class.is_empty()).map(|p| p.0).collect();
+
+    // InitAllowedClusters
+    let allowed = AllowedClusters {
+      ccl: (self.g.clusters.conditional.iter())
+        .map(|cl| self.filter_allowed(&cl.consequent.1))
+        .enumerate()
+        .filter(|attrs| !attrs.1.attrs().is_empty())
+        .collect(),
+      fcl: (self.g.clusters.functor.vec.0.iter())
+        .map(|cl| self.filter_allowed(&cl.consequent.1))
+        .enumerate()
+        .filter(|attrs| !attrs.1.attrs().is_empty())
+        .collect(),
+    };
+
+    while let Some(i) = eq_stack.pop_first() {
+      // RoundUpSuperCluster
+      if !self.terms[i].eq_class.is_empty() {
+        continue
+      }
+      let mut progress = false;
+      loop {
+        let mut added = false;
+        for (mut j, attrs) in &allowed.ccl {
+          let cl = &self.g.clusters.conditional.vec[j];
+          let inst = self.instantiate(&cl.primary);
+          let mut r = inst.inst_type(&cl.ty, i);
+          inst.and_inst_attrs(&cl.antecedent, i, &mut r);
+          added |= self.round_up_one_supercluster(i, attrs, &r)?;
+        }
+        for (mut j, attrs) in &allowed.fcl {
+          let cl = &self.g.clusters.functor.vec[j];
+          let inst = self.instantiate(&cl.primary);
+          let mut r = inst.inst_term(&cl.term, &Term::EqMark(self.terms[i].mark));
+          if let Some(ty) = &cl.ty {
+            r.mk_and(inst.inst_type(ty, i))
+          }
+          added |= self.round_up_one_supercluster(i, attrs, &r)?;
+        }
+        if !added {
+          break
+        }
+        progress = true
+      }
+      if progress {
+        for (j, etm) in self.terms.enum_iter() {
+          if !etm.eq_class.is_empty() && self.depends_on(&self.terms[i], j) {
+            deps[j].insert(i);
+          }
+        }
+        for j in self.dependent_classes(i, &self.terms[i]) {
+          eq_stack.insert(j);
+        }
+      }
+    }
     Ok(())
   }
 }
