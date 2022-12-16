@@ -1,6 +1,7 @@
 use crate::types::*;
 use crate::{CmpStyle, MizPath, RequirementIndexes};
 use enum_map::Enum;
+use quick_xml::escape::unescape;
 use quick_xml::events::{BytesStart, Event};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -83,8 +84,7 @@ impl MizPath {
   //   Ok(AdHocReader(BufReader::new(self.open(ext)?)))
   // }
 
-  /// two_clusters: false = InMMLFileObj or InEnvFileObj, true = InVRFFileObj
-  fn open_xml<'a>(
+  fn open_xml_no_pi<'a>(
     &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, two_clusters: bool,
   ) -> io::Result<(XmlReader<'a>, Vec<u8>)> {
     let mut r = quick_xml::Reader::from_reader(BufReader::new(self.open(ext)?));
@@ -93,8 +93,134 @@ impl MizPath {
     r.expand_empty_elements(true);
     r.check_end_names(true);
     assert!(matches!(r.read_event(&mut buf).unwrap(), Event::Decl(_)));
-    assert!(matches!(r.read_event(&mut buf).unwrap(), Event::PI(_)));
     Ok((XmlReader { r, two_clusters, ctx: ctx.into() }, buf))
+  }
+
+  /// two_clusters: false = InMMLFileObj or InEnvFileObj, true = InVRFFileObj
+  fn open_xml<'a>(
+    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, two_clusters: bool,
+  ) -> io::Result<(XmlReader<'a>, Vec<u8>)> {
+    let mut r = self.open_xml_no_pi(ctx, ext, two_clusters)?;
+    assert!(matches!(r.0.r.read_event(&mut r.1).unwrap(), Event::PI(_)));
+    Ok(r)
+  }
+
+  pub fn read_dcx(&self, syms: &mut Symbols) -> io::Result<()> {
+    let (mut r, mut buf) = self.open_xml_no_pi(MaybeMut::None, "dcx", false)?;
+    let buf = &mut buf;
+    assert!(matches!(r.read_event(buf), Event::Start(e) if e.local_name() == b"Symbols"));
+    while let Event::Start(e) = r.read_event(buf) {
+      assert!(e.local_name() == b"Symbol");
+      let (mut kind, mut nr, mut name) = Default::default();
+      for attr in e.attributes() {
+        let attr = attr.unwrap();
+        match attr.key {
+          b"kind" => kind = r.get_attr_unescaped(&attr.value).chars().next().unwrap() as u8,
+          b"nr" => nr = r.get_attr::<u32>(&attr.value),
+          b"name" => name = r.get_attr_unescaped(&attr.value),
+          _ => {}
+        }
+      }
+      r.end_tag(buf);
+      let kind = match kind {
+        b'O' => SymbolKind::Functor(FuncSymId(nr - 1)),
+        b'K' | b'[' | b'{' => SymbolKind::LeftBrk(LeftBrkSymId(nr - 1)),
+        b'L' | b']' | b'}' => SymbolKind::RightBrk(RightBrkSymId(nr - 1)),
+        b'R' | b'=' => SymbolKind::Pred(PredSymId(nr - 1)), // '=' is its own token
+        b'M' | 0xE0 => SymbolKind::Mode(ModeSymId(nr - 1)), // 0xE0 = "set", which is in its own token class
+        b'V' => SymbolKind::Attr(AttrSymId(nr - 1)),
+        b'G' => SymbolKind::Struct(StructSymId(nr - 1)),
+        b'U' => SymbolKind::Selector(SelSymId(nr - 1)),
+        _ => continue, // the dcx file has a bunch of other crap too
+      };
+      syms.0.push((kind, name));
+    }
+    assert!(matches!(r.read_event(buf), Event::Eof));
+    Ok(())
+  }
+
+  pub fn read_formats(&self, ext: &str, formats: &mut Formats) -> io::Result<()> {
+    let (mut r, mut buf) = self.open_xml_no_pi(MaybeMut::None, ext, false)?;
+    let buf = &mut buf;
+    assert!(matches!(r.read_event(buf), Event::Start(e) if e.local_name() == b"Formats"));
+    while let Event::Start(e) = r.read_event(buf) {
+      match e.local_name() {
+        b"Format" => {
+          assert!(formats.priority.is_empty(), "expected <Priority>");
+          let (mut kind, mut sym, mut args, mut left, mut rsym) = Default::default();
+          for attr in e.attributes() {
+            let attr = attr.unwrap();
+            match attr.key {
+              b"kind" => kind = unescape(&attr.value).unwrap()[0],
+              b"symbolnr" => sym = r.get_attr::<u32>(&attr.value) - 1,
+              b"argnr" => args = Some(r.get_attr(&attr.value)),
+              b"leftargnr" => left = Some(r.get_attr(&attr.value)),
+              b"rightsymbolnr" => rsym = Some(r.get_attr::<u32>(&attr.value) - 1),
+              _ => {}
+            }
+          }
+          let args = args.unwrap();
+          formats.formats.push(match kind {
+            b'G' => Format::Aggr(FormatAggr { sym: StructSymId(sym), args }),
+            b'J' => Format::ForgetFunc(FormatForgetFunc { sym: StructSymId(sym), args }),
+            b'L' => Format::Struct(FormatStructMode { sym: StructSymId(sym), args }),
+            b'M' => Format::Mode(FormatMode { sym: ModeSymId(sym), args }),
+            b'U' => Format::Sel(FormatSel { sym: SelSymId(sym), args }),
+            b'V' => Format::Attr(FormatAttr { sym: AttrSymId(sym), args }),
+            b'O' => {
+              let left = left.unwrap();
+              Format::Func(FormatFunc::Func { sym: FuncSymId(sym), left, right: args - left })
+            }
+            b'R' => {
+              let left = left.unwrap();
+              Format::Pred(FormatPred { sym: PredSymId(sym), left, right: args - left })
+            }
+            b'K' => Format::Func(FormatFunc::Bracket {
+              lsym: LeftBrkSymId(sym),
+              rsym: RightBrkSymId(rsym.unwrap()),
+              args,
+            }),
+            _ => panic!("unknown format kind"),
+          });
+        }
+        b"Priority" => {
+          let (mut kind, mut sym, mut value) = Default::default();
+          for attr in e.attributes() {
+            let attr = attr.unwrap();
+            match attr.key {
+              b"kind" => kind = attr.value[0],
+              b"symbolnr" => sym = r.get_attr(&attr.value),
+              b"value" => value = Some(r.get_attr(&attr.value)),
+              _ => {}
+            }
+          }
+          let kind = match kind {
+            b'O' => PriorityKind::Functor(FuncSymId(sym)),
+            b'K' => PriorityKind::LeftBrk(LeftBrkSymId(sym)),
+            b'L' => PriorityKind::RightBrk(RightBrkSymId(sym)),
+            _ => panic!("unknown format kind"),
+          };
+          formats.priority.push((kind, value.unwrap()));
+        }
+        _ => panic!("expected <Format> or <Priority>"),
+      }
+      r.end_tag(buf);
+    }
+    assert!(matches!(r.read_event(buf), Event::Eof));
+    Ok(())
+  }
+
+  pub fn read_eno(&self, notas: &mut Notations) -> io::Result<()> {
+    let (mut r, mut buf) = self.open_xml(MaybeMut::None, "eno", false)?;
+    let buf = &mut buf;
+    assert!(matches!(r.read_event(buf), Event::Start(e) if e.local_name() == b"Notations"));
+    while let Event::Start(e) = r.read_event(buf) {
+      assert!(e.local_name() == b"Pattern");
+      let attrs = r.parse_pattern_attrs(&e);
+      notas.0.push(r.parse_pattern_body(buf, attrs))
+    }
+    assert!(matches!(r.read_event(buf), Event::Eof));
+    Ok(())
   }
 
   pub fn read_atr(&self, constrs: &mut Constructors) -> io::Result<()> {
@@ -287,6 +413,10 @@ impl XmlReader<'_> {
     self.r.decode_without_bom(value).unwrap().parse().ok().unwrap()
   }
 
+  fn get_attr_unescaped(&self, value: &[u8]) -> String {
+    String::from_utf8(unescape(value).unwrap().into()).unwrap()
+  }
+
   fn read_event<'a>(&mut self, buf: &'a mut Vec<u8>) -> Event<'a> {
     buf.clear();
     let e = self.r.read_event(buf).unwrap();
@@ -462,6 +592,71 @@ impl XmlReader<'_> {
     let attr = e.attributes().next().unwrap().unwrap();
     assert!(attr.key == b"nr");
     self.get_attr(&attr.value)
+  }
+
+  fn parse_pattern_attrs(
+    &mut self, e: &BytesStart<'_>,
+  ) -> (u32, Article, u8, FormatId, u32, Option<u32>, Option<u32>, bool) {
+    assert!(e.local_name() == b"Pattern");
+    let (mut abs_nr, mut article, mut kind, mut fmt, mut constr, mut redefines, mut nr) =
+      Default::default();
+    let mut pos = true;
+    for attr in e.attributes() {
+      let attr = attr.unwrap();
+      match attr.key {
+        b"nr" => abs_nr = self.get_attr(&attr.value),
+        b"aid" => article = Article::from_bytes(&attr.value),
+        b"kind" => kind = attr.value[0],
+        b"formatnr" => fmt = FormatId(self.get_attr::<u32>(&attr.value) - 1),
+        b"constrnr" => constr = self.get_attr(&attr.value),
+        b"antonymic" => pos = &*attr.value != b"true",
+        b"relnr" => nr = self.get_attr::<u32>(&attr.value).checked_sub(1),
+        b"redefnr" => redefines = self.get_attr::<u32>(&attr.value).checked_sub(1),
+        _ => {}
+      }
+    }
+    (abs_nr, article, kind, fmt, constr, redefines, nr, pos)
+  }
+
+  fn parse_pattern_body(
+    &mut self, buf: &mut Vec<u8>,
+    (abs_nr, article, kind, fmt, constr, redefines, nr, pos): (
+      u32,
+      Article,
+      u8,
+      FormatId,
+      u32,
+      Option<u32>,
+      Option<u32>,
+      bool,
+    ),
+  ) -> Pattern {
+    let primaries = self.parse_arg_types(buf);
+    assert!(matches!(self.read_event(buf),
+      Event::Start(e) if e.local_name() == b"Visible"));
+    let visible = self.parse_int_list(buf, |n| n as u8 - 1);
+    let expansion = if let Event::Start(e) = self.read_event(buf) {
+      assert!(e.local_name() == b"Expansion");
+      let ty = Box::new(self.parse_type(buf).unwrap());
+      self.end_tag(buf);
+      self.end_tag(buf);
+      Some(ty)
+    } else {
+      None
+    };
+    let kind = match (kind, constr.checked_sub(1)) {
+      (b'M', Some(nr)) => PatternKind::Mode(ModeId(nr)),
+      (b'L', Some(nr)) => PatternKind::Struct(StructId(nr)),
+      (b'V', Some(nr)) => PatternKind::Attr(AttrId(nr)),
+      (b'R', Some(nr)) => PatternKind::Pred(PredId(nr)),
+      (b'K', Some(nr)) => PatternKind::Func(FuncId(nr)),
+      (b'U', Some(nr)) => PatternKind::Sel(SelId(nr)),
+      (b'G', Some(nr)) => PatternKind::Aggr(AggrId(nr)),
+      (b'J', Some(nr)) => PatternKind::ForgetFunc(nr),
+      (b'M', None) => PatternKind::ExpandableMode,
+      _ => panic!("unknown pattern kind"),
+    };
+    Pattern { kind, article, abs_nr, fmt, redefines, primaries, visible, pos, expansion }
   }
 
   fn parse_constructor_attrs(
@@ -1070,7 +1265,7 @@ enum ArticleElem {
   Correctness(Correctness),
   JustifiedProperty(JustifiedProperty),
   Constructor(ConstructorDef),
-  Pattern,
+  Pattern(Pattern),
   BlockThesis(Formula),
   Proposition(Proposition),
   CaseOrSupposeBlock(CaseOrSupposeBlock),
@@ -1096,12 +1291,12 @@ impl From<ArticleElem> for Item {
       ArticleElem::Conclusion(s) => Item::Conclusion(s),
       ArticleElem::PerCases(it) => Item::PerCases(it),
       ArticleElem::Registration(it) => Item::Registration(it),
+      ArticleElem::Pattern(it) => Item::Pattern(it),
       ArticleElem::CorrCond(_)
       | ArticleElem::SimpleCorrCond(_)
       | ArticleElem::Correctness(_)
       | ArticleElem::JustifiedProperty(_)
       | ArticleElem::Constructor(_)
-      | ArticleElem::Pattern
       | ArticleElem::BlockThesis(_)
       | ArticleElem::Proposition(_)
       | ArticleElem::PerCasesJustification(..)
@@ -1365,9 +1560,9 @@ impl ArticleParser<'_> {
           let end = loop {
             let e = self.parse_elem();
             match e {
-              ArticleElem::AuxiliaryItem(_) | ArticleElem::Let(_) => items.push(e.into()),
+              ArticleElem::AuxiliaryItem(_) | ArticleElem::Let(_) | ArticleElem::Pattern(_) =>
+                items.push(e.into()),
               ArticleElem::Proposition(prop) => items.push(self.finish_proposition(prop)),
-              ArticleElem::Pattern => {}
               ArticleElem::EndPosition(pos) => break pos,
               _ => panic!("unexpected definition item"),
             }
@@ -1600,7 +1795,7 @@ impl ArticleParser<'_> {
                 _ => panic!("expected cluster"),
               }
             };
-            let (mut conds, mut corr, mut state) = (vec![], None, false);
+            let (mut conds, mut corr, mut patts, mut state) = (vec![], None, vec![], false);
             loop {
               match self.parse_elem() {
                 ArticleElem::CorrCond(it) if !state => conds.push(it),
@@ -1608,12 +1803,15 @@ impl ArticleParser<'_> {
                   state = true;
                   corr = Some(it)
                 }
-                ArticleElem::Pattern => state = true,
+                ArticleElem::Pattern(it) => {
+                  state = true;
+                  patts.push(it)
+                }
                 ArticleElem::End => break,
                 _ => panic!("expected correctness condition or pattern"),
               }
             }
-            ArticleElem::DefStruct(DefStruct { pos, label, constrs, cl, conds, corr })
+            ArticleElem::DefStruct(DefStruct { pos, label, constrs, cl, conds, corr, patts })
           } else {
             let kind = match (expand, kind) {
               (false, b'V') => DefinitionKind::PrAttr,
@@ -1623,8 +1821,8 @@ impl ArticleParser<'_> {
               (true, b'M') => DefinitionKind::ExpandMode,
               _ => panic!("unexpected definition kind"),
             };
-            let (mut conds, mut corr, mut props, mut constr, mut state) =
-              (vec![], None, vec![], None, 0u8);
+            let (mut conds, mut corr, mut props, mut constr, mut patts, mut state) =
+              (vec![], None, vec![], None, vec![], 0u8);
             loop {
               match self.parse_elem() {
                 ArticleElem::CorrCond(it) if state == 0 => conds.push(it),
@@ -1640,12 +1838,15 @@ impl ArticleParser<'_> {
                   state = 2;
                   constr = Some(it)
                 }
-                ArticleElem::Pattern if state <= 2 => state = 3,
+                ArticleElem::Pattern(it) if state <= 2 => {
+                  state = 3;
+                  patts.push(it)
+                }
                 ArticleElem::End => break,
                 _ => panic!("expected correctness condition or pattern"),
               }
             }
-            let d = Definition { pos, label, redef, kind, props, conds, corr, constr };
+            let d = Definition { pos, label, redef, kind, props, conds, corr, constr, patts };
             ArticleElem::Definition(d)
           }
         }
@@ -1775,8 +1976,8 @@ impl ArticleParser<'_> {
           ArticleElem::Constructor(self.r.parse_constructor_body(&mut self.buf, attrs))
         }
         b"Pattern" => {
-          self.r.read_to_end(b"Pattern", &mut self.buf);
-          ArticleElem::Pattern
+          let attrs = self.r.parse_pattern_attrs(&e);
+          ArticleElem::Pattern(self.r.parse_pattern_body(&mut self.buf, attrs))
         }
         b"BlockThesis" => {
           let f = loop {

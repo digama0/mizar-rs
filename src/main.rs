@@ -6,6 +6,7 @@ use crate::types::*;
 use crate::verify::Verifier;
 use enum_map::EnumMap;
 use equate::EqTerm;
+use format::Formatter;
 use itertools::EitherOrBoth;
 use once_cell::sync::Lazy;
 use std::cell::RefCell;
@@ -20,6 +21,7 @@ use std::sync::Mutex;
 
 mod checker;
 mod equate;
+mod format;
 mod parser;
 mod retain_mut_from;
 mod types;
@@ -2048,6 +2050,8 @@ pub struct Global {
 
 #[derive(Default)]
 pub struct LocalContext {
+  // here for easy printing
+  formatter: Formatter,
   /// LocArgTyp
   // FIXME: this is non-owning in mizar
   locus_ty: IdxVec<LocusId, Type>,
@@ -2196,6 +2200,8 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
     Type::SET
   };
   let mut v = Verifier::new(reqs, nonzero_type, path.0);
+  let old = v.lc.start_stash();
+  v.lc.formatter.init(path);
   path.read_atr(&mut v.g.constrs).unwrap();
   path.read_ecl(&v.g.constrs, &mut v.g.clusters).unwrap();
   let mut attrs = Attrs::default();
@@ -2297,6 +2303,7 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
     // eprintln!("item {i}");
     v.read_item(it);
   }
+  LocalContext::end_stash(old);
 }
 
 pub fn stat(s: &'static str) {

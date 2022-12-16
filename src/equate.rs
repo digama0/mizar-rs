@@ -648,12 +648,12 @@ impl Instantiate<'_> {
           // TODO: numeric_value
           // &Term::Numeral(n) if numeric_value => {}
           Term::Numeral(_) => Dnf::FALSE,
-          Term::Functor { nr: n2, args: args2 } => {
-            let (n2, args2) = Term::adjust(*n2, args2, &self.g.constrs);
+          Term::Functor { nr: n1, args: args1 } => {
+            let (n1, args1) = Term::adjust(*n1, args1, &self.g.constrs);
             let mut res = Dnf::FALSE;
             for &m in &self.terms[et].eq_class {
-              if let Term::Functor { nr: n1, args: args1 } = &self.lc.marks[m].0 {
-                let (n1, args1) = Term::adjust(*n1, args1, &self.g.constrs);
+              if let Term::Functor { nr: n2, args: args2 } = &self.lc.marks[m].0 {
+                let (n2, args2) = Term::adjust(*n2, args2, &self.g.constrs);
                 if n1 == n2 {
                   res.mk_or(&self.inst_terms(args1, args2))
                 }
@@ -661,10 +661,10 @@ impl Instantiate<'_> {
             }
             res
           }
-          Term::Selector { nr: n2, args: args2 } => {
+          Term::Selector { nr: n1, args: args1 } => {
             let mut res = Dnf::True;
             for &m in &self.terms[et].eq_class {
-              if let Term::Selector { nr: n1, args: args1 } = &self.lc.marks[m].0 {
+              if let Term::Selector { nr: n2, args: args2 } = &self.lc.marks[m].0 {
                 if n1 == n2 {
                   res.mk_or(&self.inst_terms(args1, args2))
                 }
@@ -672,10 +672,10 @@ impl Instantiate<'_> {
             }
             res
           }
-          Term::Aggregate { nr: n2, args: args2 } => {
+          Term::Aggregate { nr: n1, args: args1 } => {
             let mut res = Dnf::True;
             for &m in &self.terms[et].eq_class {
-              if let Term::Aggregate { nr: n1, args: args1 } = &self.lc.marks[m].0 {
+              if let Term::Aggregate { nr: n2, args: args2 } = &self.lc.marks[m].0 {
                 if n1 == n2 {
                   res.mk_or(&self.inst_terms(args1, args2))
                 }
@@ -686,7 +686,7 @@ impl Instantiate<'_> {
           _ => unreachable!(),
         }
       }
-      _ => unreachable!(),
+      r => unreachable!("{r:?}"),
     }
   }
 
@@ -927,18 +927,17 @@ impl<'a> Equalizer<'a> {
             let inst = self
               .instantiate(&red.primary)
               .inst_term(&red.terms[0], &Term::EqMark(self.terms[et].mark));
-            match inst {
-              Dnf::True => panic!("unreachable?"),
-              Dnf::Or(conjs) =>
-                if let Some(conj) = conjs.first() {
-                  let m = if let Term::Functor { nr, args } = &red.terms[1] {
-                    let (nr, args) = Term::adjust(*nr, args, &self.g.constrs);
-                    self.locate_term(conj, &Term::Functor { nr, args: args.to_vec().into() })
-                  } else {
-                    self.locate_term(conj, &red.terms[1])
-                  };
-                  self.union_terms(et, self.lc.marks[m.unwrap()].1)?;
-                },
+            if let Some(conj) = match inst {
+              Dnf::True => Some(Conjunct::TRUE),
+              Dnf::Or(conjs) => conjs.into_iter().next(),
+            } {
+              let m = if let Term::Functor { nr, args } = &red.terms[1] {
+                let (nr, args) = Term::adjust(*nr, args, &self.g.constrs);
+                self.locate_term(&conj, &Term::Functor { nr, args: args.to_vec().into() })
+              } else {
+                self.locate_term(&conj, &red.terms[1])
+              };
+              self.union_terms(et, self.lc.marks[m.unwrap()].1)?;
             }
           }
         }
@@ -1242,7 +1241,7 @@ impl<'a> Equalizer<'a> {
   ) -> OrUnsat<bool> {
     match inst {
       Dnf::True => {
-        let attrs = self.locate_attrs(&Conjunct::default(), attrs);
+        let attrs = self.locate_attrs(&Conjunct::TRUE, attrs);
         self.terms[et].supercluster.try_enlarge_by(&self.g.constrs, &attrs)
       }
       Dnf::Or(conjs) => {
@@ -1594,7 +1593,7 @@ impl<'a> Equalizer<'a> {
           let mut to_push = vec![];
           for ty in &self.terms[et2].ty_class {
             if let TypeKind::Mode(n) = ty.kind {
-              let (n, args) = Type::adjust(n, args, &self.g.constrs);
+              let (n, args) = Type::adjust(n, &ty.args, &self.g.constrs);
               if self.g.reqs.element() == Some(n) {
                 let [arg3] = args else { unreachable!() };
                 for &m in &self.terms[self.lc.marks[arg3.mark().unwrap()].1].eq_class {

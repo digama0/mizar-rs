@@ -1,6 +1,8 @@
-use crate::VisitMut;
+use crate::{LocalContext, VisitMut};
 use enum_map::{Enum, EnumMap};
 use paste::paste;
+use std::borrow::Borrow;
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::marker::PhantomData;
@@ -37,7 +39,7 @@ impl<A: ?Sized + Clone> CowBox<'_, A> {
 }
 
 /// A trait for newtyped integers, that can be used as index types in vectors and sets.
-pub trait Idx: Copy + Eq + std::hash::Hash + Ord {
+pub trait Idx: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug {
   /// Convert from `T` to `usize`
   fn into_usize(self) -> usize;
   /// Convert from `usize` to `T`
@@ -553,32 +555,6 @@ impl Term {
   }
 }
 
-impl std::fmt::Debug for Term {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    match self {
-      Self::Locus(nr) => write!(f, "k{}", nr.0),
-      Self::Bound(nr) => write!(f, "b{}", nr.0),
-      Self::Constant(nr) => write!(f, "c{}", nr.0),
-      Self::EqClass(nr) => write!(f, "e{}", nr.0),
-      Self::EqMark(nr) => write!(f, "i{}", nr.0),
-      Self::Infer(nr) => write!(f, "?{}", nr.0),
-      Self::SchFunc { nr, args } => Self::debug_args("S", nr.0, args, f),
-      Self::Aggregate { nr, args } => Self::debug_args("G", nr.0, args, f),
-      Self::PrivFunc { nr, args, .. } => Self::debug_args("$F", nr.0, args, f),
-      Self::Functor { nr, args } => Self::debug_args("F", nr.0, args, f),
-      Self::Numeral(nr) => nr.fmt(f),
-      Self::Selector { nr, args } => Self::debug_args("Sel", nr.0, args, f),
-      Self::FreeVar(nr) => write!(f, "v{}", nr.0),
-      Self::LambdaVar(nr) => write!(f, "l{nr}"),
-      Self::Qua { value, ty } => write!(f, "({value:?} qua {ty:?})"),
-      Self::Choice { ty } => write!(f, "(the {ty:?})"),
-      Self::Fraenkel { args, scope, compr } =>
-        write!(f, "{{{scope:?} where {args:?} : {compr:?}}}"),
-      Self::It => write!(f, "it"),
-    }
-  }
-}
-
 impl<V: VisitMut> Visitable<V> for Term {
   fn visit_d(&mut self, v: &mut V, d: u32) { v.visit_term(self, d) }
 }
@@ -632,18 +608,6 @@ impl Type {
       TypeKind::Mode(_) => panic!("not a struct"),
       TypeKind::Struct(n) => n,
     }
-  }
-}
-
-impl std::fmt::Debug for Type {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "{:?}", self.attrs.0)?;
-    // write!(f, "|{:?}", self.attrs.1)?;
-    write!(f, "{:?}", self.kind)?;
-    if !self.args.is_empty() {
-      write!(f, "{:?}", self.args)?;
-    }
-    Ok(())
   }
 }
 
@@ -745,33 +709,6 @@ impl<V: VisitMut> Visitable<V> for Formula {
   fn visit_d(&mut self, v: &mut V, d: u32) { v.visit_formula(self, d) }
 }
 
-impl std::fmt::Debug for Formula {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    match self {
-      Self::SchPred { nr, args } => Term::debug_args("SP", nr.0, args, f),
-      Self::Pred { nr, args } => Term::debug_args("P", nr.0, args, f),
-      Self::Attr { nr, args } => Term::debug_args("A", nr.0, args, f),
-      Self::PrivPred { nr, args, value } => Term::debug_args("$P", nr.0, args, f),
-      Self::Is { term, ty } => write!(f, "({term:?} is {ty:?})"),
-      Self::Neg { f: fmla } => write!(f, "¬{fmla:?}"),
-      Self::And { args } => match &**args {
-        [] | [_] => unreachable!(),
-        [fs @ .., fmla] => {
-          write!(f, "(")?;
-          for fm in fs {
-            write!(f, "{fm:?} ∧ ")?
-          }
-          write!(f, "{fmla:?})")
-        }
-      },
-      Self::ForAll { dom, scope } => write!(f, "∀ {dom:?}, {scope:?}"),
-      Self::FlexAnd { orig, terms, expansion } => write!(f, "{:?} ∧ ... ∧ {:?}", orig[0], orig[1]),
-      Self::True => write!(f, "true"),
-      Self::Thesis => write!(f, "thesis"),
-    }
-  }
-}
-
 impl Formula {
   pub fn discr(&self) -> u8 {
     match self {
@@ -850,20 +787,6 @@ impl Attrs {
     }
   }
 }
-impl std::fmt::Debug for Attrs {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    match self {
-      Attrs::Inconsistent => write!(f, "F+"),
-      Attrs::Consistent(attrs) => {
-        for a in attrs {
-          write!(f, "{a:?}+")?
-        }
-        Ok(())
-      }
-    }
-  }
-}
-
 impl Default for Attrs {
   fn default() -> Self { Self::EMPTY }
 }
@@ -883,18 +806,6 @@ impl Attr {
   pub fn new0(nr: AttrId, pos: bool) -> Self { Self { nr, pos, args: Box::new([]) } }
 }
 
-impl std::fmt::Debug for Attr {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    if !self.pos {
-      write!(f, "-")?
-    }
-    write!(f, "A{}", self.nr.0)?;
-    if !self.args.is_empty() {
-      write!(f, "{:?}", self.args)?;
-    }
-    Ok(())
-  }
-}
 impl<V: VisitMut> Visitable<V> for Attr {
   fn visit_d(&mut self, v: &mut V, d: u32) { self.args.visit_d(v, d) }
 }
@@ -1627,6 +1538,7 @@ pub struct Definition {
   pub corr: Option<Correctness>,
   pub props: Vec<JustifiedProperty>,
   pub constr: Option<ConstructorDef>,
+  pub patts: Vec<Pattern>,
 }
 
 #[derive(Debug)]
@@ -1637,6 +1549,7 @@ pub struct DefStruct {
   pub cl: ClusterDecl,
   pub conds: Vec<CorrCond>,
   pub corr: Option<Correctness>,
+  pub patts: Vec<Pattern>,
 }
 
 #[derive(Clone)]
@@ -1828,6 +1741,7 @@ pub enum Item {
   Definition(Definition),
   DefStruct(DefStruct),
   Definiens(Definiens),
+  Pattern(Pattern),
   Block {
     kind: BlockKind,
     pos: (Position, Position),
@@ -1835,3 +1749,202 @@ pub enum Item {
     items: Vec<Item>,
   },
 }
+
+mk_id! {
+  FuncSymId,
+  LeftBrkSymId,
+  RightBrkSymId,
+  PredSymId,
+  ModeSymId,
+  AttrSymId,
+  StructSymId,
+  SelSymId,
+}
+
+#[derive(Hash, PartialEq, Eq, Debug)]
+pub enum SymbolKind {
+  Functor(FuncSymId),
+  LeftBrk(LeftBrkSymId),
+  RightBrk(RightBrkSymId),
+  Pred(PredSymId),
+  Mode(ModeSymId),
+  Attr(AttrSymId),
+  Struct(StructSymId),
+  Selector(SelSymId),
+}
+impl From<FuncSymId> for SymbolKind {
+  fn from(v: FuncSymId) -> Self { Self::Functor(v) }
+}
+impl From<LeftBrkSymId> for SymbolKind {
+  fn from(v: LeftBrkSymId) -> Self { Self::LeftBrk(v) }
+}
+impl From<RightBrkSymId> for SymbolKind {
+  fn from(v: RightBrkSymId) -> Self { Self::RightBrk(v) }
+}
+impl From<PredSymId> for SymbolKind {
+  fn from(v: PredSymId) -> Self { Self::Pred(v) }
+}
+impl From<ModeSymId> for SymbolKind {
+  fn from(v: ModeSymId) -> Self { Self::Mode(v) }
+}
+impl From<AttrSymId> for SymbolKind {
+  fn from(v: AttrSymId) -> Self { Self::Attr(v) }
+}
+impl From<StructSymId> for SymbolKind {
+  fn from(v: StructSymId) -> Self { Self::Struct(v) }
+}
+impl From<SelSymId> for SymbolKind {
+  fn from(v: SelSymId) -> Self { Self::Selector(v) }
+}
+
+impl SymbolKind {
+  fn discr(&self) -> u8 {
+    match self {
+      SymbolKind::Functor(_) => b'O',
+      SymbolKind::LeftBrk(_) => b'K',
+      SymbolKind::RightBrk(_) => b'L',
+      SymbolKind::Pred(_) => b'R',
+      SymbolKind::Mode(_) => b'M',
+      SymbolKind::Attr(_) => b'V',
+      SymbolKind::Struct(_) => b'G',
+      SymbolKind::Selector(_) => b'U',
+    }
+  }
+}
+
+#[derive(Debug, Default)]
+pub struct Symbols(pub Vec<(SymbolKind, String)>);
+
+#[derive(Clone, Copy, Debug)]
+pub struct FormatAggr {
+  pub sym: StructSymId,
+  pub args: u8,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FormatForgetFunc {
+  pub sym: StructSymId,
+  pub args: u8,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct FormatStructMode {
+  pub sym: StructSymId,
+  pub args: u8,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct FormatMode {
+  pub sym: ModeSymId,
+  pub args: u8,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct FormatAttr {
+  pub sym: AttrSymId,
+  pub args: u8,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FormatSel {
+  pub sym: SelSymId,
+  pub args: u8,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum FormatFunc {
+  Func { sym: FuncSymId, left: u8, right: u8 },
+  Bracket { lsym: LeftBrkSymId, rsym: RightBrkSymId, args: u8 },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FormatPred {
+  pub sym: PredSymId,
+  pub left: u8,
+  pub right: u8,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Format {
+  Aggr(FormatAggr),
+  ForgetFunc(FormatForgetFunc), // unused
+  Struct(FormatStructMode),
+  Mode(FormatMode),
+  Sel(FormatSel),
+  Attr(FormatAttr),
+  Func(FormatFunc),
+  Pred(FormatPred),
+}
+
+impl Format {
+  pub fn discr(&self) -> u8 {
+    match self {
+      Format::Aggr(_) => b'G',
+      Format::ForgetFunc(_) => b'J',
+      Format::Struct(_) => b'L',
+      Format::Mode(_) => b'M',
+      Format::Sel(_) => b'U',
+      Format::Attr(_) => b'V',
+      Format::Func(FormatFunc::Func { .. }) => b'O',
+      Format::Func(FormatFunc::Bracket { .. }) => b'K',
+      Format::Pred(_) => b'R',
+    }
+  }
+}
+
+#[derive(Debug)]
+pub enum PriorityKind {
+  Functor(FuncSymId),
+  LeftBrk(LeftBrkSymId),
+  RightBrk(RightBrkSymId),
+}
+
+mk_id! {
+  FormatId,
+}
+#[derive(Debug, Default)]
+pub struct Formats {
+  pub formats: IdxVec<FormatId, Format>,
+  pub priority: Vec<(PriorityKind, u32)>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum PatternKind {
+  Mode(ModeId),
+  ExpandableMode,
+  Struct(StructId),
+  Attr(AttrId),
+  Pred(PredId),
+  Func(FuncId),
+  Sel(SelId),
+  Aggr(AggrId),
+  ForgetFunc(u32), // unused
+}
+
+impl PatternKind {
+  fn discr(&self) -> u8 {
+    match self {
+      PatternKind::Mode(_) | PatternKind::ExpandableMode => b'M',
+      PatternKind::Struct(_) => b'L',
+      PatternKind::Attr(_) => b'V',
+      PatternKind::Pred(_) => b'R',
+      PatternKind::Func(_) => b'K',
+      PatternKind::Sel(_) => b'U',
+      PatternKind::Aggr(_) => b'G',
+      PatternKind::ForgetFunc(_) => b'j',
+    }
+  }
+}
+
+#[derive(Debug)]
+pub struct Pattern {
+  pub kind: PatternKind,
+  pub article: Article,
+  pub abs_nr: u32,
+  pub fmt: FormatId,
+  pub redefines: Option<u32>,
+  pub primaries: Box<[Type]>,
+  pub visible: Box<[u8]>,
+  pub pos: bool,
+  pub expansion: Option<Box<Type>>,
+}
+
+#[derive(Debug, Default)]
+pub struct Notations(pub Vec<Pattern>);

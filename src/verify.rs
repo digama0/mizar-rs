@@ -149,10 +149,10 @@ impl Verifier {
   }
 
   pub fn read_item(&mut self, it: &Item) {
-    // set_verbose(self.items >= 697);
+    // set_verbose(self.items >= 8);
     // eprint!("item[{}]: ", self.items);
     // if verbose() {
-    //   eprintln!("{:#?}", it);
+    //   eprintln!("{it:#?}");
     // } else {
     //   match it {
     //     Item::Let(_) => eprintln!("Let"),
@@ -230,7 +230,8 @@ impl Verifier {
       Item::Theorem { prop, just } => self.read_just_prop(prop, just),
       Item::DefTheorem { kind, prop } => self.read_proposition(prop),
       Item::Canceled(_) => {}
-      Item::Definition(Definition { pos, label, redef, kind, conds, corr, props, constr }) => {
+      Item::Definition(d) => {
+        let Definition { pos, label, redef, kind, conds, corr, props, constr, patts } = d;
         self.read_corr_conds(conds, corr);
         for JustifiedProperty { prop, just, .. } in props {
           self.read_just_prop(prop, just)
@@ -238,13 +239,15 @@ impl Verifier {
         if let Some(constr) = constr {
           self.pending_defs.push(PendingDef::Constr(self.g.constrs.push(self.intern(constr))));
         }
+        self.lc.formatter.extend(patts)
       }
-      Item::DefStruct(DefStruct { pos, label, constrs, cl, conds, corr }) => {
+      Item::DefStruct(DefStruct { pos, label, constrs, cl, conds, corr, patts }) => {
         for c in constrs {
           self.pending_defs.push(PendingDef::Constr(self.g.constrs.push(self.intern(c))));
         }
         self.read_cluster_decl(cl);
         self.read_corr_conds(conds, corr);
+        self.lc.formatter.extend(patts)
       }
       Item::Definiens(df) => self.read_definiens(df),
       Item::Block { kind, pos, label, items } => {
@@ -255,6 +258,7 @@ impl Verifier {
           }
         });
       }
+      Item::Pattern(pat) => self.lc.formatter.push(pat),
     }
   }
 

@@ -45,7 +45,7 @@ impl<'a> Checker<'a> {
   }
 
   pub fn justify(&mut self, premises: Vec<&'a Formula>) {
-    // set_verbose(self.idx >= 69);
+    // set_verbose(self.idx >= 102);
     self.lc.term_cache.get_mut().open_scope();
     let infer_const = self.lc.infer_const.borrow().len();
     let fixed_var = self.lc.fixed_var.len();
@@ -405,15 +405,31 @@ impl Atoms {
 #[derive(Clone, Default)]
 pub struct Conjunct<K, V>(pub BTreeMap<K, V>);
 
+impl<K, V> Conjunct<K, V> {
+  pub const TRUE: Self = Self(BTreeMap::new());
+}
+
 impl<K: std::fmt::Debug> std::fmt::Debug for Conjunct<K, bool> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     let mut it = self.0.iter();
     if let Some((a, &b)) = it.next() {
-      if b {
-        write!(f, "{}a{:?}", if b { "" } else { "¬" }, a)?;
-      }
+      write!(f, "{}a{:?}", if b { "" } else { "¬" }, a)?;
       for (a, &b) in it {
         write!(f, " ∧ {}a{:?}", if b { "" } else { "¬" }, a)?;
+      }
+      Ok(())
+    } else {
+      write!(f, "false")
+    }
+  }
+}
+impl<K: std::fmt::Debug, V: Idx> std::fmt::Debug for Conjunct<K, V> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let mut it = self.0.iter();
+    if let Some((a, b)) = it.next() {
+      write!(f, "a{:?} := v{:?}", a, b.into_usize())?;
+      for (a, &b) in it {
+        write!(f, " ∧ a{:?} := v{:?}", a, b.into_usize())?;
       }
       Ok(())
     } else {
@@ -454,6 +470,17 @@ pub enum Dnf<K, V> {
   True,
   /// A collection of conjunctions connected by OR.
   Or(Vec<Conjunct<K, V>>),
+}
+
+impl<K, V> std::fmt::Debug for Dnf<K, V>
+where Conjunct<K, V>: std::fmt::Debug
+{
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      Self::True => write!(f, "True"),
+      Self::Or(arg0) => f.debug_tuple("Or").field(arg0).finish(),
+    }
+  }
 }
 
 impl<K: Ord + Clone, V: PartialEq + Clone> Dnf<K, V> {
