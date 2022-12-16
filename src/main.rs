@@ -40,7 +40,7 @@ pub struct MizPath(Article, PathBuf);
 
 impl MizPath {
   fn new(s: &str) -> Self {
-    Self(Article::from_bytes(s.as_bytes()), format!("../mizshare/mml/{}", s).into())
+    Self(Article::from_bytes(s.as_bytes()), format!("../mizshare/mml/{s}").into())
   }
 
   fn open(&self, ext: &str) -> io::Result<File> {
@@ -2338,7 +2338,7 @@ fn main() {
   for (i, s) in std::fs::read_to_string("../mizshare/mml.lar").unwrap().lines().enumerate().skip(1)
   //.skip(1).take(1)
   {
-    println!("{}: {}", i, s);
+    println!("{i}: {s}");
     let path = MizPath::new(s);
     load(&path, &mut stats);
   }

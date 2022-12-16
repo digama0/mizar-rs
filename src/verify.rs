@@ -322,9 +322,7 @@ impl Verifier {
         let block_thesis = self.intern(block_thesis);
         assert!(
           ().eq_formula(&self.g, &self.lc, thesis, &block_thesis),
-          "\n{:?}\n !=\n{:?}",
-          thesis,
-          block_thesis
+          "\n{thesis:?}\n !=\n{block_thesis:?}"
         );
         self.scope(*label, false, |this| {
           for it in items {
@@ -455,7 +453,7 @@ impl Verifier {
     }
     for (i, c) in self.g.constrs.functor.0.iter().enumerate() {
       if !with(infer_const, |ck| ck.visit_type(&c.ty, 0)) {
-        panic!("bad functor: F{:?}: {:?}", i, c)
+        panic!("bad functor: F{i:?}: {c:?}")
       }
     }
     for c in &self.lc.term_cache.borrow().terms {
@@ -463,7 +461,7 @@ impl Verifier {
         ck.visit_term(&c.0, 0);
         ck.visit_type(&c.1, 0)
       }) {
-        panic!("bad term cache: {:?}", c)
+        panic!("bad term cache: {c:?}")
       }
     }
     for (i, c) in ic.enum_iter() {
@@ -471,7 +469,7 @@ impl Verifier {
         ck.visit_term(&c.def, 0);
         ck.visit_type(&c.ty, 0)
       }) {
-        panic!("bad infer const: ?{i:?} := {:?}", c)
+        panic!("bad infer const: ?{i:?} := {c:?}")
       }
     }
   }

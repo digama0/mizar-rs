@@ -294,7 +294,7 @@ impl XmlReader<'_> {
     e
   }
 
-  fn read_to_end<'a>(&mut self, tag: &[u8], buf: &'a mut Vec<u8>) {
+  fn read_to_end(&mut self, tag: &[u8], buf: &mut Vec<u8>) {
     buf.clear();
     self.r.read_to_end(tag, buf).unwrap()
   }
@@ -576,7 +576,7 @@ impl XmlReader<'_> {
       b'V' => Some(ConstrKind::Attr(AttrId(constr_nr))),
       b'K' => Some(ConstrKind::Func(FuncId(constr_nr))),
       b'M' => Some(ConstrKind::Mode(ModeId(constr_nr))),
-      c => panic!("bad constr kind {}", c),
+      c => panic!("bad constr kind {c}"),
     }
   }
 
@@ -1333,7 +1333,7 @@ impl ArticleParser<'_> {
               | ArticleElem::Canceled(_) => items.push(e.into()),
               ArticleElem::Proposition(prop) => items.push(self.finish_proposition(prop)),
               ArticleElem::EndPosition(pos) => break pos,
-              e => panic!("unexpected definition item {:?}", e),
+              e => panic!("unexpected definition item {e:?}"),
             }
           };
           self.r.end_tag(&mut self.buf);

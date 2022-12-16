@@ -533,7 +533,7 @@ impl Term {
   fn debug_args(
     kind: &str, nr: u32, args: &[Term], f: &mut std::fmt::Formatter<'_>,
   ) -> std::fmt::Result {
-    write!(f, "{}{}", kind, nr)?;
+    write!(f, "{kind}{nr}")?;
     let mut s = f.debug_tuple("");
     for arg in args {
       s.field(arg);
@@ -569,11 +569,11 @@ impl std::fmt::Debug for Term {
       Self::Numeral(nr) => nr.fmt(f),
       Self::Selector { nr, args } => Self::debug_args("Sel", nr.0, args, f),
       Self::FreeVar(nr) => write!(f, "v{}", nr.0),
-      Self::LambdaVar(nr) => write!(f, "l{}", nr),
-      Self::Qua { value, ty } => write!(f, "({:?} qua {:?})", value, ty),
-      Self::Choice { ty } => write!(f, "(the {:?})", ty),
+      Self::LambdaVar(nr) => write!(f, "l{nr}"),
+      Self::Qua { value, ty } => write!(f, "({value:?} qua {ty:?})"),
+      Self::Choice { ty } => write!(f, "(the {ty:?})"),
       Self::Fraenkel { args, scope, compr } =>
-        write!(f, "{{{:?} where {:?} : {:?}}}", scope, args, compr),
+        write!(f, "{{{scope:?} where {args:?} : {compr:?}}}"),
       Self::It => write!(f, "it"),
     }
   }
@@ -752,19 +752,19 @@ impl std::fmt::Debug for Formula {
       Self::Pred { nr, args } => Term::debug_args("P", nr.0, args, f),
       Self::Attr { nr, args } => Term::debug_args("A", nr.0, args, f),
       Self::PrivPred { nr, args, value } => Term::debug_args("$P", nr.0, args, f),
-      Self::Is { term, ty } => write!(f, "({:?} is {:?})", term, ty),
-      Self::Neg { f: fmla } => write!(f, "¬{:?}", fmla),
+      Self::Is { term, ty } => write!(f, "({term:?} is {ty:?})"),
+      Self::Neg { f: fmla } => write!(f, "¬{fmla:?}"),
       Self::And { args } => match &**args {
         [] | [_] => unreachable!(),
         [fs @ .., fmla] => {
           write!(f, "(")?;
           for fm in fs {
-            write!(f, "{:?} ∧ ", fm)?
+            write!(f, "{fm:?} ∧ ")?
           }
-          write!(f, "{:?})", fmla)
+          write!(f, "{fmla:?})")
         }
       },
-      Self::ForAll { dom, scope } => write!(f, "∀ {:?}, {:?}", dom, scope),
+      Self::ForAll { dom, scope } => write!(f, "∀ {dom:?}, {scope:?}"),
       Self::FlexAnd { orig, terms, expansion } => write!(f, "{:?} ∧ ... ∧ {:?}", orig[0], orig[1]),
       Self::True => write!(f, "true"),
       Self::Thesis => write!(f, "thesis"),
@@ -856,7 +856,7 @@ impl std::fmt::Debug for Attrs {
       Attrs::Inconsistent => write!(f, "F+"),
       Attrs::Consistent(attrs) => {
         for a in attrs {
-          write!(f, "{:?}+", a)?
+          write!(f, "{a:?}+")?
         }
         Ok(())
       }
@@ -1650,7 +1650,7 @@ impl std::fmt::Debug for Proposition {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(f, "[{:?}] ", self.pos)?;
     if let Some(id) = self.label {
-      write!(f, "L{:?}: ", id)?;
+      write!(f, "L{id:?}: ")?;
     }
     write!(f, "{:?}", self.f)
   }

@@ -1237,14 +1237,6 @@ impl<'a> Equalizer<'a> {
     }
   }
 
-  fn dependent_classes(&self, et: EqTermId, etm: &EqTerm) -> BTreeSet<EqTermId> {
-    let mut set = BTreeSet::new();
-    if !etm.eq_class.is_empty() {
-      set.extend(self.terms.enum_iter().filter(|p| self.depends_on(p.1, et)).map(|p| p.0));
-    }
-    set
-  }
-
   fn round_up_one_supercluster(
     &mut self, et: EqTermId, attrs: &Attrs, inst: &Dnf<LocusId, EqClassId>,
   ) -> OrUnsat<bool> {
@@ -1724,8 +1716,6 @@ impl<'a> Equalizer<'a> {
       }
     }
 
-    let mut deps: IdxVec<EqTermId, _> =
-      self.terms.enum_iter().map(|(i, etm)| self.dependent_classes(i, etm)).collect();
     let mut eq_stack: BTreeSet<EqTermId> =
       self.terms.enum_iter().filter(|p| !p.1.eq_class.is_empty()).map(|p| p.0).collect();
 
@@ -1772,17 +1762,16 @@ impl<'a> Equalizer<'a> {
         }
         progress = true
       }
+
       if progress {
         for (j, etm) in self.terms.enum_iter() {
-          if !etm.eq_class.is_empty() && self.depends_on(&self.terms[i], j) {
-            deps[j].insert(i);
+          if self.depends_on(etm, i) {
+            eq_stack.insert(j);
           }
-        }
-        for j in self.dependent_classes(i, &self.terms[i]) {
-          eq_stack.insert(j);
         }
       }
     }
+
     Ok(())
   }
 }
