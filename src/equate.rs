@@ -815,6 +815,23 @@ impl<'a> Equalizer<'a> {
     }
   }
 
+  fn check_refl(&self, atoms: &Atoms, prop: PropertyKind, ineqs: &mut Ineqs) -> OrUnsat<()> {
+    for f in &atoms.0 .0 {
+      if let Formula::Pred { mut nr, args } = f {
+        let pred = &self.g.constrs.predicate[nr];
+        if pred.properties.get(prop) {
+          let et1 = self.lc.marks[args[pred.arg1 as usize].mark().unwrap()].1;
+          let et2 = self.lc.marks[args[pred.arg2 as usize].mark().unwrap()].1;
+          if et1 == et2 {
+            return Err(Unsat)
+          }
+          ineqs.push(self.terms[et1].mark, self.terms[et2].mark);
+        }
+      }
+    }
+    Ok(())
+  }
+
   fn drain_pending(
     &mut self, to_y_term: &mut Vec<(EqTermId, Term)>, eq_pendings: &mut Equals,
   ) -> OrUnsat<()> {
@@ -1175,6 +1192,22 @@ impl<'a> Equalizer<'a> {
     Ok(())
   }
 
+  fn nonempty_nonzero_of_ne(&mut self, et1: EqTermId, et2: EqTermId) -> OrUnsat<()> {
+    if let Some(empty) = self.g.reqs.empty() {
+      // a != b, a is empty => b is non empty
+      self.insert_non_attr0(et1, et2, empty)?;
+      // a != b, b is empty => a is non empty
+      self.insert_non_attr0(et2, et1, empty)?;
+    }
+    if let Some(zero) = self.g.reqs.zero() {
+      // a != b, a is zero => b is non zero
+      self.insert_non_attr0(et1, et2, zero)?;
+      // a != b, b is zero => a is non zero
+      self.insert_non_attr0(et2, et1, zero)?;
+    }
+    Ok(())
+  }
+
   fn check_neg_attr(&self, nr: AttrId, args: &[Term]) -> OrUnsat<()> {
     let (last, args1) = args.split_last().unwrap();
     if let Some(attr) = self.terms[self.lc.marks[last.mark().unwrap()].1]
@@ -1494,18 +1527,7 @@ impl<'a> Equalizer<'a> {
         if c.properties.get(PropertyKind::Reflexivity) {
           let et1 = self.lc.marks[args[c.arg1 as usize].mark().unwrap()].1;
           let et2 = self.lc.marks[args[c.arg2 as usize].mark().unwrap()].1;
-          if let Some(empty) = self.g.reqs.empty() {
-            // a != b, a is empty => b is non empty
-            self.insert_non_attr0(et1, et2, empty)?;
-            // a != b, b is empty => a is non empty
-            self.insert_non_attr0(et2, et1, empty)?;
-          }
-          if let Some(zero) = self.g.reqs.zero() {
-            // a != b, a is zero => b is non zero
-            self.insert_non_attr0(et1, et2, zero)?;
-            // a != b, b is zero => a is non zero
-            self.insert_non_attr0(et2, et1, zero)?;
-          }
+          self.nonempty_nonzero_of_ne(et1, et2)?;
         }
       }
     }
@@ -1781,6 +1803,176 @@ impl<'a> Equalizer<'a> {
       }
     }
 
+    // PreUnification
+    let mut ineqs = vec![];
+    for f in &neg_bas.0 .0 {
+      if let Formula::Pred { nr, args } = f {
+        if self.g.reqs.equals_to() == Some(*nr) {
+          let (a, b) = (args[0].mark().unwrap(), args[1].mark().unwrap());
+          match a.cmp(&b) {
+            Ordering::Less => ineqs.push((a, b)),
+            Ordering::Equal => unreachable!(), // this is unsat, but we should have already detected
+            Ordering::Greater => ineqs.push((b, a)),
+          }
+        }
+      }
+    }
+    let mut ineqs = Ineqs { processed: ineqs.len(), ineqs };
+    self.check_refl(&pos_bas, PropertyKind::Irreflexivity, &mut ineqs)?;
+    self.check_refl(&neg_bas, PropertyKind::Reflexivity, &mut ineqs)?;
+    for (etm1, etm2) in
+      self.terms.0.iter().filter(|etm| !etm.eq_class.is_empty()).tuple_combinations()
+    {
+      if etm1.supercluster.contradicts(&self.g.constrs, &etm2.supercluster) {
+        ineqs.push(etm1.mark, etm2.mark)
+      }
+    }
+    for f in &neg_bas.0 .0 {
+      match f {
+        Formula::Pred { nr, args } => {
+          let (nr, args) = Formula::adjust_pred(*nr, args, &self.g.constrs);
+          let pred = &self.g.constrs.predicate[nr];
+          if pred.properties.get(PropertyKind::Reflexivity) {
+            let et1 = self.lc.marks[args[pred.arg1 as usize].mark().unwrap()].1;
+            let et2 = self.lc.marks[args[pred.arg2 as usize].mark().unwrap()].1;
+            for &m1 in &self.terms[et1].eq_class {
+              let tm1 = &self.lc.marks[m1].0;
+              match tm1 {
+                Term::Functor { .. }
+                | Term::SchFunc { .. }
+                | Term::PrivFunc { .. }
+                | Term::Aggregate { .. }
+                | Term::Selector { .. } => {}
+                _ => continue,
+              }
+              for &m2 in &self.terms[et2].eq_class {
+                let (args1, args2) = match (tm1, &self.lc.marks[m2].0) {
+                  (
+                    Term::Functor { nr: n1, args: args1 },
+                    Term::Functor { nr: n2, args: args2 },
+                  ) if n1 == n2 => (args1, args2),
+                  (
+                    Term::SchFunc { nr: n1, args: args1 },
+                    Term::SchFunc { nr: n2, args: args2 },
+                  ) if n1 == n2 => (args1, args2),
+                  (
+                    Term::PrivFunc { nr: n1, args: args1, .. },
+                    Term::PrivFunc { nr: n2, args: args2, .. },
+                  ) if n1 == n2 => (args1, args2),
+                  (
+                    Term::Aggregate { nr: n1, args: args1 },
+                    Term::Aggregate { nr: n2, args: args2 },
+                  ) if n1 == n2 => (args1, args2),
+                  (
+                    Term::Selector { nr: n1, args: args1 },
+                    Term::Selector { nr: n2, args: args2 },
+                  ) if n1 == n2 => (args1, args2),
+                  _ => continue,
+                };
+                ineqs.push_if_one_diff(args1, args2)
+              }
+            }
+          }
+          if self.g.reqs.equals_to() != Some(nr) {
+            for f2 in &pos_bas.0 .0 {
+              if let Formula::Pred { nr: nr2, args: args2 } = f2 {
+                let (nr2, args) = Formula::adjust_pred(*nr2, args2, &self.g.constrs);
+                if nr == nr2 {
+                  ineqs.push_if_one_diff(args, args2)
+                }
+              }
+            }
+          }
+        }
+        Formula::SchPred { .. } | Formula::Attr { .. } | Formula::PrivPred { .. } => {
+          for f2 in &pos_bas.0 .0 {
+            let (args1, args2) = match (f, f2) {
+              (
+                Formula::SchPred { nr: n1, args: args1 },
+                Formula::SchPred { nr: n2, args: args2 },
+              ) if n1 == n2 => (args1, args2),
+              (Formula::Attr { nr: n1, args: args1 }, Formula::Attr { nr: n2, args: args2 })
+                if n1 == n2 =>
+                (args1, args2),
+              (
+                Formula::PrivPred { nr: n1, args: args1, .. },
+                Formula::PrivPred { nr: n2, args: args2, .. },
+              ) if n1 == n2 => (args1, args2),
+              _ => continue,
+            };
+            ineqs.push_if_one_diff(args1, args2)
+          }
+        }
+        Formula::Is { term, ty } => {
+          let adj1 = match ty.kind {
+            TypeKind::Mode(n) => Some(Type::adjust(n, &ty.args, &self.g.constrs)),
+            TypeKind::Struct(_) => None,
+          };
+          let m1 = term.mark().unwrap();
+          let et1 = self.lc.marks[m1].1;
+          for ty2 in &self.terms[et1].ty_class {
+            if let (Some((n1, args1)), TypeKind::Mode(n2)) = (adj1, ty2.kind) {
+              let (n2, args2) = Type::adjust(n2, &ty.args, &self.g.constrs);
+              if n1 == n2 {
+                ineqs.push_if_one_diff(args1, args2)
+              }
+            }
+          }
+          for (et2, etm2) in self.terms.enum_iter() {
+            if et2 != et1
+              && !etm2.eq_class.is_empty()
+              && etm2.ty_class.iter().any(|ty2| EqMarks.eq_radices(self.g, self.lc, ty, ty2))
+            {
+              ineqs.push(m1, etm2.mark);
+            }
+          }
+        }
+        _ => {}
+      }
+    }
+    ineqs.process(self, &mut neg_bas)?;
+
+    Ok(())
+  }
+}
+
+struct Ineqs {
+  ineqs: Vec<(EqMarkId, EqMarkId)>,
+  processed: usize,
+}
+
+impl Ineqs {
+  fn push(&mut self, a: EqMarkId, b: EqMarkId) {
+    let (a, b) = match a.cmp(&b) {
+      Ordering::Less => (a, b),
+      Ordering::Equal => unreachable!(),
+      Ordering::Greater => (b, a),
+    };
+    if !self.ineqs.contains(&(a, b)) {
+      self.ineqs.push((a, b));
+    }
+  }
+
+  fn push_if_one_diff(&mut self, tms1: &[Term], tms2: &[Term]) {
+    let mut it = tms1
+      .iter()
+      .zip(tms2)
+      .map(|(a, b)| (a.mark().unwrap(), b.mark().unwrap()))
+      .filter(|(a, b)| a != b);
+    if let (Some((a, b)), None) = (it.next(), it.next()) {
+      self.push(a, b)
+    }
+  }
+
+  fn process(&mut self, eq: &mut Equalizer<'_>, neg_bas: &mut Atoms) -> OrUnsat<()> {
+    for &(a, b) in &self.ineqs[self.processed..] {
+      eq.nonempty_nonzero_of_ne(eq.lc.marks[a].1, eq.lc.marks[b].1)?;
+      neg_bas.0.push(Formula::Pred {
+        nr: eq.g.reqs.equals_to().unwrap(),
+        args: Box::new([Term::EqMark(a), Term::EqMark(b)]),
+      });
+    }
+    self.processed = self.ineqs.len();
     Ok(())
   }
 }

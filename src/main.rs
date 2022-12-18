@@ -1550,6 +1550,14 @@ impl Attrs {
     }
   }
 
+  /// ContradictoryAttrs(aClu1 = self, aClu2 = other)
+  pub fn contradicts(&self, ctx: &Constructors, other: &Self) -> bool {
+    let Self::Consistent(this) = self else { return true };
+    let Self::Consistent(other) = other else { return true };
+    itertools::merge_join_by(this, other, |a, b| a.cmp_abs(ctx, b, CmpStyle::Strict))
+      .any(|item| matches!(item, EitherOrBoth::Both(attr1, attr2) if attr1.pos != attr2.pos))
+  }
+
   /// MCondClList.RoundUpCluster(aCluster = self, aTyp = ty)
   /// MAttrCollection.RoundUpWith(self = self, aTyp = ty)
   pub fn round_up_with(&mut self, g: &Global, lc: &LocalContext, ty: &Type) {

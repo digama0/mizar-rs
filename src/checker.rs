@@ -93,7 +93,6 @@ impl<'a> Checker<'a> {
       let sat = (|| {
         Equalizer::new(self).equate(&atoms, &f)?;
         // vprintln!("failed equalizer: {f:?}");
-        self.pre_unification()?;
         let unifier = self.unifier();
         unifier.unify(self)
       })();
@@ -109,8 +108,6 @@ impl<'a> Checker<'a> {
     self.lc.infer_const.get_mut().truncate(infer_const);
     self.lc.term_cache.get_mut().close_scope();
   }
-
-  fn pre_unification(&self) -> OrUnsat<()> { Ok(()) }
 
   fn unifier(&self) -> Unifier { Unifier {} }
 }
