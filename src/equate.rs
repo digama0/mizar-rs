@@ -13,12 +13,12 @@ use std::ops::ControlFlow;
 
 #[derive(Debug)]
 pub struct EqTerm {
-  id: EqClassId,
+  pub id: EqClassId,
   /// Term is EqMark(mark)
-  mark: EqMarkId,
-  eq_class: Vec<EqMarkId>,
-  ty_class: Vec<Type>,
-  supercluster: Attrs,
+  pub mark: EqMarkId,
+  pub eq_class: Vec<EqMarkId>,
+  pub ty_class: Vec<Type>,
+  pub supercluster: Attrs,
   // TODO: polynomial_values
 }
 
@@ -65,14 +65,14 @@ struct ConstrMaps {
 }
 
 pub struct Equalizer<'a> {
-  g: &'a Global,
-  lc: &'a mut LocalContext,
+  pub g: &'a Global,
+  pub lc: &'a mut LocalContext,
   reductions: &'a [Reduction],
   infers: IdxVec<InferId, Option<EqMarkId>>,
   constrs: ConstrMaps,
   /// TrmS
-  terms: IdxVec<EqTermId, EqTerm>,
-  next_eq_class: EqClassId,
+  pub terms: IdxVec<EqTermId, EqTerm>,
+  pub next_eq_class: EqClassId,
   clash: bool,
 }
 
@@ -139,17 +139,24 @@ impl Equate for EqMarks {
 }
 
 impl Term {
-  fn mark(&self) -> Option<EqMarkId> {
+  pub fn mark(&self) -> Option<EqMarkId> {
     match *self {
       Term::EqMark(m) => Some(m),
       _ => None,
     }
   }
 
-  fn unmark<'a>(&'a self, lc: &'a LocalContext) -> &'a Term {
+  pub fn unmark<'a>(&'a self, lc: &'a LocalContext) -> &'a Term {
     match *self {
       Term::EqMark(m) => &lc.marks[m].0,
       _ => self,
+    }
+  }
+
+  pub fn class(&self) -> Option<EqClassId> {
+    match *self {
+      Term::EqClass(ec) => Some(ec),
+      _ => None,
     }
   }
 }
@@ -1298,7 +1305,9 @@ impl<'a> Equalizer<'a> {
     }
   }
 
-  pub fn equate(&mut self, atoms: &Atoms, conj: &Conjunct<AtomId, bool>) -> OrUnsat<()> {
+  pub fn equate(
+    &mut self, atoms: &Atoms, conj: &Conjunct<AtomId, bool>,
+  ) -> OrUnsat<EqualizerResult> {
     self.lc.marks.0.clear();
     let mut eqs = Equals::default();
     let mut bas = EnumMap::<bool, Atoms>::default();
@@ -1876,7 +1885,7 @@ impl<'a> Equalizer<'a> {
           if self.g.reqs.equals_to() != Some(nr) {
             for f2 in &pos_bas.0 .0 {
               if let Formula::Pred { nr: nr2, args: args2 } = f2 {
-                let (nr2, args) = Formula::adjust_pred(*nr2, args2, &self.g.constrs);
+                let (nr2, args2) = Formula::adjust_pred(*nr2, args2, &self.g.constrs);
                 if nr == nr2 {
                   ineqs.push_if_one_diff(args, args2)
                 }
@@ -1912,7 +1921,7 @@ impl<'a> Equalizer<'a> {
           let et1 = self.lc.marks[m1].1;
           for ty2 in &self.terms[et1].ty_class {
             if let (Some((n1, args1)), TypeKind::Mode(n2)) = (adj1, ty2.kind) {
-              let (n2, args2) = Type::adjust(n2, &ty.args, &self.g.constrs);
+              let (n2, args2) = Type::adjust(n2, &ty2.args, &self.g.constrs);
               if n1 == n2 {
                 ineqs.push_if_one_diff(args1, args2)
               }
@@ -1932,8 +1941,13 @@ impl<'a> Equalizer<'a> {
     }
     ineqs.process(self, &mut neg_bas)?;
 
-    Ok(())
+    Ok(EqualizerResult { neg_bas, pos_bas })
   }
+}
+
+pub struct EqualizerResult {
+  pub pos_bas: Atoms,
+  pub neg_bas: Atoms,
 }
 
 struct Ineqs {

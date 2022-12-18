@@ -1,6 +1,7 @@
 use crate::equate::Equalizer;
 use crate::retain_mut_from::RetainMutFrom;
 use crate::types::*;
+use crate::unify::Unifier;
 use crate::verify::Verifier;
 use crate::{
   inst, set_verbose, vprintln, Equate, ExpandPrivFunc, FixedVar, Global, InternConst, LocalContext,
@@ -91,10 +92,10 @@ impl<'a> Checker<'a> {
         vprintln!("falsifying: {f:?}");
       }
       let sat = (|| {
-        Equalizer::new(self).equate(&atoms, &f)?;
+        let mut eq = Equalizer::new(self);
+        let res = eq.equate(&atoms, &f)?;
         // vprintln!("failed equalizer: {f:?}");
-        let unifier = self.unifier();
-        unifier.unify(self)
+        Unifier::new(eq).unify(res)
       })();
       // assert!(sat.is_err(), "failed to justify");
       // if sat.is_ok() {
@@ -108,8 +109,6 @@ impl<'a> Checker<'a> {
     self.lc.infer_const.get_mut().truncate(infer_const);
     self.lc.term_cache.get_mut().close_scope();
   }
-
-  fn unifier(&self) -> Unifier { Unifier {} }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -247,7 +246,7 @@ impl Expand<'_> {
 }
 
 impl Formula {
-  fn distribute_quantifiers(&mut self, ctx: &Constructors, depth: u32) {
+  pub fn distribute_quantifiers(&mut self, ctx: &Constructors, depth: u32) {
     loop {
       match self {
         Formula::Neg { f: arg } => {
@@ -586,9 +585,4 @@ impl Atoms {
       }
     }
   }
-}
-
-struct Unifier {}
-impl Unifier {
-  fn unify(&self, ck: &mut Checker) -> OrUnsat<()> { Ok(()) }
 }

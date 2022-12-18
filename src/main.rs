@@ -26,6 +26,7 @@ mod format;
 mod parser;
 mod retain_mut_from;
 mod types;
+mod unify;
 mod verify;
 
 static MIZFILES: Lazy<PathBuf> = Lazy::new(|| {
