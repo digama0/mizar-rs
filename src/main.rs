@@ -1,5 +1,6 @@
 #![allow(clippy::needless_range_loop)]
 #![allow(unused)]
+#![warn(unused_parens)]
 #![deny(unused_must_use)]
 
 use crate::types::*;
@@ -289,6 +290,7 @@ impl Term {
   }
 
   /// ReconAggregTrm
+  /// performs eta expansion of aggregates: `foo` ~> `(# foo.1 , foo.2 #)`
   fn mk_aggr(g: &Global, s: StructId, arg: &Term, ty: &Type) -> Term {
     assert!(!g.constrs.struct_mode[s].fields.is_empty());
     let nr = g.constrs.struct_mode[s].aggr.unwrap();
@@ -1835,6 +1837,7 @@ impl<'a> InternConst<'a> {
   /// CollectEqualsConst
   /// precondition: tm must be Term::Functor
   fn collect_equals_const(&mut self, tm: &Term, depth: u32) -> BTreeSet<InferId> {
+    // vprintln!("collect_equals_const {tm:?}");
     let mut eq = BTreeSet::new();
     if self.equals_expansion_level >= 3 {
       return eq
@@ -1894,6 +1897,7 @@ impl VisitMut for InternConst<'_> {
   fn visit_term(&mut self, tm: &mut Term, depth: u32) {
     let only_constants = std::mem::replace(&mut self.only_constants, true);
     let equals_expansion_level = std::mem::replace(&mut self.equals_expansion_level, 0);
+    // vprintln!("InternConst {tm:?}");
     match tm {
       Term::Locus(_) | Term::Bound(_) | Term::FreeVar(_) | Term::LambdaVar(_) =>
         self.only_constants = false,
@@ -2032,8 +2036,8 @@ impl<V: VisitMut> Visitable<V> for Assignment {
 
 #[derive(Debug)]
 struct FuncDef {
-  value: Term,
   ty: Type,
+  value: Term,
 }
 
 #[derive(Debug)]
@@ -2200,9 +2204,9 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
     Type::SET
   };
   let mut v = Verifier::new(reqs, nonzero_type, path.0);
-  let old = v.lc.start_stash();
-  v.lc.formatter.init(path);
   path.read_atr(&mut v.g.constrs).unwrap();
+  let old = v.lc.start_stash();
+  v.lc.formatter.init(&v.g.constrs, path);
   path.read_ecl(&v.g.constrs, &mut v.g.clusters).unwrap();
   let mut attrs = Attrs::default();
   if let Some(zero) = v.g.reqs.zero() {
@@ -2299,8 +2303,12 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
         | Item::Block { .. }
     ));
     // stat(s);
-    set_verbose(i >= 210);
-    // eprintln!("item {i}");
+    if let Some(n) = FIRST_VERBOSE_TOP_ITEM {
+      set_verbose(i >= n);
+    }
+    if TOP_ITEM_HEADER {
+      eprintln!("item {i}: {it:?}");
+    }
     v.read_item(it);
   }
   LocalContext::end_stash(old);
@@ -2337,17 +2345,32 @@ fn print_stats_and_exit() {
   std::process::exit(0)
 }
 
+const TOP_ITEM_HEADER: bool = false;
+const ITEM_HEADER: bool = false;
+const CHECKER_INPUTS: bool = false;
+const CHECKER_HEADER: bool = false;
+const CHECKER_CONJUNCTS: bool = false;
+const DUMP_FORMATTER: bool = false;
+
+const FIRST_FILE: usize = 0;
+const ONE_FILE: bool = false;
+const FIRST_VERBOSE_TOP_ITEM: Option<usize> = None;
+const FIRST_VERBOSE_ITEM: Option<usize> = None;
+const FIRST_VERBOSE_CHECKER: Option<usize> = None;
+
 fn main() {
   ctrlc::set_handler(print_stats_and_exit).expect("Error setting Ctrl-C handler");
   // set_verbose(true);
 
   let mut stats = Default::default();
-  for (i, s) in std::fs::read_to_string("../mizshare/mml.lar").unwrap().lines().enumerate().skip(1)
-  //.skip(1).take(1)
-  {
+  let file = std::fs::read_to_string("../mizshare/mml.lar").unwrap();
+  for (i, s) in file.lines().enumerate().skip(FIRST_FILE) {
     println!("{i}: {s}");
     let path = MizPath::new(s);
     load(&path, &mut stats);
+    if ONE_FILE {
+      break
+    }
   }
   // let path = MizPath("../mizshare/mml/xcmplx_0".into());
   // load(&path);

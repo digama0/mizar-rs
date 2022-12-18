@@ -45,15 +45,21 @@ impl<'a> Checker<'a> {
   }
 
   pub fn justify(&mut self, premises: Vec<&'a Formula>) {
-    // set_verbose(self.idx >= 102);
+    if let Some(n) = crate::FIRST_VERBOSE_CHECKER {
+      set_verbose(self.idx >= n);
+    }
     self.lc.term_cache.get_mut().open_scope();
     let infer_const = self.lc.infer_const.borrow().len();
     let fixed_var = self.lc.fixed_var.len();
 
-    // eprintln!();
+    if crate::CHECKER_INPUTS {
+      eprintln!();
+    }
     let mut conjs = vec![];
     for f in premises {
-      // eprintln!("input: {f:?}");
+      if crate::CHECKER_INPUTS {
+        eprintln!("input: {f:?}");
+      }
       let mut f = f.clone();
       Expand { g: self.g, lc: self.lc, expansions: self.expansions }.expand(&mut f, true);
       f.distribute_quantifiers(&self.g.constrs, 0);
@@ -61,7 +67,9 @@ impl<'a> Checker<'a> {
       f.append_conjuncts_to(&mut conjs);
     }
     let mut check_f = Formula::mk_and(conjs);
-    // eprintln!("checking {} @ {:?}:\n  {check_f:?}", self.idx, self.pos);
+    if crate::CHECKER_HEADER {
+      eprintln!("checking {} @ {:?}:\n  {check_f:?}", self.idx, self.pos);
+    }
 
     self.open_quantifiers::<ConstId>(&mut check_f, true);
     // eprintln!("opened {} @ {:?}:\n  {check_f:?}", self.idx, self.pos);
@@ -72,19 +80,29 @@ impl<'a> Checker<'a> {
     let mut atoms = Atoms::default();
     let Dnf::Or(normal_form) = atoms.normalize(self.g, self.lc, check_f, true)
     else { panic!("it is not true") };
-    // for (i, a) in atoms.0.enum_iter() {
-    //   vprintln!("atom {i:?}: {a:?}");
-    // }
+    if crate::CHECKER_CONJUNCTS {
+      for (i, a) in atoms.0.enum_iter() {
+        vprintln!("atom {i:?}: {a:?}");
+      }
+    }
     self.g.recursive_round_up = true;
     for f in normal_form {
-      // vprintln!("falsifying: {f:?}");
+      if crate::CHECKER_CONJUNCTS {
+        vprintln!("falsifying: {f:?}");
+      }
       let sat = (|| {
-        Equalizer::new(self).equate(&atoms, f)?;
+        Equalizer::new(self).equate(&atoms, &f)?;
+        // vprintln!("failed equalizer: {f:?}");
         self.pre_unification()?;
         let unifier = self.unifier();
         unifier.unify(self)
       })();
-      assert!(sat.is_err(), "failed to justify");
+      // assert!(sat.is_err(), "failed to justify");
+      // if sat.is_ok() {
+      //   eprintln!("failed to justify: {f:?}");
+      // } else {
+      //   eprintln!("proved! {f:?}");
+      // }
     }
     self.g.recursive_round_up = false;
     self.lc.fixed_var.0.truncate(fixed_var);
@@ -438,15 +456,16 @@ impl<K: std::fmt::Debug, V: Idx> std::fmt::Debug for Conjunct<K, V> {
   }
 }
 
-impl<K: Ord + Clone, V: PartialEq + Clone> Conjunct<K, V> {
+impl<K: Ord + Clone, V: PartialEq + Clone> Conjunct<K, V>
+where Self: std::fmt::Debug
+{
   /// InitSingle
   pub fn single(k: K, v: V) -> Self { Self(std::iter::once((k, v)).collect()) }
 
   /// NatFunc.WeakerThan
-  /// True if every atom in other is present in self with the same polarity.
+  /// True if every atom in self is present in other with the same polarity.
   fn weaker_than(&self, other: &Self) -> bool {
-    self.0.len() <= other.0.len()
-      && self.0.iter().all(|(a, val2)| other.0.get(a).map_or(false, |val1| val1 == val2))
+    self.0.len() <= other.0.len() && self.0.iter().all(|(a, val2)| other.0.get(a) == Some(val2))
   }
 
   /// NatFunc.JoinAtom
@@ -483,7 +502,9 @@ where Conjunct<K, V>: std::fmt::Debug
   }
 }
 
-impl<K: Ord + Clone, V: PartialEq + Clone> Dnf<K, V> {
+impl<K: Ord + Clone, V: PartialEq + Clone> Dnf<K, V>
+where Conjunct<K, V>: std::fmt::Debug
+{
   pub const FALSE: Dnf<K, V> = Dnf::Or(vec![]);
 
   /// * pos = true: PreInstCollection.InitTop
@@ -496,42 +517,52 @@ impl<K: Ord + Clone, V: PartialEq + Clone> Dnf<K, V> {
     }
   }
 
+  #[inline]
+  pub fn single(conj: Conjunct<K, V>) -> Self { Self::Or(vec![conj]) }
+
+  /// PreInstCollection.InsertAndAbsorb
   pub fn insert_and_absorb(this: &mut Vec<Conjunct<K, V>>, conj: Conjunct<K, V>) {
     for (i, conj1) in this.iter_mut().enumerate() {
-      if conj.weaker_than(conj1) {
+      if conj1.weaker_than(&conj) {
         return
       }
-      if conj1.weaker_than(&conj) {
-        this.retain_mut_from(i + 1, |conj2| !conj2.weaker_than(&conj));
+      if conj.weaker_than(conj1) {
+        this.retain_mut_from(i + 1, |conj2| !conj.weaker_than(conj2));
         this[i] = conj;
         return
       }
     }
-  }
-
-  /// PreInstCollection.JoinWith
-  pub fn mk_and(&mut self, other: Self) {
-    let Dnf::Or(this) = self else { *self = other; return };
-    let Dnf::Or(other) = other else { return };
-    other.into_iter().for_each(|disj| Self::insert_and_absorb(this, disj));
+    this.push(conj)
   }
 
   /// PreInstCollection.UnionWith
-  pub fn mk_or(&mut self, other: &Self) {
+  pub fn mk_or(&mut self, other: Self) {
     let Dnf::Or(this) = self else { return };
     let Dnf::Or(other) = other else { *self = Dnf::True; return };
-    if let [conj2] = &**other {
-      this.retain_mut(|conj1| conj1.mk_and(conj2).is_ok());
-    } else {
-      // TODO: instantiation limit
-      for conj1 in std::mem::take(this) {
-        for conj2 in other {
-          let mut conj = conj1.clone();
-          if let Ok(()) = conj.mk_and(conj2) {
-            this.push(conj);
+    other.into_iter().for_each(|conj| Self::insert_and_absorb(this, conj));
+  }
+
+  /// PreInstCollection.JoinWith
+  pub fn mk_and(&mut self, other: Self)
+  where Conjunct<K, V>: std::fmt::Debug {
+    let Dnf::Or(this) = self else { *self = other; return };
+    let Dnf::Or(other) = other else { return };
+    if this.is_empty() {
+      return
+    }
+    match &*other {
+      [] => this.clear(),
+      [conj2] => this.retain_mut(|conj1| conj1.mk_and(conj2).is_ok()),
+      _ =>
+        for conj1 in std::mem::take(this) {
+          for conj2 in &other {
+            let mut conj = conj1.clone();
+            if let Ok(()) = conj.mk_and(conj2) {
+              Self::insert_and_absorb(this, conj);
+              assert!(this.len() <= 6000);
+            }
           }
-        }
-      }
+        },
     }
   }
 }
@@ -547,14 +578,14 @@ impl Atoms {
         if pos {
           args.into_iter().for_each(|f| res.mk_and(self.normalize(g, lc, f, pos)))
         } else {
-          args.into_iter().for_each(|f| res.mk_or(&self.normalize(g, lc, f, pos)));
+          args.into_iter().for_each(|f| res.mk_or(self.normalize(g, lc, f, pos)));
         }
         res
       }
       Formula::True => Dnf::mk_bool(pos),
       _ => {
         let a = self.insert(g, lc, Cow::Owned(f));
-        Dnf::Or(vec![Conjunct::single(a, pos)])
+        Dnf::single(Conjunct::single(a, pos))
       }
     }
   }
@@ -562,5 +593,5 @@ impl Atoms {
 
 struct Unifier {}
 impl Unifier {
-  fn unify(&self, ck: &mut Checker) -> OrUnsat<()> { Err(Unsat) }
+  fn unify(&self, ck: &mut Checker) -> OrUnsat<()> { Ok(()) }
 }

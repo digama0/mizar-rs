@@ -6,51 +6,67 @@ use std::cell::Cell;
 use std::collections::HashMap;
 
 const ENABLE_FORMATTER: bool = true;
+const SHOW_INFER: bool = false;
+const SHOW_MARKS: bool = false;
+const NEGATION_SUGAR: bool = true;
 
 #[derive(Default, Debug)]
 pub struct Formatter {
   symbols: HashMap<SymbolKind, String>,
   formats: IdxVec<FormatId, Format>,
-  mode: HashMap<ModeId, (Box<[u8]>, FormatMode)>,
-  struct_mode: HashMap<StructId, (Box<[u8]>, FormatStructMode)>,
-  attr: HashMap<AttrId, (Box<[u8]>, FormatAttr)>,
-  pred: HashMap<PredId, (Box<[u8]>, FormatPred)>,
-  func: HashMap<FuncId, (Box<[u8]>, FormatFunc)>,
-  sel: HashMap<SelId, (Box<[u8]>, FormatSel)>,
-  aggr: HashMap<AggrId, (Box<[u8]>, FormatAggr)>,
+  mode: HashMap<ModeId, (u8, Box<[u8]>, FormatMode)>,
+  struct_mode: HashMap<StructId, (u8, Box<[u8]>, FormatStructMode)>,
+  attr: HashMap<AttrId, (u8, Box<[u8]>, FormatAttr)>,
+  pred: HashMap<PredId, (u8, Box<[u8]>, FormatPred)>,
+  func: HashMap<FuncId, (u8, Box<[u8]>, FormatFunc)>,
+  sel: HashMap<SelId, (u8, Box<[u8]>, FormatSel)>,
+  aggr: HashMap<AggrId, (u8, Box<[u8]>, FormatAggr)>,
 }
 
 impl Formatter {
-  pub fn push(&mut self, pat: &Pattern) {
+  pub fn push(&mut self, ctx: &Constructors, pat: &Pattern) {
     if !ENABLE_FORMATTER {
       return
     }
+    if crate::DUMP_FORMATTER {
+      eprintln!("{pat:#?}")
+    }
     fn ins<I: Idx, F: std::fmt::Debug>(
-      map: &mut HashMap<I, (Box<[u8]>, F)>, pat: &Pattern, i: I, f: F,
+      c: &Constructor<I>, map: &mut HashMap<I, (u8, Box<[u8]>, F)>, pat: &Pattern, i: I, f: F,
     ) {
-      if pat.pos && pat.redefines.is_none() {
-        map.insert(i, (pat.visible.clone(), f));
+      // HACK: we definitely can't use patterns with the wrong number of arguments,
+      // but sometimes the only pattern we have for a constructor is a redefinition
+      if pat.redefines.is_some() && pat.primary.len() != c.primary.len() {
+        return
+      }
+      assert_eq!(pat.primary.len(), c.primary.len());
+      if pat.pos {
+        assert!(pat.visible.iter().all(|i| (*i as usize) < pat.primary.len()));
+        map.entry(i).or_insert((pat.primary.len() as u8, pat.visible.clone(), f));
         // FIXME: this isn't true? Redefinitions are not always marked
         // assert!(map.insert(i, (pat.visible.clone(), f)).is_none())
       }
     }
     match (pat.kind, self.formats[pat.fmt]) {
-      (PatternKind::Mode(n), Format::Mode(f)) => ins(&mut self.mode, pat, n, f),
-      (PatternKind::Struct(n), Format::Struct(f)) => ins(&mut self.struct_mode, pat, n, f),
-      (PatternKind::Attr(n), Format::Attr(f)) => ins(&mut self.attr, pat, n, f),
-      (PatternKind::Pred(n), Format::Pred(f)) => ins(&mut self.pred, pat, n, f),
-      (PatternKind::Func(n), Format::Func(f)) => ins(&mut self.func, pat, n, f),
-      (PatternKind::Sel(n), Format::Sel(f)) => ins(&mut self.sel, pat, n, f),
-      (PatternKind::Aggr(n), Format::Aggr(f)) => ins(&mut self.aggr, pat, n, f),
+      (PatternKind::Mode(n), Format::Mode(f)) => ins(&ctx.mode[n], &mut self.mode, pat, n, f),
+      (PatternKind::Struct(n), Format::Struct(f)) =>
+        ins(&ctx.struct_mode[n], &mut self.struct_mode, pat, n, f),
+      (PatternKind::Attr(n), Format::Attr(f)) => ins(&ctx.attribute[n], &mut self.attr, pat, n, f),
+      (PatternKind::Pred(n), Format::Pred(f)) => ins(&ctx.predicate[n], &mut self.pred, pat, n, f),
+      (PatternKind::Func(n), Format::Func(f)) => ins(&ctx.functor[n], &mut self.func, pat, n, f),
+      (PatternKind::Sel(n), Format::Sel(f)) => ins(&ctx.selector[n], &mut self.sel, pat, n, f),
+      (PatternKind::Aggr(n), Format::Aggr(f)) => ins(&ctx.aggregate[n], &mut self.aggr, pat, n, f),
       (PatternKind::ForgetFunc(_), _) => {}  // unused
       (PatternKind::ExpandableMode, _) => {} // not handled here
       _ => panic!("incompatible format for pattern"),
     }
   }
 
-  pub fn extend(&mut self, pats: &[Pattern]) { pats.iter().for_each(|pat| self.push(pat)) }
+  pub fn extend(&mut self, ctx: &Constructors, pats: &[Pattern]) {
+    pats.iter().for_each(|pat| self.push(ctx, pat))
+  }
 
-  pub fn init(&mut self, path: &MizPath) {
+  pub fn init(&mut self, ctx: &Constructors, path: &MizPath) {
     if !ENABLE_FORMATTER {
       return
     }
@@ -59,8 +75,24 @@ impl Formatter {
     self.symbols = symbols.0.into_iter().collect();
     path.read_formats("frx", &mut formats).unwrap();
     self.formats = formats.formats;
+    for f in &self.formats.0 {
+      match f {
+        Format::Aggr(f) => assert!(self.symbols.contains_key(&f.sym.into())),
+        Format::ForgetFunc(f) => assert!(self.symbols.contains_key(&f.sym.into())),
+        Format::Struct(f) => assert!(self.symbols.contains_key(&f.sym.into())),
+        Format::Mode(f) => assert!(self.symbols.contains_key(&f.sym.into())),
+        Format::Sel(f) => assert!(self.symbols.contains_key(&f.sym.into())),
+        Format::Attr(f) => assert!(self.symbols.contains_key(&f.sym.into())),
+        &Format::Func(FormatFunc::Func { sym, .. }) =>
+          assert!(self.symbols.contains_key(&sym.into())),
+        &Format::Func(FormatFunc::Bracket { lsym, rsym, .. }) => assert!(
+          self.symbols.contains_key(&lsym.into()) && self.symbols.contains_key(&rsym.into())
+        ),
+        Format::Pred(f) => assert!(self.symbols.contains_key(&f.sym.into())),
+      }
+    }
     path.read_eno(&mut notations).unwrap();
-    self.extend(&notations.0);
+    self.extend(ctx, &notations.0);
   }
 }
 
@@ -131,20 +163,17 @@ impl<'a> Pretty<'a> {
 
   #[allow(clippy::too_many_arguments)]
   fn infix_term(
-    &self, prec: bool, vis: &[u8], sym: SymbolKind, left: u8, right: u8, args: &[Term], k: &str,
-    nr: u32,
+    &self, prec: bool, len: u8, vis: &[u8], sym: SymbolKind, left: u8, right: u8, args: &[Term],
   ) -> Doc<'a> {
     let lc = self.lc.unwrap();
+    assert_eq!(len as usize, args.len());
     assert_eq!(vis.len(), (left + right) as usize);
     let doc = match left {
       0 => self.nil(),
       1 => self.term(true, &args[vis[0] as usize]).append(self.space()),
       _ => self.terms(Some(&vis[..left as usize]), args).parens().append(self.space()),
     };
-    let doc = doc.append(match lc.formatter.symbols.get(&sym) {
-      Some(sym) => self.text(sym),
-      None => self.text(format!("{k}{nr}")),
-    });
+    let doc = doc.append(self.text(&lc.formatter.symbols[&sym]));
     let doc = match right {
       0 => doc,
       1 => doc.append(self.line()).append(self.term(true, &args[vis[left as usize] as usize])),
@@ -162,13 +191,21 @@ impl<'a> Pretty<'a> {
       Term::EqClass(nr) => self.text(format!("e{}", nr.0)),
       Term::EqMark(nr) => {
         if let Some(lc) = self.lc {
-          return self.term(prec, &lc.marks[*nr].0)
+          return if SHOW_MARKS {
+            self.text(format!("{:?}'", lc.marks[*nr].1)).append(self.term(true, &lc.marks[*nr].0))
+          } else {
+            self.term(prec, &lc.marks[*nr].0)
+          }
         }
         self.text(format!("m{}", nr.0))
       }
       Term::Infer(nr) => {
-        if let Some(lc) = self.lc {
-          return self.term(prec, &lc.infer_const.borrow()[*nr].def)
+        if let Some(ic) = self.lc.and_then(|lc| lc.infer_const.try_borrow().ok()) {
+          return if SHOW_INFER {
+            self.text(format!("?{}=", nr.0)).append(self.term(true, &ic[*nr].def))
+          } else {
+            self.term(prec, &ic[*nr].def)
+          }
         }
         self.text(format!("?{}", nr.0))
       }
@@ -177,9 +214,10 @@ impl<'a> Pretty<'a> {
       Term::Aggregate { nr, args } => {
         let (mut doc, mut ovis) = (None, None);
         if let Some(lc) = self.lc {
-          if let Some(&(ref vis, FormatAggr { sym, args: n })) = lc.formatter.aggr.get(nr) {
+          if let Some(&(len, ref vis, FormatAggr { sym, args: n })) = lc.formatter.aggr.get(nr) {
+            assert_eq!(len as usize, args.len());
             assert_eq!(vis.len(), n as usize);
-            doc = lc.formatter.symbols.get(&sym.into()).map(|sym| self.text(sym));
+            doc = Some(self.text(&lc.formatter.symbols[&sym.into()]));
             ovis = Some(&**vis)
           }
         }
@@ -192,16 +230,14 @@ impl<'a> Pretty<'a> {
         let mut ovis = None;
         if let Some(lc) = self.lc {
           match lc.formatter.func.get(nr) {
-            Some(&(ref vis, FormatFunc::Func { sym, left, right })) =>
-              return self.infix_term(prec, vis, sym.into(), left, right, args, "F", nr.0),
-            Some(&(ref vis, FormatFunc::Bracket { lsym, rsym, args: n })) => {
+            Some(&(len, ref vis, FormatFunc::Func { sym, left, right })) =>
+              return self.infix_term(prec, len, vis, sym.into(), left, right, args),
+            Some(&(len, ref vis, FormatFunc::Bracket { lsym, rsym, args: n })) => {
+              assert_eq!(len as usize, args.len());
               assert_eq!(vis.len(), n as usize);
-              if let Some(lsym) = lc.formatter.symbols.get(&lsym.into()) {
-                if let Some(rsym) = lc.formatter.symbols.get(&rsym.into()) {
-                  return self.terms(Some(vis), args).enclose(lsym, rsym)
-                }
-              }
-              ovis = Some(&**vis)
+              return self
+                .terms(Some(vis), args)
+                .enclose(&lc.formatter.symbols[&lsym.into()], &lc.formatter.symbols[&rsym.into()])
             }
             None => {}
           }
@@ -212,10 +248,11 @@ impl<'a> Pretty<'a> {
       Term::Selector { nr, args } => {
         let (mut s, mut ovis) = (None, None);
         if let Some(lc) = self.lc {
-          if let Some(&(ref vis, FormatSel { sym, args: n })) = lc.formatter.sel.get(nr) {
+          if let Some(&(len, ref vis, FormatSel { sym, args: n })) = lc.formatter.sel.get(nr) {
+            assert_eq!(len as usize, args.len());
             assert_eq!(vis.len(), n as usize);
             ovis = Some(&**vis);
-            s = lc.formatter.symbols.get(&sym.into());
+            s = Some(&lc.formatter.symbols[&sym.into()]);
           }
         }
         let doc = self.text(match s {
@@ -250,16 +287,16 @@ impl<'a> Pretty<'a> {
 
   fn adjective(&self, nr: AttrId, args: &[Term]) -> Doc<'a> {
     if let Some(lc) = self.lc {
-      if let Some(&(ref vis, FormatAttr { sym, args: n })) = lc.formatter.attr.get(&nr) {
+      if let Some(&(len, ref vis, FormatAttr { sym, args: n })) = lc.formatter.attr.get(&nr) {
+        assert_eq!(len as usize, args.len() + 1);
         assert_eq!(vis.len(), n as usize);
         let (v0, vis) = vis.split_last().unwrap();
         assert_eq!(*v0 as usize, args.len());
-        if let Some(sym) = lc.formatter.symbols.get(&sym.into()) {
-          return match vis.len() {
-            0 => self.text(sym),
-            1 => self.term(true, &args[vis[0] as usize]).append(self.text(sym)),
-            _ => self.terms(Some(vis), args).parens().append(self.text(sym)),
-          }
+        let sym = self.text(&lc.formatter.symbols[&sym.into()]);
+        return match vis.len() {
+          0 => sym,
+          1 => self.term(true, &args[vis[0] as usize]).append(sym),
+          _ => self.terms(Some(vis), args).parens().append(sym),
         }
       }
     }
@@ -287,17 +324,20 @@ impl<'a> Pretty<'a> {
     if let Some(lc) = self.lc {
       match ty.kind {
         TypeKind::Struct(n) =>
-          if let Some(&(ref vis, FormatStructMode { sym, args })) = lc.formatter.struct_mode.get(&n)
+          if let Some(&(len, ref vis, FormatStructMode { sym, args })) =
+            lc.formatter.struct_mode.get(&n)
           {
+            assert_eq!(len as usize, ty.args.len());
             assert_eq!(vis.len(), args as usize);
             ovis = Some(&**vis);
-            s = lc.formatter.symbols.get(&sym.into())
+            s = Some(&lc.formatter.symbols[&sym.into()])
           },
         TypeKind::Mode(n) =>
-          if let Some(&(ref vis, FormatMode { sym, args })) = lc.formatter.mode.get(&n) {
+          if let Some(&(len, ref vis, FormatMode { sym, args })) = lc.formatter.mode.get(&n) {
+            assert_eq!(len as usize, ty.args.len());
             assert_eq!(vis.len(), args as usize);
             ovis = Some(&**vis);
-            s = lc.formatter.symbols.get(&sym.into())
+            s = Some(&lc.formatter.symbols[&sym.into()])
           },
       }
     }
@@ -314,11 +354,21 @@ impl<'a> Pretty<'a> {
 
   fn formula(&self, prec: bool, pos: bool, fmla: &Formula) -> Doc<'a> {
     match (pos, fmla) {
-      (pos, Formula::Neg { f }) => self.formula(true, !pos, f),
-      (pos, Formula::And { args }) => {
-        let sep = self.text(if pos { " ∧" } else { " ∨" }).append(self.line());
-        let doc = self.intersperse(args.iter().map(|f| self.formula(true, pos, f)), sep);
-        self.parens_if(prec, doc.nest(2).group())
+      (false, f) if !NEGATION_SUGAR => self.text("¬").append(self.formula(true, true, fmla)),
+      (pos, Formula::Neg { f }) => self.formula(prec, !pos, f),
+      (false, Formula::And { args }) => {
+        let i =
+          args.iter().position(|f| matches!(*f, Formula::Neg { .. })).unwrap_or(args.len() - 1);
+        let lhs = if i > 0 {
+          let sep = self.text(" ∧").append(self.line());
+          let doc = self.intersperse(args[..i].iter().map(|f| self.formula(true, true, f)), sep);
+          doc.append(" →").append(self.line())
+        } else {
+          self.nil()
+        };
+        let sep = self.text(" ∨").append(self.line());
+        let doc = self.intersperse(args[i..].iter().map(|f| self.formula(true, false, f)), sep);
+        self.parens_if(prec, lhs.append(doc).nest(2).group())
       }
       (true, Formula::And { args }) => {
         let sep = self.text(" ∧").append(self.line());
@@ -340,7 +390,7 @@ impl<'a> Pretty<'a> {
           .append(self.intersperse(iter, self.text(",")).group())
           .append(if pos { " holds" } else { " st" })
           .append(self.line().append(self.formula(false, pos, f)).nest(2));
-        doc.group()
+        self.parens_if(prec, doc.group())
       }
       (pos, Formula::FlexAnd { orig, terms, expansion }) => {
         let doc = self
@@ -356,8 +406,9 @@ impl<'a> Pretty<'a> {
       (true, Formula::Pred { nr, args }) => {
         let mut ovis = None;
         if let Some(lc) = self.lc {
-          if let Some(&(ref vis, FormatPred { sym, left, right })) = lc.formatter.pred.get(nr) {
-            return self.infix_term(prec, vis, sym.into(), left, right, args, "P", nr.0)
+          if let Some(&(len, ref vis, FormatPred { sym, left, right })) = lc.formatter.pred.get(nr)
+          {
+            return self.infix_term(prec, len, vis, sym.into(), left, right, args)
           }
         }
         self.text(format!("P{}", nr.0)).append(self.terms(ovis, args).brackets())

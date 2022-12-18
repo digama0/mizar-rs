@@ -596,9 +596,9 @@ impl XmlReader<'_> {
 
   fn parse_pattern_attrs(
     &mut self, e: &BytesStart<'_>,
-  ) -> (u32, Article, u8, FormatId, u32, Option<u32>, Option<u32>, bool) {
+  ) -> (u32, Article, u8, FormatId, u32, Option<u32>, u32, bool) {
     assert!(e.local_name() == b"Pattern");
-    let (mut abs_nr, mut article, mut kind, mut fmt, mut constr, mut redefines, mut nr) =
+    let (mut abs_nr, mut article, mut kind, mut fmt, mut constr, mut redefines, mut pid) =
       Default::default();
     let mut pos = true;
     for attr in e.attributes() {
@@ -610,28 +610,28 @@ impl XmlReader<'_> {
         b"formatnr" => fmt = FormatId(self.get_attr::<u32>(&attr.value) - 1),
         b"constrnr" => constr = self.get_attr(&attr.value),
         b"antonymic" => pos = &*attr.value != b"true",
-        b"relnr" => nr = self.get_attr::<u32>(&attr.value).checked_sub(1),
+        b"relnr" => pid = Some(self.get_attr::<u32>(&attr.value) - 1),
         b"redefnr" => redefines = self.get_attr::<u32>(&attr.value).checked_sub(1),
         _ => {}
       }
     }
-    (abs_nr, article, kind, fmt, constr, redefines, nr, pos)
+    (abs_nr, article, kind, fmt, constr, redefines, pid.unwrap(), pos)
   }
 
   fn parse_pattern_body(
     &mut self, buf: &mut Vec<u8>,
-    (abs_nr, article, kind, fmt, constr, redefines, nr, pos): (
+    (abs_nr, article, kind, fmt, constr, redefines, pid, pos): (
       u32,
       Article,
       u8,
       FormatId,
       u32,
       Option<u32>,
-      Option<u32>,
+      u32,
       bool,
     ),
   ) -> Pattern {
-    let primaries = self.parse_arg_types(buf);
+    let primary = self.parse_arg_types(buf);
     assert!(matches!(self.read_event(buf),
       Event::Start(e) if e.local_name() == b"Visible"));
     let visible = self.parse_int_list(buf, |n| n as u8 - 1);
@@ -656,7 +656,7 @@ impl XmlReader<'_> {
       (b'M', None) => PatternKind::ExpandableMode,
       _ => panic!("unknown pattern kind"),
     };
-    Pattern { kind, article, abs_nr, fmt, redefines, primaries, visible, pos, expansion }
+    Pattern { kind, pid, article, abs_nr, fmt, redefines, primary, visible, pos, expansion }
   }
 
   fn parse_constructor_attrs(
@@ -960,7 +960,7 @@ impl XmlReader<'_> {
             assert!(e.local_name() == b"Field");
             let attr = e.attributes().next().unwrap().unwrap();
             assert!(attr.key == b"nr");
-            fields.push(self.get_attr(&attr.value));
+            fields.push(SelId(self.get_attr::<u32>(&attr.value) - 1));
             self.end_tag(buf);
           }
           Elem::Fields(fields.into())

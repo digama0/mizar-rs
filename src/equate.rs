@@ -11,6 +11,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::ControlFlow;
 
+#[derive(Debug)]
 pub struct EqTerm {
   id: EqClassId,
   /// Term is EqMark(mark)
@@ -157,6 +158,7 @@ impl Equalizer<'_> {
   /// YEqClass
   fn new_eq_class(&mut self, tm: &mut Term) -> (EqMarkId, EqTermId) {
     let id = self.next_eq_class.fresh();
+    // vprintln!("new_eq_class e{id:?}: {tm:?}");
     let et = self.terms.push(EqTerm {
       id,
       mark: Default::default(),
@@ -306,7 +308,7 @@ impl VisitMut for Y<'_, '_> {
     if self.abort() {
       return
     }
-    // vprintln!("y term {depth} <- {tm:?} <- {:?}", tm.unmark(self.lc));
+    // vprintln!("y term {depth} <- {tm:?}");
     let et = match tm {
       Term::Bound(_) | Term::EqClass(_) => return,
       &mut Term::Infer(nr) => {
@@ -450,6 +452,7 @@ impl Equalizer<'_> {
 
   /// YYTerm(fTrm = term, fi = fi)
   fn yy_term(&mut self, mut term: Term, mut fi: EqTermId) -> OrUnsat<EqTermId> {
+    // vprintln!("yy term {term:?} <- {:?}", self.terms[fi]);
     macro_rules! func_like {
       ($k:ident: $nr:expr, $args:expr) => {{
         self.y(|y| y.visit_terms($args, 0))?;
@@ -602,6 +605,7 @@ struct Instantiate<'a> {
 impl Instantiate<'_> {
   /// InstantiateTerm(fCluster = self.subst, eTrm = tgt, aTrm = src)
   fn inst_term(&self, src: &Term, tgt: &Term) -> Dnf<LocusId, EqClassId> {
+    // vprintln!("inst_term {:?} <- {src:?} = {tgt:?}", self.subst);
     match (tgt.unmark(self.lc), src) {
       (Term::Numeral(n), Term::Numeral(n2)) if n == n2 => Dnf::True,
       (Term::Functor { nr: n1, args: args1 }, Term::Functor { nr: n2, args: args2 }) => {
@@ -640,9 +644,7 @@ impl Instantiate<'_> {
         match src {
           &Term::Locus(v) => {
             let mut z = self.inst_type(&self.subst[v.0 as usize], et);
-            if let Dnf::Or(conjs) = &mut z {
-              Dnf::insert_and_absorb(conjs, Conjunct::single(v, self.terms[et].id));
-            }
+            z.mk_and(Dnf::single(Conjunct::single(v, self.terms[et].id)));
             z
           }
           // TODO: numeric_value
@@ -655,29 +657,29 @@ impl Instantiate<'_> {
               if let Term::Functor { nr: n2, args: args2 } = &self.lc.marks[m].0 {
                 let (n2, args2) = Term::adjust(*n2, args2, &self.g.constrs);
                 if n1 == n2 {
-                  res.mk_or(&self.inst_terms(args1, args2))
+                  res.mk_or(self.inst_terms(args1, args2))
                 }
               }
             }
             res
           }
           Term::Selector { nr: n1, args: args1 } => {
-            let mut res = Dnf::True;
+            let mut res = Dnf::FALSE;
             for &m in &self.terms[et].eq_class {
               if let Term::Selector { nr: n2, args: args2 } = &self.lc.marks[m].0 {
                 if n1 == n2 {
-                  res.mk_or(&self.inst_terms(args1, args2))
+                  res.mk_or(self.inst_terms(args1, args2))
                 }
               }
             }
             res
           }
           Term::Aggregate { nr: n1, args: args1 } => {
-            let mut res = Dnf::True;
+            let mut res = Dnf::FALSE;
             for &m in &self.terms[et].eq_class {
               if let Term::Aggregate { nr: n2, args: args2 } = &self.lc.marks[m].0 {
                 if n1 == n2 {
-                  res.mk_or(&self.inst_terms(args1, args2))
+                  res.mk_or(self.inst_terms(args1, args2))
                 }
               }
             }
@@ -688,6 +690,7 @@ impl Instantiate<'_> {
       }
       r => unreachable!("{r:?}"),
     }
+    // vprintln!("inst_term {:?} -> {src:?} = {tgt:?} -> {res:?}", self.subst);
   }
 
   fn inst_terms(&self, args1: &[Term], args2: &[Term]) -> Dnf<LocusId, EqClassId> {
@@ -707,7 +710,7 @@ impl Instantiate<'_> {
       TypeKind::Struct(_) =>
         for ty2 in &self.terms[et].ty_class {
           if ty.kind == ty2.kind {
-            res.mk_or(&self.inst_terms(&ty.args, &ty2.args));
+            res.mk_or(self.inst_terms(&ty.args, &ty2.args));
             if let Dnf::True = res {
               break
             }
@@ -719,7 +722,7 @@ impl Instantiate<'_> {
           if let TypeKind::Mode(n2) = ty2.kind {
             let (n2, args2) = Type::adjust(n2, &ty2.args, &self.g.constrs);
             if n == n2 {
-              res.mk_or(&self.inst_terms(&ty.args, args2));
+              res.mk_or(self.inst_terms(&ty.args, args2));
               if let Dnf::True = res {
                 break
               }
@@ -735,15 +738,15 @@ impl Instantiate<'_> {
   fn and_inst_attrs(&self, attrs: &Attrs, et: EqTermId, res: &mut Dnf<LocusId, EqClassId>) {
     let Attrs::Consistent(attrs) = attrs else { unreachable!() };
     let Attrs::Consistent(sc) = &self.terms[et].supercluster else { unreachable!() };
-    for a1 in attrs {
+    'next: for a1 in attrs {
       let (n1, args1) = a1.adjust(&self.g.constrs);
       let mut z = Dnf::FALSE;
       for a2 in sc {
         let (n2, args2) = a2.adjust(&self.g.constrs);
         if n1 == n2 && a1.pos == a2.pos {
-          z.mk_or(&self.inst_terms(args1, args2));
+          z.mk_or(self.inst_terms(args1, args2));
           if let Dnf::True = z {
-            break
+            continue 'next
           }
         }
       }
@@ -858,14 +861,16 @@ impl<'a> Equalizer<'a> {
     &self, inst: &Conjunct<LocusId, EqClassId>, args1: &[Term], args2: &[Term],
   ) -> Option<()> {
     assert!(args1.len() == args2.len());
+    // vprintln!("locate_terms {args1:?}, {args2:?}");
     for (t1, t2) in args1.iter().zip(args2) {
       let m1 = self.locate_term(inst, t1)?;
-      matches!(*t2, Term::EqMark(m2) if m1 == m2).then_some(())?;
+      matches!(*t2, Term::EqMark(m2) if self.lc.marks[m1].1 == self.lc.marks[m2].1).then_some(())?;
     }
     Some(())
   }
 
   fn locate_term(&self, inst: &Conjunct<LocusId, EqClassId>, tm: &Term) -> Option<EqMarkId> {
+    // vprintln!("locate_term {inst:?}, {tm:?}");
     match *tm {
       Term::Locus(n) => {
         let id = *inst.0.get(&n)?;
@@ -922,11 +927,16 @@ impl<'a> Equalizer<'a> {
     while let Some(m) = self.infers.0.get(i) {
       if let Some(m) = *m {
         let et = self.lc.marks[m].1;
+        // vprintln!("reducing: {et:?}'e{:#?}", self.terms[et].id);
         if !self.terms[et].eq_class.is_empty() {
           for red in self.reductions {
             let inst = self
               .instantiate(&red.primary)
               .inst_term(&red.terms[0], &Term::EqMark(self.terms[et].mark));
+            // if !matches!(&inst, Dnf::Or(conjs) if conjs.is_empty()) {
+            //   vprintln!("found reduction {et:?}'e{:#?} by {red:#?}", self.terms[et].id);
+            //   vprintln!("inst = {inst:#?}");
+            // }
             if let Some(conj) = match inst {
               Dnf::True => Some(Conjunct::TRUE),
               Dnf::Or(conjs) => conjs.into_iter().next(),
@@ -1255,7 +1265,7 @@ impl<'a> Equalizer<'a> {
     }
   }
 
-  pub fn equate(&mut self, atoms: &Atoms, conj: Conjunct<AtomId, bool>) -> OrUnsat<()> {
+  pub fn equate(&mut self, atoms: &Atoms, conj: &Conjunct<AtomId, bool>) -> OrUnsat<()> {
     self.lc.marks.0.clear();
     let mut eqs = Equals::default();
     let mut bas = EnumMap::<bool, Atoms>::default();

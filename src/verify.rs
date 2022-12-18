@@ -149,44 +149,49 @@ impl Verifier {
   }
 
   pub fn read_item(&mut self, it: &Item) {
-    // set_verbose(self.items >= 8);
-    // eprint!("item[{}]: ", self.items);
-    // if verbose() {
-    //   eprintln!("{it:#?}");
-    // } else {
-    //   match it {
-    //     Item::Let(_) => eprintln!("Let"),
-    //     Item::Given(_) => eprintln!("Given"),
-    //     Item::Conclusion(_) => eprintln!("Conclusion"),
-    //     Item::Assume(_) => eprintln!("Assume"),
-    //     Item::Take(_) => eprintln!("Take"),
-    //     Item::TakeAsVar(_, _) => eprintln!("TakeAsVar"),
-    //     Item::PerCases(_) => eprintln!("PerCases"),
-    //     Item::AuxiliaryItem(it) => match it {
-    //       AuxiliaryItem::PrivateStatement(it) => match it {
-    //         PrivateStatement::Proposition { .. } => eprintln!("Proposition"),
-    //         PrivateStatement::IterEquality { .. } => eprintln!("IterEquality"),
-    //         PrivateStatement::Now { .. } => eprintln!("Now"),
-    //       },
-    //       AuxiliaryItem::Consider { .. } => eprintln!("Consider"),
-    //       AuxiliaryItem::Set { .. } => eprintln!("Set"),
-    //       AuxiliaryItem::Reconsider { .. } => eprintln!("Reconsider"),
-    //       AuxiliaryItem::DefFunc { .. } => eprintln!("DefFunc"),
-    //       AuxiliaryItem::DefPred { .. } => eprintln!("DefPred"),
-    //     },
-    //     Item::Registration(_) => eprintln!("Registration"),
-    //     Item::Scheme(_) => eprintln!("Scheme"),
-    //     Item::Theorem { .. } => eprintln!("Theorem"),
-    //     Item::DefTheorem { kind, .. } => eprintln!("DefTheorem {kind:?}"),
-    //     Item::Reservation { .. } => eprintln!("Reservation"),
-    //     Item::Section => eprintln!("Section"),
-    //     Item::Canceled(_) => eprintln!("Canceled"),
-    //     Item::Definition(_) => eprintln!("Definition"),
-    //     Item::DefStruct(_) => eprintln!("DefStruct"),
-    //     Item::Definiens(_) => eprintln!("Definiens"),
-    //     Item::Block { kind, .. } => eprintln!("{kind:?}"),
-    //   }
-    // }
+    if let Some(n) = crate::FIRST_VERBOSE_ITEM {
+      set_verbose(self.items >= n);
+    }
+    if crate::ITEM_HEADER {
+      eprint!("item[{}]: ", self.items);
+      if verbose() {
+        eprintln!("{it:#?}");
+      } else {
+        match it {
+          Item::Let(_) => eprintln!("Let"),
+          Item::Given(_) => eprintln!("Given"),
+          Item::Conclusion(_) => eprintln!("Conclusion"),
+          Item::Assume(_) => eprintln!("Assume"),
+          Item::Take(_) => eprintln!("Take"),
+          Item::TakeAsVar(_, _) => eprintln!("TakeAsVar"),
+          Item::PerCases(_) => eprintln!("PerCases"),
+          Item::AuxiliaryItem(it) => match it {
+            AuxiliaryItem::PrivateStatement(it) => match it {
+              PrivateStatement::Proposition { .. } => eprintln!("Proposition"),
+              PrivateStatement::IterEquality { .. } => eprintln!("IterEquality"),
+              PrivateStatement::Now { .. } => eprintln!("Now"),
+            },
+            AuxiliaryItem::Consider { .. } => eprintln!("Consider"),
+            AuxiliaryItem::Set { .. } => eprintln!("Set"),
+            AuxiliaryItem::Reconsider { .. } => eprintln!("Reconsider"),
+            AuxiliaryItem::DefFunc { .. } => eprintln!("DefFunc"),
+            AuxiliaryItem::DefPred { .. } => eprintln!("DefPred"),
+          },
+          Item::Registration(_) => eprintln!("Registration"),
+          Item::Scheme(_) => eprintln!("Scheme"),
+          Item::Theorem { .. } => eprintln!("Theorem"),
+          Item::DefTheorem { kind, .. } => eprintln!("DefTheorem {kind:?}"),
+          Item::Reservation { .. } => eprintln!("Reservation"),
+          Item::Section => eprintln!("Section"),
+          Item::Canceled(_) => eprintln!("Canceled"),
+          Item::Definition(_) => eprintln!("Definition"),
+          Item::DefStruct(_) => eprintln!("DefStruct"),
+          Item::Definiens(_) => eprintln!("Definiens"),
+          Item::Block { kind, .. } => eprintln!("{kind:?}"),
+          Item::Pattern(_) => eprintln!("Pattern"),
+        }
+      }
+    }
     self.items += 1;
     match it {
       // reservations not handled by checker
@@ -239,7 +244,7 @@ impl Verifier {
         if let Some(constr) = constr {
           self.pending_defs.push(PendingDef::Constr(self.g.constrs.push(self.intern(constr))));
         }
-        self.lc.formatter.extend(patts)
+        self.lc.formatter.extend(&self.g.constrs, patts)
       }
       Item::DefStruct(DefStruct { pos, label, constrs, cl, conds, corr, patts }) => {
         for c in constrs {
@@ -247,7 +252,7 @@ impl Verifier {
         }
         self.read_cluster_decl(cl);
         self.read_corr_conds(conds, corr);
-        self.lc.formatter.extend(patts)
+        self.lc.formatter.extend(&self.g.constrs, patts)
       }
       Item::Definiens(df) => self.read_definiens(df),
       Item::Block { kind, pos, label, items } => {
@@ -258,7 +263,7 @@ impl Verifier {
           }
         });
       }
-      Item::Pattern(pat) => self.lc.formatter.push(pat),
+      Item::Pattern(pat) => self.lc.formatter.push(&self.g.constrs, pat),
     }
   }
 
@@ -289,9 +294,9 @@ impl Verifier {
   }
 
   fn read_definiens(&mut self, df: &Definiens) {
-    let df = self.intern(df);
-    let exp = df.equals_expansion();
-    if let Some(func) = exp {
+    self.equalities.push(df.clone());
+    self.expansions.push(df.clone());
+    if let Some(func) = df.equals_expansion() {
       let f = func.pattern.0;
       if !func.expansion.has_func(&self.g.constrs, f) {
         let mut i = 0;
@@ -315,8 +320,6 @@ impl Verifier {
         self.equals.entry(df.constr).or_default().push(func);
       }
     }
-    self.equalities.push(df.clone());
-    self.expansions.push(df);
   }
 
   fn read_justification(&mut self, thesis: &Formula, just: &Justification) {
@@ -360,8 +363,8 @@ impl Verifier {
         }
         self.read_just_prop(prop, just);
       }
-      AuxiliaryItem::DefFunc { args, value, ty } => {
-        self.lc.priv_func.push(FuncDef { value: self.intern(value), ty: self.intern(ty) });
+      AuxiliaryItem::DefFunc { args, ty, value } => {
+        self.lc.priv_func.push(FuncDef { ty: self.intern(ty), value: self.intern(value) });
       }
       AuxiliaryItem::DefPred { args, value } => {}
     }

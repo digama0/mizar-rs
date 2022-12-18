@@ -1608,8 +1608,8 @@ pub enum AuxiliaryItem {
   /// itPrivFuncDefinition
   DefFunc {
     args: Box<[Type]>,
-    value: Term,
     ty: Type,
+    value: Term,
   },
   /// itPrivPredDefinition
   DefPred {
@@ -1936,11 +1936,12 @@ impl PatternKind {
 #[derive(Debug)]
 pub struct Pattern {
   pub kind: PatternKind,
+  pub pid: u32,
   pub article: Article,
   pub abs_nr: u32,
   pub fmt: FormatId,
   pub redefines: Option<u32>,
-  pub primaries: Box<[Type]>,
+  pub primary: Box<[Type]>,
   pub visible: Box<[u8]>,
   pub pos: bool,
   pub expansion: Option<Box<Type>>,
