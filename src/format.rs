@@ -424,7 +424,6 @@ impl<'a> Pretty<'a> {
         let doc = self.term(false, term).append(" is ").append(self.ty(ty)).group();
         self.parens_if(prec, doc)
       }
-      (true, Formula::Thesis) => self.text("thesis"),
       (false, _) => self.text("¬").append(self.formula(true, true, fmla)),
     }
   }

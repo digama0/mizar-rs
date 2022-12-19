@@ -503,7 +503,7 @@ impl Formula {
     self.discr().cmp(&other.discr()).then_with(|| {
       use Formula::*;
       match (self, other) {
-        (True, True) | (Thesis, Thesis) => Ordering::Equal,
+        (True, True) => Ordering::Equal,
         (Neg { f: f1 }, Neg { f: f2 }) => f1.cmp(ctx, f2, style),
         (Is { term: t1, ty: ty1 }, Is { term: t2, ty: ty2 }) =>
           t1.cmp(ctx, t2, style).then_with(|| ty1.cmp(ctx, ty2, style)),
@@ -678,7 +678,7 @@ trait Equate {
   fn eq_formula(&mut self, g: &Global, lc: &LocalContext, f1: &Formula, f2: &Formula) -> bool {
     use Formula::*;
     match (f1.skip_priv_pred(), f2.skip_priv_pred()) {
-      (True, True) | (Thesis, Thesis) => true,
+      (True, True) => true,
       (Neg { f: f1 }, Neg { f: f2 }) => self.eq_formula(g, lc, f1, f2),
       (Is { term: t1, ty: ty1 }, Is { term: t2, ty: ty2 }) =>
         self.eq_term(g, lc, t1, t2) && self.eq_type(g, lc, ty1, ty2),
@@ -862,7 +862,7 @@ macro_rules! mk_visit {
             self.visit_term(tm_l, depth);
             self.visit_term(tm_r, depth);
           }
-          Formula::True | Formula::Thesis => {}
+          Formula::True => {}
         }
       }
 
@@ -899,6 +899,24 @@ impl Visit for CheckBound {
     self.super_visit_term(tm, depth);
     if let Term::Bound(BoundId(nr)) = *tm {
       self.0 |= nr < self.1
+    }
+  }
+}
+
+pub struct CheckLocus(bool);
+impl CheckLocus {
+  pub fn get(f: impl FnOnce(&mut Self)) -> bool {
+    let mut cb = Self(false);
+    f(&mut cb);
+    cb.0
+  }
+}
+impl Visit for CheckLocus {
+  fn abort(&self) -> bool { self.0 }
+  fn visit_term(&mut self, tm: &Term, depth: u32) {
+    self.super_visit_term(tm, depth);
+    if let Term::Locus(_) = *tm {
+      self.0 = true
     }
   }
 }
@@ -2359,6 +2377,7 @@ const ITEM_HEADER: bool = false;
 const CHECKER_INPUTS: bool = false;
 const CHECKER_HEADER: bool = false;
 const CHECKER_CONJUNCTS: bool = false;
+const UNIFY_HEADER: bool = true;
 const DUMP_FORMATTER: bool = false;
 
 const FIRST_FILE: usize = 0;

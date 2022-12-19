@@ -698,7 +698,7 @@ pub enum Formula {
   },
   /// ikFrmVerum
   True,
-  Thesis,
+  // Thesis,
 }
 
 impl Default for Formula {
@@ -722,7 +722,7 @@ impl Formula {
       Formula::ForAll { .. } => 157,
       Formula::FlexAnd { .. } => b'b',
       Formula::True => b'%',
-      Formula::Thesis => b'$',
+      // Formula::Thesis => b'$',
     }
   }
 

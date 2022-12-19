@@ -72,7 +72,7 @@ impl<'a> Checker<'a> {
       eprintln!("checking {} @ {:?}:\n  {check_f:?}", self.idx, self.pos);
     }
 
-    self.open_quantifiers::<ConstId>(&mut check_f, true);
+    OpenAsConst(self).open_quantifiers(&mut check_f, true);
     // eprintln!("opened {} @ {:?}:\n  {check_f:?}", self.idx, self.pos);
 
     check_f.visit(&mut self.intern_const());
@@ -95,7 +95,7 @@ impl<'a> Checker<'a> {
         let mut eq = Equalizer::new(self);
         let res = eq.equate(&atoms, &f)?;
         // vprintln!("failed equalizer: {f:?}");
-        Unifier::new(eq).unify(res)
+        Unifier::new(eq, &res).unify()
       })();
       // assert!(sat.is_err(), "failed to justify");
       // if sat.is_ok() {
@@ -179,8 +179,7 @@ impl Expand<'_> {
       | Formula::PrivPred { .. }
       | Formula::Is { .. }
       | Formula::ForAll { .. }
-      | Formula::True
-      | Formula::Thesis => {}
+      | Formula::True => {}
     }
   }
 
@@ -290,72 +289,25 @@ impl Formula {
         | Formula::Attr { .. }
         | Formula::Is { .. }
         | Formula::FlexAnd { .. }
-        | Formula::True
-        | Formula::Thesis => ExpandPrivFunc { ctx }.visit_formula(self, depth),
+        | Formula::True => ExpandPrivFunc { ctx }.visit_formula(self, depth),
       }
       break
     }
   }
 }
 
-trait VarKind: Idx {
+pub trait Open {
   fn mk_var(n: u32) -> Term;
-  fn base(lc: &LocalContext) -> u32;
-  fn push_var(lc: &mut LocalContext, ty: Type);
-}
-
-impl VarKind for ConstId {
-  fn mk_var(n: u32) -> Term { Term::Constant(ConstId(n)) }
-  fn base(lc: &LocalContext) -> u32 { lc.fixed_var.len() as u32 }
-  fn push_var(lc: &mut LocalContext, ty: Type) { lc.fixed_var.push(FixedVar { ty, def: None }); }
-}
-// impl VarKind for FVarId {
-//   fn mk_var(n: u32) -> Term { Term::FreeVar { nr: FVarId(n) } }
-//   fn base(lc: &LocalContext) -> u32 { lc.free_var.len() as u32 }
-//   fn push_var(lc: &mut LocalContext, ty: Box<Type>) {
-//     lc.free_var.push(FixedVar { ty, def: None });
-//   }
-// }
-
-struct SetVar<V> {
-  depth: u32,
-  base: u32,
-  var: PhantomData<V>,
-}
-
-impl<V: VarKind> SetVar<V> {
-  fn new(lc: &LocalContext, depth: u32) -> SetVar<V> {
-    SetVar { depth, base: V::base(lc), var: PhantomData }
-  }
-}
-
-impl<V: VarKind> VisitMut for SetVar<V> {
-  fn visit_term(&mut self, tm: &mut Term, depth: u32) {
-    match tm {
-      Term::Bound(nr) =>
-        if nr.0 >= self.depth {
-          nr.0 -= self.depth
-        } else {
-          *tm = V::mk_var(self.base + nr.0)
-        },
-      _ => self.super_visit_term(tm, depth),
-    }
-  }
-}
-
-impl<'a> Checker<'a> {
-  fn new_var<V: VarKind>(&mut self, mut ty: Type) {
-    ty.visit(&mut self.intern_const());
-    V::push_var(self.lc, ty)
-  }
+  fn base(&self) -> u32;
+  fn new_var(&mut self, ty: Type);
 
   /// * pos = true: RemoveIntQuantifier
   /// * pos = false: RemoveExtQuantifier
-  fn open_quantifiers<V: VarKind>(&mut self, fmla: &mut Formula, pos: bool) {
+  fn open_quantifiers(&mut self, fmla: &mut Formula, pos: bool) {
     loop {
       match fmla {
         Formula::Neg { f } => {
-          self.open_quantifiers::<V>(f, !pos);
+          self.open_quantifiers(f, !pos);
           if let Formula::Neg { f } = &mut **f {
             *fmla = std::mem::take(f);
           }
@@ -363,19 +315,19 @@ impl<'a> Checker<'a> {
         Formula::And { args } => {
           let mut conjs = vec![];
           for mut f in std::mem::take(args) {
-            self.open_quantifiers::<V>(&mut f, pos);
+            self.open_quantifiers(&mut f, pos);
             f.append_conjuncts_to(&mut conjs)
           }
           *fmla = Formula::mk_and(conjs)
         }
         Formula::ForAll { dom, scope } =>
           if !pos {
-            let mut set_var = SetVar::<V>::new(self.lc, 1);
-            self.new_var::<V>(std::mem::take(&mut **dom));
+            let mut set_var = SetVar::new(self, 1);
+            self.new_var(std::mem::take(&mut **dom));
             let mut f = std::mem::take(scope);
             while let Formula::ForAll { mut dom, scope } = *f {
               set_var.visit_type(&mut dom, set_var.depth);
-              self.new_var::<V>(*dom);
+              self.new_var(*dom);
               set_var.depth += 1;
               f = scope
             }
@@ -389,10 +341,46 @@ impl<'a> Checker<'a> {
         | Formula::PrivPred { .. }
         | Formula::Is { .. }
         | Formula::FlexAnd { .. }
-        | Formula::True
-        | Formula::Thesis => {}
+        | Formula::True => {}
       }
       return
+    }
+  }
+}
+
+struct OpenAsConst<'a, 'b>(&'b mut Checker<'a>);
+
+impl Open for OpenAsConst<'_, '_> {
+  fn mk_var(n: u32) -> Term { Term::Constant(ConstId(n)) }
+  fn base(&self) -> u32 { self.0.lc.fixed_var.len() as u32 }
+  fn new_var(&mut self, mut ty: Type) {
+    ty.visit(&mut self.0.intern_const());
+    self.0.lc.fixed_var.push(FixedVar { ty, def: None });
+  }
+}
+
+struct SetVar<O: ?Sized> {
+  depth: u32,
+  base: u32,
+  open: PhantomData<O>,
+}
+
+impl<O: Open + ?Sized> SetVar<O> {
+  fn new(open: &O, depth: u32) -> SetVar<O> {
+    SetVar { depth, base: open.base(), open: PhantomData }
+  }
+}
+
+impl<O: Open + ?Sized> VisitMut for SetVar<O> {
+  fn visit_term(&mut self, tm: &mut Term, depth: u32) {
+    match tm {
+      Term::Bound(nr) =>
+        if nr.0 >= self.depth {
+          nr.0 -= self.depth
+        } else {
+          *tm = O::mk_var(self.base + nr.0)
+        },
+      _ => self.super_visit_term(tm, depth),
     }
   }
 }
@@ -538,33 +526,52 @@ where Conjunct<K, V>: std::fmt::Debug
     other.into_iter().for_each(|conj| Self::insert_and_absorb(this, conj));
   }
 
-  /// PreInstCollection.JoinWith
-  pub fn mk_and(&mut self, other: Self)
-  where Conjunct<K, V>: std::fmt::Debug {
-    let Dnf::Or(this) = self else { *self = other; return };
-    let Dnf::Or(other) = other else { return };
-    if this.is_empty() {
-      return
-    }
-    match &*other {
-      [] => this.clear(),
-      [conj2] => this.retain_mut(|conj1| conj1.mk_and(conj2).is_ok()),
-      _ =>
-        for conj1 in std::mem::take(this) {
-          for conj2 in &other {
-            let mut conj = conj1.clone();
-            if let Ok(()) = conj.mk_and(conj2) {
-              Self::insert_and_absorb(this, conj);
-              assert!(this.len() <= 6000);
-            }
+  fn mk_and_core(this: &mut Vec<Conjunct<K, V>>, other: Vec<Conjunct<K, V>>) {
+    if let [conj2] = &*other {
+      this.retain_mut(|conj1| conj1.mk_and(conj2).is_ok())
+    } else {
+      for conj1 in std::mem::take(this) {
+        for conj2 in &other {
+          let mut conj = conj1.clone();
+          if let Ok(()) = conj.mk_and(conj2) {
+            Self::insert_and_absorb(this, conj);
+            assert!(this.len() <= 6000);
           }
-        },
+        }
+      }
+    }
+  }
+
+  /// PreInstCollection.JoinWith
+  pub fn mk_and(&mut self, other: Self) {
+    match self {
+      Dnf::True => *self = other,
+      Dnf::Or(this) => match other {
+        Dnf::True => {}
+        _ if this.is_empty() => {}
+        Dnf::Or(other) if other.is_empty() => this.clear(),
+        Dnf::Or(other) => Self::mk_and_core(this, other),
+      },
+    }
+  }
+
+  /// PreInstCollection.JoinInstList
+  /// Constructs the AND of a set of (nontrivial) DNF expressions.
+  pub fn and_many(dnfs: Vec<Vec<Conjunct<K, V>>>) -> Self {
+    let mut it = dnfs.into_iter();
+    if let Some(mut this) = it.next() {
+      it.for_each(|other| Self::mk_and_core(&mut this, other));
+      Dnf::Or(this)
+    } else {
+      Dnf::True
     }
   }
 }
 
 impl Atoms {
-  fn normalize(
+  /// * pos = true: PreInstCollection.NormalizeAsTrue
+  /// * pos = false: PreInstCollection.NormalizeAsFalse
+  pub fn normalize(
     &mut self, g: &Global, lc: &LocalContext, f: Formula, pos: bool,
   ) -> Dnf<AtomId, bool> {
     match f {

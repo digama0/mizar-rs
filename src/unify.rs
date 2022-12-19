@@ -1,7 +1,7 @@
-use crate::checker::OrUnsat;
+use crate::checker::{Atoms, Dnf, Open, OrUnsat, Unsat};
 use crate::equate::{Equalizer, EqualizerResult};
 use crate::types::*;
-use crate::{Global, LocalContext};
+use crate::{vprintln, CheckLocus, ExpandPrivFunc, Global, LocalContext, Visit, VisitMut};
 use enum_map::{Enum, EnumMap};
 use itertools::Itertools;
 use std::collections::HashMap;
@@ -16,6 +16,7 @@ pub struct Unifier<'a> {
   ty_class: IdxVec<EqClassId, Vec<Type>>,
   supercluster: IdxVec<EqClassId, Attrs>,
   eterm: IdxVec<EqClassId, EqClassId>,
+  res: &'a EqualizerResult,
 }
 
 #[derive(Copy, Clone, Debug, Enum)]
@@ -47,7 +48,7 @@ impl Term {
 
 impl<'a> Unifier<'a> {
   /// InitUnifier
-  pub fn new(eq: Equalizer<'a>) -> Self {
+  pub fn new(eq: Equalizer<'a>, res: &'a EqualizerResult) -> Self {
     let mut u = Self {
       g: eq.g,
       lc: eq.lc,
@@ -58,6 +59,7 @@ impl<'a> Unifier<'a> {
       ty_class: IdxVec::from_default(eq.next_eq_class.into_usize()),
       supercluster: IdxVec::from_default(eq.next_eq_class.into_usize()),
       eterm: Default::default(),
+      res,
     };
     for etm in eq.terms.0 {
       if !etm.eq_class.is_empty() {
@@ -83,10 +85,66 @@ impl<'a> Unifier<'a> {
     u
   }
 
-  /// Verify
-  fn verify(&self, f: &Formula) -> OrUnsat<()> {
-    //
+  /// Verify: Attempts to prove f |- false
+  fn falsify(&mut self, mut f: Formula) -> OrUnsat<()> {
+    Standardize { g: self.g, lc: self.lc }.visit_formula(&mut f, 0);
+    if crate::UNIFY_HEADER {
+      eprintln!("verifying: {f:?}");
+    }
+    let mut free_vars = vec![];
+    // Suppose f = ∀ xs, F(xs).
+    // First, introduce metavariables ("free vars") to obtain a formula F(?v)
+    OpenAsFreeVar { u: self, free_vars: &mut free_vars }.open_quantifiers(&mut f, false);
+
+    // want to show: ∃ ?v. |- !F(?v)
+    // Normalize !F(?v) into DNF: ∃ ?v. |- C_1(?v) \/ ... \/ C_n(?v)
+    // If we get !F(?v) = true then we are done.
+    let mut atoms = Atoms::default();
+    let Dnf::Or(clauses) = atoms.normalize(self.g, self.lc, f, false) else { return Err(Unsat) };
+
+    // For the remainder we prove each clause separately.
+    // Any of them being true will finish the goal.
+    'next: for clause in clauses {
+      // We want to show: ∃ ?v. |- C(?v)
+      assert!(!clause.0.is_empty()); // this would be a proof but is also not reachable
+
+      // The strategy is to come up with an "assignment" P(?v) such that
+      // ∃ ?v. P(?v) is true structurally and ∀ ?v. (P(?v) -> C(?v)) holds.
+      // We write P(?v) in DNF, and ensure that each conjunct is satisfiable,
+      // so it suffices to check that P(?v) is not identically false to ensure ∃ ?v. P(?v).
+
+      let mut insts = vec![];
+      // C(?v) is a conjunction A_1(?v) /\ ... /\ A_n(?v);
+      // for each A_i(?v) we will construct P_i(?v) and AND them together
+      for (a, val) in clause.0 {
+        // Negate the conclusion to !A_i(?v) |- false to match the usual polarity,
+        // and get an instantiation P_i(?v) such that P_i(?v), !A_i(?v) |- false.
+        match self.compute_inst(&atoms.0[a], !val) {
+          // A_i(?v) is true without our help
+          Dnf::True => {}
+          // We failed to construct an instantiation,
+          // the strongest P_i(?v) we could come up with is 'false'
+          Dnf::Or(conjs) if conjs.is_empty() => continue 'next,
+          // Otherwise we push P_i(?v) on insts (we delay the join operation
+          // in case we can get one of the other two cases on some atoms)
+          Dnf::Or(conjs) => insts.push(conjs),
+        }
+      }
+      // Unless /\_i P_i(?v) is the empty disjunction (false), it is satisfiable and we are done
+      if !matches!(Dnf::and_many(insts), Dnf::Or(conjs) if conjs.is_empty()) {
+        return Err(Unsat)
+      }
+    }
+    // falsification failed
     Ok(())
+  }
+
+  /// Constructs an instantiation P(?v) such that
+  /// * pos = true: COMPInstAsTrue - P(?v) /\ F(?v) |- false
+  /// * pos = false: COMPInstAsFalse - P(?v) /\ !F(?v) |- false
+  fn compute_inst(&mut self, f: &Formula, pos: bool) -> Dnf<u32, u32> {
+    //
+    Dnf::True
   }
 
   /// Unifiable
@@ -96,11 +154,11 @@ impl<'a> Unifier<'a> {
   }
 
   /// Unification
-  pub fn unify(&mut self, res: EqualizerResult) -> OrUnsat<()> {
+  pub fn unify(&mut self) -> OrUnsat<()> {
     let univ =
-      res.pos_bas.0 .0.iter().filter(|f| matches!(f, Formula::ForAll { .. })).collect_vec();
+      self.res.pos_bas.0 .0.iter().filter(|f| matches!(f, Formula::ForAll { .. })).collect_vec();
     for &f in &univ {
-      self.verify(f)?;
+      self.falsify(f.clone())?;
     }
     if ENABLE_UNIFIER {
       for f in &univ {
@@ -112,7 +170,7 @@ impl<'a> Unifier<'a> {
     }
 
     let mut fraenkel_fmlas = vec![];
-    for (neg, bas) in [(false, &res.pos_bas), (true, &res.neg_bas)] {
+    for (neg, bas) in [(false, &self.res.pos_bas), (true, &self.res.neg_bas)] {
       for f in &bas.0 .0 {
         if let Formula::Pred { nr, args } = f {
           let (nr, args) = Formula::adjust_pred(*nr, args, &self.g.constrs);
@@ -126,7 +184,7 @@ impl<'a> Unifier<'a> {
               }
             }
             for f in fraenkel_fmlas.drain(..) {
-              self.verify(&f)?;
+              self.falsify(f)?;
             }
           }
         }
@@ -134,6 +192,17 @@ impl<'a> Unifier<'a> {
     }
     Ok(())
   }
+}
+
+struct OpenAsFreeVar<'a, 'b> {
+  u: &'b mut Unifier<'a>,
+  free_vars: &'b mut Vec<Type>,
+}
+
+impl Open for OpenAsFreeVar<'_, '_> {
+  fn mk_var(n: u32) -> Term { Term::FreeVar(FVarId(n)) }
+  fn base(&self) -> u32 { self.free_vars.len() as u32 }
+  fn new_var(&mut self, mut ty: Type) { self.free_vars.push(ty); }
 }
 
 impl Term {
@@ -150,5 +219,80 @@ impl Term {
       f = Formula::ForAll { dom: Box::new(ty), scope: Box::new(f) }
     }
     f
+  }
+}
+
+struct Standardize<'a> {
+  g: &'a Global,
+  lc: &'a mut LocalContext,
+}
+
+impl VisitMut for Standardize<'_> {
+  fn visit_term(&mut self, tm: &mut Term, depth: u32) {}
+  fn visit_terms(&mut self, tms: &mut [Term], depth: u32) {}
+
+  fn visit_type(&mut self, ty: &mut Type, depth: u32) {
+    assert!(!CheckLocus::get(|cl| {
+      cl.visit_attrs(&ty.attrs.0, depth);
+      cl.visit_attrs(&ty.attrs.1, depth);
+    }));
+    self.visit_terms(&mut ty.args, depth);
+  }
+
+  fn visit_formula(&mut self, f: &mut Formula, depth: u32) {
+    self.standardize_formula(f, true, depth)
+  }
+}
+
+impl Standardize<'_> {
+  /// * pos = true: PositivelyStandardized
+  /// * pos = false: NegativelyStandardized
+  fn standardize_formula(&mut self, f: &mut Formula, pos: bool, depth: u32) {
+    loop {
+      match f {
+        Formula::Neg { f } => self.standardize_formula(f, !pos, depth),
+        Formula::And { args } =>
+          args.iter_mut().for_each(|f| self.standardize_formula(f, pos, depth)),
+        Formula::ForAll { dom, scope, .. } =>
+          if pos {
+            self.visit_type(dom, depth);
+            self.lc.bound_var.push(std::mem::take(dom));
+            self.standardize_formula(scope, pos, depth + 1);
+            **dom = self.lc.bound_var.0.pop().unwrap();
+          },
+        Formula::SchPred { args, .. } | Formula::Pred { args, .. } => self.visit_terms(args, depth),
+        Formula::Attr { mut nr, args } => {
+          let (main, rest) = args.split_last_mut().unwrap();
+          self.visit_term(main, depth);
+          let attr = Attr { nr, pos: true, args: rest.to_owned().into() };
+          *f = Box::new(std::mem::take(main)).mk_is(self.g, self.lc, attr);
+          continue
+        }
+        Formula::PrivPred { args, value, .. } => {
+          self.visit_terms(args, depth);
+          ExpandPrivFunc { ctx: &self.g.constrs }.visit_formula(value, depth);
+        }
+        Formula::Is { term, ty } => {
+          self.visit_term(term, depth);
+          self.visit_type(ty, depth)
+        }
+        Formula::FlexAnd { .. } | Formula::True => {}
+      }
+      break
+    }
+  }
+}
+
+impl Term {
+  /// ChReconQualFrm
+  fn mk_is(self: Box<Term>, g: &Global, lc: &LocalContext, attr: Attr) -> Formula {
+    let mut ty = self.get_type_uncached(g, lc);
+    ty.attrs.0.insert(&g.constrs, attr);
+    if matches!(ty.attrs.0, Attrs::Inconsistent) {
+      Formula::Neg { f: Box::new(Formula::True) }
+    } else {
+      ty.attrs.1 = ty.attrs.0.clone();
+      Formula::Is { term: self, ty: Box::new(ty) }
+    }
   }
 }
