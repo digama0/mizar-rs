@@ -574,7 +574,9 @@ where Conjunct<K, V>: std::fmt::Debug
 
   /// PreInstCollection.JoinInstList
   /// Constructs the AND of a set of (nontrivial) DNF expressions.
-  pub fn and_many(dnfs: Vec<Vec<Conjunct<K, V>>>) -> Self {
+  pub fn and_many(mut dnfs: Vec<Vec<Conjunct<K, V>>>) -> Self {
+    // We sort the DNFs by length to prioritize a small accumulator
+    dnfs.sort_unstable_by_key(|dnf| dnf.len());
     let mut it = dnfs.into_iter();
     if let Some(mut this) = it.next() {
       it.for_each(|other| Self::mk_and_core(&mut this, other));
