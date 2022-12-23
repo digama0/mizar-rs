@@ -2383,6 +2383,7 @@ const ITEM_HEADER: bool = false;
 const CHECKER_INPUTS: bool = false;
 const CHECKER_HEADER: bool = false;
 const CHECKER_CONJUNCTS: bool = false;
+const CHECKER_RESULT: bool = false;
 const UNIFY_HEADER: bool = true;
 const DUMP_FORMATTER: bool = false;
 

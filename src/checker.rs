@@ -4,8 +4,8 @@ use crate::types::*;
 use crate::unify::Unifier;
 use crate::verify::Verifier;
 use crate::{
-  inst, set_verbose, vprintln, Equate, ExpandPrivFunc, FixedVar, Global, InternConst, LocalContext,
-  OnVarMut, Subst, VisitMut,
+  inst, set_verbose, stat, vprintln, Equate, ExpandPrivFunc, FixedVar, Global, InternConst,
+  LocalContext, OnVarMut, Subst, VisitMut,
 };
 use itertools::EitherOrBoth;
 use std::borrow::Cow;
@@ -83,13 +83,13 @@ impl<'a> Checker<'a> {
     else { panic!("it is not true") };
     if crate::CHECKER_CONJUNCTS {
       for (i, a) in atoms.0.enum_iter() {
-        vprintln!("atom {i:?}: {a:?}");
+        eprintln!("atom {i:?}: {a:?}");
       }
     }
     self.g.recursive_round_up = true;
     for f in normal_form {
       if crate::CHECKER_CONJUNCTS {
-        vprintln!("falsifying: {f:?}");
+        eprintln!("falsifying: {f:?}");
       }
       let sat = (|| {
         let mut eq = Equalizer::new(self);
@@ -98,11 +98,17 @@ impl<'a> Checker<'a> {
         Unifier::new(eq, &res).run()
       })();
       // assert!(sat.is_err(), "failed to justify");
-      // if sat.is_ok() {
-      //   eprintln!("failed to justify: {f:?}");
-      // } else {
-      //   eprintln!("proved! {f:?}");
-      // }
+      if sat.is_ok() {
+        stat("failure");
+        if crate::CHECKER_RESULT {
+          eprintln!("failed to justify: {f:?}");
+        }
+      } else {
+        stat("success");
+        if crate::CHECKER_RESULT {
+          vprintln!("proved! {f:?}");
+        }
+      }
     }
     self.g.recursive_round_up = false;
     self.lc.fixed_var.0.truncate(fixed_var);
