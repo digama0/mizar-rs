@@ -1305,9 +1305,9 @@ impl<'a> Equalizer<'a> {
     }
   }
 
-  pub fn equate(
+  pub fn run(
     &mut self, atoms: &Atoms, conj: &Conjunct<AtomId, bool>,
-  ) -> OrUnsat<EqualizerResult> {
+  ) -> OrUnsat<EnumMap<bool, Atoms>> {
     self.lc.marks.0.clear();
     let mut eqs = Equals::default();
     let mut bas = EnumMap::<bool, Atoms>::default();
@@ -1941,13 +1941,8 @@ impl<'a> Equalizer<'a> {
     }
     ineqs.process(self, &mut neg_bas)?;
 
-    Ok(EqualizerResult { neg_bas, pos_bas })
+    Ok(EnumMap::from_array([neg_bas, pos_bas]))
   }
-}
-
-pub struct EqualizerResult {
-  pub pos_bas: Atoms,
-  pub neg_bas: Atoms,
 }
 
 struct Ineqs {

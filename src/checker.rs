@@ -93,9 +93,9 @@ impl<'a> Checker<'a> {
       }
       let sat = (|| {
         let mut eq = Equalizer::new(self);
-        let res = eq.equate(&atoms, &f)?;
+        let res = eq.run(&atoms, &f)?;
         // vprintln!("failed equalizer: {f:?}");
-        Unifier::new(eq, &res).unify()
+        Unifier::new(eq, &res).run()
       })();
       // assert!(sat.is_err(), "failed to justify");
       // if sat.is_ok() {
@@ -467,6 +467,7 @@ where Self: std::fmt::Debug
   }
 }
 
+#[derive(Clone)]
 pub enum Dnf<K, V> {
   /// The constant true is represented specially, although we could use `Or([[]])`
   /// to represent it (that is, the singleton of the empty map).
@@ -474,6 +475,11 @@ pub enum Dnf<K, V> {
   /// A collection of conjunctions connected by OR.
   Or(Vec<Conjunct<K, V>>),
 }
+
+// We can handle a few orders of magnitude more than this before
+// things really start to chug, but Mizar has this as a hard limit
+// so if we go past it using MML inputs then something must have gone wrong
+const MAX_DISJUNCTS: usize = 6000;
 
 impl<K, V> std::fmt::Debug for Dnf<K, V>
 where Conjunct<K, V>: std::fmt::Debug
@@ -490,6 +496,8 @@ impl<K: Ord + Clone, V: PartialEq + Clone> Dnf<K, V>
 where Conjunct<K, V>: std::fmt::Debug
 {
   pub const FALSE: Dnf<K, V> = Dnf::Or(vec![]);
+
+  pub fn is_false(&self) -> bool { matches!(self, Dnf::Or(conjs) if conjs.is_empty()) }
 
   /// * pos = true: PreInstCollection.InitTop
   /// * pos = false: PreInstCollection.InitBottom
@@ -526,6 +534,15 @@ where Conjunct<K, V>: std::fmt::Debug
     other.into_iter().for_each(|conj| Self::insert_and_absorb(this, conj));
   }
 
+  pub fn mk_and_single(&mut self, k: K, v: V) {
+    match self {
+      Dnf::True => *self = Dnf::single(Conjunct::single(k, v)),
+      Dnf::Or(conjs) => conjs.iter_mut().for_each(|conj| {
+        conj.0.insert(k.clone(), v.clone());
+      }),
+    }
+  }
+
   fn mk_and_core(this: &mut Vec<Conjunct<K, V>>, other: Vec<Conjunct<K, V>>) {
     if let [conj2] = &*other {
       this.retain_mut(|conj1| conj1.mk_and(conj2).is_ok())
@@ -535,7 +552,7 @@ where Conjunct<K, V>: std::fmt::Debug
           let mut conj = conj1.clone();
           if let Ok(()) = conj.mk_and(conj2) {
             Self::insert_and_absorb(this, conj);
-            assert!(this.len() <= 6000);
+            assert!(this.len() <= MAX_DISJUNCTS);
           }
         }
       }

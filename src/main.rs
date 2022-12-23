@@ -564,6 +564,10 @@ trait Equate {
     t1.len() == t2.len() && t1.iter().zip(t2).all(|(t1, t2)| self.eq_term(g, lc, t1, t2))
   }
 
+  fn eq_class_right(&mut self, g: &Global, lc: &LocalContext, t1: &Term, ec: EqClassId) -> bool {
+    false
+  }
+
   /// on (): EqTrm(fTrm1 = t1, fTrm2 = t2)
   /// on Subst: EsTrm(fTrm = t1, aTrm = t2)
   fn eq_term(&mut self, g: &Global, lc: &LocalContext, t1: &Term, t2: &Term) -> bool {
@@ -577,9 +581,10 @@ trait Equate {
       | (Constant(ConstId(n1)), Constant(ConstId(n2)))
       | (FreeVar(FVarId(n1)), FreeVar(FVarId(n2)))
       | (LambdaVar(n1), LambdaVar(n2))
-      | (EqClass(EqClassId(n1)), EqClass(EqClassId(n2)))
       | (Numeral(n1), Numeral(n2)) => n1 == n2,
-      (EqMark(EqMarkId(n1)), EqMark(EqMarkId(n2))) | (Infer(InferId(n1)), Infer(InferId(n2)))
+      (EqClass(EqClassId(n1)), EqClass(EqClassId(n2)))
+      | (EqMark(EqMarkId(n1)), EqMark(EqMarkId(n2)))
+      | (Infer(InferId(n1)), Infer(InferId(n2)))
         if n1 == n2 =>
         true,
       (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) =>
@@ -613,6 +618,7 @@ trait Equate {
       (&Infer(nr), _) => self.eq_term(g, lc, &lc.infer_const.borrow()[nr].def, t2),
       (_, &EqMark(nr)) => self.eq_term(g, lc, t1, &lc.marks[nr].0),
       (&EqMark(nr), _) => self.eq_term(g, lc, &lc.marks[nr].0, t2),
+      (_, &EqClass(nr)) => self.eq_class_right(g, lc, t1, nr),
       (PrivFunc { .. }, _) | (_, PrivFunc { .. }) =>
         self.eq_term(g, lc, t1.skip_priv_func(), t2.skip_priv_func()),
       _ => false,
