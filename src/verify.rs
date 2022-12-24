@@ -401,9 +401,103 @@ impl Verifier {
     }
   }
 
+  /// RoundUpFurther
+  fn round_up_further<T>(&mut self, rounded_up: BTreeMap<InferId, T>) {
+    if rounded_up.is_empty() {
+      return
+    }
+    let mut i = *rounded_up.first_key_value().unwrap().0;
+    let mut ic = self.lc.infer_const.borrow();
+    while let Some(asgn) = ic.get(i) {
+      match &asgn.def {
+        Term::Functor { args, .. }
+        | Term::Selector { args, .. }
+        | Term::Aggregate { args, .. }
+        | Term::SchFunc { args, .. } => {
+          if args.iter().any(|t| matches!(t, Term::Infer(i) if rounded_up.contains_key(i))) {
+            let mut ty = asgn.def.round_up_type(&self.g, &self.lc).to_owned();
+            ty.attrs.1.round_up_with(&self.g, &self.lc, &asgn.ty);
+            ty.attrs.1.visit(&mut self.intern_const());
+            drop(ic);
+            self.lc.infer_const.borrow_mut()[i].ty = *ty;
+            ic = self.lc.infer_const.borrow();
+          }
+        }
+        Term::Numeral(_) => {
+          let mut attrs = asgn.ty.attrs.1.clone();
+          attrs.round_up_with(&self.g, &self.lc, &asgn.ty);
+          attrs.visit(&mut self.intern_const());
+          drop(ic);
+          self.lc.infer_const.borrow_mut()[i].ty.attrs.1 = attrs;
+          ic = self.lc.infer_const.borrow();
+        }
+        _ => {}
+      }
+      i.0 += 1;
+    }
+    //
+  }
+
   fn read_cluster_decl(&mut self, cl: &ClusterDecl) {
-    // self.pending_defs.push(PendingDef::Cluster);
     self.read_corr_conds(&cl.conds, &cl.corr);
+    match &cl.kind {
+      ClusterDeclKind::R(cl) => {
+        let mut cl = cl.clone();
+        cl.consequent.1.visit(&mut self.intern_const());
+        self.g.clusters.registered.push(cl)
+      }
+      ClusterDeclKind::F(cl) => {
+        let mut cl = cl.clone();
+        cl.consequent.1.visit(&mut self.intern_const());
+        let mut rounded_up = BTreeMap::new();
+        for (i, asgn) in self.lc.infer_const.borrow().enum_iter() {
+          let mut attrs = asgn.ty.attrs.1.clone();
+          let orig = attrs.attrs().len();
+          cl.round_up_with(&self.g, &self.lc, &asgn.def, &asgn.ty, &mut attrs);
+          assert!(matches!(attrs, Attrs::Consistent(_)));
+          attrs.round_up_with(&self.g, &self.lc, &asgn.ty);
+          if attrs.attrs().len() > orig {
+            attrs.visit(&mut self.intern_const());
+            rounded_up.insert(i, attrs);
+          }
+        }
+        let i = (self.g.clusters.functor)
+          .insertion_index(|a| FunctorCluster::cmp_term(&a.term, &self.g.constrs, &cl.term));
+        self.g.clusters.functor.insert_at(i, cl);
+        let ic = self.lc.infer_const.get_mut();
+        for (&i, attrs) in &mut rounded_up {
+          self.lc.infer_const.get_mut()[i].ty.attrs.1 = std::mem::take(attrs);
+        }
+        self.round_up_further(rounded_up);
+      }
+      ClusterDeclKind::C(cl) => {
+        let mut cl = cl.clone();
+        cl.consequent.1.visit(&mut self.intern_const());
+        let mut rounded_up = BTreeMap::new();
+        for (i, asgn) in self.lc.infer_const.borrow().enum_iter() {
+          if let Some(subst) = cl.try_apply(&self.g, &self.lc, &asgn.ty.attrs.1, &asgn.ty) {
+            let mut attrs = asgn.ty.attrs.1.clone();
+            let orig = attrs.attrs().len();
+            // eprintln!("enlarge {:?} by {:?}", self, cl.consequent.1);
+            attrs.enlarge_by(&self.g.constrs, &cl.consequent.1, |a| {
+              a.visit_cloned(&mut Inst::new(&subst))
+            });
+            assert!(matches!(attrs, Attrs::Consistent(_)));
+            attrs.round_up_with(&self.g, &self.lc, &asgn.ty);
+            if attrs.attrs().len() > orig {
+              attrs.visit(&mut self.intern_const());
+              rounded_up.insert(i, attrs);
+            }
+          }
+        }
+        self.g.clusters.conditional.vec.push(cl);
+        let ic = self.lc.infer_const.get_mut();
+        for (&i, attrs) in &mut rounded_up {
+          self.lc.infer_const.get_mut()[i].ty.attrs.1 = std::mem::take(attrs);
+        }
+        self.round_up_further(rounded_up);
+      }
+    }
   }
 
   fn read_inference(&mut self, thesis: &Formula, it: &Inference) {

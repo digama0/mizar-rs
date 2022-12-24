@@ -183,6 +183,7 @@ impl Equalizer<'_> {
   fn insert_type(&mut self, mut new: Type, et: EqTermId, depth: u32) -> OrUnsat<()> {
     self.y(|y| y.visit_type(&mut new, depth))?;
     let mut eq_term = &mut self.terms[et];
+    // vprintln!("insert type e{:?}: {new:?}", eq_term.id);
     let mut i;
     loop {
       if let Some(old) = (eq_term.ty_class.iter())
@@ -325,8 +326,8 @@ impl VisitMut for Y<'_, '_> {
           let (m, et) = self.new_eq_class(tm);
           *self.eq.infers.get_mut_extending(nr) = Some(self.eq.terms[et].mark);
           // TODO: numeric_value
-          let mut ty = self.lc.infer_const.get_mut()[nr].ty.clone();
-          ExpandPrivFunc { ctx: &self.g.constrs }.visit_type(&mut ty, depth);
+          let ty = (self.eq.lc.infer_const.get_mut()[nr].ty)
+            .visit_cloned_d(&mut ExpandPrivFunc(&self.eq.g.constrs), depth);
           y_try!(self, self.insert_type(ty, et, depth));
           *tm = Term::EqMark(self.terms[et].mark);
         }
@@ -1355,7 +1356,10 @@ impl<'a> Equalizer<'a> {
 
     let mut to_y_term = vec![];
     let mut to_yy_term = vec![];
-    for (i, ets) in self.terms.enum_iter() {
+    let mut settings = Equals::default();
+    let mut i = EqTermId::default();
+    // This cannot be a for loop because the terms list grows due to y_term() and yy_term()
+    while let Some(ets) = self.terms.get(i) {
       let mut j = 0;
       for &m in &ets.eq_class {
         if let Term::Infer(id) = self.lc.marks[m].0 {
@@ -1363,17 +1367,14 @@ impl<'a> Equalizer<'a> {
           for &z in &asgn.eq_const {
             to_y_term.push((i, Term::Infer(z)));
           }
-          let mut tm = asgn.def.clone();
-          ExpandPrivFunc { ctx: &self.g.constrs }.visit_term(&mut tm, 0);
-          to_yy_term.push((i, tm))
+          to_yy_term.push((i, asgn.def.visit_cloned(&mut ExpandPrivFunc(&self.g.constrs))))
         }
       }
-    }
-    let mut eq_pendings = Equals::default();
-    self.drain_pending(&mut to_y_term, &mut eq_pendings)?;
-    let mut settings = Equals::default();
-    for (i, mut tm) in to_yy_term {
-      settings.insert(i, self.yy_term(tm, i)?)
+      self.drain_pending(&mut to_y_term, &mut eqs)?;
+      for (i, mut tm) in to_yy_term.drain(..) {
+        settings.insert(i, self.yy_term(tm, i)?)
+      }
+      i.0 += 1;
     }
 
     // InitEmptyInEqClass
@@ -1385,7 +1386,7 @@ impl<'a> Equalizer<'a> {
           to_y_term.push((i, Term::Functor { nr: empty_set, args: Box::new([]) }))
         }
       }
-      self.drain_pending(&mut to_y_term, &mut eq_pendings)?;
+      self.drain_pending(&mut to_y_term, &mut eqs)?;
     }
     if let Some(zero_number) = self.g.reqs.zero_number() {
       let zero = self.g.reqs.zero().unwrap();
@@ -1395,13 +1396,13 @@ impl<'a> Equalizer<'a> {
           to_y_term.push((i, Term::Functor { nr: zero_number, args: Box::new([]) }))
         }
       }
-      self.drain_pending(&mut to_y_term, &mut eq_pendings)?;
+      self.drain_pending(&mut to_y_term, &mut eqs)?;
     }
 
     // InitStructuresInEqClass
     for (i, mut tm) in to_y_term.drain(..) {
       self.y(|y| y.visit_term(&mut tm, 0))?;
-      eq_pendings.insert(i, self.lc.marks[tm.mark().unwrap()].1)
+      eqs.insert(i, self.lc.marks[tm.mark().unwrap()].1)
     }
 
     for (i, ets) in self.terms.enum_iter() {
@@ -1426,7 +1427,6 @@ impl<'a> Equalizer<'a> {
         }
       }
     }
-    let mut eqs = Equals::default();
     self.drain_pending(&mut to_y_term, &mut eqs)?;
 
     self.process_reductions()?;
@@ -1437,7 +1437,7 @@ impl<'a> Equalizer<'a> {
     }
 
     // UnionEqualsForNonComplex
-    for (x, y) in eqs.0 {
+    for (x, y) in std::mem::take(&mut eqs.0) {
       self.union_terms(x, y)?
     }
 
@@ -1457,9 +1457,9 @@ impl<'a> Equalizer<'a> {
     self.equate_polynomials()?;
     self.clear_polynomial_values()?;
 
-    let polys = self.process_linear_equations(&mut eq_pendings)?;
+    let polys = self.process_linear_equations(&mut eqs)?;
 
-    for (x, y) in eq_pendings.0 {
+    for (x, y) in eqs.0 {
       // TODO: polynomial_values
       self.union_terms(x, y)?
     }

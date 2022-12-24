@@ -574,7 +574,8 @@ trait Equate {
     use Term::*;
     // vprintln!("{t1:?} =? {t2:?}");
     match (t1, t2) {
-      (&EqMark(nr), _) if !Self::IGNORE_MARKS => matches!(*t2, Term::EqMark(nr2) if nr == nr2),
+      (&EqMark(nr), _) if !Self::IGNORE_MARKS =>
+        matches!(*t2, Term::EqMark(nr2) if lc.marks[nr].1 == lc.marks[nr2].1),
       (&Locus(nr), _) if self.locus_var_left(g, lc, nr, t2) => true,
       (&Locus(LocusId(n1)), &Locus(LocusId(n2))) if self.eq_locus_var(n1, n2) => true,
       (Bound(BoundId(n1)), Bound(BoundId(n2)))
@@ -1649,32 +1650,39 @@ impl Attrs {
       let last = if let Some(last) = state.jobs.pop() { last } else { break };
       // vprintln!("job {last}");
       let cl = &g.clusters.conditional.vec[last as usize];
-      let mut subst = Subst::new(cl.primary.len());
-      // TryRounding()
-      if g.type_reachable(&cl.ty, ty)
-        && cl.antecedent.is_subset_of(self, |a1, a2| subst.eq_attr(g, lc, a1, a2))
-        && !cl.consequent.1.is_subset_of(self, |a1, a2| {
-          (a1.adjusted_nr(&g.constrs), a1.pos) == (a2.adjusted_nr(&g.constrs), a2.pos)
-        })
-      {
-        // eprintln!(
-        //   "try rounding cc {last} = {:?} + {:?} + {:?} by {:?}",
-        //   cl.ty, cl.consequent.1, cl.primary, ty
-        // );
-        if let Some(ty) = cl.ty.widening_of(g, ty) {
-          if subst.cmp_type(g, lc, &cl.ty, &ty, false)
-            && cl.ty.attrs.0.is_subset_of(&ty.attrs.1, |a1, a2| subst.eq_attr(g, lc, a1, a2))
-            && subst.check_loci_types::<false>(g, lc, &cl.primary)
-          {
-            let subst =
-              subst.subst_term.into_vec().into_iter().map(|x| *x.unwrap()).collect::<Box<[Term]>>();
-            // eprintln!("enlarge {:?} by {:?}", self, cl.consequent.1);
-            self
-              .enlarge_by(&g.constrs, &cl.consequent.1, |a| a.visit_cloned(&mut Inst::new(&subst)));
-            state.handle_usage_and_fire(g, self)
-          }
-        }
+      if let Some(subst) = cl.try_apply(g, lc, self, ty) {
+        // eprintln!("enlarge {:?} by {:?}", self, cl.consequent.1);
+        self.enlarge_by(&g.constrs, &cl.consequent.1, |a| a.visit_cloned(&mut Inst::new(&subst)));
+        state.handle_usage_and_fire(g, self)
       }
+    }
+  }
+}
+
+impl ConditionalCluster {
+  fn try_apply(
+    &self, g: &Global, lc: &LocalContext, attrs: &Attrs, ty: &Type,
+  ) -> Option<Box<[Term]>> {
+    if !g.type_reachable(&self.ty, ty) {
+      return None
+    }
+    let mut subst = Subst::new(self.primary.len());
+    // TryRounding()
+    if !self.antecedent.is_subset_of(attrs, |a1, a2| subst.eq_attr(g, lc, a1, a2))
+      || self.consequent.1.is_subset_of(attrs, |a1, a2| {
+        (a1.adjusted_nr(&g.constrs), a1.pos) == (a2.adjusted_nr(&g.constrs), a2.pos)
+      })
+    {
+      return None
+    }
+    let ty = self.ty.widening_of(g, ty)?;
+    if subst.cmp_type(g, lc, &self.ty, &ty, false)
+      && self.ty.attrs.0.is_subset_of(&ty.attrs.1, |a1, a2| subst.eq_attr(g, lc, a1, a2))
+      && subst.check_loci_types::<false>(g, lc, &self.primary)
+    {
+      Some(subst.subst_term.into_vec().into_iter().map(|x| *x.unwrap()).collect::<Box<[Term]>>())
+    } else {
+      None
     }
   }
 }
@@ -1775,9 +1783,7 @@ impl EqualsDef {
   }
 }
 
-struct ExpandPrivFunc<'a> {
-  ctx: &'a Constructors,
-}
+struct ExpandPrivFunc<'a>(&'a Constructors);
 
 impl VisitMut for ExpandPrivFunc<'_> {
   /// CopyExpTrm
@@ -1791,7 +1797,7 @@ impl VisitMut for ExpandPrivFunc<'_> {
   }
 
   fn visit_attrs(&mut self, attrs: &mut Attrs, depth: u32) {
-    attrs.reinsert_all(self.ctx, |attr| self.visit_terms(&mut attr.args, depth))
+    attrs.reinsert_all(self.0, |attr| self.visit_terms(&mut attr.args, depth))
   }
 
   /// CopyExpFrm
@@ -1883,7 +1889,7 @@ impl<'a> InternConst<'a> {
       return eq
     }
     let mut insert_one = |this: &mut Self, mut tm| {
-      ExpandPrivFunc { ctx: &this.g.constrs }.visit_term(&mut tm, depth);
+      ExpandPrivFunc(&this.g.constrs).visit_term(&mut tm, depth);
       this.equals_expansion_level += 1;
       this.infer_consts.insert(nr);
       this.visit_term(&mut tm, 0);
@@ -1938,7 +1944,7 @@ impl VisitMut for InternConst<'_> {
         let mut eq = BTreeSet::new();
         if let Some(fv) = &self.lc.fixed_var[nr].def {
           let mut fv = (**fv).clone();
-          ExpandPrivFunc { ctx: &self.g.constrs }.visit_term(&mut fv, depth);
+          ExpandPrivFunc(&self.g.constrs).visit_term(&mut fv, depth);
           self.visit_term(&mut fv, depth);
           if self.only_constants {
             let Term::Infer(nr) = fv else { unreachable!() };

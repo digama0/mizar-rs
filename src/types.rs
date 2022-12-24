@@ -237,8 +237,12 @@ impl<I: Idx, T: std::fmt::Debug> std::fmt::Debug for SortedIdxVec<I, T> {
 }
 
 impl<I: Idx, T> SortedIdxVec<I, T> {
+  pub fn insertion_index(&self, p: impl Fn(&T) -> Ordering) -> usize {
+    self.sorted.partition_point(|&i| p(&self.vec[i]) == Ordering::Less)
+  }
+
   pub fn find_index(&self, p: impl Fn(&T) -> Ordering) -> Result<I, usize> {
-    let i = self.sorted.partition_point(|&i| p(&self.vec[i]) == Ordering::Less);
+    let i = self.insertion_index(&p);
     let Some(&idx) = self.sorted.get(i) else { return Err(i) };
     let Ordering::Equal = p(&self.vec[idx]) else { return Err(i) };
     Ok(idx)

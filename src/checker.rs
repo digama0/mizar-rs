@@ -7,7 +7,7 @@ use crate::{
   inst, set_verbose, stat, vprintln, Equate, ExpandPrivFunc, FixedVar, Global, InternConst,
   LocalContext, OnVarMut, Subst, VisitMut,
 };
-use itertools::EitherOrBoth;
+use itertools::{EitherOrBoth, Itertools};
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -81,15 +81,13 @@ impl<'a> Checker<'a> {
     let mut atoms = Atoms::default();
     let Dnf::Or(normal_form) = atoms.normalize(self.g, self.lc, check_f, true)
     else { panic!("it is not true") };
-    if crate::CHECKER_CONJUNCTS {
-      for (i, a) in atoms.0.enum_iter() {
-        eprintln!("atom {i:?}: {a:?}");
-      }
-    }
     self.g.recursive_round_up = true;
     for f in normal_form {
       if crate::CHECKER_CONJUNCTS {
-        eprintln!("falsifying: {f:?}");
+        eprintln!(
+          "falsifying: {:#?}",
+          f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
+        );
       }
       let sat = (|| {
         let mut eq = Equalizer::new(self);
@@ -101,12 +99,20 @@ impl<'a> Checker<'a> {
       if sat.is_ok() {
         stat("failure");
         if crate::CHECKER_RESULT {
-          eprintln!("failed to justify: {f:?}");
+          eprintln!(
+            "FAILED TO JUSTIFY {} @ {:?}: {:#?}",
+            self.idx,
+            self.pos,
+            f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
+          );
         }
       } else {
         stat("success");
         if crate::CHECKER_RESULT {
-          vprintln!("proved! {f:?}");
+          eprintln!(
+            "proved! {:#?}",
+            f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
+          );
         }
       }
     }
@@ -164,7 +170,7 @@ impl Expand<'_> {
       }
       Formula::FlexAnd { orig, terms, expansion } =>
         if self.lc.bound_var.is_empty() {
-          let mut epf = ExpandPrivFunc { ctx: &self.g.constrs };
+          let mut epf = ExpandPrivFunc(&self.g.constrs);
           let depth = self.lc.bound_var.len() as u32;
           let mut f1 = Formula::FlexAnd {
             orig: orig.clone(),
@@ -267,7 +273,7 @@ impl Formula {
           *self = Formula::mk_and(conjs)
         }
         Formula::ForAll { dom, scope, .. } => {
-          ExpandPrivFunc { ctx }.visit_type(dom, depth);
+          ExpandPrivFunc(ctx).visit_type(dom, depth);
           scope.distribute_quantifiers(ctx, depth + 1);
           if let Formula::And { args } = &mut **scope {
             for f in args {
@@ -295,7 +301,7 @@ impl Formula {
         | Formula::Attr { .. }
         | Formula::Is { .. }
         | Formula::FlexAnd { .. }
-        | Formula::True => ExpandPrivFunc { ctx }.visit_formula(self, depth),
+        | Formula::True => ExpandPrivFunc(ctx).visit_formula(self, depth),
       }
       break
     }
@@ -391,7 +397,7 @@ impl<O: Open + ?Sized> VisitMut for SetVar<O> {
   }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Atoms(pub IdxVec<AtomId, Formula>);
 
 impl Atoms {
@@ -435,9 +441,9 @@ impl<K: std::fmt::Debug, V: Idx> std::fmt::Debug for Conjunct<K, V> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     let mut it = self.0.iter();
     if let Some((a, b)) = it.next() {
-      write!(f, "a{:?} := v{:?}", a, b.into_usize())?;
+      write!(f, "v{:?} := e{:?}", a, b.into_usize())?;
       for (a, &b) in it {
-        write!(f, " ∧ a{:?} := v{:?}", a, b.into_usize())?;
+        write!(f, " ∧ v{:?} := e{:?}", a, b.into_usize())?;
       }
       Ok(())
     } else {

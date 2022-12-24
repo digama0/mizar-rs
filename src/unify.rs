@@ -101,6 +101,17 @@ impl<'a> Unifier<'a> {
         ec.supercluster = etm.supercluster;
       }
     }
+    // for (ec, etm) in u.eq_class.enum_iter() {
+    //   vprintln!("e{ec:?}: {etm:#?}");
+    // }
+    // for (i, j) in &u.infer {
+    //   vprintln!("{:?} = e{j:#?}", Term::Infer(*i));
+    // }
+    // for (pos, ats) in u.bas.iter() {
+    //   for f in &ats.0 .0 {
+    //     vprintln!("assume: {}{f:?}", if pos { "" } else { "¬" });
+    //   }
+    // }
     u
   }
 
@@ -126,6 +137,7 @@ impl<'a> Unifier<'a> {
     // For the remainder we prove each clause separately.
     // Any of them being true will finish the goal.
     'next: for clause in clauses {
+      // vprintln!("clause: {clause:?}");
       // We want to show: ∃ ?v. |- C(?v)
       assert!(!clause.0.is_empty()); // this would be a proof but is also not reachable
 
@@ -284,7 +296,7 @@ impl Standardize<'_> {
         }
         Formula::PrivPred { args, value, .. } => {
           self.visit_terms(args, depth);
-          ExpandPrivFunc { ctx: &self.g.constrs }.visit_formula(value, depth);
+          ExpandPrivFunc(&self.g.constrs).visit_formula(value, depth);
         }
         Formula::Is { term, ty } => {
           self.visit_term(term, depth);
@@ -357,11 +369,14 @@ impl Unify<'_> {
         } else {
           PropertyKind::Reflexivity
         }) {
+          vprintln!("found reflexive: {f:?}");
           for (ec, _) in self.eq_class.enum_iter() {
             let t = Term::EqClass(ec);
             let mut inst1 = self.unify_term(&args[pred.arg1 as usize], &t);
             if !inst1.is_false() {
+              vprintln!("found inst1: {inst1:?}");
               inst1.mk_and(self.unify_term(&args[pred.arg2 as usize], &t));
+              vprintln!("found inst2: {inst1:?}");
               inst.mk_or(inst1);
             }
           }
@@ -579,6 +594,7 @@ impl Unify<'_> {
     for f2 in &bas[!pos].0 .0 {
       inst.mk_or(self.unify_formula(f, f2));
     }
+    // vprintln!("compute_inst -> {inst:?}");
     inst
   }
 
@@ -678,6 +694,7 @@ impl Unify<'_> {
   /// InstCollection.UNIFunc
   fn unify_func(&mut self, n1: FuncId, args1: &[Term], t2: &Term) -> Dnf<FVarId, EqClassId> {
     let Term::Functor { nr: mut n2, args: args2 } = t2 else { return Dnf::FALSE };
+    // vprintln!("unify: {:?} =?= {:?}", args1, t2);
     if n1 == n2 {
       self.unify_terms(args1, args2)
     } else {
