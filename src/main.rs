@@ -682,6 +682,13 @@ trait Equate {
     n1 == n2 && self.eq_terms(g, lc, args1, args2)
   }
 
+  fn eq_forall(
+    &mut self, g: &Global, lc: &LocalContext, dom1: &Type, dom2: &Type, sc1: &Formula,
+    sc2: &Formula,
+  ) -> bool {
+    self.eq_type(g, lc, dom1, dom2) && self.eq_formula(g, lc, sc1, sc2)
+  }
+
   fn eq_formula(&mut self, g: &Global, lc: &LocalContext, f1: &Formula, f2: &Formula) -> bool {
     use Formula::*;
     match (f1.skip_priv_pred(), f2.skip_priv_pred()) {
@@ -710,7 +717,7 @@ trait Equate {
         self.eq_pred(g, lc, n1, n2, args1, args2)
       }
       (ForAll { dom: dom1, scope: sc1, .. }, ForAll { dom: dom2, scope: sc2, .. }) =>
-        self.eq_type(g, lc, dom1, dom2) && self.eq_formula(g, lc, sc1, sc2),
+        self.eq_forall(g, lc, dom1, dom2, sc1, sc2),
       #[allow(clippy::explicit_auto_deref)]
       (FlexAnd { orig: orig1, .. }, FlexAnd { orig: orig2, .. }) =>
         self.eq_formulas(g, lc, &**orig1, &**orig2),
@@ -2390,14 +2397,14 @@ const CHECKER_INPUTS: bool = false;
 const CHECKER_HEADER: bool = false;
 const CHECKER_CONJUNCTS: bool = false;
 const CHECKER_RESULT: bool = false;
-const UNIFY_HEADER: bool = true;
+const UNIFY_HEADER: bool = false;
 const DUMP_FORMATTER: bool = false;
 
 const FIRST_FILE: usize = 0;
-const ONE_FILE: bool = false;
+const ONE_FILE: bool = true;
 const FIRST_VERBOSE_TOP_ITEM: Option<usize> = None;
 const FIRST_VERBOSE_ITEM: Option<usize> = None;
-const FIRST_VERBOSE_CHECKER: Option<usize> = None;
+const FIRST_VERBOSE_CHECKER: Option<usize> = Some(4);
 
 fn main() {
   ctrlc::set_handler(print_stats_and_exit).expect("Error setting Ctrl-C handler");

@@ -546,6 +546,14 @@ where Conjunct<K, V>: std::fmt::Debug
     other.into_iter().for_each(|conj| Self::insert_and_absorb(this, conj));
   }
 
+  /// PreInstCollection.UnionWith
+  #[inline]
+  pub fn mk_or_else(&mut self, other: impl FnOnce() -> Self) {
+    if matches!(self, Dnf::Or(_)) {
+      self.mk_or(other())
+    }
+  }
+
   pub fn mk_and_single(&mut self, k: K, v: V) {
     match self {
       Dnf::True => *self = Dnf::single(Conjunct::single(k, v)),
@@ -584,6 +592,12 @@ where Conjunct<K, V>: std::fmt::Debug
     }
   }
 
+  pub fn mk_and_then(&mut self, other: impl FnOnce() -> Self) {
+    if !self.is_false() {
+      self.mk_and(other())
+    }
+  }
+
   /// PreInstCollection.JoinInstList
   /// Constructs the AND of a set of (nontrivial) DNF expressions.
   pub fn and_many(mut dnfs: Vec<Vec<Conjunct<K, V>>>) -> Self {
@@ -610,9 +624,9 @@ impl Atoms {
       Formula::And { args } => {
         let mut res = Dnf::mk_bool(pos);
         if pos {
-          args.into_iter().for_each(|f| res.mk_and(self.normalize(g, lc, f, pos)))
+          args.into_iter().for_each(|f| res.mk_and_then(|| self.normalize(g, lc, f, pos)))
         } else {
-          args.into_iter().for_each(|f| res.mk_or(self.normalize(g, lc, f, pos)));
+          args.into_iter().for_each(|f| res.mk_or_else(|| self.normalize(g, lc, f, pos)));
         }
         res
       }
