@@ -1716,7 +1716,7 @@ pub enum Item {
   Let(Vec<Type>),
   /// itExistentialAssumption
   Given(GivenItem),
-  Conclusion(PrivateStatement),
+  Thus(PrivateStatement),
   /// itAssumption
   Assume(Vec<Proposition>),
   /// itSimpleExemplification

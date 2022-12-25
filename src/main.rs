@@ -3,8 +3,8 @@
 #![warn(unused_parens)]
 #![deny(unused_must_use)]
 
+use crate::reader::Reader;
 use crate::types::*;
-use crate::verify::Verifier;
 use enum_map::EnumMap;
 use equate::EqTerm;
 use format::Formatter;
@@ -24,10 +24,10 @@ mod checker;
 mod equate;
 mod format;
 mod parser;
+mod reader;
 mod retain_mut_from;
 mod types;
 mod unify;
-mod verify;
 
 static MIZFILES: Lazy<PathBuf> = Lazy::new(|| {
   std::env::var_os("MIZFILES").expect("MIZFILES environment variable is not set").into()
@@ -2255,7 +2255,7 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
   } else {
     Type::SET
   };
-  let mut v = Verifier::new(reqs, nonzero_type, path.0);
+  let mut v = Reader::new(reqs, nonzero_type, path.0);
   path.read_atr(&mut v.g.constrs).unwrap();
   let old = v.lc.start_stash();
   v.lc.formatter.init(&v.g.constrs, path);

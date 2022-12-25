@@ -8,7 +8,7 @@ enum PendingDef {
   // Cluster,
 }
 
-pub struct Verifier {
+pub struct Reader {
   pub g: Global,
   pub lc: LocalContext,
   pub libs: Libraries,
@@ -33,9 +33,9 @@ pub struct Verifier {
   inference_nr: usize,
 }
 
-impl Verifier {
+impl Reader {
   pub fn new(reqs: RequirementIndexes, nonzero_type: Type, article: Article) -> Self {
-    Verifier {
+    Reader {
       g: Global {
         reqs,
         constrs: Default::default(),
@@ -160,7 +160,7 @@ impl Verifier {
         match it {
           Item::Let(_) => eprintln!("Let"),
           Item::Given(_) => eprintln!("Given"),
-          Item::Conclusion(_) => eprintln!("Conclusion"),
+          Item::Thus(_) => eprintln!("Conclusion"),
           Item::Assume(_) => eprintln!("Assume"),
           Item::Take(_) => eprintln!("Take"),
           Item::TakeAsVar(_, _) => eprintln!("TakeAsVar"),
@@ -202,7 +202,6 @@ impl Verifier {
         self.read_fixed_vars(fixed);
         intro.iter().for_each(|prop| self.read_proposition(prop));
       }
-      Item::Conclusion(it) => self.read_private_stmt(it),
       Item::Assume(intro) => intro.iter().for_each(|prop| self.read_proposition(prop)),
       Item::Take(_) => {}
       Item::TakeAsVar(ty, tm) => {
@@ -224,7 +223,25 @@ impl Verifier {
         });
         self.push_prop(*label, self.intern(block_thesis))
       }
-      Item::AuxiliaryItem(it) => self.read_auxiliary_item(it),
+      Item::AuxiliaryItem(AuxiliaryItem::PrivateStatement(it)) | Item::Thus(it) =>
+        self.read_private_stmt(it),
+      Item::AuxiliaryItem(AuxiliaryItem::Consider { prop, just, fixed, intro }) => {
+        self.read_just_prop(prop, just);
+        self.read_fixed_vars(fixed);
+        intro.iter().for_each(|prop| self.read_proposition(prop));
+      }
+      Item::AuxiliaryItem(AuxiliaryItem::Set { ty, .. }) => self.push_fixed_var(ty),
+      Item::AuxiliaryItem(AuxiliaryItem::Reconsider { terms, prop, just }) => {
+        for (ty, tm) in terms {
+          let fv = FixedVar { ty: self.intern(ty), def: Some(Box::new(self.intern(tm))) };
+          self.lc.fixed_var.push(fv);
+        }
+        self.read_just_prop(prop, just);
+      }
+      Item::AuxiliaryItem(AuxiliaryItem::DefFunc { args, ty, value }) => {
+        self.lc.priv_func.push(FuncDef { ty: self.intern(ty), value: self.intern(value) });
+      }
+      Item::AuxiliaryItem(AuxiliaryItem::DefPred { args, value }) => {}
       Item::Registration(reg) => match reg {
         Registration::Cluster(cl) => self.read_cluster_decl(cl),
         Registration::Identify { kind, conds, corr } => {
@@ -351,29 +368,6 @@ impl Verifier {
     let f = self.intern(&prop.f);
     self.read_justification(&f, just);
     self.push_prop(prop.label, f);
-  }
-
-  fn read_auxiliary_item(&mut self, it: &AuxiliaryItem) {
-    match it {
-      AuxiliaryItem::PrivateStatement(it) => self.read_private_stmt(it),
-      AuxiliaryItem::Consider { prop, just, fixed, intro } => {
-        self.read_just_prop(prop, just);
-        self.read_fixed_vars(fixed);
-        intro.iter().for_each(|prop| self.read_proposition(prop));
-      }
-      AuxiliaryItem::Set { ty, .. } => self.push_fixed_var(ty),
-      AuxiliaryItem::Reconsider { terms, prop, just } => {
-        for (ty, tm) in terms {
-          let fv = FixedVar { ty: self.intern(ty), def: Some(Box::new(self.intern(tm))) };
-          self.lc.fixed_var.push(fv);
-        }
-        self.read_just_prop(prop, just);
-      }
-      AuxiliaryItem::DefFunc { args, ty, value } => {
-        self.lc.priv_func.push(FuncDef { ty: self.intern(ty), value: self.intern(value) });
-      }
-      AuxiliaryItem::DefPred { args, value } => {}
-    }
   }
 
   fn read_private_stmt(&mut self, it: &PrivateStatement) {

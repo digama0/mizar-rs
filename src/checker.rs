@@ -1,8 +1,8 @@
 use crate::equate::Equalizer;
+use crate::reader::Reader;
 use crate::retain_mut_from::RetainMutFrom;
 use crate::types::*;
 use crate::unify::Unifier;
-use crate::verify::Verifier;
 use crate::{
   inst, set_verbose, stat, vprintln, Equate, ExpandPrivFunc, FixedVar, Global, InternConst,
   LocalContext, OnVarMut, Subst, VisitMut,

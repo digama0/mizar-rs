@@ -1256,7 +1256,7 @@ enum ArticleElem {
   Definition(Definition),
   DefStruct(DefStruct),
   Canceled(CancelKind),
-  Conclusion(PrivateStatement),
+  Thus(PrivateStatement),
   PerCases(PerCases),
   PerCasesJustification(Proposition, Justification),
   Registration(Registration),
@@ -1288,7 +1288,7 @@ impl From<ArticleElem> for Item {
       ArticleElem::Definition(decl) => Item::Definition(decl),
       ArticleElem::DefStruct(decl) => Item::DefStruct(decl),
       ArticleElem::Canceled(it) => Item::Canceled(it),
-      ArticleElem::Conclusion(s) => Item::Conclusion(s),
+      ArticleElem::Thus(s) => Item::Thus(s),
       ArticleElem::PerCases(it) => Item::PerCases(it),
       ArticleElem::Registration(it) => Item::Registration(it),
       ArticleElem::Pattern(it) => Item::Pattern(it),
@@ -1356,7 +1356,7 @@ impl ArticleParser<'_> {
         ArticleElem::AuxiliaryItem(_) | ArticleElem::PerCases(_) => items.push((e.into(), None)),
         ArticleElem::Proposition(prop) => items.push((self.finish_proposition(prop), None)),
         ArticleElem::Let(_)
-        | ArticleElem::Conclusion(_)
+        | ArticleElem::Thus(_)
         | ArticleElem::Assume(_)
         | ArticleElem::Given(_)
         | ArticleElem::Take(_)
@@ -1868,7 +1868,7 @@ impl ArticleParser<'_> {
             _ => panic!("expected justified proposition"),
           };
           self.r.end_tag(&mut self.buf);
-          ArticleElem::Conclusion(s)
+          ArticleElem::Thus(s)
         }
         b"Take" => {
           let tm = self.r.parse_term(&mut self.buf).unwrap();
