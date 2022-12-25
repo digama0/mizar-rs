@@ -34,13 +34,13 @@ pub struct Reader {
 }
 
 impl Reader {
-  pub fn new(reqs: RequirementIndexes, nonzero_type: Type, article: Article) -> Self {
+  pub fn new(reqs: RequirementIndexes, numeral_type: Type, article: Article) -> Self {
     Reader {
       g: Global {
         reqs,
         constrs: Default::default(),
         clusters: Default::default(),
-        nonzero_type,
+        numeral_type,
         recursive_round_up: false,
         rounded_up_clusters: false,
       },

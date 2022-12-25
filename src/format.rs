@@ -377,14 +377,22 @@ impl<'a> Pretty<'a> {
             assert_eq!(len as usize, ty.args.len());
             assert_eq!(vis.len(), args as usize);
             ovis = Some(&**vis);
-            s = Some(&lc.formatter.symbols[&sym.into()])
+            s = Some(if SHOW_ORIG {
+              Cow::Owned(format!("{}({})", &*lc.formatter.symbols[&sym.into()], n.0))
+            } else {
+              Cow::Borrowed(&*lc.formatter.symbols[&sym.into()])
+            })
           },
         TypeKind::Mode(n) =>
           if let Some(&(len, ref vis, FormatMode { sym, args })) = lc.formatter.mode.get(&n) {
             assert_eq!(len as usize, ty.args.len());
             assert_eq!(vis.len(), args as usize);
             ovis = Some(&**vis);
-            s = Some(&lc.formatter.symbols[&sym.into()])
+            s = Some(if SHOW_ORIG {
+              Cow::Owned(format!("{}[{}]", &*lc.formatter.symbols[&sym.into()], n.0))
+            } else {
+              Cow::Borrowed(&*lc.formatter.symbols[&sym.into()])
+            })
           },
       }
     }

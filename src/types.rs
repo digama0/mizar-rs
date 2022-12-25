@@ -305,6 +305,42 @@ impl ArticleId {
   pub const SELF: ArticleId = ArticleId(0);
 }
 
+/// "Requirements" are schemes which are built into the system reasoning itself,
+/// which hence act as axioms, although they are used in a way that should be a
+/// conservative extension.
+///
+/// * `HIDDEN`: this introduces `object`, `set`, `=`, `in`.
+///   This is not a proper mizar file, and every mizar file implicitly depends on it.
+/// * `BOOLE` (introduced after XBOOLE_0):
+///   introduces set operators: `A \/ B`, `A /\ B`, `A \ B`, `A \+\ B`, `A meets B`.
+///   This is not used for much, just a few extra properties in the equalizer.
+/// * `SUBSET` (introduced after SUBSET_1):
+///   introduces `Element of A`, `bool A`, `A c= B`, `Subset of A`.
+///   The equalizer knows about how subsets are elements of the powerset and so on.
+/// * `NUMERALS` (introduced after ORDINAL1):
+///   introduces `succ x`, `x is natural`, `omega`, `0`, `x is zero`.
+///   After this point the system knows about positive numerals like 37: they have type
+///   `Element of omega` (they already existed before but were uninterpeted sets),
+///   and it knows how to evaluate `succ (succ 0) = 2` and `1 <> 2`.
+///   These can be metatheoretically justified by the theorems `succ x = succ y -> x = y`
+///   and `succ x is non zero`.
+/// * `REAL` (introduced after XXREAL_0): introduces `x <= y`, `x is positive`, `x is negative`.
+///   The equalizer knows some basic things about transitivity of less and less-equal
+///   and its relation to the `positive` and `negative` attributes.
+///   * `NUMERALS` + `REAL` also enables the support for flex conjunctions P(1) /\ ... /\ P(n).
+///     The main new thing that is needed is the expansion in the concrete `n` case,
+///     which amounts to the theorem `0 <= x <= n -> x = 0 \/ ... \/ x = n`.
+///     I didn't see anything immediately relevant to proving this in XXREAL_0
+///     but I'm sure it's possible.
+/// * `ARITHM` (introduced after XCMPLX_0):
+///   introduces `x + y`, `x * y`, `-x`, `x"`, `x - y`, `x / y`, `<i>`, `x is complex`.
+///   Also enables bignum arithmetic for complex rational numeric expressions.
+///   Also enables polynomial evaluation of ring expressions in terms of these operators;
+///   this last one seems like a bit of a cheat since there isn't anything like a proof of
+///   `-(x + y) = -x + -y` and the like in XCMPLX_0. Many of the theorems in XCMPLX_1
+///   reference earlier theorems, maybe to justify why they can now be taken as axioms,
+///   but some references like JGRAPH_6 also use ARITHM so this isn't very convincing.
+///
 pub struct RequirementIndexes {
   pub fwd: EnumMap<Requirement, u32>,
   pub rev: IdxVec<FuncId, Option<Requirement>>,
@@ -316,6 +352,26 @@ impl Default for RequirementIndexes {
 
 impl std::fmt::Debug for RequirementIndexes {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.fwd.fmt(f) }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum RequirementKind {
+  Func(FuncId),
+  Mode(ModeId),
+  Pred(PredId),
+  Attr(AttrId),
+}
+impl From<AttrId> for RequirementKind {
+  fn from(v: AttrId) -> Self { Self::Attr(v) }
+}
+impl From<PredId> for RequirementKind {
+  fn from(v: PredId) -> Self { Self::Pred(v) }
+}
+impl From<ModeId> for RequirementKind {
+  fn from(v: ModeId) -> Self { Self::Mode(v) }
+}
+impl From<FuncId> for RequirementKind {
+  fn from(v: FuncId) -> Self { Self::Func(v) }
 }
 
 macro_rules! mk_requirements {
@@ -330,83 +386,90 @@ macro_rules! mk_requirements {
       paste! {
         $(
           $(#[$attr])*
-          pub fn [<$id:snake>](&self) -> Option<$ty> { self.get(Requirement::$id).map($ty) }
+          pub fn [<$id:snake>](&self) -> Option<$ty> { self.get_raw(Requirement::$id).map($ty) }
         )*
       }
       pub fn on_func_ids(mut f: impl FnMut(Requirement)) {
         $(if mk_requirements!(@is_func $ty) { f(Requirement::$id) })*
       }
+
+      pub fn get(&self, req: Requirement) -> Option<RequirementKind> {
+        match req {
+          $(Requirement::$id => self.get_raw(req).map(|x| $ty(x).into()),)*
+        }
+      }
     }
   }
 }
+
 mk_requirements! {
-  /// mode `object`
+  /// mode `object`; from HIDDEN
   Any: ModeId,
-  /// mode `set`
+  /// mode `set`; from HIDDEN
   SetMode: ModeId,
-  /// predicate `a = b`
+  /// predicate `a = b`; from HIDDEN
   EqualsTo: PredId,
-  /// predicate `a in b`
+  /// predicate `a in b`; from HIDDEN
   BelongsTo: PredId,
-  /// attribute `x is empty`
+  /// attribute `x is empty`; from BOOLE [XBOOLE_0]
   Empty: AttrId,
-  /// functor `{}`
+  /// functor `{}`; from BOOLE [XBOOLE_0]
   EmptySet: FuncId,
-  /// mode `Element of A`
+  /// mode `Element of A`; from SUBSET [SUBSET_1]
   Element: ModeId,
-  /// functor `bool A`
+  /// functor `bool A`; from SUBSET [SUBSET_1]
   PowerSet: FuncId,
-  /// predicate `A c= B`
+  /// predicate `A c= B`; from SUBSET [SUBSET_1]
   Inclusion: PredId,
-  /// mode `Subset of A`
+  /// mode `Subset of A`; from SUBSET [SUBSET_1]
   SubDomElem: ModeId,
-  /// functor `REAL`
+  /// functor `REAL` (unused)
   RealDom: FuncId,
-  /// functor `NAT`
+  /// functor `NAT` (unused)
   NatDom: FuncId,
-  /// functor `x + y`
+  /// functor `x + y`; from ARITHM [XCMPLX_0]
   RealAdd: FuncId,
-  /// functor `x * y`
+  /// functor `x * y`; from ARITHM [XCMPLX_0]
   RealMult: FuncId,
-  /// predicate `x <= y`
+  /// predicate `x <= y`; from REAL [XXREAL_0]
   LessOrEqual: PredId,
-  /// functor `succ x`
+  /// functor `succ x`; from NUMERALS [ORDINAL1]
   Succ: FuncId,
-  /// functor `A (\/) B`
+  /// functor `A \/ B`; from BOOLE [XBOOLE_0]
   Union: FuncId,
-  /// functor `A (/\) B`
+  /// functor `A /\ B`; from BOOLE [XBOOLE_0]
   Intersection: FuncId,
-  /// functor `A (\) B`
+  /// functor `A \ B`; from BOOLE [XBOOLE_0]
   Subtraction: FuncId,
-  /// functor `A (\+\) B`
+  /// functor `A \+\ B`; from BOOLE [XBOOLE_0]
   SymmetricDifference: FuncId,
-  /// predicate `A meets B`
+  /// predicate `A meets B`; from BOOLE [XBOOLE_0]
   Meets: PredId,
-  /// functor `-x`
+  /// functor `-x`; from ARITHM [XCMPLX_0]
   RealNeg: FuncId,
-  /// functor `x"`
+  /// functor `x"`; from ARITHM [XCMPLX_0]
   RealInv: FuncId,
-  /// functor `x - y`
+  /// functor `x - y`; from ARITHM [XCMPLX_0]
   RealDiff: FuncId,
-  /// functor `x / y`
+  /// functor `x / y`; from ARITHM [XCMPLX_0]
   RealDiv: FuncId,
-  /// attribute `x is real`
+  /// attribute `x is real` (unused)
   Real: AttrId,
-  /// attribute `x is positive`
+  /// attribute `x is positive`; from REAL [XXREAL_0]
   Positive: AttrId,
-  /// attribute `x is negative`
+  /// attribute `x is negative`; from REAL [XXREAL_0]
   Negative: AttrId,
-  /// attribute `x is natural`
+  /// attribute `x is natural`; from NUMERALS [ORDINAL1]
   Natural: AttrId,
-  /// functor `<i>`
+  /// functor `<i>`; from ARITHM [XCMPLX_0]
   ImaginaryUnit: FuncId,
-  /// attribute `x is complex`
+  /// attribute `x is complex`; from ARITHM [XCMPLX_0]
   Complex: AttrId,
-  /// functor `omega`
+  /// functor `omega`; from NUMERALS [ORDINAL1]
   Omega: FuncId,
-  /// functor `0`
+  /// functor `0`; from NUMERALS [ORDINAL1]
   ZeroNumber: FuncId,
-  /// attribute `x is zero`
+  /// attribute `x is zero`; from NUMERALS [ORDINAL1]
   Zero: AttrId,
 }
 
@@ -421,14 +484,17 @@ impl RequirementIndexes {
   pub fn init_rev(&mut self) {
     assert_eq!(self.fwd[Requirement::Any], ModeId::ANY.0 + 1);
     assert_eq!(self.fwd[Requirement::SetMode], ModeId::SET.0 + 1);
+    assert_eq!(self.fwd[Requirement::RealDom], 0);
+    assert_eq!(self.fwd[Requirement::NatDom], 0);
+    assert_eq!(self.fwd[Requirement::Real], 0);
     Self::on_func_ids(|req| {
-      if let Some(r) = self.get(req) {
+      if let Some(r) = self.get_raw(req) {
         *self.rev.get_mut_extending(FuncId(r)) = Some(req);
       }
     })
   }
 
-  pub fn get(&self, req: Requirement) -> Option<u32> { self.fwd[req].checked_sub(1) }
+  pub fn get_raw(&self, req: Requirement) -> Option<u32> { self.fwd[req].checked_sub(1) }
 
   pub fn mk_eq(&self, t1: Term, t2: Term) -> Formula {
     Formula::Pred { nr: self.equals_to().unwrap(), args: Box::new([t1, t2]) }

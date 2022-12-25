@@ -184,6 +184,10 @@ enum CmpStyle {
 }
 
 impl Term {
+  fn locus_list(n: usize) -> Box<[Term]> {
+    (0..n).map(|i| Term::Locus(Idx::from_usize(i))).collect()
+  }
+
   fn adjust<'a>(n: FuncId, args: &'a [Term], ctx: &Constructors) -> (FuncId, &'a [Term]) {
     let c = &ctx.functor[n].c;
     match c.redefines {
@@ -1082,7 +1086,7 @@ impl Term {
         lc.fixed_var[nr].ty.visit_cloned(&mut OnVarMut(|nr, _| *nr += base))
       }
       Term::Infer(nr) => lc.infer_const.borrow()[nr].ty.clone(),
-      Term::Numeral(_) => g.nonzero_type.clone(),
+      Term::Numeral(_) => g.numeral_type.clone(),
       Term::Locus(nr) => lc.locus_ty[nr].clone(),
       Term::SchFunc { nr, .. } => lc.sch_func_ty[nr].clone(),
       Term::PrivFunc { nr, ref args, .. } => lc.priv_func[nr].ty.visit_cloned(&mut Inst::new(args)),
@@ -1265,7 +1269,7 @@ impl Subst {
     //   subst_term[i] : subst_ty[i]   and   subst_ty[i] <: subst(tys[i]).
     //
     // let n = CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    // vprintln!("\nCheckLociTypes {n}: subst = {:?} : {subst_ty:?}, tys = {tys:?}", self.subst_term);
+    // vprintln!("\nCheckLociTypes {n}: subst = {:?}, tys = {tys:?}", self.subst_term);
     'main: loop {
       // vprintln!("main {i:?}, subst = {:?} : {subst_ty:?}", self.subst_term);
       // Decrease i to skip past `None`s in subst_term, and then `let Some(tm) = subst_term[i]`
@@ -1337,9 +1341,9 @@ impl Subst {
               }
             } else {
               // Increase i to the beginning of the last run of Nones in subst_term,
-              // by checking that subst_term[i+1] is set
+              // by checking that subst_term[i] is set
               loop {
-                match self.subst_term.get(i + 1) {
+                match self.subst_term.get(i) {
                   None => return false,
                   Some(Some(_)) => break,
                   _ => {}
@@ -1347,7 +1351,6 @@ impl Subst {
                 i += 1;
               }
             }
-            // FIXME: Bug? Why is subst_ty[i] Some here
             // vprintln!("bad {i:?}, subst = {:?} : {subst_ty:?}", self.subst_term);
             let ty = subst_ty[i].as_deref().unwrap();
             // vprintln!("bad {i:?}, subst = {:?} : {subst_ty:?}, ty = {ty:?}", self.subst_term);
@@ -1886,7 +1889,7 @@ impl<'a> InternConst<'a> {
           // TODO: numeric_value
           ic = self.lc.infer_const.borrow_mut();
           let nr = ic.insert_at(i, Assignment { def, ty, eq_const: Default::default() });
-          // eprintln!("insert ?{nr:?} : {:?} := {:?}", ic[nr].ty, ic[nr].def);
+          // vprintln!("insert ?{nr:?} : {:?} := {:?}", ic[nr].ty, ic[nr].def);
           let mut ty = ic[nr].ty.clone();
           drop(ic);
           self.visit_type(&mut ty, depth);
@@ -1925,8 +1928,9 @@ impl<'a> InternConst<'a> {
     };
     if let Some(eq_defs) = self.equals.get(&ConstrKind::Func(nr)) {
       for eq_def in eq_defs {
-        if let Some(tm) = eq_def.expand_if_equal(self.g, self.lc, args, depth) {
-          insert_one(self, tm);
+        if let Some(tm2) = eq_def.expand_if_equal(self.g, self.lc, args, depth) {
+          // vprintln!("{tm:?} -> {tm2:?} using {eq_def:?}");
+          insert_one(self, tm2);
         }
       }
     }
@@ -1934,6 +1938,7 @@ impl<'a> InternConst<'a> {
       for &id in ids {
         let id = &self.identify[id];
         let IdentifyKind::Func { lhs, rhs } = &id.kind else { unreachable!() };
+        // vprintln!("applying {tm:?} <- {id:?}");
         if let Some(subst) = id.try_apply_lhs(self.g, self.lc, lhs, tm) {
           let mut tm = subst.inst_term(rhs, depth);
           insert_one(self, tm);
@@ -1985,6 +1990,7 @@ impl VisitMut for InternConst<'_> {
           match ic.find_index(|a| a.def.cmp(&self.g.constrs, tm, CmpStyle::Strict)) {
             Ok(nr) => *tm = Term::Infer(nr),
             _ => {
+              // vprintln!("search for {tm:?} failed");
               drop(ic);
               self.collect_infer_const(tm, depth);
               let Term::Infer(nr) = *tm else { unreachable!() };
@@ -2097,7 +2103,10 @@ pub struct Global {
   reqs: RequirementIndexes,
   constrs: Constructors,
   clusters: Clusters,
-  nonzero_type: Type,
+  /// This is the type that nonzero numerals have.
+  /// It is `set` until the NUMERALS requirement is read,
+  /// and then it changes to `Element of omega`
+  numeral_type: Type,
   /// ItIsChecker in mizar
   recursive_round_up: bool,
   /// AfterClusters
@@ -2236,6 +2245,44 @@ impl LocalContext {
   }
 }
 
+impl Constructors {
+  fn dump_mode(&self, nr: ModeId) {
+    let c = &self.mode[nr];
+    let args = Term::locus_list(c.primary.len()).into();
+    eprintln!("mode {:?} = {:?}", Type { args, ..Type::new(nr.into()) }, c);
+  }
+  fn dump_struct(&self, nr: StructId) {
+    let c = &self.struct_mode[nr];
+    let args = Term::locus_list(c.primary.len()).into();
+    eprintln!("struct {:?} = {:?}", Type { args, ..Type::new(nr.into()) }, c);
+  }
+  fn dump_attr(&self, nr: AttrId) {
+    let c = &self.attribute[nr];
+    let args = Term::locus_list(c.primary.len());
+    eprintln!("attr {:?} = {:?}", Formula::Attr { nr, args }, c);
+  }
+  fn dump_pred(&self, nr: PredId) {
+    let c = &self.predicate[nr];
+    let args = Term::locus_list(c.primary.len());
+    eprintln!("pred {:?} = {:?}", Formula::Pred { nr, args }, c);
+  }
+  fn dump_func(&self, nr: FuncId) {
+    let c = &self.functor[nr];
+    let args = Term::locus_list(c.primary.len());
+    eprintln!("func {:?} = {:?}", Term::Functor { nr, args }, c);
+  }
+  fn dump_sel(&self, nr: SelId) {
+    let c = &self.selector[nr];
+    let args = Term::locus_list(c.primary.len());
+    eprintln!("sel {:?} = {:?}", Term::Selector { nr, args }, c);
+  }
+  fn dump_aggr(&self, nr: AggrId) {
+    let c = &self.aggregate[nr];
+    let args = Term::locus_list(c.primary.len());
+    eprintln!("aggr {:?} = {:?}", Term::Aggregate { nr, args }, c);
+  }
+}
+
 fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
   // MizPBlockObj.InitPrepData
   let mut refs = References::default();
@@ -2245,7 +2292,7 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
   let mut reqs = RequirementIndexes::default();
   path.read_ere(&mut reqs).unwrap();
   let mut has_omega = false;
-  let nonzero_type = if let (Some(element), Some(omega)) = (reqs.element(), reqs.omega()) {
+  let numeral_type = if let (Some(element), Some(omega)) = (reqs.element(), reqs.omega()) {
     has_omega = true;
     Type {
       kind: TypeKind::Mode(element),
@@ -2255,14 +2302,30 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
   } else {
     Type::SET
   };
-  let mut v = Reader::new(reqs, nonzero_type, path.0);
+  let mut v = Reader::new(reqs, numeral_type, path.0);
   path.read_atr(&mut v.g.constrs).unwrap();
   let old = v.lc.start_stash();
   v.lc.formatter.init(&v.g.constrs, path);
   if DUMP_CONSTRUCTORS {
-    for (nr, c) in v.g.constrs.predicate.enum_iter() {
-      let args = (0..c.primary.len()).map(|i| Term::Locus(Idx::from_usize(i))).collect();
-      eprintln!("constructor: {:?} = {:?}", Formula::Pred { nr, args }, c);
+    v.g.constrs.mode.enum_iter().for_each(|p| v.g.constrs.dump_mode(p.0));
+    v.g.constrs.struct_mode.enum_iter().for_each(|p| v.g.constrs.dump_struct(p.0));
+    v.g.constrs.attribute.enum_iter().for_each(|p| v.g.constrs.dump_attr(p.0));
+    v.g.constrs.predicate.enum_iter().for_each(|p| v.g.constrs.dump_pred(p.0));
+    v.g.constrs.functor.enum_iter().for_each(|p| v.g.constrs.dump_func(p.0));
+    v.g.constrs.selector.enum_iter().for_each(|p| v.g.constrs.dump_sel(p.0));
+    v.g.constrs.aggregate.enum_iter().for_each(|p| v.g.constrs.dump_aggr(p.0));
+  }
+  if DUMP_REQUIREMENTS {
+    for (req, _) in &v.g.reqs.fwd {
+      if let Some(val) = v.g.reqs.get(req) {
+        eprint!("req[{req:?}[{}]] = ", req as u8);
+        match val {
+          RequirementKind::Func(nr) => v.g.constrs.dump_func(nr),
+          RequirementKind::Mode(nr) => v.g.constrs.dump_mode(nr),
+          RequirementKind::Pred(nr) => v.g.constrs.dump_pred(nr),
+          RequirementKind::Attr(nr) => v.g.constrs.dump_attr(nr),
+        }
+      }
     }
   }
   path.read_ecl(&v.g.constrs, &mut v.g.clusters).unwrap();
@@ -2275,8 +2338,8 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
       attrs.push(Attr::new0(positive, true))
     }
   }
-  attrs.round_up_with(&v.g, &v.lc, &v.g.nonzero_type);
-  v.g.nonzero_type.attrs.1 = attrs;
+  attrs.round_up_with(&v.g, &v.lc, &v.g.numeral_type);
+  v.g.numeral_type.attrs.1 = attrs;
   v.lc.clear_term_cache();
   v.g.round_up_clusters(&mut v.lc);
 
@@ -2321,14 +2384,14 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
 
   // CollectConstInEnvConstructors
   let mut cc = v.intern_const();
-  let nonzero_type = v.g.nonzero_type.visit_cloned(&mut cc);
+  let numeral_type = v.g.numeral_type.visit_cloned(&mut cc);
   let constrs = v.g.constrs.visit_cloned(&mut cc);
   let mut clusters = v.g.clusters.clone();
   clusters.registered.iter_mut().for_each(|c| c.consequent.1.visit(&mut cc));
   clusters.conditional.iter_mut().for_each(|c| c.consequent.1.visit(&mut cc));
   // note: collecting in the functor term breaks the sort order
   clusters.functor.vec.0.iter_mut().for_each(|c| c.consequent.1.visit(&mut cc));
-  v.g.nonzero_type = nonzero_type;
+  v.g.numeral_type = numeral_type;
   v.g.constrs = constrs;
   v.g.clusters = clusters;
 
@@ -2412,6 +2475,7 @@ const CHECKER_RESULT: bool = false;
 const UNIFY_HEADER: bool = false;
 
 const DUMP_CONSTRUCTORS: bool = false;
+const DUMP_REQUIREMENTS: bool = false;
 const DUMP_FORMATTER: bool = false;
 
 const FIRST_FILE: usize = 0;
