@@ -8,6 +8,8 @@ use std::collections::HashMap;
 const ENABLE_FORMATTER: bool = true;
 const SHOW_INFER: bool = false;
 const SHOW_MARKS: bool = false;
+const SHOW_INVISIBLE: bool = false;
+const SHOW_ORIG: bool = false;
 const NEGATION_SUGAR: bool = true;
 
 #[derive(Default, Debug)]
@@ -175,25 +177,38 @@ impl<'a> Pretty<'a> {
 
   #[allow(clippy::too_many_arguments)]
   fn infix_term(
-    &self, prec: bool, len: u8, vis: &[u8], sym: SymbolKind, left: u8, right: u8, args: &[Term],
-    depth: u32,
+    &self, prec: bool, len: u8, vis: &[u8], orig: u32, sym: SymbolKind, left: u8, right: u8,
+    args: &[Term], depth: u32,
   ) -> Doc<'a> {
     let lc = self.lc.unwrap();
     assert_eq!(len as usize, args.len());
-    assert_eq!(vis.len(), (left + right) as usize);
-    let doc = match left {
-      0 => self.nil(),
-      1 => self.term(true, &args[vis[0] as usize], depth).append(self.space()),
-      _ => self.terms(Some(&vis[..left as usize]), args, depth).parens().append(self.space()),
+    let vis = (!SHOW_INVISIBLE).then_some(vis);
+    let (left, right) = if let Some(vis) = vis {
+      assert_eq!(vis.len(), (left + right) as usize);
+      (left, right)
+    } else {
+      (0, args.len() as u8)
     };
-    let doc = doc.append(self.text(&lc.formatter.symbols[&sym]));
+    let doc = match (left, vis) {
+      (_, None) | (0, _) => self.nil(),
+      (1, Some(vis)) => self.term(true, &args[vis[0] as usize], depth).append(self.space()),
+      (_, Some(vis)) =>
+        self.terms(Some(&vis[..left as usize]), args, depth).parens().append(self.space()),
+    };
+    let doc = if SHOW_ORIG {
+      doc.append(self.text(format!("{}[{}]", &lc.formatter.symbols[&sym], orig)))
+    } else {
+      doc.append(self.text(&lc.formatter.symbols[&sym]))
+    };
     let doc = match right {
       0 => doc,
-      1 =>
-        doc.append(self.line()).append(self.term(true, &args[vis[left as usize] as usize], depth)),
+      1 => {
+        let i = vis.map_or(0, |v| v[left as usize] as usize);
+        doc.append(self.line()).append(self.term(true, &args[i], depth))
+      }
       _ => doc
         .append(self.line())
-        .append(self.terms(Some(&vis[left as usize..]), args, depth).parens()),
+        .append(self.terms(vis.map(|v| &v[left as usize..]), args, depth).parens()),
     };
     let doc = doc.group();
     return if prec && left + right != 0 { doc.parens() } else { doc }
@@ -251,7 +266,7 @@ impl<'a> Pretty<'a> {
         if let Some(lc) = self.lc {
           match lc.formatter.func.get(nr) {
             Some(&(len, ref vis, FormatFunc::Func { sym, left, right })) =>
-              return self.infix_term(prec, len, vis, sym.into(), left, right, args, depth),
+              return self.infix_term(prec, len, vis, nr.0, sym.into(), left, right, args, depth),
             Some(&(len, ref vis, FormatFunc::Bracket { lsym, rsym, args: n })) => {
               assert_eq!(len as usize, args.len());
               assert_eq!(vis.len(), n as usize);
@@ -319,11 +334,16 @@ impl<'a> Pretty<'a> {
         assert_eq!(vis.len(), n as usize);
         let (v0, vis) = vis.split_last().unwrap();
         assert_eq!(*v0 as usize, args.len());
-        let sym = self.text(&lc.formatter.symbols[&sym.into()]);
-        return match vis.len() {
+        let vis = (!SHOW_INVISIBLE).then_some(vis);
+        let sym = if SHOW_ORIG {
+          self.text(format!("{}[{}]", lc.formatter.symbols[&sym.into()], nr.0))
+        } else {
+          self.text(&lc.formatter.symbols[&sym.into()])
+        };
+        return match vis.map_or(args.len(), |v| v.len()) {
           0 => sym,
-          1 => self.term(true, &args[vis[0] as usize], depth).append(sym),
-          _ => self.terms(Some(vis), args, depth).parens().append(sym),
+          1 => self.term(true, &args[vis.map_or(0, |v| v[0] as usize)], depth).append(sym),
+          _ => self.terms(vis, args, depth).parens().append(sym),
         }
       }
     }
@@ -342,7 +362,7 @@ impl<'a> Pretty<'a> {
     match attrs {
       Attrs::Inconsistent => self.text("false").append(self.space()),
       Attrs::Consistent(attrs) =>
-        self.concat(attrs.iter().map(|a| self.attr(a, depth).append(self.space()))),
+        self.concat(attrs.iter().map(|a| self.attr(a, depth).append(self.softline()))),
     }
   }
 
@@ -439,7 +459,7 @@ impl<'a> Pretty<'a> {
         if let Some(lc) = self.lc {
           if let Some(&(len, ref vis, FormatPred { sym, left, right })) = lc.formatter.pred.get(nr)
           {
-            return self.infix_term(prec, len, vis, sym.into(), left, right, args, depth)
+            return self.infix_term(prec, len, vis, nr.0, sym.into(), left, right, args, depth)
           }
         }
         self.text(format!("P{}", nr.0)).append(self.terms(ovis, args, depth).brackets())

@@ -187,7 +187,7 @@ impl Verifier {
           Item::Definition(_) => eprintln!("Definition"),
           Item::DefStruct(_) => eprintln!("DefStruct"),
           Item::Definiens(_) => eprintln!("Definiens"),
-          Item::Block { kind, .. } => eprintln!("{kind:?}"),
+          Item::Block { kind, .. } => eprintln!("{kind:?} block"),
           Item::Pattern(_) => eprintln!("Pattern"),
         }
       }
@@ -227,8 +227,14 @@ impl Verifier {
       Item::AuxiliaryItem(it) => self.read_auxiliary_item(it),
       Item::Registration(reg) => match reg {
         Registration::Cluster(cl) => self.read_cluster_decl(cl),
-        Registration::Identify { conds, corr, .. }
-        | Registration::Reduction { conds, corr, .. } => self.read_corr_conds(conds, corr),
+        Registration::Identify { kind, conds, corr } => {
+          self.read_corr_conds(conds, corr);
+          self.push_identify(kind)
+        }
+        Registration::Reduction { kind, conds, corr } => {
+          self.read_corr_conds(conds, corr);
+          self.reductions.push(kind.clone())
+        }
         Registration::Property { prop, just, .. } => self.read_just_prop(prop, just),
       },
       Item::Scheme(sch) => self.read_scheme(sch),
@@ -401,6 +407,30 @@ impl Verifier {
     }
   }
 
+  fn push_identify(&mut self, id: &Identify) {
+    if let IdentifyKind::Func { lhs, rhs } = &id.kind {
+      let mut ic = self.lc.infer_const.borrow();
+      let mut i = InferId::default();
+      while let Some(asgn) = ic.get(i) {
+        if matches!(asgn.def, Term::Functor { .. }) {
+          if let Some(subst) = id.try_apply_lhs(&self.g, &self.lc, lhs, &asgn.def) {
+            let mut tm = subst.inst_term(rhs, 0);
+            drop(ic);
+            tm.visit(&mut self.intern_const());
+            let Term::Infer(n) = tm else { unreachable!() };
+            self.lc.infer_const.borrow_mut()[i].eq_const.insert(n);
+            ic = self.lc.infer_const.borrow();
+          }
+        }
+        i.0 += 1;
+      }
+      let Term::Functor { nr, args } = lhs else { unreachable!() };
+      let k = ConstrKind::Func(Term::adjusted_nr(*nr, &self.g.constrs));
+      self.func_ids.entry(k).or_default().push(self.identify.len());
+    }
+    self.identify.push(id.clone());
+  }
+
   /// RoundUpFurther
   fn round_up_further<T>(&mut self, rounded_up: BTreeMap<InferId, T>) {
     if rounded_up.is_empty() {
@@ -490,7 +520,7 @@ impl Verifier {
             }
           }
         }
-        self.g.clusters.conditional.vec.push(cl);
+        self.g.clusters.conditional.push(&self.g.constrs, cl);
         let ic = self.lc.infer_const.get_mut();
         for (&i, attrs) in &mut rounded_up {
           self.lc.infer_const.get_mut()[i].ty.attrs.1 = std::mem::take(attrs);

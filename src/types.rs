@@ -909,7 +909,6 @@ impl PropertySet {
 
 #[derive(Clone, Default, Debug)]
 pub struct Constructor<I> {
-  // pub data: ConstructorData,
   pub article: Article,
   /// number of constructor in article
   pub abs_nr: u32,
@@ -1360,7 +1359,7 @@ impl IdentifyKind {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Identify {
   pub article: Article,
   pub abs_nr: u32,
@@ -1369,7 +1368,7 @@ pub struct Identify {
   pub eq_args: Box<[(LocusId, LocusId)]>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Reduction {
   pub article: Article,
   pub abs_nr: u32,

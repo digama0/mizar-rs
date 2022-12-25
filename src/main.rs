@@ -1790,6 +1790,20 @@ impl EqualsDef {
   }
 }
 
+impl Identify {
+  fn try_apply_lhs(&self, g: &Global, lc: &LocalContext, lhs: &Term, tm: &Term) -> Option<Subst> {
+    let mut subst = Subst::new(self.primary.len());
+    subst.eq_term(g, lc, lhs, tm).then_some(())?;
+    subst.check_loci_types::<false>(g, lc, &self.primary).then_some(())?;
+    for &(x, y) in &*self.eq_args {
+      let (ux, uy) = (Idx::into_usize(x), Idx::into_usize(y));
+      assert!(subst.subst_term[uy].is_none());
+      self.primary[uy].is_wider_than(g, lc, &self.primary[ux]).then_some(())?;
+      subst.subst_term[uy] = subst.subst_term[ux].clone();
+    }
+    Some(subst)
+  }
+}
 struct ExpandPrivFunc<'a>(&'a Constructors);
 
 impl VisitMut for ExpandPrivFunc<'_> {
@@ -1809,16 +1823,20 @@ impl VisitMut for ExpandPrivFunc<'_> {
 
   /// CopyExpFrm
   fn visit_formula(&mut self, f: &mut Formula, depth: u32) {
-    if let Formula::And { args } = f {
-      for mut f in std::mem::take(args) {
-        self.visit_formula(&mut f, depth);
-        match f {
-          Formula::And { args: fs } => args.extend(fs),
-          _ => args.push(f),
-        }
+    match f {
+      Formula::And { args } =>
+        for mut f in std::mem::take(args) {
+          self.visit_formula(&mut f, depth);
+          match f {
+            Formula::And { args: fs } => args.extend(fs),
+            _ => args.push(f),
+          }
+        },
+      Formula::PrivPred { nr, args, value } => {
+        *f = std::mem::take(value);
+        self.visit_formula(f, depth)
       }
-    } else {
-      self.super_visit_formula(f, depth);
+      _ => self.super_visit_formula(f, depth),
     }
   }
 }
@@ -1916,21 +1934,9 @@ impl<'a> InternConst<'a> {
       for &id in ids {
         let id = &self.identify[id];
         let IdentifyKind::Func { lhs, rhs } = &id.kind else { unreachable!() };
-        let mut subst = Subst::new(id.primary.len());
-        if subst.eq_term(self.g, self.lc, lhs, tm)
-          && subst.check_loci_types::<false>(self.g, self.lc, &id.primary)
-        {
-          let mut widening = true;
-          for &(x, y) in &*id.eq_args {
-            let (ux, uy) = (Idx::into_usize(x), Idx::into_usize(y));
-            assert!(subst.subst_term[uy].is_none());
-            widening |= id.primary[uy].is_wider_than(self.g, self.lc, &id.primary[ux]);
-            subst.subst_term[uy] = subst.subst_term[ux].clone();
-          }
-          if widening {
-            let mut tm = subst.inst_term(rhs, depth);
-            insert_one(self, tm);
-          }
+        if let Some(subst) = id.try_apply_lhs(self.g, self.lc, lhs, tm) {
+          let mut tm = subst.inst_term(rhs, depth);
+          insert_one(self, tm);
         }
       }
     }
@@ -2253,6 +2259,12 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
   path.read_atr(&mut v.g.constrs).unwrap();
   let old = v.lc.start_stash();
   v.lc.formatter.init(&v.g.constrs, path);
+  if DUMP_CONSTRUCTORS {
+    for (nr, c) in v.g.constrs.predicate.enum_iter() {
+      let args = (0..c.primary.len()).map(|i| Term::Locus(Idx::from_usize(i))).collect();
+      eprintln!("constructor: {:?} = {:?}", Formula::Pred { nr, args }, c);
+    }
+  }
   path.read_ecl(&v.g.constrs, &mut v.g.clusters).unwrap();
   let mut attrs = Attrs::default();
   if let Some(zero) = v.g.reqs.zero() {
@@ -2302,7 +2314,7 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
 
   for (i, id) in v.identify.iter().enumerate() {
     if let IdentifyKind::Func { lhs: Term::Functor { nr, args }, rhs } = &id.kind {
-      let k = ConstrKind::Func(Term::adjust(*nr, args, &v.g.constrs).0);
+      let k = ConstrKind::Func(Term::adjusted_nr(*nr, &v.g.constrs));
       v.func_ids.entry(k).or_default().push(i);
     }
   }
@@ -2398,13 +2410,16 @@ const CHECKER_HEADER: bool = false;
 const CHECKER_CONJUNCTS: bool = false;
 const CHECKER_RESULT: bool = false;
 const UNIFY_HEADER: bool = false;
+
+const DUMP_CONSTRUCTORS: bool = false;
 const DUMP_FORMATTER: bool = false;
 
 const FIRST_FILE: usize = 0;
-const ONE_FILE: bool = true;
+const ONE_FILE: bool = false;
+const PANIC_ON_FAIL: bool = false;
 const FIRST_VERBOSE_TOP_ITEM: Option<usize> = None;
 const FIRST_VERBOSE_ITEM: Option<usize> = None;
-const FIRST_VERBOSE_CHECKER: Option<usize> = Some(4);
+const FIRST_VERBOSE_CHECKER: Option<usize> = None;
 
 fn main() {
   ctrlc::set_handler(print_stats_and_exit).expect("Error setting Ctrl-C handler");

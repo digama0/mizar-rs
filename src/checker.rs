@@ -92,7 +92,6 @@ impl<'a> Checker<'a> {
       let sat = (|| {
         let mut eq = Equalizer::new(self);
         let res = eq.run(&atoms, &f)?;
-        // vprintln!("failed equalizer: {f:?}");
         Unifier::new(eq, &res).run()
       })();
       // assert!(sat.is_err(), "failed to justify");
@@ -106,11 +105,16 @@ impl<'a> Checker<'a> {
             f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
           );
         }
+        if crate::PANIC_ON_FAIL {
+          panic!("failed to justify {} @ {:?}", self.idx, self.pos);
+        }
       } else {
         stat("success");
         if crate::CHECKER_RESULT {
           eprintln!(
-            "proved! {:#?}",
+            "proved {} @ {:?}! {:#?}",
+            self.idx,
+            self.pos,
             f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
           );
         }
@@ -151,21 +155,13 @@ impl Expand<'_> {
         self.lc.bound_var.0.pop().unwrap();
       }
       Formula::Pred { nr, args } => {
-        let c = &self.g.constrs.predicate[*nr];
-        if let Some(nr2) = c.redefines {
-          *nr = nr2;
-          *args = args[c.superfluous as usize..].to_vec().into()
-        }
-        let expansions = self.well_matched_expansions(ConstrKind::Pred(*nr), args);
+        let (n2, args2) = Formula::adjust_pred(*nr, args, &self.g.constrs);
+        let expansions = self.well_matched_expansions(ConstrKind::Pred(n2), args2);
         f.conjdisj_many(pos, expansions);
       }
       Formula::Attr { nr, args } => {
-        let c = &self.g.constrs.attribute[*nr];
-        if let Some(nr2) = c.redefines {
-          *nr = nr2;
-          *args = args[c.superfluous as usize..].to_vec().into()
-        }
-        let expansions = self.well_matched_expansions(ConstrKind::Attr(*nr), args);
+        let (n2, args2) = Formula::adjust_attr(*nr, args, &self.g.constrs);
+        let expansions = self.well_matched_expansions(ConstrKind::Attr(n2), args);
         f.conjdisj_many(pos, expansions);
       }
       Formula::FlexAnd { orig, terms, expansion } =>
