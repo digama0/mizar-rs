@@ -10,6 +10,8 @@ const SHOW_INFER: bool = false;
 const SHOW_MARKS: bool = false;
 const SHOW_INVISIBLE: bool = false;
 const SHOW_ORIG: bool = false;
+const UPPER_CLUSTERS: bool = false;
+const BOTH_CLUSTERS: bool = false;
 const NEGATION_SUGAR: bool = true;
 
 #[derive(Default, Debug)]
@@ -347,22 +349,24 @@ impl<'a> Pretty<'a> {
         }
       }
     }
+    let doc = self.text(format!("A{}", nr.0));
     match args.len() {
-      0 => self.text(format!("A{}", nr.0)),
-      _ => self.terms(None, args, depth).parens(),
+      0 => doc,
+      _ => doc.append(self.terms(None, args, depth).parens()),
     }
   }
 
-  fn attr(&self, attr: &Attr, depth: u32) -> Doc<'a> {
-    if attr.pos { self.nil() } else { self.text("non ") }
+  fn attr(&self, attr: &Attr, plus: bool, depth: u32) -> Doc<'a> {
+    if plus { self.text("+") } else { self.nil() }
+      .append(if attr.pos { self.nil() } else { self.text("non ") })
       .append(self.adjective(attr.nr, &attr.args, depth))
   }
 
-  fn attrs(&self, attrs: &Attrs, depth: u32) -> Doc<'a> {
+  fn attrs(&self, attrs: &Attrs, plus: bool, depth: u32) -> Doc<'a> {
     match attrs {
       Attrs::Inconsistent => self.text("false").append(self.space()),
       Attrs::Consistent(attrs) =>
-        self.concat(attrs.iter().map(|a| self.attr(a, depth).append(self.softline()))),
+        self.concat(attrs.iter().map(|a| self.attr(a, plus, depth).append(self.softline()))),
     }
   }
 
@@ -396,7 +400,12 @@ impl<'a> Pretty<'a> {
           },
       }
     }
-    let doc = self.attrs(&ty.attrs.0, depth).append(match s {
+    let doc = if BOTH_CLUSTERS {
+      self.attrs(&ty.attrs.0, false, depth).append(self.attrs(&ty.attrs.1, true, depth))
+    } else {
+      self.attrs(if UPPER_CLUSTERS { &ty.attrs.1 } else { &ty.attrs.0 }, UPPER_CLUSTERS, depth)
+    };
+    let doc = doc.append(match s {
       Some(sym) => self.text(sym),
       None => self.text(format!("{:?}", ty.kind)),
     });
@@ -501,12 +510,12 @@ impl std::fmt::Debug for Formula {
 }
 impl std::fmt::Debug for Attr {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.attr(self, 0).render_fmt(100, f))
+    Pretty::with(|p| p.attr(self, false, 0).render_fmt(100, f))
   }
 }
 impl std::fmt::Debug for Attrs {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.attrs(self, 0).render_fmt(100, f))
+    Pretty::with(|p| p.attrs(self, false, 0).render_fmt(100, f))
   }
 }
 impl std::fmt::Debug for Type {

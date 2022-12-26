@@ -110,7 +110,7 @@ impl<'a> Unifier<'a> {
 
   /// Verify: Attempts to prove f |- false
   fn falsify(&mut self, mut f: Formula) -> OrUnsat<()> {
-    Standardize { g: self.g, lc: self.lc }.visit_formula(&mut f, 0);
+    Standardize { g: self.g, lc: self.lc }.visit_formula(&mut f);
     if crate::UNIFY_HEADER {
       eprintln!("falsify: {f:?}");
     }
@@ -118,6 +118,11 @@ impl<'a> Unifier<'a> {
     // Suppose f = ∀ xs, F(xs).
     // First, introduce metavariables ("free vars") to obtain a formula F(?v)
     OpenAsFreeVar(&mut fvars).open_quantifiers(&mut f, false);
+    if crate::UNIFY_HEADER {
+      for (i, ty) in fvars.enum_iter() {
+        vprintln!("v{i:?}: {ty:?}")
+      }
+    }
     let bas = self.bas;
     let mut u = self.unify(&fvars);
 
@@ -127,7 +132,7 @@ impl<'a> Unifier<'a> {
     let mut atoms = Atoms::default();
     let Dnf::Or(clauses) = atoms.normalize(u.g, u.lc, f, false) else { return Err(Unsat) };
     if crate::UNIFY_HEADER {
-      vprintln!("atoms: {atoms:?}");
+      vprintln!("atoms: {atoms:#?}");
     }
 
     // For the remainder we prove each clause separately.
@@ -323,42 +328,39 @@ struct Standardize<'a> {
 }
 
 impl VisitMut for Standardize<'_> {
-  fn visit_term(&mut self, tm: &mut Term, depth: u32) {}
-  fn visit_terms(&mut self, tms: &mut [Term], depth: u32) {}
+  fn visit_term(&mut self, tm: &mut Term) {}
+  fn visit_terms(&mut self, tms: &mut [Term]) {}
 
-  fn visit_type(&mut self, ty: &mut Type, depth: u32) {
+  fn visit_type(&mut self, ty: &mut Type) {
     assert!(!CheckLocus::get(|cl| {
-      cl.visit_attrs(&ty.attrs.0, depth);
-      cl.visit_attrs(&ty.attrs.1, depth);
+      cl.visit_attrs(&ty.attrs.0);
+      cl.visit_attrs(&ty.attrs.1);
     }));
-    self.visit_terms(&mut ty.args, depth);
+    self.visit_terms(&mut ty.args);
   }
 
-  fn visit_formula(&mut self, f: &mut Formula, depth: u32) {
-    self.standardize_formula(f, true, depth)
-  }
+  fn visit_formula(&mut self, f: &mut Formula) { self.standardize_formula(f, true) }
 }
 
 impl Standardize<'_> {
   /// * pos = true: PositivelyStandardized
   /// * pos = false: NegativelyStandardized
-  fn standardize_formula(&mut self, f: &mut Formula, pos: bool, depth: u32) {
+  fn standardize_formula(&mut self, f: &mut Formula, pos: bool) {
     loop {
       match f {
-        Formula::Neg { f } => self.standardize_formula(f, !pos, depth),
-        Formula::And { args } =>
-          args.iter_mut().for_each(|f| self.standardize_formula(f, pos, depth)),
+        Formula::Neg { f } => self.standardize_formula(f, !pos),
+        Formula::And { args } => args.iter_mut().for_each(|f| self.standardize_formula(f, pos)),
         Formula::ForAll { dom, scope, .. } =>
           if pos {
-            self.visit_type(dom, depth);
+            self.visit_type(dom);
             self.lc.bound_var.push(std::mem::take(dom));
-            self.standardize_formula(scope, pos, depth + 1);
+            self.standardize_formula(scope, pos);
             **dom = self.lc.bound_var.0.pop().unwrap();
           },
-        Formula::SchPred { args, .. } | Formula::Pred { args, .. } => self.visit_terms(args, depth),
+        Formula::SchPred { args, .. } | Formula::Pred { args, .. } => self.visit_terms(args),
         Formula::Attr { mut nr, args } => {
           let (main, rest) = args.split_last_mut().unwrap();
-          self.visit_term(main, depth);
+          self.visit_term(main);
           if !matches!(main.unmark(self.lc), Term::EqClass(_)) {
             let attr = Attr { nr, pos: true, args: rest.to_owned().into() };
             *f = Box::new(std::mem::take(main)).mk_is(self.g, self.lc, attr);
@@ -366,12 +368,12 @@ impl Standardize<'_> {
           }
         }
         Formula::PrivPred { args, value, .. } => {
-          self.visit_terms(args, depth);
-          ExpandPrivFunc(&self.g.constrs).visit_formula(value, depth);
+          self.visit_terms(args);
+          ExpandPrivFunc(&self.g.constrs).visit_formula(value);
         }
         Formula::Is { term, ty } => {
-          self.visit_term(term, depth);
-          self.visit_type(ty, depth)
+          self.visit_term(term);
+          self.visit_type(ty)
         }
         Formula::FlexAnd { .. } | Formula::True => {}
       }
@@ -427,13 +429,15 @@ impl Unify<'_> {
   fn compute_inst(
     &mut self, bas: &EnumMap<bool, Atoms>, f: &Formula, pos: bool,
   ) -> Dnf<FVarId, EqClassId> {
-    // vprintln!("compute_inst {pos}: {f:?}");
+    if crate::UNIFY_INSTS {
+      vprintln!("compute_inst {pos}: {f:?}");
+    }
     let mut inst = Dnf::FALSE;
+    let mut skip = false;
     match f {
       // We already DNF'd f so there should be no top-level propositional connectives remaining
       Formula::True | Formula::Neg { .. } | Formula::And { .. } => unreachable!(),
       Formula::Pred { mut nr, args } => {
-        let (nr, args) = Formula::adjust_pred(nr, args, &self.g.constrs);
         let pred = &self.g.constrs.predicate[nr];
         if pred.properties.get(if pos {
           PropertyKind::Irreflexivity
@@ -449,6 +453,7 @@ impl Unify<'_> {
             }
           }
         }
+        let (nr, args) = Formula::adjust_pred(nr, args, &self.g.constrs);
         if self.g.reqs.belongs_to() == Some(nr) {
           let [arg1, arg2] = args else { unreachable!() };
           if let Some(empty) = self.g.reqs.empty() {
@@ -541,7 +546,7 @@ impl Unify<'_> {
           }
           // FIXME: the original control flow seems very haphazard/inconsistent here
           if !pos {
-            return inst
+            skip = true
           }
         } else if self.g.reqs.less_or_equal() == Some(nr) {
           let [arg1, arg2] = args else { unreachable!() };
@@ -581,13 +586,13 @@ impl Unify<'_> {
             }
           }
           if !pos {
-            return inst
+            skip = true
           }
         } else if self.g.reqs.equals_to() == Some(nr) {
           let [arg1, arg2] = args else { unreachable!() };
           // TODO: numeric_value
           if !pos {
-            return inst
+            skip = true
           }
         }
       }
@@ -601,7 +606,7 @@ impl Unify<'_> {
             }
           }
         }
-        return inst
+        skip = true
       }
       Formula::Is { term, ty } => {
         if pos {
@@ -656,14 +661,18 @@ impl Unify<'_> {
             }
           }
         }
-        return inst
+        skip = true
       }
       _ => {}
     }
-    for f2 in &bas[!pos].0 .0 {
-      inst.mk_or_else(|| self.unify_formula(f, f2));
+    if !skip {
+      for f2 in &bas[!pos].0 .0 {
+        inst.mk_or_else(|| self.unify_formula(f, f2));
+      }
     }
-    // vprintln!("compute_inst -> {inst:?}");
+    if crate::UNIFY_INSTS {
+      vprintln!("compute_inst (skip: {skip}) -> {inst:?}");
+    }
     inst
   }
 
@@ -687,11 +696,13 @@ impl Unify<'_> {
   fn or_unify_attr(
     &mut self, attr1: &Attr, attr2: &Attr, pos: bool, out: &mut Dnf<FVarId, EqClassId>,
   ) {
+    // vprintln!("or_unify_attr {pos}: {attr1:?} <> {attr2:?} <- {out:?}");
     let (n1, args1) = attr1.adjust(&self.g.constrs);
     let (n2, args2) = attr2.adjust(&self.g.constrs);
     if n1 == n2 && (attr1.pos == attr2.pos) == pos {
       out.mk_or_else(|| self.unify_terms(args1, args2))
     }
+    // vprintln!("or_unify_attr {pos}: {attr1:?} <> {attr2:?} -> {out:?}");
   }
 
   /// InstCollection.UNIRadices
@@ -815,7 +826,7 @@ impl Unify<'_> {
       }};
     }
     // vprintln!("unify_term {t1:?} <> {t2:?}");
-    match t1 {
+    let res = match t1 {
       &Term::FreeVar(n) =>
         if let Some(ec) = self.get_eq_class(t2) {
           if let Some(inst) = self.cache.get(&(n, ec)) {
@@ -879,8 +890,9 @@ impl Unify<'_> {
       Term::Locus(_) | Term::PrivFunc { .. } | Term::LambdaVar(_) | Term::Qua { .. } | Term::It =>
         unreachable!(),
       _ => Dnf::FALSE,
-    }
+    };
     // vprintln!("unify_term {t1:?} <> {t2:?} -> {res:?}");
+    res
   }
 
   /// InstCollection.UNITrmList
@@ -899,7 +911,7 @@ impl Unify<'_> {
   /// InstCollection.UNIFrm
   fn unify_formula(&mut self, f1: &Formula, f2: &Formula) -> Dnf<FVarId, EqClassId> {
     // vprintln!("unify_formula {f1:?} <> {f2:?}");
-    match (f1, f2) {
+    let res = match (f1, f2) {
       (Formula::True, Formula::True) => Dnf::True,
       (Formula::Neg { f: f1 }, Formula::Neg { f: f2 }) => self.unify_formula(f1, f2),
       (Formula::And { args: args1 }, Formula::And { args: args2 })
@@ -969,8 +981,9 @@ impl Unify<'_> {
         inst
       }
       _ => Dnf::FALSE,
-    }
+    };
     // vprintln!("unify_formula {f1:?} <> {f2:?} -> {res:?}");
+    res
   }
 }
 
@@ -1205,23 +1218,28 @@ impl Equate for EquateClass<'_> {
     &mut self, g: &Global, lc: &LocalContext, n1: PredId, n2: PredId, args1: &[Term],
     args2: &[Term],
   ) -> bool {
-    if n1 != n2 {
+    let (n1_adj, args1_adj) = Formula::adjust_pred(n1, args1, &g.constrs);
+    let (n2_adj, args2_adj) = Formula::adjust_pred(n2, args2, &g.constrs);
+    if n1_adj != n2_adj {
       return false
     }
-    if self.eq_terms(g, lc, args1, args2) {
+    if self.eq_terms(g, lc, args1_adj, args2_adj) {
       return true
     }
     let c = &g.constrs.predicate[n1];
     if c.properties.get(PropertyKind::Symmetry) {
       let mut args1 = args1.iter().collect_vec();
       args1.swap(c.arg1 as usize, c.arg2 as usize);
-      args1[c.superfluous as usize..].iter().zip(args2).all(|(t1, t2)| self.eq_term(g, lc, t1, t2))
+      args1[c.superfluous as usize..]
+        .iter()
+        .zip(args2_adj)
+        .all(|(t1, t2)| self.eq_term(g, lc, t1, t2))
     } else {
       let c = &g.constrs.predicate[n2];
       c.properties.get(PropertyKind::Symmetry) && {
         let mut args2 = args2.iter().collect_vec();
         args2.swap(c.arg1 as usize, c.arg2 as usize);
-        (args1.iter().zip(&args2[c.superfluous as usize..]))
+        (args1_adj.iter().zip(&args2[c.superfluous as usize..]))
           .all(|(t1, t2)| self.eq_term(g, lc, t1, t2))
       }
     }

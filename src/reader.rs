@@ -309,10 +309,10 @@ impl Reader {
         .collect();
       let mut thesis = this.intern(&thesis.f);
       this.read_justification(&thesis, just);
-      let tys = this.lc.sch_func_ty.0.drain(sch_funcs..).collect();
+      let primary = this.lc.sch_func_ty.0.drain(sch_funcs..).collect();
       this.lc.expand_consts(|c| (&mut prems, &mut thesis).visit(c));
       this.lc.infer_const.get_mut().truncate(infer_consts);
-      this.libs.sch.insert((ArticleId::SELF, *nr), Scheme { tys, prems, thesis });
+      this.libs.sch.insert((ArticleId::SELF, *nr), Scheme { primary, prems, thesis });
     });
   }
 
@@ -334,7 +334,9 @@ impl Reader {
               if let Some(mut t) = func.expand_if_equal(&self.g, &self.lc, args, 0) {
                 t.visit(&mut self.intern_const());
                 let Term::Infer(nr) = t else { unreachable!() };
-                self.lc.infer_const.borrow_mut().0[i].eq_const.insert(nr);
+                ic = self.lc.infer_const.borrow_mut();
+                ic.0[i].eq_const.insert(nr);
+                ic.0[i].has_numbers |= ic[nr].has_numbers;
               }
             }
           }
@@ -563,8 +565,8 @@ impl Reader {
     struct Checker(u32, bool);
     impl Visit for Checker {
       fn abort(&self) -> bool { !self.1 }
-      fn visit_term(&mut self, tm: &Term, depth: u32) {
-        self.super_visit_term(tm, depth);
+      fn visit_term(&mut self, tm: &Term) {
+        self.super_visit_term(tm);
         // Term::PrivFunc { nr, args, value } => self.2 &= nr.0 < self.0,
         if let Term::Infer(nr) = tm {
           self.1 &= nr.0 < self.0
@@ -577,22 +579,22 @@ impl Reader {
       ck.1
     }
     for (i, c) in self.g.constrs.functor.0.iter().enumerate() {
-      if !with(infer_const, |ck| ck.visit_type(&c.ty, 0)) {
+      if !with(infer_const, |ck| ck.visit_type(&c.ty)) {
         panic!("bad functor: F{i:?}: {c:?}")
       }
     }
     for c in &self.lc.term_cache.borrow().terms {
       if !with(infer_const, |ck| {
-        ck.visit_term(&c.0, 0);
-        ck.visit_type(&c.1, 0)
+        ck.visit_term(&c.0);
+        ck.visit_type(&c.1)
       }) {
         panic!("bad term cache: {c:?}")
       }
     }
     for (i, c) in ic.enum_iter() {
       if !with(infer_const, |ck| {
-        ck.visit_term(&c.def, 0);
-        ck.visit_type(&c.ty, 0)
+        ck.visit_term(&c.def);
+        ck.visit_type(&c.ty)
       }) {
         panic!("bad infer const: ?{i:?} := {c:?}")
       }

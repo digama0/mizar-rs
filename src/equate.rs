@@ -1,7 +1,7 @@
 use crate::checker::{Atoms, Checker, Conjunct, Dnf, OrUnsat, Unsat};
 use crate::types::*;
 use crate::{
-  mk_id, verbose, vprintln, CheckBound, CmpStyle, Equate, ExpandPrivFunc, Global, Inst,
+  mk_id, stat, verbose, vprintln, CheckBound, CmpStyle, Equate, ExpandPrivFunc, Global, Inst,
   LocalContext, OnVarMut, Visit, VisitMut,
 };
 use enum_map::EnumMap;
@@ -105,11 +105,11 @@ impl<'a> CheckE<'a> {
 
 impl Visit for CheckE<'_> {
   fn abort(&self) -> bool { self.found }
-  fn visit_term(&mut self, tm: &Term, depth: u32) {
+  fn visit_term(&mut self, tm: &Term) {
     match *tm {
       Term::EqClass(_) => self.found = true,
       Term::EqMark(m) if matches!(self.marks[m].0, Term::EqClass(_)) => self.found = true,
-      _ => self.super_visit_term(tm, depth),
+      _ => self.super_visit_term(tm),
     }
   }
 }
@@ -122,8 +122,10 @@ impl Equate for EqMarks {
     &mut self, g: &Global, lc: &LocalContext, n1: PredId, n2: PredId, args1: &[Term],
     args2: &[Term],
   ) -> bool {
-    n1 == n2
-      && (self.eq_terms(g, lc, args1, args2)
+    let (n1_adj, args1_adj) = Formula::adjust_pred(n1, args1, &g.constrs);
+    let (n2_adj, args2_adj) = Formula::adjust_pred(n2, args2, &g.constrs);
+    n1_adj == n2_adj
+      && (self.eq_terms(g, lc, args1_adj, args2_adj)
         || {
           let c = &g.constrs.predicate[n1];
           c.properties.get(PropertyKind::Symmetry) && {
@@ -131,7 +133,7 @@ impl Equate for EqMarks {
             args1.swap(c.arg1 as usize, c.arg2 as usize);
             args1[c.superfluous as usize..]
               .iter()
-              .zip(args2)
+              .zip(args2_adj)
               .all(|(&t1, t2)| self.eq_term(g, lc, t1, t2))
           }
         }
@@ -140,7 +142,7 @@ impl Equate for EqMarks {
           c.properties.get(PropertyKind::Symmetry) && {
             let mut args2 = args2.iter().collect_vec();
             args2.swap(c.arg1 as usize, c.arg2 as usize);
-            args1
+            args1_adj
               .iter()
               .zip(&args2[c.superfluous as usize..])
               .all(|(t1, &t2)| self.eq_term(g, lc, t1, t2))
@@ -194,8 +196,8 @@ impl Equalizer<'_> {
     (m, et)
   }
 
-  fn insert_type(&mut self, mut new: Type, et: EqTermId, depth: u32) -> OrUnsat<bool> {
-    self.y(|y| y.visit_type(&mut new, depth))?;
+  fn insert_type(&mut self, mut new: Type, et: EqTermId) -> OrUnsat<bool> {
+    self.y(|y| y.visit_type(&mut new))?;
     let mut eq_term = &mut self.terms[et];
     // vprintln!("insert type e{:?}: {new:?}", eq_term.id);
     let mut i;
@@ -213,7 +215,7 @@ impl Equalizer<'_> {
         }
         return Ok(added)
       }
-      self.y(|y| y.visit_type(&mut new, depth))?; // is this okay? we already visited it
+      self.y(|y| y.visit_type(&mut new))?; // is this okay? we already visited it
       let Attrs::Consistent(attrs) = std::mem::take(&mut new.attrs).1 else { unreachable!() };
       eq_term = &mut self.terms[et];
       for attr in attrs {
@@ -233,7 +235,7 @@ impl Equalizer<'_> {
         let prefixes = self.g.constrs.struct_mode[m].prefixes.clone();
         for mut ty in prefixes.into_vec() {
           ty.visit(&mut Inst::new(&eq_term.ty_class[i].args));
-          self.y(|y| y.visit_type(&mut ty, depth))?;
+          self.y(|y| y.visit_type(&mut ty))?;
           eq_term = &mut self.terms[et];
           ty.attrs = Default::default();
           if !(eq_term.ty_class.iter())
@@ -257,6 +259,7 @@ impl Equalizer<'_> {
 struct Y<'a, 'b> {
   eq: &'b mut Equalizer<'a>,
   unsat: OrUnsat<()>,
+  depth: u32,
 }
 impl<'a, 'b> std::ops::Deref for Y<'a, 'b> {
   type Target = &'b mut Equalizer<'a>;
@@ -268,7 +271,7 @@ impl<'a, 'b> std::ops::DerefMut for Y<'a, 'b> {
 
 impl<'a> Equalizer<'a> {
   fn y<'b, R>(&'b mut self, f: impl FnOnce(&mut Y<'a, 'b>) -> R) -> OrUnsat<R> {
-    let mut y = Y { eq: self, unsat: Ok(()) };
+    let mut y = Y { eq: self, unsat: Ok(()), depth: 0 };
     let r = f(&mut y);
     y.unsat?;
     Ok(r)
@@ -277,10 +280,10 @@ impl<'a> Equalizer<'a> {
   fn prep_binder(
     &mut self, tm: &mut Term, depth: u32, coll: fn(&mut ConstrMaps) -> &mut Vec<EqMarkId>,
   ) -> Option<Result<EqTermId, usize>> {
-    if CheckBound::get(depth, |cb| cb.visit_term(tm, depth)) {
+    if CheckBound::get(depth, |cb| cb.visit_term(tm)) {
       return None
     }
-    OnVarMut(|n, _| *n -= depth).visit_term(tm, depth);
+    OnVarMut(depth, |n, _| *n -= depth).visit_term(tm);
     let vec = coll(&mut self.constrs);
     match vec.binary_search_by(|&m| self.lc.marks[m].0.cmp(&self.g.constrs, tm, CmpStyle::Red)) {
       Ok(i) => Some(Ok(self.lc.marks[vec[i]].1)),
@@ -302,14 +305,15 @@ macro_rules! y_try {
 }
 
 impl<'a, 'b> Y<'a, 'b> {
-  fn visit_args(&mut self, tms: &mut [Term], depth: u32) -> bool {
-    self.visit_terms(tms, depth);
+  fn visit_args(&mut self, tms: &mut [Term]) -> bool {
+    self.visit_terms(tms);
     tms.iter().all(|tm| matches!(tm, Term::EqMark(_)))
   }
 
   fn add_binder_into(
-    &mut self, tm: &mut Term, depth: u32, coll: fn(&mut ConstrMaps) -> &mut Vec<EqMarkId>,
+    &mut self, tm: &mut Term, coll: fn(&mut ConstrMaps) -> &mut Vec<EqMarkId>,
   ) -> Option<EqTermId> {
+    let depth = self.depth;
     match self.prep_binder(tm, depth, coll)? {
       Ok(i) => {
         *tm = Term::EqMark(self.terms[i].mark);
@@ -326,9 +330,11 @@ impl<'a, 'b> Y<'a, 'b> {
 
 impl VisitMut for Y<'_, '_> {
   fn abort(&self) -> bool { self.unsat.is_err() }
+  fn push_bound(&mut self, _: &mut Type) { self.depth += 1 }
+  fn pop_bound(&mut self, n: u32) { self.depth -= n }
 
   /// YTerm
-  fn visit_term(&mut self, tm: &mut Term, depth: u32) {
+  fn visit_term(&mut self, tm: &mut Term) {
     if self.abort() {
       return
     }
@@ -343,19 +349,19 @@ impl VisitMut for Y<'_, '_> {
           *self.eq.infers.get_mut_extending(nr) = Some(self.eq.terms[et].mark);
           // TODO: numeric_value
           let ty = (self.eq.lc.infer_const.get_mut()[nr].ty)
-            .visit_cloned_d(&mut ExpandPrivFunc(&self.eq.g.constrs), depth);
-          y_try!(self, self.insert_type(ty, et, depth));
+            .visit_cloned(&mut ExpandPrivFunc(&self.eq.g.constrs));
+          y_try!(self, self.insert_type(ty, et));
           *tm = Term::EqMark(self.terms[et].mark);
         }
         return
       }
       Term::Functor { mut nr, args } => {
         let orig = args.clone();
-        if !self.visit_args(args, depth) {
+        if !self.visit_args(args) {
           return
         }
         let mut args1 = args.clone();
-        let mut ty = if CheckE::with(&self.lc.marks, |ce| ce.visit_terms(&orig, depth)) {
+        let mut ty = if CheckE::with(&self.lc.marks, |ce| ce.visit_terms(&orig)) {
           Term::Functor { nr, args: orig }.get_type_uncached(self.g, self.lc)
         } else {
           *Term::Functor { nr, args: orig }.round_up_type(self.g, self.lc).to_owned()
@@ -368,7 +374,7 @@ impl VisitMut for Y<'_, '_> {
         *tm = Term::Functor { nr: nr2, args: args2.to_vec().into() };
         let (m, et) = self.new_eq_class(tm);
         self.constrs.functor.insert(nr2, m);
-        y_try!(self, self.insert_type(ty, et, depth));
+        y_try!(self, self.insert_type(ty, et));
         if self.g.reqs.zero_number() == Some(Term::adjusted_nr(nr2, &self.g.constrs)) {
           // TODO: numeric_value
         }
@@ -385,13 +391,13 @@ impl VisitMut for Y<'_, '_> {
         return
       }
       Term::SchFunc { nr, args } => {
-        if !self.visit_args(args, depth) {
+        if !self.visit_args(args) {
           return
         }
         self.new_eq_class(tm).1
       }
       Term::PrivFunc { mut nr, args, .. } => {
-        if !self.visit_args(args, depth) {
+        if !self.visit_args(args) {
           return
         }
         let (m, et) = self.new_eq_class(tm);
@@ -399,7 +405,7 @@ impl VisitMut for Y<'_, '_> {
         et
       }
       Term::Aggregate { mut nr, args, .. } => {
-        if !self.visit_args(args, depth) {
+        if !self.visit_args(args) {
           return
         }
         if let Some(m) = self.constrs.aggregate.find(self.g, self.lc, nr, args) {
@@ -411,7 +417,7 @@ impl VisitMut for Y<'_, '_> {
         et
       }
       Term::Selector { mut nr, args, .. } => {
-        if !self.visit_args(args, depth) {
+        if !self.visit_args(args) {
           return
         }
         if let Some(m) = self.constrs.selector.find(self.g, self.lc, nr, args) {
@@ -423,19 +429,19 @@ impl VisitMut for Y<'_, '_> {
         et
       }
       Term::Fraenkel { args, scope, compr } => {
-        let mut depth2 = depth;
         for ty in &mut **args {
-          self.visit_type(ty, depth2);
-          depth2 += 1;
+          self.visit_type(ty);
+          self.push_bound(ty);
         }
-        self.visit_term(scope, depth2);
-        self.visit_formula(compr, depth2);
-        let Some(et) = self.add_binder_into(tm, depth, |c| &mut c.fraenkel) else { return };
+        self.visit_term(scope);
+        self.visit_formula(compr);
+        self.pop_bound(args.len() as u32);
+        let Some(et) = self.add_binder_into(tm, |c| &mut c.fraenkel) else { return };
         et
       }
       Term::Choice { ty } => {
-        self.visit_type(ty, depth);
-        let Some(et) = self.add_binder_into(tm, depth, |c| &mut c.choice) else { return };
+        self.visit_type(ty);
+        let Some(et) = self.add_binder_into(tm, |c| &mut c.choice) else { return };
         et
       }
       Term::EqMark(mut m) => match &self.lc.marks[m].0 {
@@ -451,7 +457,7 @@ impl VisitMut for Y<'_, '_> {
       | Term::It => unreachable!(),
     };
     let mut ty = tm.get_type_uncached(self.g, self.lc);
-    y_try!(self, self.insert_type(ty, et, depth));
+    y_try!(self, self.insert_type(ty, et));
     *tm = Term::EqMark(self.terms[et].mark);
     // vprintln!("y term {depth} -> {tm:?} -> {:?}", tm.mark().map(|m| &self.lc.marks[m]));
   }
@@ -479,7 +485,7 @@ impl Equalizer<'_> {
     // vprintln!("yy term {term:?} <- {:?}", self.terms[fi]);
     macro_rules! func_like {
       ($k:ident: $nr:expr, $args:expr) => {{
-        self.y(|y| y.visit_terms($args, 0))?;
+        self.y(|y| y.visit_terms($args))?;
         if let Some(m) = self.constrs.$k.find(self.g, self.lc, $nr, $args) {
           return Ok(self.lc.marks[m].1)
         }
@@ -499,7 +505,7 @@ impl Equalizer<'_> {
         Ok(fi)
       }
       Term::Functor { mut nr, args } => {
-        self.y(|y| y.visit_terms(args, 0))?;
+        self.y(|y| y.visit_terms(args))?;
         let c = &self.g.constrs.functor[nr];
         let (nr1, args1) = Term::adjust(nr, args, &self.g.constrs);
         if let Some(m) = self.constrs.functor.find(self.g, self.lc, nr1, args1) {
@@ -532,7 +538,7 @@ impl Equalizer<'_> {
       Term::PrivFunc { mut nr, args, .. } => func_like!(priv_func: nr, args),
       Term::Selector { mut nr, args } => func_like!(selector: nr, args),
       Term::Aggregate { mut nr, args } => {
-        self.y(|y| y.visit_terms(args, 0))?;
+        self.y(|y| y.visit_terms(args))?;
         if let Some(vec) = self.constrs.aggregate.0.get(&nr) {
           let base = self.g.constrs.aggregate[nr].base as usize;
           let args = &args[base..];
@@ -550,18 +556,18 @@ impl Equalizer<'_> {
       }
       Term::Fraenkel { args, scope, compr } => {
         self.y(|y| {
-          let mut depth = 0;
           for ty in &mut **args {
-            y.visit_type(ty, depth);
-            depth += 1;
+            y.visit_type(ty);
+            y.push_bound(ty);
           }
-          y.visit_term(scope, depth);
-          y.visit_formula(compr, depth)
+          y.visit_term(scope);
+          y.visit_formula(compr);
+          y.pop_bound(args.len() as u32);
         })?;
         Ok(self.yy_binder(term, fi, |c| &mut c.fraenkel))
       }
       Term::Choice { ty } => {
-        self.y(|y| y.visit_type(ty, 0))?;
+        self.y(|y| y.visit_type(ty))?;
         Ok(self.yy_binder(term, fi, |c| &mut c.choice))
       }
       Term::Infer(_) | Term::Constant(_) => Ok(fi),
@@ -605,10 +611,10 @@ impl<'a> HasInfer<'a> {
 }
 impl Visit for HasInfer<'_> {
   fn abort(&self) -> bool { self.found }
-  fn visit_term(&mut self, tm: &Term, depth: u32) {
+  fn visit_term(&mut self, tm: &Term) {
     match *tm {
       Term::Infer(n) => self.found |= self.infers.get(n).map_or(true, |i| i.is_none()),
-      _ => self.super_visit_term(tm, depth),
+      _ => self.super_visit_term(tm),
     }
   }
 }
@@ -814,7 +820,7 @@ impl<'a> Equalizer<'a> {
       Attrs::Inconsistent => Attrs::Inconsistent,
       Attrs::Consistent(attrs) => {
         let attrs =
-          attrs.iter().filter(|a| !HasInfer::get(&self.infers, |ci| ci.visit_terms(&a.args, 0)));
+          attrs.iter().filter(|a| !HasInfer::get(&self.infers, |ci| ci.visit_terms(&a.args)));
         Attrs::Consistent(attrs.cloned().collect())
       }
     }
@@ -855,7 +861,7 @@ impl<'a> Equalizer<'a> {
     &mut self, to_y_term: &mut Vec<(EqTermId, Term)>, eq_pendings: &mut Equals,
   ) -> OrUnsat<()> {
     for (i, mut tm) in to_y_term.drain(..) {
-      self.y(|y| y.visit_term(&mut tm, 0))?;
+      self.y(|y| y.visit_term(&mut tm))?;
       eq_pendings.insert(i, self.lc.marks[tm.mark().unwrap()].1)
     }
     Ok(())
@@ -869,6 +875,11 @@ impl<'a> Equalizer<'a> {
       Ordering::Equal => return Ok(()),
       Ordering::Greater => (x, y),
     };
+    // vprintln!(
+    //   "union {:?} <=> {:?}",
+    //   self.terms[x].eq_class.iter().map(|&x| Term::EqMark(x)).collect_vec(),
+    //   self.terms[y].eq_class.iter().map(|&x| Term::EqMark(x)).collect_vec(),
+    // );
     self.clash = true;
     // TODO: numeric_value
     for &m in &self.terms[from].eq_class {
@@ -883,7 +894,7 @@ impl<'a> Equalizer<'a> {
       self.terms[to].supercluster.try_insert(&self.g.constrs, attr)?;
     }
     for ty in std::mem::take(&mut self.terms[from].ty_class) {
-      self.insert_type(ty, to, 0)?;
+      self.insert_type(ty, to)?;
     }
     // TODO: polynomial_values
     Ok(())
@@ -1081,6 +1092,22 @@ impl<'a> Equalizer<'a> {
             }
           }
         }
+        if c.properties.get(PropertyKind::Projectivity) {
+          for &m in marks {
+            let (Term::Functor { ref args, .. }, et) = self.lc.marks[m] else { unreachable!() };
+            assert!(c.arg1 as usize + 1 == args.len());
+            let et1 = self.lc.marks[args[c.arg1 as usize].mark().unwrap()].1;
+            let args1 = &args[..c.arg1 as usize];
+            for &m2 in &self.terms[self.lc.marks[self.terms[et1].mark].1].eq_class {
+              if let Term::Functor { nr, args: ref args2 } = self.lc.marks[m2].0 {
+                if nr == i && EqMarks.eq_terms(self.g, self.lc, args1, &args2[..c.arg1 as usize]) {
+                  let et2 = self.lc.marks[args2[c.arg1 as usize].mark().unwrap()].1;
+                  to_union.push((self.lc.marks[self.terms[et].mark].1, et1))
+                }
+              }
+            }
+          }
+        }
         match self.g.reqs.rev.get(i).copied().flatten() {
           Some(Requirement::Union) =>
             for &m in marks {
@@ -1119,13 +1146,22 @@ impl<'a> Equalizer<'a> {
                 to_union.push((self.lc.marks[self.terms[et].mark].1, et1))
               }
             },
-          // Some(Requirement::Succ) => todo!(), // TODO: numbers
-          // Some(Requirement::RealAdd) if arith => todo!(),
-          // Some(Requirement::RealMult) if arith => todo!(),
-          // Some(Requirement::RealNeg) if arith => todo!(),
-          // Some(Requirement::RealInv) if arith => todo!(),
-          // Some(Requirement::RealDiff) if arith => todo!(),
-          // Some(Requirement::RealDiv) if arith => todo!(),
+          Some(Requirement::Succ) => {
+            // TODO: numbers
+            stat("numbers");
+            return Err(Unsat)
+          }
+          Some(Requirement::RealAdd)
+          | Some(Requirement::RealMult)
+          | Some(Requirement::RealNeg)
+          | Some(Requirement::RealInv)
+          | Some(Requirement::RealDiff)
+          | Some(Requirement::RealDiv)
+            if arith =>
+          {
+            stat("numbers");
+            return Err(Unsat)
+          }
           _ => {}
         }
       }
@@ -1280,7 +1316,7 @@ impl<'a> Equalizer<'a> {
       }
       impl Visit for CheckEqTerm<'_> {
         fn abort(&self) -> bool { self.found }
-        fn visit_term(&mut self, tm: &Term, depth: u32) {
+        fn visit_term(&mut self, tm: &Term) {
           match *tm {
             Term::EqClass(_) => self.found = true,
             Term::EqMark(m) => {
@@ -1288,20 +1324,20 @@ impl<'a> Equalizer<'a> {
               if matches!(tm, Term::EqClass(_)) {
                 self.found |= self.marks[self.terms[et].mark].1 == self.tgt
               } else {
-                self.super_visit_term(tm, depth);
+                self.super_visit_term(tm);
               }
             }
-            _ => self.super_visit_term(tm, depth),
+            _ => self.super_visit_term(tm),
           }
         }
       }
 
       let mut ck = CheckEqTerm { marks: &self.lc.marks, terms: &self.terms, tgt, found: false };
       for &m in &etm.eq_class {
-        ck.visit_term(&Term::EqMark(m), 0)
+        ck.visit_term(&Term::EqMark(m))
       }
-      ck.visit_types(&etm.ty_class, 0);
-      ck.visit_attrs(&etm.supercluster, 0);
+      ck.visit_types(&etm.ty_class);
+      ck.visit_attrs(&etm.supercluster);
       ck.found
     }
   }
@@ -1339,7 +1375,7 @@ impl<'a> Equalizer<'a> {
             Formula::Is { term, ty } if pos => {
               let x_type = self.y(|y| (**ty).visit_cloned(y))?;
               let x_term = self.y(|y| (**term).visit_cloned(y))?;
-              self.insert_type(x_type, self.lc.marks[x_term.mark().unwrap()].1, 0)?;
+              self.insert_type(x_type, self.lc.marks[x_term.mark().unwrap()].1)?;
             }
             Formula::Attr { mut nr, args } => {
               let mut args = self.y(|y| args.visit_cloned(y))?.into_vec();
@@ -1420,7 +1456,7 @@ impl<'a> Equalizer<'a> {
 
     // InitStructuresInEqClass
     for (i, mut tm) in to_y_term.drain(..) {
-      self.y(|y| y.visit_term(&mut tm, 0))?;
+      self.y(|y| y.visit_term(&mut tm))?;
       eqs.insert(i, self.lc.marks[tm.mark().unwrap()].1)
     }
 
@@ -1562,6 +1598,10 @@ impl<'a> Equalizer<'a> {
 
     loop {
       let mut added = false;
+      // vprintln!("start pos loop");
+      // for (et, etm) in self.terms.enum_iter() {
+      //   vprintln!("state: {et:?}' {:#?}", etm);
+      // }
       for pos in &pos_bas.0 .0 {
         if let Formula::Pred { mut nr, args } = pos {
           let (nr, args) = Formula::adjust_pred(nr, args, &self.g.constrs);
@@ -1625,16 +1665,16 @@ impl<'a> Equalizer<'a> {
             if let Some(element) = self.g.reqs.element() {
               // A in B => A: Element of B
               let ty = Type { args: vec![arg2.clone()], ..Type::new(element.into()) };
-              self.insert_type(ty, et1, 0)?;
+              self.insert_type(ty, et1)?;
             }
           } else if self.g.reqs.inclusion() == Some(nr) {
             if let (Some(element), Some(pw)) = (self.g.reqs.element(), self.g.reqs.power_set()) {
               let [arg1, arg2] = args else { unreachable!() };
               // A c= B => A: Element of bool B
               let mut tm = Term::Functor { nr: pw, args: Box::new([arg2.clone()]) };
-              self.y(|y| y.visit_term(&mut tm, 0))?;
+              self.y(|y| y.visit_term(&mut tm))?;
               let ty = Type { args: vec![tm], ..Type::new(element.into()) };
-              self.insert_type(ty, self.lc.marks[arg1.mark().unwrap()].1, 0)?;
+              self.insert_type(ty, self.lc.marks[arg1.mark().unwrap()].1)?;
             }
           }
         }
@@ -1646,6 +1686,10 @@ impl<'a> Equalizer<'a> {
 
     loop {
       let mut added = false;
+      // vprintln!("start element transitivity loop");
+      // for (et, etm) in self.terms.enum_iter() {
+      //   vprintln!("state: {et:?}' {:#?}", etm);
+      // }
       for pos2 in &pos_bas.0 .0 {
         if let Formula::Pred { mut nr, args } = pos2 {
           let (nr, args) = Formula::adjust_pred(nr, args, &self.g.constrs);
@@ -1683,7 +1727,7 @@ impl<'a> Equalizer<'a> {
               let et1 = self.lc.marks[arg1.mark().unwrap()].1;
               for &m in &to_push {
                 let ty = Type { args: vec![Term::EqMark(m)], ..Type::new(element.into()) };
-                added |= self.insert_type(ty, et1, 0)?;
+                added |= self.insert_type(ty, et1)?;
               }
             }
           }
@@ -1696,6 +1740,10 @@ impl<'a> Equalizer<'a> {
 
     loop {
       let mut added = false;
+      // vprintln!("start neg loop");
+      // for (et, etm) in self.terms.enum_iter() {
+      //   vprintln!("state: {et:?}' {:#?}", etm);
+      // }
       for neg in &neg_bas.0 .0 {
         match neg {
           Formula::Attr { mut nr, args } => {
@@ -1726,20 +1774,18 @@ impl<'a> Equalizer<'a> {
               }
               // TODO: numeric_value
             } else if self.g.reqs.belongs_to() == Some(nr) {
-              if let Some(element) = self.g.reqs.element() {
+              if let (Some(element), Some(empty)) = (self.g.reqs.element(), self.g.reqs.empty()) {
                 let [arg1, arg2] = args else { unreachable!() };
                 let et1 = self.lc.marks[arg1.mark().unwrap()].1;
                 let et2 = self.lc.marks[arg2.mark().unwrap()].1;
-                if let Some(empty) = self.g.reqs.empty() {
-                  if self.terms[et2].supercluster.find0(&self.g.constrs, empty, false) {
-                    let ty = Type { args: vec![arg2.clone()], ..Type::new(element.into()) };
-                    // B is non empty, A: Element of B => A in B
-                    if self.terms[et1].ty_class.iter().any(|ty2| {
-                      ty2.decreasing_attrs(&ty, |a1, a2| EqMarks.eq_attr(self.g, self.lc, a1, a2))
-                        && EqMarks.eq_radices(self.g, self.lc, &ty, ty2)
-                    }) {
-                      return Err(Unsat)
-                    }
+                if self.terms[et2].supercluster.find0(&self.g.constrs, empty, false) {
+                  let ty = Type { args: vec![arg2.clone()], ..Type::new(element.into()) };
+                  // B is non empty, A: Element of B => A in B
+                  if self.terms[et1].ty_class.iter().any(|ty2| {
+                    ty2.decreasing_attrs(&ty, |a1, a2| EqMarks.eq_attr(self.g, self.lc, a1, a2))
+                      && EqMarks.eq_radices(self.g, self.lc, &ty, ty2)
+                  }) {
+                    return Err(Unsat)
                   }
                 }
               }
@@ -1748,7 +1794,7 @@ impl<'a> Equalizer<'a> {
                 let [arg1, arg2] = args else { unreachable!() };
                 let et1 = self.lc.marks[arg1.mark().unwrap()].1;
                 let mut tm = Term::Functor { nr: pw, args: Box::new([arg2.clone()]) };
-                self.y(|y| y.visit_term(&mut tm, 0))?;
+                self.y(|y| y.visit_term(&mut tm))?;
                 let ty = Type { args: vec![tm], ..Type::new(element.into()) };
                 // A: Element of bool B => A c= B
                 if self.terms[et1].ty_class.iter().any(|ty2| {
@@ -1843,6 +1889,15 @@ impl<'a> Equalizer<'a> {
 
     // PreUnification
     let mut ineqs = Ineqs::default();
+    for f in &neg_bas.0 .0 {
+      if let Formula::Pred { nr, args } = f {
+        if self.g.reqs.equals_to() == Some(*nr) {
+          let [arg1, arg2] = &**args else { unreachable!() };
+          ineqs.push(arg1.mark().unwrap(), arg2.mark().unwrap());
+        }
+      }
+    }
+    ineqs.base = ineqs.ineqs.len();
     self.check_refl(&pos_bas, PropertyKind::Irreflexivity, &mut ineqs)?;
     self.check_refl(&neg_bas, PropertyKind::Reflexivity, &mut ineqs)?;
     for (etm1, etm2) in
@@ -1931,6 +1986,7 @@ impl<'a> Equalizer<'a> {
 struct Ineqs {
   ineqs: Vec<(EqMarkId, EqMarkId)>,
   processed: usize,
+  base: usize,
 }
 
 impl Ineqs {
@@ -2003,10 +2059,12 @@ impl Ineqs {
   fn process(&mut self, eq: &mut Equalizer<'_>, neg_bas: &mut Atoms) -> OrUnsat<()> {
     while let Some(&(a, b)) = self.ineqs.get(self.processed) {
       eq.nonempty_nonzero_of_ne(eq.lc.marks[a].1, eq.lc.marks[b].1)?;
-      neg_bas.0.push(Formula::Pred {
-        nr: eq.g.reqs.equals_to().unwrap(),
-        args: Box::new([Term::EqMark(a), Term::EqMark(b)]),
-      });
+      if self.processed >= self.base {
+        neg_bas.0.push(Formula::Pred {
+          nr: eq.g.reqs.equals_to().unwrap(),
+          args: Box::new([Term::EqMark(a), Term::EqMark(b)]),
+        });
+      }
       self.processed += 1;
       self.process_ineq(eq, a, b);
     }

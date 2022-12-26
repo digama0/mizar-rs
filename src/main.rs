@@ -134,6 +134,40 @@ impl Global {
   }
 }
 
+struct RoundUpTypes<'a> {
+  g: &'a Global,
+  lc: &'a mut LocalContext,
+}
+
+impl VisitMut for RoundUpTypes<'_> {
+  fn push_bound(&mut self, ty: &mut Type) { self.lc.bound_var.push(ty.clone()); }
+  fn pop_bound(&mut self, n: u32) {
+    self.lc.bound_var.0.truncate(self.lc.bound_var.0.len() - n as usize)
+  }
+  fn visit_type(&mut self, ty: &mut Type) {
+    self.visit_attrs(&mut ty.attrs.0);
+    self.visit_terms(&mut ty.args);
+    ty.attrs.1 = ty.attrs.0.clone();
+    if let TypeKind::Mode(n) = ty.kind {
+      let new = self.g.constrs.mode[n].ty.attrs.1.visit_cloned(&mut Inst::new(&ty.args));
+      ty.attrs.1.enlarge_by(&self.g.constrs, &new, |a| a.clone());
+    }
+    ty.round_up_with_self(self.g, self.lc)
+  }
+
+  fn visit_push_locus_tys(&mut self, tys: &mut [Type]) {
+    for ty in tys {
+      self.visit_type(ty);
+      self.lc.locus_ty.push(ty.clone());
+    }
+  }
+
+  fn pop_locus_tys(&mut self, n: usize) {
+    assert!(self.lc.locus_ty.len() == n);
+    self.lc.locus_ty.0.clear()
+  }
+}
+
 fn sorted_subset<T: Ord>(a: &[T], b: &[T]) -> bool {
   if b.len() < a.len() {
     return false
@@ -683,6 +717,9 @@ trait Equate {
     &mut self, g: &Global, lc: &LocalContext, n1: PredId, n2: PredId, args1: &[Term],
     args2: &[Term],
   ) -> bool {
+    let (n1, args1) =
+      if Self::ADJUST_LEFT { Formula::adjust_pred(n1, args1, &g.constrs) } else { (n1, args1) };
+    let (n2, args2) = Formula::adjust_pred(n2, args2, &g.constrs);
     n1 == n2 && self.eq_terms(g, lc, args1, args2)
   }
 
@@ -711,15 +748,8 @@ trait Equate {
         let (n2, args2) = Formula::adjust_attr(*n2, args2, &g.constrs);
         n1 == n2 && self.eq_terms(g, lc, args1, args2)
       }
-      (Pred { nr: n1, args: args1 }, Pred { nr: n2, args: args2 }) => {
-        let (n1, args1) = if Self::ADJUST_LEFT {
-          Formula::adjust_pred(*n1, args1, &g.constrs)
-        } else {
-          (*n1, &**args1)
-        };
-        let (n2, args2) = Formula::adjust_pred(*n2, args2, &g.constrs);
-        self.eq_pred(g, lc, n1, n2, args1, args2)
-      }
+      (Pred { nr: n1, args: args1 }, Pred { nr: n2, args: args2 }) =>
+        self.eq_pred(g, lc, *n1, *n2, args1, args2),
       (ForAll { dom: dom1, scope: sc1, .. }, ForAll { dom: dom2, scope: sc2, .. }) =>
         self.eq_forall(g, lc, dom1, dom2, sc1, sc2),
       #[allow(clippy::explicit_auto_deref)]
@@ -753,6 +783,8 @@ impl Equate for () {
     &mut self, g: &Global, lc: &LocalContext, n1: PredId, n2: PredId, args1: &[Term],
     args2: &[Term],
   ) -> bool {
+    let (n1, args1) = Formula::adjust_pred(n1, args1, &g.constrs);
+    let (n2, args2) = Formula::adjust_pred(n2, args2, &g.constrs);
     n1 == n2
       && (self.eq_terms(g, lc, args1, args2)
         || Some(n1) == g.reqs.equals_to()
@@ -776,7 +808,10 @@ macro_rules! mk_visit {
   ($visit:ident$(, $mutbl:tt)?) => {
     pub trait $visit {
       #[inline] fn abort(&self) -> bool { false }
-      fn super_visit_term(&mut self, tm: &$($mutbl)? Term, depth: u32) {
+      fn push_bound(&mut self, ty: &$($mutbl)? Type) {}
+      fn pop_bound(&mut self, n: u32) {}
+
+      fn super_visit_term(&mut self, tm: &$($mutbl)? Term) {
         if self.abort() { return }
         match tm {
           Term::Locus(_)
@@ -791,101 +826,117 @@ macro_rules! mk_visit {
           Term::SchFunc { args, .. }
           | Term::Aggregate { args, .. }
           | Term::Functor { args, .. }
-          | Term::Selector { args, .. } => self.visit_terms(args, depth),
+          | Term::Selector { args, .. } => self.visit_terms(args),
           Term::PrivFunc { args, value, .. } => {
-            self.visit_terms(args, depth);
-            self.visit_term(value, depth)
+            self.visit_terms(args);
+            self.visit_term(value)
           }
           Term::Numeral { .. } => {}
           Term::Qua { value, ty } => {
-            self.visit_term(value, depth);
-            self.visit_type(ty, depth);
+            self.visit_term(value);
+            self.visit_type(ty);
           }
-          Term::Choice { ty } => self.visit_type(ty, depth),
+          Term::Choice { ty } => self.visit_type(ty),
           Term::Fraenkel { args, scope, compr } => {
-            let mut depth = depth;
             for ty in &$($mutbl)? **args {
-              self.visit_type(ty, depth);
-              depth += 1;
+              self.visit_type(ty);
+              self.push_bound(ty);
             }
-            self.visit_term(scope, depth);
-            self.visit_formula(compr, depth)
+            self.visit_term(scope);
+            self.visit_formula(compr);
+            self.pop_bound(args.len() as u32);
+
           }
         }
       }
 
-      fn visit_term(&mut self, tm: &$($mutbl)? Term, depth: u32) {
-        self.super_visit_term(tm, depth)
+      fn visit_term(&mut self, tm: &$($mutbl)? Term) {
+        self.super_visit_term(tm)
       }
 
-      fn visit_terms(&mut self, tms: &$($mutbl)? [Term], depth: u32) {
+      fn visit_terms(&mut self, tms: &$($mutbl)? [Term]) {
         for tm in tms {
           if self.abort() { return }
-          self.visit_term(tm, depth)
+          self.visit_term(tm)
         }
       }
 
-      fn visit_type(&mut self, ty: &$($mutbl)? Type, depth: u32) {
+      fn visit_type(&mut self, ty: &$($mutbl)? Type) {
         if self.abort() { return }
-        self.visit_attrs(&$($mutbl)? ty.attrs.0, depth);
-        self.visit_attrs(&$($mutbl)? ty.attrs.1, depth);
-        self.visit_terms(&$($mutbl)? ty.args, depth);
+        self.visit_attrs(&$($mutbl)? ty.attrs.0);
+        self.visit_attrs(&$($mutbl)? ty.attrs.1);
+        self.visit_terms(&$($mutbl)? ty.args);
       }
 
-      fn visit_types(&mut self, tys: &$($mutbl)? [Type], depth: u32) {
+      fn visit_types(&mut self, tys: &$($mutbl)? [Type]) {
         for ty in tys {
           if self.abort() { return }
-          self.visit_type(ty, depth)
+          self.visit_type(ty)
         }
       }
 
-      fn visit_attrs(&mut self, attrs: &$($mutbl)? Attrs, depth: u32) {
+      fn visit_attrs(&mut self, attrs: &$($mutbl)? Attrs) {
         if let Attrs::Consistent(attrs) = attrs {
           for attr in attrs {
             if self.abort() { return }
-            self.visit_terms(&$($mutbl)? attr.args, depth)
+            self.visit_terms(&$($mutbl)? attr.args)
           }
         }
       }
 
-      fn super_visit_formula(&mut self, f: &$($mutbl)? Formula, depth: u32) {
+      fn super_visit_formula(&mut self, f: &$($mutbl)? Formula) {
         if self.abort() { return }
         match f {
           Formula::SchPred { args, .. }
           | Formula::Pred { args, .. }
-          | Formula::Attr { args, .. } => self.visit_terms(args, depth),
+          | Formula::Attr { args, .. } => self.visit_terms(args),
           Formula::PrivPred { args, value, .. } => {
-            self.visit_terms(args, depth);
-            self.visit_formula(value, depth)
+            self.visit_terms(args);
+            self.visit_formula(value)
           }
           Formula::Is { term, ty } => {
-            self.visit_term(term, depth);
-            self.visit_type(ty, depth)
+            self.visit_term(term);
+            self.visit_type(ty)
           }
-          Formula::Neg { f } => self.visit_formula(f, depth),
+          Formula::Neg { f } => self.visit_formula(f),
           Formula::And { args } =>
             for f in args {
-              self.visit_formula(f, depth)
+              self.visit_formula(f)
             },
           Formula::ForAll { dom, scope, .. } => {
-            self.visit_type(dom, depth);
-            self.visit_formula(scope, depth + 1)
+            self.visit_type(dom);
+            self.push_bound(dom);
+            self.visit_formula(scope);
+            self.pop_bound(1)
           }
           Formula::FlexAnd { orig, terms, expansion } => {
             let [orig_l, orig_r] = &$($mutbl)? **orig;
             let [tm_l, tm_r] = &$($mutbl)? **terms;
-            self.visit_formula(orig_l, depth);
-            self.visit_formula(orig_r, depth);
-            self.visit_formula(expansion, depth);
-            self.visit_term(tm_l, depth);
-            self.visit_term(tm_r, depth);
+            self.visit_formula(orig_l);
+            self.visit_formula(orig_r);
+            self.visit_formula(expansion);
+            self.visit_term(tm_l);
+            self.visit_term(tm_r);
           }
           Formula::True => {}
         }
       }
 
-      fn visit_formula(&mut self, f: &$($mutbl)? Formula, depth: u32) {
-        self.super_visit_formula(f, depth)
+      fn visit_formula(&mut self, f: &$($mutbl)? Formula) {
+        self.super_visit_formula(f)
+      }
+
+      fn visit_push_locus_tys(&mut self, tys: &$($mutbl)? [Type]) {
+        for ty in tys {
+          self.visit_type(ty)
+        }
+      }
+      fn pop_locus_tys(&mut self, n: usize) {}
+
+      fn with_locus_tys(&mut self, tys: &$($mutbl)? [Type], f: impl FnOnce(&mut Self)) {
+        self.visit_push_locus_tys(tys);
+        f(self);
+        self.pop_locus_tys(tys.len());
       }
     }
   };
@@ -893,12 +944,14 @@ macro_rules! mk_visit {
 mk_visit!(Visit);
 mk_visit!(VisitMut, mut);
 
-struct OnVarMut<F: FnMut(&mut u32, u32)>(F);
+struct OnVarMut<F: FnMut(&mut u32, u32)>(u32, F);
 impl<F: FnMut(&mut u32, u32)> VisitMut for OnVarMut<F> {
-  fn visit_term(&mut self, tm: &mut Term, depth: u32) {
-    self.super_visit_term(tm, depth);
+  fn push_bound(&mut self, _: &mut Type) { self.0 += 1 }
+  fn pop_bound(&mut self, n: u32) { self.0 -= n }
+  fn visit_term(&mut self, tm: &mut Term) {
+    self.super_visit_term(tm);
     if let Term::Bound(BoundId(nr)) = tm {
-      self.0(nr, depth)
+      self.1(nr, self.0)
     }
   }
 }
@@ -913,8 +966,8 @@ impl CheckBound {
 }
 impl Visit for CheckBound {
   fn abort(&self) -> bool { self.0 }
-  fn visit_term(&mut self, tm: &Term, depth: u32) {
-    self.super_visit_term(tm, depth);
+  fn visit_term(&mut self, tm: &Term) {
+    self.super_visit_term(tm);
     if let Term::Bound(BoundId(nr)) = *tm {
       self.0 |= nr < self.1
     }
@@ -931,8 +984,8 @@ impl CheckLocus {
 }
 impl Visit for CheckLocus {
   fn abort(&self) -> bool { self.0 }
-  fn visit_term(&mut self, tm: &Term, depth: u32) {
-    self.super_visit_term(tm, depth);
+  fn visit_term(&mut self, tm: &Term) {
+    self.super_visit_term(tm);
     if let Term::Locus(_) = *tm {
       self.0 = true
     }
@@ -941,14 +994,14 @@ impl Visit for CheckLocus {
 
 struct OnFunc<F: FnMut(FuncId, &[Term])>(F);
 impl<F: FnMut(FuncId, &[Term])> Visit for OnFunc<F> {
-  fn visit_term(&mut self, tm: &Term, depth: u32) {
-    self.super_visit_term(tm, depth);
+  fn visit_term(&mut self, tm: &Term) {
+    self.super_visit_term(tm);
     if let Term::Functor { nr, args } = tm {
       (self.0)(*nr, args)
     }
   }
-  fn visit_type(&mut self, ty: &Type, depth: u32) {}
-  fn visit_formula(&mut self, f: &Formula, depth: u32) {}
+  fn visit_type(&mut self, ty: &Type) {}
+  fn visit_formula(&mut self, f: &Formula) {}
 }
 
 fn has_func<'a>(ctx: &'a Constructors, nr: FuncId, found: &'a mut bool) -> impl Visit + 'a {
@@ -958,33 +1011,34 @@ fn has_func<'a>(ctx: &'a Constructors, nr: FuncId, found: &'a mut bool) -> impl 
 struct Inst<'a> {
   subst: &'a [Term],
   base: u32,
+  depth: u32,
 }
 
 impl<'a> Inst<'a> {
-  fn new(subst: &'a [Term]) -> Self { Self { subst, base: 0 } }
+  fn new(subst: &'a [Term]) -> Self { Self { subst, base: 0, depth: 0 } }
 }
 
 fn inst<'a, T: Clone + Visitable<Inst<'a>>>(
   subst: &'a [Term], base: u32, tm: &T, f: impl FnOnce(&mut Inst<'a>, &mut T),
 ) -> T {
   let mut t = tm.clone();
-  f(&mut Inst { subst, base }, &mut t);
+  f(&mut Inst { subst, base, depth: base }, &mut t);
   t
 }
 
 impl VisitMut for Inst<'_> {
-  fn visit_term(&mut self, tm: &mut Term, depth: u32) {
+  fn visit_term(&mut self, tm: &mut Term) {
     match *tm {
       Term::Locus(nr) => {
         *tm = self.subst[nr.0 as usize].clone();
-        OnVarMut(|nr, depth| {
+        OnVarMut(self.depth, |nr, depth| {
           if *nr >= self.base {
             *nr += depth - self.base
           }
         })
-        .visit_term(tm, depth);
+        .visit_term(tm);
       }
-      _ => self.super_visit_term(tm, depth),
+      _ => self.super_visit_term(tm),
     }
   }
 }
@@ -992,7 +1046,7 @@ impl VisitMut for Inst<'_> {
 impl Term {
   fn has_func(&self, ctx: &Constructors, nr: FuncId) -> bool {
     let mut found = false;
-    has_func(ctx, nr, &mut found).visit_term(self, 0);
+    has_func(ctx, nr, &mut found).visit_term(self);
     found
   }
 
@@ -1083,7 +1137,7 @@ impl Term {
       Term::Bound(nr) => lc.bound_var[nr].clone(),
       Term::Constant(nr) => {
         let base = lc.bound_var.len() as u32;
-        lc.fixed_var[nr].ty.visit_cloned(&mut OnVarMut(|nr, _| *nr += base))
+        lc.fixed_var[nr].ty.visit_cloned(&mut OnVarMut(0, |nr, _| *nr += base))
       }
       Term::Infer(nr) => lc.infer_const.borrow()[nr].ty.clone(),
       Term::Numeral(_) => g.numeral_type.clone(),
@@ -1235,7 +1289,7 @@ impl Subst {
   }
 
   fn inst_term_mut(&self, tm: &mut Term, depth: u32) {
-    Inst { subst: &self.finish(), base: depth }.visit_term(tm, depth)
+    Inst { subst: &self.finish(), base: depth, depth }.visit_term(tm)
   }
 
   /// InstSubstTrm
@@ -1247,7 +1301,7 @@ impl Subst {
 
   /// InstSubstFrm
   fn inst_formula_mut(&self, f: &mut Formula, depth: u32) {
-    Inst { subst: &self.finish(), base: depth }.visit_formula(f, depth)
+    Inst { subst: &self.finish(), base: depth, depth }.visit_formula(f)
   }
 
   /// NEW = false: CheckLociTypes
@@ -1477,15 +1531,15 @@ impl Attrs {
         struct ContainsLocusVar(bool);
         impl Visit for ContainsLocusVar {
           fn abort(&self) -> bool { self.0 }
-          fn visit_term(&mut self, tm: &Term, depth: u32) {
+          fn visit_term(&mut self, tm: &Term) {
             match tm {
               Term::Locus(_) => self.0 = true,
-              _ => self.super_visit_term(tm, depth),
+              _ => self.super_visit_term(tm),
             }
           }
         }
         let mut v = ContainsLocusVar(false);
-        v.visit_attrs(self, 0);
+        v.visit_attrs(self);
         !v.0
       }
     }
@@ -1811,25 +1865,25 @@ struct ExpandPrivFunc<'a>(&'a Constructors);
 
 impl VisitMut for ExpandPrivFunc<'_> {
   /// CopyExpTrm
-  fn visit_term(&mut self, tm: &mut Term, depth: u32) {
+  fn visit_term(&mut self, tm: &mut Term) {
     if let Term::PrivFunc { value, .. } = tm {
       *tm = std::mem::take(value);
-      self.visit_term(tm, depth)
+      self.visit_term(tm)
     } else {
-      self.super_visit_term(tm, depth)
+      self.super_visit_term(tm)
     }
   }
 
-  fn visit_attrs(&mut self, attrs: &mut Attrs, depth: u32) {
-    attrs.reinsert_all(self.0, |attr| self.visit_terms(&mut attr.args, depth))
+  fn visit_attrs(&mut self, attrs: &mut Attrs) {
+    attrs.reinsert_all(self.0, |attr| self.visit_terms(&mut attr.args))
   }
 
   /// CopyExpFrm
-  fn visit_formula(&mut self, f: &mut Formula, depth: u32) {
+  fn visit_formula(&mut self, f: &mut Formula) {
     match f {
       Formula::And { args } =>
         for mut f in std::mem::take(args) {
-          self.visit_formula(&mut f, depth);
+          self.visit_formula(&mut f);
           match f {
             Formula::And { args: fs } => args.extend(fs),
             _ => args.push(f),
@@ -1837,9 +1891,9 @@ impl VisitMut for ExpandPrivFunc<'_> {
         },
       Formula::PrivPred { nr, args, value } => {
         *f = std::mem::take(value);
-        self.visit_formula(f, depth)
+        self.visit_formula(f)
       }
-      _ => self.super_visit_formula(f, depth),
+      _ => self.super_visit_formula(f),
     }
   }
 }
@@ -1852,6 +1906,7 @@ pub struct InternConst<'a> {
   func_ids: &'a BTreeMap<ConstrKind, Vec<usize>>,
   only_constants: bool,
   equals_expansion_level: u32,
+  depth: u32,
   /// InferConsts
   infer_consts: BTreeSet<FuncId>,
 }
@@ -1869,6 +1924,7 @@ impl<'a> InternConst<'a> {
       identify,
       only_constants: true,
       equals_expansion_level: 0,
+      depth: 0,
       infer_consts: Default::default(),
     }
   }
@@ -1876,7 +1932,7 @@ impl<'a> InternConst<'a> {
   /// CollectInferConst
   /// * precondition: tm must be Term::Functor
   /// * postcondition: if self.only_constants, then tm will be Term::Infer after
-  fn collect_infer_const(&mut self, tm: &mut Term, depth: u32) {
+  fn collect_infer_const(&mut self, tm: &mut Term) {
     if self.only_constants {
       let mut ic = self.lc.infer_const.borrow_mut();
       let nr = match ic.find_index(|a| a.def.cmp(&self.g.constrs, tm, CmpStyle::Strict)) {
@@ -1888,11 +1944,13 @@ impl<'a> InternConst<'a> {
           let def = std::mem::take(tm);
           // TODO: numeric_value
           ic = self.lc.infer_const.borrow_mut();
-          let nr = ic.insert_at(i, Assignment { def, ty, eq_const: Default::default() });
+          let has_numbers = HasNumbers::get(self.g, &ic, |hn| hn.visit_term(&def));
+          let nr =
+            ic.insert_at(i, Assignment { def, ty, has_numbers, eq_const: Default::default() });
           // vprintln!("insert ?{nr:?} : {:?} := {:?}", ic[nr].ty, ic[nr].def);
           let mut ty = ic[nr].ty.clone();
           drop(ic);
-          self.visit_type(&mut ty, depth);
+          self.visit_type(&mut ty);
           self.lc.infer_const.borrow_mut()[nr].ty = ty;
           nr
         }
@@ -1903,7 +1961,7 @@ impl<'a> InternConst<'a> {
 
   /// CollectEqualsConst
   /// precondition: tm must be Term::Functor
-  fn collect_equals_const(&mut self, tm: &Term, depth: u32) -> BTreeSet<InferId> {
+  fn collect_equals_const(&mut self, tm: &Term) -> BTreeSet<InferId> {
     // vprintln!("collect_equals_const {tm:?}");
     let mut eq = BTreeSet::new();
     if self.equals_expansion_level >= 3 {
@@ -1917,10 +1975,12 @@ impl<'a> InternConst<'a> {
       return eq
     }
     let mut insert_one = |this: &mut Self, mut tm| {
-      ExpandPrivFunc(&this.g.constrs).visit_term(&mut tm, depth);
+      ExpandPrivFunc(&this.g.constrs).visit_term(&mut tm);
       this.equals_expansion_level += 1;
       this.infer_consts.insert(nr);
-      this.visit_term(&mut tm, 0);
+      let depth = std::mem::take(&mut this.depth);
+      this.visit_term(&mut tm);
+      this.depth = depth;
       this.equals_expansion_level -= 1;
       this.infer_consts.remove(&nr);
       let Term::Infer(nr) = tm else { unreachable!("{:?}", tm) };
@@ -1928,7 +1988,7 @@ impl<'a> InternConst<'a> {
     };
     if let Some(eq_defs) = self.equals.get(&ConstrKind::Func(nr)) {
       for eq_def in eq_defs {
-        if let Some(tm2) = eq_def.expand_if_equal(self.g, self.lc, args, depth) {
+        if let Some(tm2) = eq_def.expand_if_equal(self.g, self.lc, args, self.depth) {
           // vprintln!("{tm:?} -> {tm2:?} using {eq_def:?}");
           insert_one(self, tm2);
         }
@@ -1940,7 +2000,7 @@ impl<'a> InternConst<'a> {
         let IdentifyKind::Func { lhs, rhs } = &id.kind else { unreachable!() };
         // vprintln!("applying {tm:?} <- {id:?}");
         if let Some(subst) = id.try_apply_lhs(self.g, self.lc, lhs, tm) {
-          let mut tm = subst.inst_term(rhs, depth);
+          let mut tm = subst.inst_term(rhs, self.depth);
           insert_one(self, tm);
         }
       }
@@ -1950,8 +2010,11 @@ impl<'a> InternConst<'a> {
 }
 
 impl VisitMut for InternConst<'_> {
+  fn push_bound(&mut self, _: &mut Type) { self.depth += 1 }
+  fn pop_bound(&mut self, n: u32) { self.depth -= n }
+
   /// CollectConstInTrm
-  fn visit_term(&mut self, tm: &mut Term, depth: u32) {
+  fn visit_term(&mut self, tm: &mut Term) {
     let only_constants = std::mem::replace(&mut self.only_constants, true);
     let equals_expansion_level = std::mem::replace(&mut self.equals_expansion_level, 0);
     // vprintln!("InternConst {tm:?}");
@@ -1959,32 +2022,36 @@ impl VisitMut for InternConst<'_> {
       Term::Locus(_) | Term::Bound(_) | Term::FreeVar(_) | Term::LambdaVar(_) =>
         self.only_constants = false,
       &mut Term::Constant(nr) => {
+        let mut has_numbers = false;
         let mut eq = BTreeSet::new();
         if let Some(fv) = &self.lc.fixed_var[nr].def {
           let mut fv = (**fv).clone();
-          ExpandPrivFunc(&self.g.constrs).visit_term(&mut fv, depth);
-          self.visit_term(&mut fv, depth);
+          ExpandPrivFunc(&self.g.constrs).visit_term(&mut fv);
+          self.visit_term(&mut fv);
           if self.only_constants {
             let Term::Infer(nr) = fv else { unreachable!() };
             eq.insert(nr);
+            has_numbers |= self.lc.infer_const.borrow()[nr].has_numbers;
           }
           self.only_constants = true;
         }
-        self.collect_infer_const(tm, depth);
+        self.collect_infer_const(tm);
         let Term::Infer(nr) = *tm else { unreachable!() };
-        self.lc.infer_const.borrow_mut()[nr].eq_const.extend(eq);
+        let asgn = &mut self.lc.infer_const.borrow_mut()[nr];
+        asgn.eq_const.extend(eq);
+        asgn.has_numbers |= has_numbers;
       }
       Term::Infer(_) => {}
       Term::SchFunc { args, .. } | Term::Aggregate { args, .. } | Term::Selector { args, .. } => {
-        self.visit_terms(args, depth);
-        self.collect_infer_const(tm, depth)
+        self.visit_terms(args);
+        self.collect_infer_const(tm)
       }
       Term::PrivFunc { args, value, .. } => {
-        self.visit_terms(args, depth);
-        self.visit_term(value, depth)
+        self.visit_terms(args);
+        self.visit_term(value)
       }
       Term::Functor { args, .. } => {
-        self.visit_terms(args, depth);
+        self.visit_terms(args);
         if self.only_constants {
           let ic = self.lc.infer_const.borrow();
           match ic.find_index(|a| a.def.cmp(&self.g.constrs, tm, CmpStyle::Strict)) {
@@ -1992,33 +2059,36 @@ impl VisitMut for InternConst<'_> {
             _ => {
               // vprintln!("search for {tm:?} failed");
               drop(ic);
-              self.collect_infer_const(tm, depth);
+              self.collect_infer_const(tm);
               let Term::Infer(nr) = *tm else { unreachable!() };
               self.equals_expansion_level = equals_expansion_level;
               let tm = self.lc.infer_const.borrow()[nr].def.clone();
-              let eq = self.collect_equals_const(&tm, depth);
-              self.lc.infer_const.borrow_mut()[nr].eq_const.extend(eq);
+              let eq = self.collect_equals_const(&tm);
+              let mut ic = self.lc.infer_const.borrow_mut();
+              let has_numbers = eq.iter().any(|&i| ic[i].has_numbers);
+              ic[nr].eq_const.extend(eq);
+              ic[nr].has_numbers |= has_numbers;
             }
           }
         }
       }
-      Term::Numeral(_) => self.collect_infer_const(tm, depth),
+      Term::Numeral(_) => self.collect_infer_const(tm),
       Term::Choice { ty } => {
-        self.visit_type(ty, depth);
-        self.collect_infer_const(tm, depth)
+        self.visit_type(ty);
+        self.collect_infer_const(tm)
       }
       Term::Fraenkel { args, scope, compr } => {
-        let mut i = depth;
         for ty in &mut **args {
-          self.visit_type(ty, i);
-          i += 1;
+          self.visit_type(ty);
+          self.push_bound(ty);
         }
-        self.visit_term(scope, i);
-        self.visit_formula(compr, i);
-        self.only_constants = !CheckBound::get(depth, |cb| cb.visit_term(tm, depth));
+        self.visit_term(scope);
+        self.visit_formula(compr);
+        self.pop_bound(args.len() as u32);
+        self.only_constants = !CheckBound::get(self.depth, |cb| cb.visit_term(tm));
         if self.only_constants {
-          OnVarMut(|n, _| *n -= depth).visit_term(tm, depth);
-          self.collect_infer_const(tm, depth)
+          OnVarMut(self.depth, |n, _| *n -= self.depth).visit_term(tm);
+          self.collect_infer_const(tm)
         }
       }
       Term::EqClass(_) | Term::EqMark(_) | Term::It | Term::Qua { .. } =>
@@ -2028,26 +2098,71 @@ impl VisitMut for InternConst<'_> {
     self.equals_expansion_level = equals_expansion_level;
   }
 
-  fn visit_attrs(&mut self, attrs: &mut Attrs, depth: u32) {
-    attrs.reinsert_all(&self.g.constrs, |attr| self.visit_terms(&mut attr.args, depth))
+  fn visit_attrs(&mut self, attrs: &mut Attrs) {
+    attrs.reinsert_all(&self.g.constrs, |attr| self.visit_terms(&mut attr.args))
   }
 }
 
-pub struct ExpandConsts<'a>(&'a IdxVec<InferId, Assignment>);
+pub struct ExpandConsts<'a>(&'a IdxVec<InferId, Assignment>, u32);
 impl LocalContext {
   pub fn expand_consts(&self, f: impl FnOnce(&mut ExpandConsts<'_>)) {
-    f(&mut ExpandConsts(&self.infer_const.borrow().vec))
+    f(&mut ExpandConsts(&self.infer_const.borrow().vec, 0))
   }
 }
 
 impl VisitMut for ExpandConsts<'_> {
+  fn push_bound(&mut self, _: &mut Type) { self.1 += 1 }
+  fn pop_bound(&mut self, n: u32) { self.1 -= n }
+
   /// ExpandInferConsts
-  fn visit_term(&mut self, tm: &mut Term, depth: u32) {
+  fn visit_term(&mut self, tm: &mut Term) {
     if let Term::Infer(nr) = *tm {
       *tm = self.0[nr].def.clone();
-      OnVarMut(|v, _| *v += depth).visit_term(tm, depth)
+      OnVarMut(self.1, |v, _| *v += self.1).visit_term(tm)
     }
-    self.super_visit_term(tm, depth);
+    self.super_visit_term(tm);
+  }
+}
+
+struct HasNumbers<'a> {
+  g: &'a Global,
+  ic: &'a IdxVec<InferId, Assignment>,
+  found: bool,
+}
+impl<'a> HasNumbers<'a> {
+  pub fn get(
+    g: &'a Global, ic: &'a IdxVec<InferId, Assignment>, f: impl FnOnce(&mut Self),
+  ) -> bool {
+    let mut cb = Self { g, ic, found: false };
+    f(&mut cb);
+    cb.found
+  }
+}
+impl Visit for HasNumbers<'_> {
+  fn abort(&self) -> bool { self.found }
+  fn visit_term(&mut self, tm: &Term) {
+    match tm {
+      Term::Functor { nr, .. } =>
+        if let Some(Some(n)) = self.g.reqs.rev.get(Term::adjusted_nr(*nr, &self.g.constrs)) {
+          match n {
+            Requirement::RealAdd
+            | Requirement::RealMult
+            | Requirement::RealNeg
+            | Requirement::RealInv
+            | Requirement::RealDiff
+            | Requirement::RealDiv
+            | Requirement::ImaginaryUnit
+            | Requirement::Succ
+            | Requirement::Omega
+            | Requirement::ZeroNumber => self.found = true,
+            _ => {}
+          }
+        },
+      Term::Numeral(_) => self.found = true,
+      &Term::Infer(i) => self.found |= self.ic[i].has_numbers,
+      _ => {}
+    }
+    self.super_visit_term(tm);
   }
 }
 
@@ -2058,8 +2173,8 @@ impl Renumber {
 }
 
 impl VisitMut for Renumber {
-  fn visit_term(&mut self, tm: &mut Term, depth: u32) {
-    self.super_visit_term(tm, depth);
+  fn visit_term(&mut self, tm: &mut Term) {
+    self.super_visit_term(tm);
     if let Term::Infer(nr) = tm {
       if let Some(&nr2) = self.0.get(nr) {
         *nr = nr2;
@@ -2082,13 +2197,14 @@ struct Assignment {
   /// Must be Term::Functor
   def: Term,
   ty: Type,
+  has_numbers: bool,
   eq_const: BTreeSet<InferId>,
   // numeric_value: Option<Complex>,
 }
 impl<V: VisitMut> Visitable<V> for Assignment {
-  fn visit_d(&mut self, v: &mut V, d: u32) {
-    self.def.visit_d(v, d);
-    self.ty.visit_d(v, d);
+  fn visit(&mut self, v: &mut V) {
+    self.def.visit(v);
+    self.ty.visit(v);
   }
 }
 
@@ -2187,8 +2303,8 @@ impl LocalContext {
         }
         impl Visit for CheckForLocalConst<'_> {
           fn abort(&self) -> bool { self.found }
-          fn visit_term(&mut self, tm: &Term, depth: u32) {
-            self.super_visit_term(tm, depth);
+          fn visit_term(&mut self, tm: &Term) {
+            self.super_visit_term(tm);
             match tm {
               Term::Constant(nr) => self.found |= nr.0 >= self.num_consts,
               Term::Infer(nr) => self.found |= self.has_local_const.contains(nr),
@@ -2201,8 +2317,8 @@ impl LocalContext {
           num_consts: self.fixed_var.len() as u32,
           found: false,
         };
-        cc.visit_term(&asgn.def, 0);
-        cc.visit_type(&asgn.ty, 0);
+        cc.visit_term(&asgn.def);
+        cc.visit_type(&asgn.ty);
         if cc.found {
           has_local_const.insert(i);
           continue 'retry
@@ -2358,6 +2474,14 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
   // LoadReductions
   path.read_erd(&v.g.constrs, &mut v.reductions).unwrap();
 
+  // in mizar this was done inside the parser
+  let rr = &mut RoundUpTypes { g: &v.g, lc: &mut v.lc };
+  v.equalities.visit(rr);
+  v.expansions.visit(rr);
+  v.properties.visit(rr);
+  v.identify.visit(rr);
+  v.reductions.visit(rr);
+
   for df in &v.equalities {
     if let Some(func) = df.equals_expansion() {
       let nr = func.pattern.0;
@@ -2383,14 +2507,14 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
   }
 
   // CollectConstInEnvConstructors
-  let mut cc = v.intern_const();
-  let numeral_type = v.g.numeral_type.visit_cloned(&mut cc);
-  let constrs = v.g.constrs.visit_cloned(&mut cc);
+  let mut cc = &mut v.intern_const();
+  let numeral_type = v.g.numeral_type.visit_cloned(cc);
+  let constrs = v.g.constrs.visit_cloned(cc);
   let mut clusters = v.g.clusters.clone();
-  clusters.registered.iter_mut().for_each(|c| c.consequent.1.visit(&mut cc));
-  clusters.conditional.iter_mut().for_each(|c| c.consequent.1.visit(&mut cc));
+  clusters.registered.iter_mut().for_each(|c| c.consequent.1.visit(cc));
+  clusters.conditional.iter_mut().for_each(|c| c.consequent.1.visit(cc));
   // note: collecting in the functor term breaks the sort order
-  clusters.functor.vec.0.iter_mut().for_each(|c| c.consequent.1.visit(&mut cc));
+  clusters.functor.vec.0.iter_mut().for_each(|c| c.consequent.1.visit(cc));
   v.g.numeral_type = numeral_type;
   v.g.constrs = constrs;
   v.g.clusters = clusters;
@@ -2400,12 +2524,22 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
 
   // InLibraries
   path.read_eth(&v.g.constrs, &refs, &mut v.libs).unwrap();
-  let mut cc = InternConst::new(&v.g, &v.lc, &v.equals, &v.identify, &v.func_ids);
-  v.libs.thm.values_mut().for_each(|f| f.visit(&mut cc));
-  v.libs.def.values_mut().for_each(|f| f.visit(&mut cc));
+  v.libs.visit(&mut RoundUpTypes { g: &v.g, lc: &mut v.lc });
+  let cc = &mut InternConst::new(&v.g, &v.lc, &v.equals, &v.identify, &v.func_ids);
+  v.libs.thm.values_mut().for_each(|f| f.visit(cc));
+  v.libs.def.values_mut().for_each(|f| f.visit(cc));
   const ONLY_THEOREMS: bool = true;
   if !ONLY_THEOREMS {
     path.read_esh(&v.g.constrs, &refs, &mut v.libs).unwrap();
+  }
+
+  if DUMP_LIBRARIES {
+    for (&(ar, nr), th) in &v.libs.thm {
+      eprintln!("art {ar:?}:{nr:?} = {th:?}");
+    }
+    for (&(ar, nr), th) in &v.libs.def {
+      eprintln!("art {ar:?}:def {nr:?} = {th:?}");
+    }
   }
 
   // Prepare
@@ -2473,17 +2607,22 @@ const CHECKER_HEADER: bool = false;
 const CHECKER_CONJUNCTS: bool = false;
 const CHECKER_RESULT: bool = false;
 const UNIFY_HEADER: bool = false;
+const UNIFY_INSTS: bool = false;
 
 const DUMP_CONSTRUCTORS: bool = false;
 const DUMP_REQUIREMENTS: bool = false;
+const DUMP_LIBRARIES: bool = false;
 const DUMP_FORMATTER: bool = false;
 
 const FIRST_FILE: usize = 0;
 const ONE_FILE: bool = false;
-const PANIC_ON_FAIL: bool = false;
+const PANIC_ON_FAIL: bool = true;
 const FIRST_VERBOSE_TOP_ITEM: Option<usize> = None;
 const FIRST_VERBOSE_ITEM: Option<usize> = None;
 const FIRST_VERBOSE_CHECKER: Option<usize> = None;
+
+// files that take too damn long
+const BLACKLIST: &[&str] = &[];
 
 fn main() {
   ctrlc::set_handler(print_stats_and_exit).expect("Error setting Ctrl-C handler");
@@ -2492,6 +2631,9 @@ fn main() {
   let mut stats = Default::default();
   let file = std::fs::read_to_string("../mizshare/mml.lar").unwrap();
   for (i, s) in file.lines().enumerate().skip(FIRST_FILE) {
+    if BLACKLIST.contains(&s) {
+      continue
+    }
     println!("{i}: {s}");
     let path = MizPath::new(s);
     load(&path, &mut stats);
