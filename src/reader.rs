@@ -216,6 +216,9 @@ impl Reader {
               props.iter().for_each(|p| this.read_proposition(p));
               for it in items {
                 this.read_item(&it.0);
+                // if let Some(thesis) = &it.1 {
+                //   let _ = this.intern(&thesis.f);
+                // }
               }
             });
           }
@@ -487,8 +490,8 @@ impl Reader {
             rounded_up.insert(i, attrs);
           }
         }
-        let i = (self.g.clusters.functor)
-          .insertion_index(|a| FunctorCluster::cmp_term(&a.term, &self.g.constrs, &cl.term));
+        let (_, i) = (self.g.clusters.functor)
+          .equal_range(|a| FunctorCluster::cmp_term(&a.term, &self.g.constrs, &cl.term));
         self.g.clusters.functor.insert_at(i, cl);
         let ic = self.lc.infer_const.get_mut();
         for (&i, attrs) in &mut rounded_up {

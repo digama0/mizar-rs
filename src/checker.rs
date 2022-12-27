@@ -4,8 +4,8 @@ use crate::retain_mut_from::RetainMutFrom;
 use crate::types::*;
 use crate::unify::Unifier;
 use crate::{
-  inst, set_verbose, stat, vprintln, Assignment, Equate, ExpandPrivFunc, FixedVar, Global,
-  HasNumbers, InternConst, LocalContext, OnVarMut, Subst, Visit, VisitMut,
+  set_verbose, stat, vprintln, Assignment, Equate, ExpandPrivFunc, FixedVar, Global, HasNumbers,
+  InternConst, LocalContext, OnVarMut, Subst, Visit, VisitMut,
 };
 use itertools::{EitherOrBoth, Itertools};
 use std::borrow::Cow;
@@ -257,7 +257,7 @@ impl Expand<'_> {
       let Some(subst) = exp.matches(self.g, self.lc, kind, args) else { continue };
       let base = self.lc.bound_var.len() as u32;
       let mut result = body.otherwise.as_ref().expect("no cases and no otherwise?").clone();
-      OnVarMut(0, |nr, _| *nr += base).visit_formula(&mut result);
+      OnVarMut(|nr| *nr += base).visit_formula(&mut result);
       subst.inst_formula_mut(&mut result, base);
       expansions.push(result)
     }
@@ -287,11 +287,11 @@ impl Formula {
           if let Formula::And { args } = &mut **scope {
             for f in args {
               let mut nontrivial = false;
-              f.visit(&mut OnVarMut(depth, |nr, _| nontrivial |= *nr == depth));
+              f.visit(&mut OnVarMut(|nr| nontrivial |= *nr == depth));
               if nontrivial {
                 *f = Formula::ForAll { dom: dom.clone(), scope: Box::new(std::mem::take(f)) }
               } else {
-                f.visit(&mut OnVarMut(depth, |nr, _| {
+                f.visit(&mut OnVarMut(|nr| {
                   if *nr > depth {
                     *nr -= 1
                   }

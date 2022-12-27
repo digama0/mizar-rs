@@ -283,7 +283,7 @@ impl<'a> Equalizer<'a> {
     if CheckBound::get(depth, |cb| cb.visit_term(tm)) {
       return None
     }
-    OnVarMut(depth, |n, _| *n -= depth).visit_term(tm);
+    OnVarMut(|n| *n -= depth).visit_term(tm);
     let vec = coll(&mut self.constrs);
     match vec.binary_search_by(|&m| self.lc.marks[m].0.cmp(&self.g.constrs, tm, CmpStyle::Red)) {
       Ok(i) => Some(Ok(self.lc.marks[vec[i]].1)),

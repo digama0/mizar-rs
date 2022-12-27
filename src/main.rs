@@ -944,14 +944,12 @@ macro_rules! mk_visit {
 mk_visit!(Visit);
 mk_visit!(VisitMut, mut);
 
-struct OnVarMut<F: FnMut(&mut u32, u32)>(u32, F);
-impl<F: FnMut(&mut u32, u32)> VisitMut for OnVarMut<F> {
-  fn push_bound(&mut self, _: &mut Type) { self.0 += 1 }
-  fn pop_bound(&mut self, n: u32) { self.0 -= n }
+struct OnVarMut<F: FnMut(&mut u32)>(F);
+impl<F: FnMut(&mut u32)> VisitMut for OnVarMut<F> {
   fn visit_term(&mut self, tm: &mut Term) {
     self.super_visit_term(tm);
     if let Term::Bound(BoundId(nr)) = tm {
-      self.1(nr, self.0)
+      self.0(nr)
     }
   }
 }
@@ -1018,22 +1016,16 @@ impl<'a> Inst<'a> {
   fn new(subst: &'a [Term]) -> Self { Self { subst, base: 0, depth: 0 } }
 }
 
-fn inst<'a, T: Clone + Visitable<Inst<'a>>>(
-  subst: &'a [Term], base: u32, tm: &T, f: impl FnOnce(&mut Inst<'a>, &mut T),
-) -> T {
-  let mut t = tm.clone();
-  f(&mut Inst { subst, base, depth: base }, &mut t);
-  t
-}
-
 impl VisitMut for Inst<'_> {
+  fn push_bound(&mut self, _: &mut Type) { self.depth += 1 }
+  fn pop_bound(&mut self, n: u32) { self.depth -= n }
   fn visit_term(&mut self, tm: &mut Term) {
     match *tm {
       Term::Locus(nr) => {
         *tm = self.subst[nr.0 as usize].clone();
-        OnVarMut(self.depth, |nr, depth| {
+        OnVarMut(|nr| {
           if *nr >= self.base {
-            *nr += depth - self.base
+            *nr += self.depth
           }
         })
         .visit_term(tm);
@@ -1137,7 +1129,7 @@ impl Term {
       Term::Bound(nr) => lc.bound_var[nr].clone(),
       Term::Constant(nr) => {
         let base = lc.bound_var.len() as u32;
-        lc.fixed_var[nr].ty.visit_cloned(&mut OnVarMut(0, |nr, _| *nr += base))
+        lc.fixed_var[nr].ty.visit_cloned(&mut OnVarMut(|nr| *nr += base))
       }
       Term::Infer(nr) => lc.infer_const.borrow()[nr].ty.clone(),
       Term::Numeral(_) => g.numeral_type.clone(),
@@ -1770,7 +1762,7 @@ impl FunctorCluster {
   fn round_up_with(
     &self, g: &Global, lc: &LocalContext, term: &Term, ty: &Type, attrs: &mut Attrs,
   ) -> bool {
-    // vprintln!("RoundUpWith {term:?}, {ty:?} <- {attrs:?} in {self:?}");
+    // vprintln!("RoundUpWith {term:?}, {ty:?} <- {attrs:?} in {self:#?}");
     let mut subst = Subst::new(self.primary.len());
     let mut eq = subst.eq_term(g, lc, &self.term, term)
       && subst.check_loci_types::<false>(g, lc, &self.primary);
@@ -1792,9 +1784,7 @@ impl FunctorCluster {
         match cluster_ty.widening_of(g, ty) {
           Some(ty)
             if subst.cmp_type(g, lc, cluster_ty, &ty, false)
-              && cluster_ty
-                .attrs
-                .0
+              && (cluster_ty.attrs.0)
                 .is_subset_of(&ty.attrs.1, |a1, a2| subst.eq_attr(g, lc, a1, a2))
               && subst.check_loci_types::<false>(g, lc, &self.primary) => {}
           _ => return false,
@@ -2087,7 +2077,7 @@ impl VisitMut for InternConst<'_> {
         self.pop_bound(args.len() as u32);
         self.only_constants = !CheckBound::get(self.depth, |cb| cb.visit_term(tm));
         if self.only_constants {
-          OnVarMut(self.depth, |n, _| *n -= self.depth).visit_term(tm);
+          OnVarMut(|n| *n -= self.depth).visit_term(tm);
           self.collect_infer_const(tm)
         }
       }
@@ -2118,7 +2108,7 @@ impl VisitMut for ExpandConsts<'_> {
   fn visit_term(&mut self, tm: &mut Term) {
     if let Term::Infer(nr) = *tm {
       *tm = self.0[nr].def.clone();
-      OnVarMut(self.1, |v, _| *v += self.1).visit_term(tm)
+      OnVarMut(|v| *v += self.1).visit_term(tm)
     }
     self.super_visit_term(tm);
   }

@@ -237,15 +237,23 @@ impl<I: Idx, T: std::fmt::Debug> std::fmt::Debug for SortedIdxVec<I, T> {
 }
 
 impl<I: Idx, T> SortedIdxVec<I, T> {
-  pub fn insertion_index(&self, p: impl Fn(&T) -> Ordering) -> usize {
-    self.sorted.partition_point(|&i| p(&self.vec[i]) == Ordering::Less)
+  pub fn equal_range(&self, p: impl Fn(&T) -> Ordering) -> (usize, usize) {
+    let start = self.sorted.partition_point(|&i| p(&self.vec[i]) == Ordering::Less);
+    let mut end = start;
+    while let Some(&i) = self.sorted.get(end) {
+      if p(&self.vec[i]) == Ordering::Greater {
+        break
+      }
+      end += 1;
+    }
+    (start, end)
   }
 
   pub fn find_index(&self, p: impl Fn(&T) -> Ordering) -> Result<I, usize> {
-    let i = self.insertion_index(&p);
-    let Some(&idx) = self.sorted.get(i) else { return Err(i) };
-    let Ordering::Equal = p(&self.vec[idx]) else { return Err(i) };
-    Ok(idx)
+    match self.equal_range(p) {
+      (start, end) if start == end => Err(end),
+      (start, _) => Ok(self.sorted[start]),
+    }
   }
 
   pub fn find(&self, p: impl Fn(&T) -> Ordering) -> Option<(I, &T)> {
@@ -258,7 +266,7 @@ impl<I: Idx, T> SortedIdxVec<I, T> {
     self.sorted.sort_by(|&a, &b| f(&self.vec[a], &self.vec[b]));
   }
 
-  /// Assumes `idx` is the sorted index of `t` (as returned by `find_idx`)
+  /// Assumes `idx` is the sorted index of `t` (as returned by `find_index`)
   pub fn insert_at(&mut self, idx: usize, t: T) -> I {
     let i = self.vec.push(t);
     self.sorted.insert(idx, i);
