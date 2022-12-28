@@ -1011,7 +1011,7 @@ pub struct StructMode {
   pub c: Constructor<StructId>,
   // These are guaranteed to be struct types
   pub prefixes: Box<[Type]>,
-  pub aggr: Option<AggrId>,
+  pub aggr: AggrId,
   pub fields: Box<[SelId]>,
 }
 

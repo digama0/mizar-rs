@@ -712,7 +712,7 @@ impl XmlReader<'_> {
       b'L' => {
         let c = constructor!(StructId);
         let mut prefixes = vec![];
-        let aggr = aggr.checked_sub(1).map(AggrId);
+        let aggr = AggrId(aggr - 1);
         let fields = loop {
           match self.parse_elem(buf) {
             Elem::Type(ty) => {

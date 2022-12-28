@@ -332,7 +332,7 @@ impl Term {
   /// performs eta expansion of aggregates: `foo` ~> `(# foo.1 , foo.2 #)`
   fn mk_aggr(g: &Global, s: StructId, arg: &Term, ty: &Type) -> Term {
     assert!(!g.constrs.struct_mode[s].fields.is_empty());
-    let nr = g.constrs.struct_mode[s].aggr.unwrap();
+    let nr = g.constrs.struct_mode[s].aggr;
     let ty = &*Type::new(s.into()).widening_of(g, ty).unwrap();
     let mut args = ty.args.clone();
     for &sel in &*g.constrs.aggregate[nr].coll {

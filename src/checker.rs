@@ -5,7 +5,7 @@ use crate::types::*;
 use crate::unify::Unifier;
 use crate::{
   set_verbose, stat, vprintln, Assignment, Equate, ExpandPrivFunc, FixedVar, Global, HasNumbers,
-  InternConst, LocalContext, OnVarMut, Subst, Visit, VisitMut,
+  Inst, InternConst, LocalContext, OnVarMut, Subst, Visit, VisitMut,
 };
 use itertools::{EitherOrBoth, Itertools};
 use std::borrow::Cow;
@@ -79,8 +79,11 @@ impl<'a> Checker<'a> {
       // eprintln!("interned {} @ {:?}:{:?}:\n  {check_f:?}", self.idx, self.article, self.pos);
 
       let mut atoms = Atoms::default();
-      let Dnf::Or(normal_form) = atoms.normalize(self.g, self.lc, check_f, true)
+      let Dnf::Or(mut normal_form) = atoms.normalize(self.g, self.lc, check_f, true)
       else { panic!("it is not true") };
+
+      self.process_is(&mut atoms, &mut normal_form);
+
       self.g.recursive_round_up = true;
       for f in normal_form {
         if crate::CHECKER_CONJUNCTS {
@@ -129,6 +132,72 @@ impl<'a> Checker<'a> {
     self.lc.fixed_var.0.truncate(fixed_var);
     self.lc.infer_const.get_mut().truncate(infer_const);
     self.lc.term_cache.get_mut().close_scope();
+  }
+
+  fn process_is(&self, atoms: &mut Atoms, normal_form: &mut Vec<Conjunct<AtomId, bool>>) {
+    let (mut i, mut len) = (0, normal_form.len());
+    while i < len {
+      let conj = &normal_form[i];
+      let mut is_ats = vec![];
+      for (a, f) in atoms.0.enum_iter() {
+        if let (Some(false), Formula::Is { .. }) = (conj.0.get(&a), f) {
+          is_ats.push(a)
+        }
+      }
+      if is_ats.is_empty() {
+        i += 1;
+        continue
+      }
+      let mut conj1 = conj.clone();
+      for a in &is_ats {
+        conj1.0.remove(a);
+      }
+      let mut inst = Dnf::single(conj1);
+      for a in is_ats {
+        let Formula::Is { term, ty } = &atoms.0[a].clone() else { unreachable!() };
+        let Attrs::Consistent(attrs) = ty.attrs.0.clone() else { unreachable!() };
+        let ty2 = Type { kind: ty.kind, attrs: Default::default(), args: ty.args.clone() };
+        let f2 = Formula::Is { term: term.clone(), ty: Box::new(ty2) };
+        let a2 = atoms.insert(self.g, self.lc, Cow::Owned(f2));
+        let mut inst1 = vec![];
+        for attr in attrs {
+          let c = &self.g.constrs.attribute[attr.nr];
+          let mut attrs = c.ty.attrs.1.visit_cloned(&mut Inst::new(&attr.args));
+          attrs
+            .insert(&self.g.constrs, Attr { nr: attr.nr, pos: !attr.pos, args: attr.args.clone() });
+          attrs.visit(&mut self.intern_const());
+          let ty3 = Type { kind: ty.kind, attrs: (attrs.clone(), attrs), args: ty.args.clone() };
+          let f3 = Formula::Is { term: term.clone(), ty: Box::new(ty3) };
+          let a3 = atoms.insert(self.g, self.lc, Cow::Owned(f3));
+          Dnf::insert_and_absorb(&mut inst1, Conjunct::single(a3, true));
+        }
+        let mut inst2 = vec![Conjunct::single(a2, false)];
+        if let TypeKind::Struct(n) = ty.kind {
+          let orig = term.get_type_uncached(self.g, self.lc);
+          if let Some(w) = ty.widening_of(self.g, &orig).as_deref() {
+            let c = &self.g.constrs.struct_mode[n];
+            let mut inst3 = vec![];
+            for &sel in &*c.fields {
+              let tm2 = Term::mk_select(self.g, sel, term, ty);
+              let f3 = Formula::Is {
+                term: Box::new(Term::mk_select(self.g, sel, term, w)),
+                ty: Box::new(tm2.get_type_uncached(self.g, self.lc)),
+              };
+              let a3 = atoms.insert(self.g, self.lc, Cow::Owned(f3));
+              Dnf::insert_and_absorb(&mut inst3, Conjunct::single(a3, false));
+            }
+            Dnf::mk_and_core(&mut inst2, inst3)
+          }
+        }
+        let mut inst1 = Dnf::Or(inst1);
+        inst1.mk_or(Dnf::Or(inst2));
+        inst.mk_and(inst1);
+      }
+      let Dnf::Or(inst) = &mut inst else { unreachable!() };
+      normal_form.remove(i);
+      len -= 1;
+      normal_form.append(inst);
+    }
   }
 }
 
@@ -521,8 +590,13 @@ where Conjunct<K, V>: std::fmt::Debug
     }
   }
 
-  #[inline]
-  pub fn single(conj: Conjunct<K, V>) -> Self { Self::Or(vec![conj]) }
+  pub fn single(conj: Conjunct<K, V>) -> Self {
+    if conj.0.is_empty() {
+      Self::True
+    } else {
+      Self::Or(vec![conj])
+    }
+  }
 
   /// PreInstCollection.InsertAndAbsorb
   pub fn insert_and_absorb(this: &mut Vec<Conjunct<K, V>>, conj: Conjunct<K, V>) {
@@ -556,7 +630,7 @@ where Conjunct<K, V>: std::fmt::Debug
 
   pub fn mk_and_single(&mut self, k: K, v: V) {
     match self {
-      Dnf::True => *self = Dnf::single(Conjunct::single(k, v)),
+      Dnf::True => *self = Self::Or(vec![Conjunct::single(k, v)]),
       Dnf::Or(conjs) => conjs.iter_mut().for_each(|conj| {
         conj.0.insert(k.clone(), v.clone());
       }),
@@ -633,7 +707,7 @@ impl Atoms {
       Formula::True => Dnf::mk_bool(pos),
       _ => {
         let a = self.insert(g, lc, Cow::Owned(f));
-        Dnf::single(Conjunct::single(a, pos))
+        Dnf::Or(vec![Conjunct::single(a, pos)])
       }
     }
   }
