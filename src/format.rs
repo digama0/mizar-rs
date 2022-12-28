@@ -254,7 +254,11 @@ impl<'a> Pretty<'a> {
           if let Some(&(len, ref vis, FormatAggr { sym, args: n })) = lc.formatter.aggr.get(nr) {
             assert_eq!(len as usize, args.len());
             assert_eq!(vis.len(), n as usize);
-            doc = Some(self.text(&lc.formatter.symbols[&sym.into()]));
+            doc = Some(if SHOW_ORIG {
+              self.text(format!("{}[{}]", lc.formatter.symbols[&sym.into()], nr.0))
+            } else {
+              self.text(&lc.formatter.symbols[&sym.into()])
+            });
             ovis = Some(&**vis)
           }
         }
@@ -272,14 +276,23 @@ impl<'a> Pretty<'a> {
             Some(&(len, ref vis, FormatFunc::Bracket { lsym, rsym, args: n })) => {
               assert_eq!(len as usize, args.len());
               assert_eq!(vis.len(), n as usize);
+              let left = if SHOW_ORIG {
+                self.text(format!("{}[{}] ", &lc.formatter.symbols[&lsym.into()], nr.0))
+              } else {
+                self.text(&*lc.formatter.symbols[&lsym.into()])
+              };
               return self
                 .terms(Some(vis), args, depth)
-                .enclose(&lc.formatter.symbols[&lsym.into()], &lc.formatter.symbols[&rsym.into()])
+                .enclose(left, &lc.formatter.symbols[&rsym.into()])
             }
             None => {}
           }
         }
-        self.text(format!("F{}", nr.0)).append(self.terms(ovis, args, depth).parens())
+        let doc = self.text(format!("F{}", nr.0));
+        match args.len() {
+          0 => doc,
+          _ => doc.append(self.terms(ovis, args, depth).parens()),
+        }
       }
       Term::Numeral(nr) => self.as_string(nr),
       Term::Selector { nr, args } => {
@@ -293,6 +306,7 @@ impl<'a> Pretty<'a> {
           }
         }
         let doc = self.text(match s {
+          Some(sym) if SHOW_ORIG => format!("the {sym}[{}] of", nr.0),
           Some(sym) => format!("the {sym} of"),
           None => format!("the Sel{} of", nr.0),
         });
@@ -411,7 +425,13 @@ impl<'a> Pretty<'a> {
     });
     let doc = match ovis.map_or(ty.args.len(), |vis| vis.len()) {
       0 => doc,
-      _ => doc.append(" of ").append(self.terms(ovis, &ty.args, depth)),
+      _ => {
+        let of = match ty.kind {
+          TypeKind::Mode(_) => " of ",
+          TypeKind::Struct(_) => " over ",
+        };
+        doc.append(of).append(self.terms(ovis, &ty.args, depth))
+      }
     };
     doc.group()
   }
