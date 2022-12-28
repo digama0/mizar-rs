@@ -446,8 +446,8 @@ impl Reader {
           if args.iter().any(|t| matches!(t, Term::Infer(i) if rounded_up.contains_key(i))) {
             let mut ty = asgn.def.round_up_type(&self.g, &self.lc).to_owned();
             ty.attrs.1.round_up_with(&self.g, &self.lc, &asgn.ty);
-            ty.attrs.1.visit(&mut self.intern_const());
             drop(ic);
+            ty.attrs.1.visit(&mut self.intern_const());
             self.lc.infer_const.borrow_mut()[i].ty = *ty;
             ic = self.lc.infer_const.borrow();
           }
@@ -486,15 +486,14 @@ impl Reader {
           assert!(matches!(attrs, Attrs::Consistent(_)));
           attrs.round_up_with(&self.g, &self.lc, &asgn.ty);
           if attrs.attrs().len() > orig {
-            attrs.visit(&mut self.intern_const());
             rounded_up.insert(i, attrs);
           }
         }
         let (_, i) = (self.g.clusters.functor)
           .equal_range(|a| FunctorCluster::cmp_term(&a.term, &self.g.constrs, &cl.term));
         self.g.clusters.functor.insert_at(i, cl);
-        let ic = self.lc.infer_const.get_mut();
         for (&i, attrs) in &mut rounded_up {
+          attrs.visit(&mut self.intern_const());
           self.lc.infer_const.get_mut()[i].ty.attrs.1 = std::mem::take(attrs);
         }
         self.round_up_further(rounded_up);
@@ -514,14 +513,13 @@ impl Reader {
             assert!(matches!(attrs, Attrs::Consistent(_)));
             attrs.round_up_with(&self.g, &self.lc, &asgn.ty);
             if attrs.attrs().len() > orig {
-              attrs.visit(&mut self.intern_const());
               rounded_up.insert(i, attrs);
             }
           }
         }
         self.g.clusters.conditional.push(&self.g.constrs, cl);
-        let ic = self.lc.infer_const.get_mut();
-        for (&i, attrs) in &mut rounded_up {
+        for (&i, mut attrs) in &mut rounded_up {
+          attrs.visit(&mut self.intern_const());
           self.lc.infer_const.get_mut()[i].ty.attrs.1 = std::mem::take(attrs);
         }
         self.round_up_further(rounded_up);
@@ -550,6 +548,7 @@ impl Reader {
           identify: &self.identify,
           func_ids: &self.func_ids,
           reductions: &self.reductions,
+          article: self.article,
           idx: self.inference_nr,
           pos: it.pos,
         }

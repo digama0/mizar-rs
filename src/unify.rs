@@ -1082,7 +1082,7 @@ impl UnifyWithConst<'_> {
         self.unify_terms(&ty1.args, &ty2.args),
       (TypeKind::Mode(n1), TypeKind::Mode(n2)) => {
         let (n1, args1) = Type::adjust(n1, &ty1.args, &self.0.g.constrs);
-        let (n2, args2) = Type::adjust(n1, &ty1.args, &self.0.g.constrs);
+        let (n2, args2) = Type::adjust(n2, &ty2.args, &self.0.g.constrs);
         if n1 == n2 {
           self.unify_terms(args1, args2)
         } else {

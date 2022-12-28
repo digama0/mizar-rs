@@ -22,25 +22,12 @@ pub struct Checker<'a> {
   pub identify: &'a [Identify],
   pub func_ids: &'a BTreeMap<ConstrKind, Vec<usize>>,
   pub reductions: &'a [Reduction],
+  pub article: Article,
   pub idx: usize,
   pub pos: Position,
 }
 
 impl<'a> Checker<'a> {
-  fn as_mut(&mut self) -> Checker<'_> {
-    Checker {
-      g: self.g,
-      lc: self.lc,
-      expansions: self.expansions,
-      equals: self.equals,
-      identify: self.identify,
-      func_ids: self.func_ids,
-      reductions: self.reductions,
-      idx: self.idx,
-      pos: self.pos,
-    }
-  }
-
   fn intern_const(&self) -> InternConst<'_> {
     InternConst::new(self.g, self.lc, self.equals, self.identify, self.func_ids)
   }
@@ -82,14 +69,14 @@ impl<'a> Checker<'a> {
       }
       let mut check_f = Formula::mk_and(conjs);
       if crate::CHECKER_HEADER {
-        eprintln!("checking {} @ {:?}:\n  {check_f:?}", self.idx, self.pos);
+        eprintln!("checking {} @ {:?}:{:?}:\n  {check_f:?}", self.idx, self.article, self.pos);
       }
 
       OpenAsConst(self).open_quantifiers(&mut check_f, true);
-      // eprintln!("opened {} @ {:?}:\n  {check_f:?}", self.idx, self.pos);
+      // eprintln!("opened {} @ {:?}:{:?}:\n  {check_f:?}", self.idx, self.article, self.pos);
 
       check_f.visit(&mut self.intern_const());
-      // eprintln!("interned {} @ {:?}:\n  {check_f:?}", self.idx, self.pos);
+      // eprintln!("interned {} @ {:?}:{:?}:\n  {check_f:?}", self.idx, self.article, self.pos);
 
       let mut atoms = Atoms::default();
       let Dnf::Or(normal_form) = atoms.normalize(self.g, self.lc, check_f, true)
@@ -112,21 +99,25 @@ impl<'a> Checker<'a> {
           stat("failure");
           if crate::CHECKER_RESULT {
             eprintln!(
-              "FAILED TO JUSTIFY {} @ {:?}: {:#?}",
+              "FAILED TO JUSTIFY {} @ {:?}:{:?}: {:#?}",
               self.idx,
+              self.article,
               self.pos,
               f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
             );
           }
           if crate::PANIC_ON_FAIL {
-            panic!("failed to justify {} @ {:?}", self.idx, self.pos);
+            panic!("failed to justify {} @ {:?}:{:?}", self.idx, self.article, self.pos);
+          } else {
+            println!("failed to justify {} @ {:?}:{:?}", self.idx, self.article, self.pos);
           }
         } else {
           stat("success");
           if crate::CHECKER_RESULT {
             eprintln!(
-              "proved {} @ {:?}! {:#?}",
+              "proved {} @ {:?}:{:?}! {:#?}",
               self.idx,
+              self.article,
               self.pos,
               f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
             );
