@@ -1,4 +1,4 @@
-use crate::checker::{Atoms, Conjunct, Dnf, Open, OrUnsat, Unsat};
+use crate::checker::{Atoms, Conjunct, Dnf, Open, OrUnsat, Overflow, Unsat};
 use crate::equate::Equalizer;
 use crate::types::*;
 use crate::{vprintln, CheckLocus, Equate, ExpandPrivFunc, Global, LocalContext, Visit, VisitMut};
@@ -113,7 +113,7 @@ impl<'a> Unifier<'a> {
   }
 
   /// Verify: Attempts to prove f |- false
-  fn falsify(&mut self, mut f: Formula) -> OrUnsat<()> {
+  fn falsify(&mut self, mut f: Formula) -> Result<OrUnsat<()>, Overflow> {
     Standardize { g: self.g, lc: self.lc }.visit_formula(&mut f);
     if crate::UNIFY_HEADER {
       eprintln!("falsify: {f:?}");
@@ -134,7 +134,7 @@ impl<'a> Unifier<'a> {
     // Normalize !F(?v) into DNF: ∃ ?v. |- C_1(?v) \/ ... \/ C_n(?v)
     // If we get !F(?v) = true then we are done.
     let mut atoms = Atoms::default();
-    let Dnf::Or(clauses) = atoms.normalize(u.g, u.lc, f, false) else { return Err(Unsat) };
+    let Dnf::Or(clauses) = atoms.normalize(u.g, u.lc, f, false)? else { return Ok(Err(Unsat)) };
     if crate::UNIFY_HEADER {
       vprintln!("atoms: {atoms:#?}");
     }
@@ -159,7 +159,7 @@ impl<'a> Unifier<'a> {
       for (a, val) in clause.0 {
         // Negate the conclusion to !A_i(?v) |- false to match the usual polarity,
         // and get an instantiation P_i(?v) such that P_i(?v), !A_i(?v) |- false.
-        match u.compute_inst(bas, &atoms.0[a], !val) {
+        match u.compute_inst(bas, &atoms.0[a], !val)? {
           // A_i(?v) is true without our help
           Dnf::True => {}
           // We failed to construct an instantiation,
@@ -171,16 +171,16 @@ impl<'a> Unifier<'a> {
         }
       }
       // Unless /\_i P_i(?v) is the empty disjunction (false), it is satisfiable and we are done
-      if !Dnf::and_many(dnfs).is_false() {
-        return Err(Unsat)
+      if !Dnf::and_many(dnfs)?.is_false() {
+        return Ok(Err(Unsat))
       }
     }
     // falsification failed
-    Ok(())
+    Ok(Ok(()))
   }
 
   /// Unifiable: Attempts to prove f_1, ..., f_n |- false
-  fn resolution(&mut self, fs: &[&Formula]) -> OrUnsat<()> {
+  fn resolution(&mut self, fs: &[&Formula]) -> Result<OrUnsat<()>, Overflow> {
     // CreateClauses
     let mut all_clauses = Dnf::FALSE;
     let mut atoms = Atoms::default();
@@ -194,15 +194,15 @@ impl<'a> Unifier<'a> {
         let mut f = f.visit_cloned(&mut Standardize { g: self.g, lc: self.lc });
         OpenAsFreeVar(&mut fvars).open_quantifiers(&mut f, false);
         atoms.normalize(self.g, self.lc, f, false)
-      });
+      })?;
     }
     // We normalized !F_1(?v_1) \/ ... \/ !F_n(?v_n) into DNF, as ∃ ?v. |- \/_i C_i(?v)
     // vprintln!("all_clauses = {all_clauses:#?}");
-    let Dnf::Or(all_clauses) = all_clauses else { return Ok(()) };
+    let Dnf::Or(all_clauses) = all_clauses else { return Ok(Ok(())) };
 
     // This is not a complete procedure, we give up if there are not 2..=4 clauses C_i
     if all_clauses.len() < 2 || all_clauses.len() > 4 {
-      return Ok(())
+      return Ok(Ok(()))
     }
 
     // CollectComplementaryLiterals
@@ -222,7 +222,7 @@ impl<'a> Unifier<'a> {
       for (&a1, &val1) in &cl1.0 {
         for (&a2, &val2) in &cl2.0 {
           if val1 != val2 && Similar.eq_formula(u.0.g, u.0.lc, &atoms.0[a1], &atoms.0[a2]) {
-            if let Dnf::Or(dnf) = u.unify_basic_formula(&atoms.0[a1], &atoms.0[a2]) {
+            if let Dnf::Or(dnf) = u.unify_basic_formula(&atoms.0[a1], &atoms.0[a2])? {
               if !dnf.is_empty() {
                 // vprintln!("found resolvable clauses {cl1:?} <a{a1:?}!=a{a2:?}> {cl2:?} = {dnf:#?}");
                 complementary.push(([(cl1, a1), (cl2, a2)], dnf));
@@ -234,7 +234,7 @@ impl<'a> Unifier<'a> {
     }
 
     if complementary.len() != 1 {
-      return Ok(())
+      return Ok(Ok(()))
     }
     // ResolventVerify
     'next: for (cls, dnf) in complementary {
@@ -242,7 +242,7 @@ impl<'a> Unifier<'a> {
       for (cl, a1) in cls {
         for (&a2, &val) in &cl.0 {
           if a2 != a1 {
-            match u.0.compute_inst(bas, &atoms.0[a2], !val) {
+            match u.0.compute_inst(bas, &atoms.0[a2], !val)? {
               Dnf::True => {}
               Dnf::Or(dnf) if dnf.is_empty() => continue 'next,
               Dnf::Or(dnf) => dnfs.push(dnf),
@@ -250,27 +250,38 @@ impl<'a> Unifier<'a> {
           }
         }
       }
-      if !Dnf::and_many(dnfs).is_false() {
-        return Err(Unsat)
+      if !Dnf::and_many(dnfs)?.is_false() {
+        return Ok(Err(Unsat))
       }
     }
 
-    Ok(())
+    Ok(Ok(()))
   }
 
   /// Unification
-  pub fn run(&mut self) -> OrUnsat<()> {
+  pub fn run(&mut self) -> OrUnsat<bool> {
     let univ =
       self.bas[true].0 .0.iter().filter(|f| matches!(f, Formula::ForAll { .. })).collect_vec();
+    let mut overflow = false;
+    let mut set_overflow = |Overflow| {
+      overflow = true;
+      Ok(())
+    };
     for &f in &univ {
-      self.falsify(f.clone())?;
+      match self.falsify(f.clone()) {
+        Ok(or_unsat) => or_unsat?,
+        Err(o) => {
+          set_overflow(o)?;
+          break
+        }
+      }
     }
     if ENABLE_UNIFIER {
       for f in &univ {
-        self.resolution(&[f])?;
+        self.resolution(&[f]).unwrap_or_else(&mut set_overflow)?;
       }
       for (f1, f2) in univ.iter().tuple_combinations() {
-        self.resolution(&[f1, f2])?;
+        self.resolution(&[f1, f2]).unwrap_or_else(&mut set_overflow)?;
       }
     }
 
@@ -291,13 +302,13 @@ impl<'a> Unifier<'a> {
               }
             }
             for f in fraenkel_fmlas.drain(..) {
-              self.falsify(f)?;
+              self.falsify(f).unwrap_or_else(&mut set_overflow)?;
             }
           }
         }
       }
     }
-    Ok(())
+    Ok(overflow)
   }
 }
 
@@ -432,7 +443,7 @@ impl Unify<'_> {
   /// * pos = false: COMPInstAsFalse - P(?v) /\ !F(?v) |- false
   fn compute_inst(
     &mut self, bas: &EnumMap<bool, Atoms>, f: &Formula, pos: bool,
-  ) -> Dnf<FVarId, EqClassId> {
+  ) -> Result<Dnf<FVarId, EqClassId>, Overflow> {
     if crate::UNIFY_INSTS {
       vprintln!("compute_inst {pos}: {f:?}");
     }
@@ -450,10 +461,10 @@ impl Unify<'_> {
         }) {
           for (ec, _) in self.eq_class.enum_iter() {
             let t = Term::EqClass(ec);
-            let mut inst1 = self.unify_term(&args[pred.arg1 as usize], &t);
+            let mut inst1 = self.unify_term(&args[pred.arg1 as usize], &t)?;
             if !inst1.is_false() {
-              inst1.mk_and(self.unify_term(&args[pred.arg2 as usize], &t));
-              inst.mk_or(inst1);
+              inst1.mk_and(self.unify_term(&args[pred.arg2 as usize], &t)?)?;
+              inst.mk_or(inst1)?;
             }
           }
         }
@@ -463,19 +474,19 @@ impl Unify<'_> {
           if let Some(empty) = self.g.reqs.empty() {
             for (ec, etm) in self.eq_class.enum_iter() {
               if etm.supercluster.find0(&self.g.constrs, empty, pos) {
-                let mut inst1 = self.unify_term(arg2, &Term::EqClass(ec));
+                let mut inst1 = self.unify_term(arg2, &Term::EqClass(ec))?;
                 if !inst1.is_false() {
                   if let (false, Some(element)) = (pos, self.g.reqs.element()) {
                     let ty = Type { args: vec![Term::EqClass(ec)], ..Type::new(element.into()) };
                     let mut inst2 = Dnf::FALSE;
                     for (ec2, etm2) in self.eq_class.enum_iter() {
                       if etm2.ty_class.iter().any(|ty2| ().eq_radices(self.g, self.lc, ty2, &ty)) {
-                        inst2.mk_or_else(|| self.unify_term(arg1, &Term::EqClass(ec2)));
+                        inst2.mk_or_else(|| self.unify_term(arg1, &Term::EqClass(ec2)))?;
                       }
                     }
-                    inst1.mk_and(inst2);
+                    inst1.mk_and(inst2)?;
                   }
-                  inst.mk_or(inst1);
+                  inst.mk_or(inst1)?;
                 }
               }
             }
@@ -486,10 +497,10 @@ impl Unify<'_> {
                 if let TypeKind::Mode(n) = ty.kind {
                   let (n, args) = Type::adjust(n, &ty.args, &self.g.constrs);
                   if self.g.reqs.element() == Some(n) {
-                    let mut inst1 = self.unify_term(arg1, term);
+                    let mut inst1 = self.unify_term(arg1, term)?;
                     if !inst1.is_false() {
-                      inst1.mk_and(self.unify_term(arg2, &args[0]));
-                      inst.mk_or(inst1);
+                      inst1.mk_and(self.unify_term(arg2, &args[0])?)?;
+                      inst.mk_or(inst1)?;
                     }
                   }
                 }
@@ -505,7 +516,7 @@ impl Unify<'_> {
                   if let TypeKind::Mode(n) = ty.kind {
                     let (n, args) = Type::adjust(n, &ty.args, &self.g.constrs);
                     if self.g.reqs.element() == Some(n) {
-                      let mut inst1 = self.unify_term(arg1, term);
+                      let mut inst1 = self.unify_term(arg1, term)?;
                       if !inst1.is_false() {
                         if let Term::EqClass(ec) = *arg2 {
                           let Term::EqClass(ec2) = args[0] else { unreachable!() };
@@ -514,12 +525,12 @@ impl Unify<'_> {
                             args: Box::new([Term::EqClass(ec)]),
                           }) == Some(ec2)
                           {
-                            inst.mk_or(inst1)
+                            inst.mk_or(inst1)?
                           }
                         } else {
                           let t = Term::Functor { nr: power, args: Box::new([arg2.clone()]) };
-                          inst1.mk_and(self.unify_term(&t, &args[0]));
-                          inst.mk_or(inst1)
+                          inst1.mk_and(self.unify_term(&t, &args[0])?)?;
+                          inst.mk_or(inst1)?
                         }
                       }
                     }
@@ -528,7 +539,7 @@ impl Unify<'_> {
               }
             } else if let Some(element) = self.g.reqs.element() {
               for (ec1, etm1) in self.eq_class.enum_iter() {
-                let mut inst1 = self.unify_term(arg2, &Term::EqClass(ec1));
+                let mut inst1 = self.unify_term(arg2, &Term::EqClass(ec1))?;
                 if !inst1.is_false() {
                   let mut inst2 = Dnf::FALSE;
                   if let Some(ec2) = self.get_eq_class(&Term::Functor {
@@ -538,11 +549,11 @@ impl Unify<'_> {
                     let ty = Type { args: vec![Term::EqClass(ec2)], ..Type::new(element.into()) };
                     for (ec2, etm2) in self.eq_class.enum_iter() {
                       if etm2.ty_class.iter().any(|ty2| ().eq_radices(self.g, self.lc, ty2, &ty)) {
-                        inst2.mk_or_else(|| self.unify_term(arg1, &Term::EqClass(ec2)));
+                        inst2.mk_or_else(|| self.unify_term(arg1, &Term::EqClass(ec2)))?;
                       }
                     }
-                    inst1.mk_and(inst2);
-                    inst.mk_or(inst1)
+                    inst1.mk_and(inst2)?;
+                    inst.mk_or(inst1)?
                   }
                 }
               }
@@ -556,30 +567,30 @@ impl Unify<'_> {
           let [arg1, arg2] = args else { unreachable!() };
           if !pos {
             for f2 in &bas[true].0 .0 {
-              inst.mk_or_else(|| self.unify_formula(f, f2));
+              inst.mk_or_else(|| self.unify_formula(f, f2))?;
             }
           }
           for (ec1, etm1) in self.eq_class.enum_iter() {
             if let Some(n1) = etm1.number {
-              let mut inst1 = self.unify_term(arg1, &Term::EqClass(ec1));
+              let mut inst1 = self.unify_term(arg1, &Term::EqClass(ec1))?;
               if !inst1.is_false() {
                 let mut inst2 = Dnf::FALSE;
                 for (ec2, etm2) in self.eq_class.enum_iter() {
                   if let Some(n2) = etm2.number {
                     if (n1 <= n2) != pos {
-                      inst2.mk_or(self.unify_term(arg2, &Term::EqClass(ec2)));
+                      inst2.mk_or(self.unify_term(arg2, &Term::EqClass(ec2))?)?;
                     }
                   }
                 }
-                inst1.mk_and(inst2);
-                inst.mk_or(inst1);
+                inst1.mk_and(inst2)?;
+                inst.mk_or(inst1)?;
               }
             }
           }
           if let (Some(positive), Some(negative)) = (self.g.reqs.positive(), self.g.reqs.negative())
           {
             for (ec1, etm1) in self.eq_class.enum_iter() {
-              let mut inst1 = self.unify_term(arg1, &Term::EqClass(ec1));
+              let mut inst1 = self.unify_term(arg1, &Term::EqClass(ec1))?;
               if !inst1.is_false() {
                 let mut inst2 = Dnf::FALSE;
                 if pos {
@@ -589,19 +600,19 @@ impl Unify<'_> {
                     if pos1 && etm2.supercluster.find0(&self.g.constrs, positive, false)
                       || nonneg1 && etm2.supercluster.find0(&self.g.constrs, negative, true)
                     {
-                      inst2.mk_or_else(|| self.unify_term(arg2, &Term::EqClass(ec2)));
+                      inst2.mk_or_else(|| self.unify_term(arg2, &Term::EqClass(ec2)))?;
                     }
                   }
                 } else {
                   let nonpos1 = etm1.supercluster.find0(&self.g.constrs, positive, false);
                   for (ec2, etm2) in self.eq_class.enum_iter() {
                     if nonpos1 && etm2.supercluster.find0(&self.g.constrs, negative, false) {
-                      inst2.mk_or_else(|| self.unify_term(arg2, &Term::EqClass(ec2)));
+                      inst2.mk_or_else(|| self.unify_term(arg2, &Term::EqClass(ec2)))?;
                     }
                   }
                 }
-                inst1.mk_and(inst2);
-                inst.mk_or(inst1);
+                inst1.mk_and(inst2)?;
+                inst.mk_or(inst1)?;
               }
             }
           }
@@ -614,19 +625,19 @@ impl Unify<'_> {
             for (ec, etm) in self.eq_class.enum_iter() {
               if let Some(n1) = etm.number {
                 let t = Term::EqClass(ec);
-                let mut inst1 = self.unify_term(arg1, &t);
+                let mut inst1 = self.unify_term(arg1, &t)?;
                 if !inst1.is_false() {
                   let mut inst2 = Dnf::FALSE;
                   for (ec2, etm2) in self.eq_class.enum_iter() {
                     if ec != ec2 {
                       if let Some(n2) = etm2.number {
                         assert!(n1 != n2);
-                        inst2.mk_or(self.unify_term(arg2, &t));
+                        inst2.mk_or(self.unify_term(arg2, &t)?)?;
                       }
                     }
                   }
-                  inst1.mk_and(inst2);
-                  inst.mk_or(inst1)
+                  inst1.mk_and(inst2)?;
+                  inst.mk_or(inst1)?
                 }
               }
             }
@@ -641,7 +652,7 @@ impl Unify<'_> {
         if let Some(ec) = arg0.unmark(self.lc).class() {
           for attr in self.eq_class[ec].supercluster.attrs() {
             if attr.nr == nr && attr.pos != pos {
-              inst.mk_or_else(|| self.unify_terms(args, &attr.args));
+              inst.mk_or_else(|| self.unify_terms(args, &attr.args))?;
             }
           }
         }
@@ -651,7 +662,7 @@ impl Unify<'_> {
         if pos {
           for f2 in &bas[!pos].0 .0 {
             if let Formula::Is { term: term2, ty: ty2 } = f2 {
-              let mut inst1 = self.unify_term(term, term2);
+              let mut inst1 = self.unify_term(term, term2)?;
               if !inst1.is_false() {
                 let mut inst2 = Dnf::FALSE;
                 match ty2.kind {
@@ -664,39 +675,39 @@ impl Unify<'_> {
                         if pn < n2 {
                           break
                         }
-                        inst2.mk_or_else(|| self.unify_radix_type(&pty, ty2));
+                        inst2.mk_or_else(|| self.unify_radix_type(&pty, ty2))?;
                         pty = CowBox::Owned(pty.widening(self.g).unwrap());
                       }
                     },
                   TypeKind::Struct(_) =>
                     if let Some(ty) = ty2.widening_of(self.g, ty) {
-                      inst2 = self.unify_radix_type(&ty, ty2);
+                      inst2 = self.unify_radix_type(&ty, ty2)?;
                     },
                 }
-                inst1.mk_and(inst2);
-                inst.mk_or(inst1);
+                inst1.mk_and(inst2)?;
+                inst.mk_or(inst1)?;
               }
             }
           }
           for (ec, etm) in self.eq_class.enum_iter() {
-            let mut inst1 = self.unify_term(term, &Term::EqClass(ec));
+            let mut inst1 = self.unify_term(term, &Term::EqClass(ec))?;
             if !inst1.is_false() {
               let mut inst2 = Dnf::FALSE;
               for attr in ty.attrs.1.attrs() {
                 for attr2 in etm.supercluster.attrs() {
-                  self.or_unify_attr(attr, attr2, false, &mut inst2)
+                  self.or_unify_attr(attr, attr2, false, &mut inst2)?
                 }
               }
-              inst1.mk_and(inst2);
-              inst.mk_or(inst1);
+              inst1.mk_and(inst2)?;
+              inst.mk_or(inst1)?;
             }
           }
         } else {
           for (ec, etm) in self.eq_class.enum_iter() {
-            let mut inst1 = self.unify_term(term, &Term::EqClass(ec));
+            let mut inst1 = self.unify_term(term, &Term::EqClass(ec))?;
             if !inst1.is_false() {
-              inst1.mk_and(self.unify_eq_class_types(etm, ty));
-              inst.mk_or(inst1);
+              inst1.mk_and(self.unify_eq_class_types(etm, ty)?)?;
+              inst.mk_or(inst1)?;
             }
           }
         }
@@ -706,13 +717,13 @@ impl Unify<'_> {
     }
     if !skip {
       for f2 in &bas[!pos].0 .0 {
-        inst.mk_or_else(|| self.unify_formula(f, f2));
+        inst.mk_or_else(|| self.unify_formula(f, f2))?;
       }
     }
     if crate::UNIFY_INSTS {
       vprintln!("compute_inst (skip: {skip}) -> {inst:?}");
     }
-    inst
+    Ok(inst)
   }
 
   fn get_eq_class(&self, tm: &Term) -> Option<EqClassId> {
@@ -720,32 +731,37 @@ impl Unify<'_> {
   }
 
   /// InstCollection.UNIEqClassTyps
-  fn unify_eq_class_types(&mut self, ec: &EqTerm, ty: &Type) -> Dnf<FVarId, EqClassId> {
+  fn unify_eq_class_types(
+    &mut self, ec: &EqTerm, ty: &Type,
+  ) -> Result<Dnf<FVarId, EqClassId>, Overflow> {
     // vprintln!("unify_eq_class_types {ec:?} as {ty:?}");
     let mut inst = Dnf::FALSE;
     for ty2 in &ec.ty_class {
-      inst.mk_or_else(|| self.unify_radix_type(ty, ty2))
+      inst.mk_or_else(|| self.unify_radix_type(ty, ty2))?
     }
-    inst.mk_and_then(|| self.unify_subset_attrs(&ty.attrs.0, &ec.supercluster, true));
-    inst
+    inst.mk_and_then(|| self.unify_subset_attrs(&ty.attrs.0, &ec.supercluster, true))?;
+    Ok(inst)
   }
 
   /// * pos = true: InstCollection.UNIAttr
   /// * pos = false: InstCollection.UNIAttr1
   fn or_unify_attr(
     &mut self, attr1: &Attr, attr2: &Attr, pos: bool, out: &mut Dnf<FVarId, EqClassId>,
-  ) {
+  ) -> Result<(), Overflow> {
     // vprintln!("or_unify_attr {pos}: {attr1:?} <> {attr2:?} <- {out:?}");
     let (n1, args1) = attr1.adjust(&self.g.constrs);
     let (n2, args2) = attr2.adjust(&self.g.constrs);
     if n1 == n2 && (attr1.pos == attr2.pos) == pos {
-      out.mk_or_else(|| self.unify_terms(args1, args2))
+      out.mk_or_else(|| self.unify_terms(args1, args2))?
     }
     // vprintln!("or_unify_attr {pos}: {attr1:?} <> {attr2:?} -> {out:?}");
+    Ok(())
   }
 
   /// InstCollection.UNIRadices
-  fn unify_radix_type(&mut self, ty1: &Type, ty2: &Type) -> Dnf<FVarId, EqClassId> {
+  fn unify_radix_type(
+    &mut self, ty1: &Type, ty2: &Type,
+  ) -> Result<Dnf<FVarId, EqClassId>, Overflow> {
     match (ty1.kind, ty2.kind) {
       (TypeKind::Mode(n1), TypeKind::Mode(n2)) => {
         let (n1, args1) = Type::adjust(n1, &ty1.args, &self.g.constrs);
@@ -753,19 +769,19 @@ impl Unify<'_> {
         if n1 == n2 {
           self.unify_terms(args1, args2)
         } else {
-          Dnf::FALSE
+          Ok(Dnf::FALSE)
         }
       }
       (TypeKind::Struct(n1), TypeKind::Struct(n2)) if n1 == n2 =>
         self.unify_terms(&ty1.args, &ty2.args),
-      _ => Dnf::FALSE,
+      _ => Ok(Dnf::FALSE),
     }
   }
 
   /// InstCollection.UNIInclClusters
   fn unify_subset_attrs(
     &mut self, attrs1: &Attrs, attrs2: &Attrs, fwd: bool,
-  ) -> Dnf<FVarId, EqClassId> {
+  ) -> Result<Dnf<FVarId, EqClassId>, Overflow> {
     let Attrs::Consistent(attrs1) = attrs1 else { unreachable!() };
     let Attrs::Consistent(attrs2) = attrs2 else { unreachable!() };
     let mut inst = Dnf::True;
@@ -773,7 +789,7 @@ impl Unify<'_> {
     for attr1 in attrs1 {
       let n = attr1.adjusted_nr(&self.g.constrs);
       loop {
-        let Some(a) = it2.peek() else { return Dnf::FALSE };
+        let Some(a) = it2.peek() else { return Ok(Dnf::FALSE) };
         if a.1 >= n {
           break
         }
@@ -782,42 +798,44 @@ impl Unify<'_> {
       let mut inst1 = Dnf::FALSE;
       for (attr2, _) in it2.clone().take_while(|a| a.1 <= n) {
         if fwd {
-          self.or_unify_attr(attr1, attr2, true, &mut inst1);
+          self.or_unify_attr(attr1, attr2, true, &mut inst1)?;
         } else {
-          self.or_unify_attr(attr2, attr1, true, &mut inst1);
+          self.or_unify_attr(attr2, attr1, true, &mut inst1)?;
         }
       }
-      inst.mk_and(inst1);
+      inst.mk_and(inst1)?;
       if inst.is_false() {
         break
       }
     }
-    inst
+    Ok(inst)
   }
 
   /// InstCollection.UNITyp
-  fn unify_type(&mut self, ty1: &Type, ty2: &Type) -> Dnf<FVarId, EqClassId> {
+  fn unify_type(&mut self, ty1: &Type, ty2: &Type) -> Result<Dnf<FVarId, EqClassId>, Overflow> {
     match (ty1.kind, ty2.kind) {
       (TypeKind::Struct(_), TypeKind::Struct(_)) | (TypeKind::Mode(_), TypeKind::Mode(_)) => {
-        let mut inst = self.unify_subset_attrs(&ty1.attrs.0, &ty2.attrs.1, true);
-        inst.mk_and_then(|| self.unify_subset_attrs(&ty2.attrs.0, &ty1.attrs.1, false));
-        inst.mk_and_then(|| self.unify_radix_type(ty1, ty2));
-        inst
+        let mut inst = self.unify_subset_attrs(&ty1.attrs.0, &ty2.attrs.1, true)?;
+        inst.mk_and_then(|| self.unify_subset_attrs(&ty2.attrs.0, &ty1.attrs.1, false))?;
+        inst.mk_and_then(|| self.unify_radix_type(ty1, ty2))?;
+        Ok(inst)
       }
-      _ => Dnf::FALSE,
+      _ => Ok(Dnf::FALSE),
     }
   }
 
   /// InstCollection.UNIFunc
-  fn unify_func(&mut self, n1: FuncId, args1: &[Term], t2: &Term) -> Dnf<FVarId, EqClassId> {
-    let Term::Functor { nr: mut n2, args: args2 } = t2 else { return Dnf::FALSE };
+  fn unify_func(
+    &mut self, n1: FuncId, args1: &[Term], t2: &Term,
+  ) -> Result<Dnf<FVarId, EqClassId>, Overflow> {
+    let Term::Functor { nr: mut n2, args: args2 } = t2 else { return Ok(Dnf::FALSE) };
     // vprintln!("unify: {:?} =?= {:?}", args1, t2);
     let (n1, args1) = Term::adjust(n1, args1, &self.g.constrs);
     let (n2, args2) = Term::adjust(n2, args2, &self.g.constrs);
     if n1 == n2 {
       self.unify_terms(args1, args2)
     } else {
-      Dnf::FALSE
+      Ok(Dnf::FALSE)
     }
   }
 
@@ -825,35 +843,35 @@ impl Unify<'_> {
   fn unify_fraenkel(
     &mut self, args1: &[Type], scope1: &Term, compr1: &Formula, args2: &[Type], scope2: &Term,
     compr2: &Formula,
-  ) -> Dnf<FVarId, EqClassId> {
+  ) -> Result<Dnf<FVarId, EqClassId>, Overflow> {
     if args1.len() != args2.len() {
-      return Dnf::FALSE
+      return Ok(Dnf::FALSE)
     }
     let depth = self.depth;
     let mut inst = Dnf::True;
     for (ty1, ty2) in args1.iter().zip(args2) {
-      inst.mk_and_then(|| self.unify_type(ty1, ty2));
+      inst.mk_and_then(|| self.unify_type(ty1, ty2))?;
       self.depth += 1;
     }
-    inst.mk_and_then(|| self.unify_term(scope1, scope2));
-    inst.mk_and_then(|| self.unify_formula(compr1, compr2));
+    inst.mk_and_then(|| self.unify_term(scope1, scope2))?;
+    inst.mk_and_then(|| self.unify_formula(compr1, compr2))?;
     self.depth = depth;
-    inst
+    Ok(inst)
   }
 
   /// InstCollection.UNITrm
-  fn unify_term(&mut self, t1: &Term, t2: &Term) -> Dnf<FVarId, EqClassId> {
+  fn unify_term(&mut self, t1: &Term, t2: &Term) -> Result<Dnf<FVarId, EqClassId>, Overflow> {
     macro_rules! function_like {
       ($tk:ident { $nr:expr, $args:expr }) => {{
         let mut inst = match t2 {
-          Term::$tk { nr, args, .. } if $nr == nr => self.unify_terms($args, args),
+          Term::$tk { nr, args, .. } if $nr == nr => self.unify_terms($args, args)?,
           _ => Dnf::FALSE,
         };
         if let Some(ec) = self.get_eq_class(t2) {
           for &m in &self.eq_class[ec].terms[CTK::$tk] {
             let Term::$tk { nr, args, .. } = &self.lc.marks[m].0 else { unreachable!() };
             if $nr == nr {
-              inst.mk_or_else(|| self.unify_terms($args, args))
+              inst.mk_or_else(|| self.unify_terms($args, args))?
             }
           }
         }
@@ -867,7 +885,7 @@ impl Unify<'_> {
           if let Some(inst) = self.cache.get(&(n, ec)) {
             inst.clone()
           } else {
-            let mut inst = self.unify_eq_class_types(&self.eq_class[ec], &self.fvars[n].clone());
+            let mut inst = self.unify_eq_class_types(&self.eq_class[ec], &self.fvars[n].clone())?;
             inst.mk_and_single(n, ec);
             self.cache.insert((n, ec), inst.clone());
             inst
@@ -877,10 +895,10 @@ impl Unify<'_> {
         },
       Term::Bound(n1) => Dnf::mk_bool(matches!(t2, Term::Bound(n2) if n1.0 - self.base == n2.0)),
       Term::Functor { mut nr, args } => {
-        let mut inst = self.unify_func(nr, args, t2);
+        let mut inst = self.unify_func(nr, args, t2)?;
         if let Some(ec) = self.get_eq_class(t2) {
           for &m in &self.eq_class[ec].terms[CTK::Functor] {
-            inst.mk_or_else(|| self.unify_func(nr, args, &self.lc.marks[m].0))
+            inst.mk_or_else(|| self.unify_func(nr, args, &self.lc.marks[m].0))?
           }
         }
         inst
@@ -891,7 +909,7 @@ impl Unify<'_> {
       Term::Selector { nr, args } => function_like!(Selector { nr, args }),
       Term::Fraenkel { args: a1, scope: s1, compr: c1 } => {
         let mut inst = if let Term::Fraenkel { args: a2, scope: s2, compr: c2 } = t2 {
-          self.unify_fraenkel(a1, s1, c1, a2, s2, c2)
+          self.unify_fraenkel(a1, s1, c1, a2, s2, c2)?
         } else {
           Dnf::FALSE
         };
@@ -901,7 +919,7 @@ impl Unify<'_> {
           for &m in &self.eq_class[ec].terms[CTK::Fraenkel] {
             let Term::Fraenkel { args: a2, scope: s2, compr: c2 } = &self.lc.marks[m].0
             else { unreachable!() };
-            inst.mk_or_else(|| self.unify_fraenkel(a1, s1, c1, a2, s2, c2))
+            inst.mk_or_else(|| self.unify_fraenkel(a1, s1, c1, a2, s2, c2))?
           }
         }
         self.base = base;
@@ -909,11 +927,11 @@ impl Unify<'_> {
       }
       Term::Choice { ty } => {
         let mut inst =
-          if let Term::Choice { ty: ty2 } = t2 { self.unify_type(ty, ty2) } else { Dnf::FALSE };
+          if let Term::Choice { ty: ty2 } = t2 { self.unify_type(ty, ty2)? } else { Dnf::FALSE };
         if let Some(ec) = self.get_eq_class(t2) {
           for &m in &self.eq_class[ec].terms[CTK::Choice] {
             let Term::Choice { ty: ty2 } = &self.lc.marks[m].0 else { unreachable!() };
-            inst.mk_or_else(|| self.unify_type(ty, ty2))
+            inst.mk_or_else(|| self.unify_type(ty, ty2))?
           }
         }
         inst
@@ -921,55 +939,61 @@ impl Unify<'_> {
       &Term::EqClass(n) => Dnf::mk_bool(self.get_eq_class(t2) == Some(n)),
       Term::Numeral(_) | Term::Constant(_) | Term::Infer(_) =>
         Dnf::mk_bool(Some(self.get_eq_class(t1).unwrap()) == self.get_eq_class(t2)),
-      &Term::EqMark(m) => self.unify_term(&self.lc.marks[m].0, t2),
+      &Term::EqMark(m) => self.unify_term(&self.lc.marks[m].0, t2)?,
       Term::Locus(_) | Term::PrivFunc { .. } | Term::LambdaVar(_) | Term::Qua { .. } | Term::It =>
         unreachable!(),
       _ => Dnf::FALSE,
     };
     // vprintln!("unify_term {t1:?} <> {t2:?} -> {res:?}");
-    res
+    Ok(res)
   }
 
   /// InstCollection.UNITrmList
-  fn unify_terms(&mut self, tms1: &[Term], tms2: &[Term]) -> Dnf<FVarId, EqClassId> {
+  fn unify_terms(
+    &mut self, tms1: &[Term], tms2: &[Term],
+  ) -> Result<Dnf<FVarId, EqClassId>, Overflow> {
     assert!(tms1.len() == tms2.len());
     let mut res = Dnf::True;
     for (t1, t2) in tms1.iter().zip(tms2) {
-      res.mk_and(self.unify_term(t1, t2));
+      res.mk_and(self.unify_term(t1, t2)?)?;
       if res.is_false() {
         break
       }
     }
-    res
+    Ok(res)
   }
 
   /// InstCollection.UNIFrm
-  fn unify_formula(&mut self, f1: &Formula, f2: &Formula) -> Dnf<FVarId, EqClassId> {
+  fn unify_formula(
+    &mut self, f1: &Formula, f2: &Formula,
+  ) -> Result<Dnf<FVarId, EqClassId>, Overflow> {
     // vprintln!("unify_formula {f1:?} <> {f2:?}");
     let res = match (f1, f2) {
       (Formula::True, Formula::True) => Dnf::True,
-      (Formula::Neg { f: f1 }, Formula::Neg { f: f2 }) => self.unify_formula(f1, f2),
+      (Formula::Neg { f: f1 }, Formula::Neg { f: f2 }) => self.unify_formula(f1, f2)?,
       (Formula::And { args: args1 }, Formula::And { args: args2 })
         if args1.len() == args2.len() =>
       {
         let mut res = Dnf::True;
-        args1.iter().zip(args2).for_each(|(f1, f2)| res.mk_and_then(|| self.unify_formula(f1, f2)));
+        for (f1, f2) in args1.iter().zip(args2) {
+          res.mk_and_then(|| self.unify_formula(f1, f2))?
+        }
         res
       }
       (Formula::Pred { nr: mut n1, args: args1 }, Formula::Pred { nr: mut n2, args: args2 }) => {
         let (n1_adj, args1_adj) = Formula::adjust_pred(n1, args1, &self.g.constrs);
         let (n2_adj, args2_adj) = Formula::adjust_pred(n2, args2, &self.g.constrs);
         if n1_adj != n2_adj {
-          return Dnf::FALSE
+          return Ok(Dnf::FALSE)
         }
-        let mut inst = self.unify_terms(args1_adj, args2_adj);
+        let mut inst = self.unify_terms(args1_adj, args2_adj)?;
         let c = &self.g.constrs.predicate[n1];
         if c.properties.get(PropertyKind::Symmetry) {
           inst.mk_or_else(|| {
             let mut args1 = args1.to_vec();
             args1.swap(c.arg1 as usize, c.arg2 as usize);
             self.unify_terms(&args1[c.superfluous as usize..], args2_adj)
-          });
+          })?;
         }
         let c = &self.g.constrs.predicate[n2];
         if c.properties.get(PropertyKind::Symmetry) {
@@ -977,7 +1001,7 @@ impl Unify<'_> {
             let mut args2 = args2.to_vec();
             args2.swap(c.arg1 as usize, c.arg2 as usize);
             self.unify_terms(args1_adj, &args2[c.superfluous as usize..])
-          });
+          })?;
         }
         inst
       }
@@ -988,37 +1012,37 @@ impl Unify<'_> {
       | (
         Formula::PrivPred { nr: PrivPredId(n1), args: args1, .. },
         Formula::PrivPred { nr: PrivPredId(n2), args: args2, .. },
-      ) if n1 == n2 => self.unify_terms(args1, args2),
+      ) if n1 == n2 => self.unify_terms(args1, args2)?,
       (Formula::Attr { nr: n1, args: args1 }, Formula::Attr { nr: n2, args: args2 }) => {
         let (n1, args1) = Formula::adjust_attr(*n1, args1, &self.g.constrs);
         let (n2, args2) = Formula::adjust_attr(*n2, args2, &self.g.constrs);
         if n1 == n2 {
-          self.unify_terms(args1, args2)
+          self.unify_terms(args1, args2)?
         } else {
           Dnf::FALSE
         }
       }
       (Formula::ForAll { dom: dom1, scope: sc1 }, Formula::ForAll { dom: dom2, scope: sc2 }) => {
-        let mut inst = self.unify_type(dom1, dom2);
+        let mut inst = self.unify_type(dom1, dom2)?;
         self.depth += 1;
-        inst.mk_and_then(|| self.unify_formula(sc1, sc2));
+        inst.mk_and_then(|| self.unify_formula(sc1, sc2))?;
         self.depth -= 1;
         inst
       }
       (Formula::Is { term: tm1, ty: ty1 }, Formula::Is { term: tm2, ty: ty2 }) => {
-        let mut inst = self.unify_term(tm1, tm2);
-        inst.mk_and_then(|| self.unify_type(ty1, ty2));
+        let mut inst = self.unify_term(tm1, tm2)?;
+        inst.mk_and_then(|| self.unify_type(ty1, ty2))?;
         inst
       }
       (Formula::FlexAnd { orig: orig1, .. }, Formula::FlexAnd { orig: orig2, .. }) => {
-        let mut inst = self.unify_formula(&orig1[0], &orig2[0]);
-        inst.mk_and_then(|| self.unify_formula(&orig1[1], &orig2[1]));
+        let mut inst = self.unify_formula(&orig1[0], &orig2[0])?;
+        inst.mk_and_then(|| self.unify_formula(&orig1[1], &orig2[1]))?;
         inst
       }
       _ => Dnf::FALSE,
     };
     // vprintln!("unify_formula {f1:?} <> {f2:?} -> {res:?}");
-    res
+    Ok(res)
   }
 }
 
@@ -1043,27 +1067,29 @@ struct UnifyWithConst<'a>(Unify<'a>);
 
 impl UnifyWithConst<'_> {
   /// InstCollection.UnifyTrmsWithConsts
-  fn unify_term(&mut self, t1: &Term, t2: &Term) -> Dnf<FVarId, EqClassId> {
+  fn unify_term(&mut self, t1: &Term, t2: &Term) -> Result<Dnf<FVarId, EqClassId>, Overflow> {
     let mut inst = Dnf::FALSE;
     for (ec, _) in self.0.eq_class.enum_iter() {
       let t = Term::EqClass(ec);
-      let mut inst1 = self.0.unify_term(t1, &t);
+      let mut inst1 = self.0.unify_term(t1, &t)?;
       if !inst1.is_false() {
-        inst1.mk_and(self.0.unify_term(t2, &t));
-        inst.mk_or(inst1);
+        inst1.mk_and(self.0.unify_term(t2, &t)?)?;
+        inst.mk_or(inst1)?;
       }
     }
-    inst
+    Ok(inst)
   }
 
   /// InstCollection.UnifyTrmList
-  fn unify_terms(&mut self, tms1: &[Term], tms2: &[Term]) -> Dnf<FVarId, EqClassId> {
+  fn unify_terms(
+    &mut self, tms1: &[Term], tms2: &[Term],
+  ) -> Result<Dnf<FVarId, EqClassId>, Overflow> {
     assert!(tms1.len() == tms2.len());
     let mut dnfs = Vec::with_capacity(tms1.len());
     for (t1, t2) in tms1.iter().zip(tms2) {
-      match self.unify_term(t1, t2) {
+      match self.unify_term(t1, t2)? {
         Dnf::True => continue,
-        Dnf::Or(dnf) if dnf.is_empty() => return Dnf::FALSE,
+        Dnf::Or(dnf) if dnf.is_empty() => return Ok(Dnf::FALSE),
         Dnf::Or(dnf) => dnfs.push(dnf),
       }
     }
@@ -1072,27 +1098,32 @@ impl UnifyWithConst<'_> {
 
   /// * pos = true: InstCollection.UNIAttr
   /// * pos = false: InstCollection.UNIAttr1
-  fn or_unify_attr(&mut self, attr1: &Attr, attr2: &Attr, out: &mut Dnf<FVarId, EqClassId>) {
+  fn or_unify_attr(
+    &mut self, attr1: &Attr, attr2: &Attr, out: &mut Dnf<FVarId, EqClassId>,
+  ) -> Result<(), Overflow> {
     let (n1, args1) = attr1.adjust(&self.0.g.constrs);
     let (n2, args2) = attr2.adjust(&self.0.g.constrs);
     if n1 == n2 && attr1.pos == attr2.pos {
-      out.mk_or_else(|| self.unify_terms(args1, args2))
+      out.mk_or_else(|| self.unify_terms(args1, args2))?
     }
+    Ok(())
   }
 
   /// InstCollection.UnifyInclClusters
-  fn unify_subset_attrs(&mut self, attrs1: &Attrs, attrs2: &Attrs) -> Dnf<FVarId, EqClassId> {
+  fn unify_subset_attrs(
+    &mut self, attrs1: &Attrs, attrs2: &Attrs,
+  ) -> Result<Dnf<FVarId, EqClassId>, Overflow> {
     let Attrs::Consistent(attrs1) = attrs1 else { unreachable!() };
     let Attrs::Consistent(attrs2) = attrs2 else { unreachable!() };
     if attrs1.len() > attrs2.len() {
-      return Dnf::FALSE
+      return Ok(Dnf::FALSE)
     }
     let mut inst = Dnf::True;
     let mut it2 = attrs2.iter().map(|a| (a, a.adjusted_nr(&self.0.g.constrs))).peekable();
     for attr1 in attrs1 {
       let n = attr1.adjusted_nr(&self.0.g.constrs);
       loop {
-        let Some(a) = it2.peek() else { return Dnf::FALSE };
+        let Some(a) = it2.peek() else { return Ok(Dnf::FALSE) };
         if a.1 >= n {
           break
         }
@@ -1100,39 +1131,41 @@ impl UnifyWithConst<'_> {
       }
       let mut inst1 = Dnf::FALSE;
       for (attr2, _) in it2.clone().take_while(|a| a.1 <= n) {
-        self.or_unify_attr(attr1, attr2, &mut inst1);
+        self.or_unify_attr(attr1, attr2, &mut inst1)?;
       }
-      inst.mk_and(inst1);
+      inst.mk_and(inst1)?;
       if inst.is_false() {
         break
       }
     }
-    inst
+    Ok(inst)
   }
 
   /// InstCollection.UnifyTypsWithConsts
-  fn unify_type(&mut self, ty1: &Type, ty2: &Type) -> Dnf<FVarId, EqClassId> {
+  fn unify_type(&mut self, ty1: &Type, ty2: &Type) -> Result<Dnf<FVarId, EqClassId>, Overflow> {
     let mut inst = match (ty1.kind, ty2.kind) {
       (TypeKind::Struct(n1), TypeKind::Struct(n2)) if n1 == n2 =>
-        self.unify_terms(&ty1.args, &ty2.args),
+        self.unify_terms(&ty1.args, &ty2.args)?,
       (TypeKind::Mode(n1), TypeKind::Mode(n2)) => {
         let (n1, args1) = Type::adjust(n1, &ty1.args, &self.0.g.constrs);
         let (n2, args2) = Type::adjust(n2, &ty2.args, &self.0.g.constrs);
         if n1 == n2 {
-          self.unify_terms(args1, args2)
+          self.unify_terms(args1, args2)?
         } else {
-          return Dnf::FALSE
+          return Ok(Dnf::FALSE)
         }
       }
-      _ => return Dnf::FALSE,
+      _ => return Ok(Dnf::FALSE),
     };
-    inst.mk_and_then(|| self.unify_subset_attrs(&ty1.attrs.0, &ty2.attrs.1));
-    inst.mk_and_then(|| self.unify_subset_attrs(&ty2.attrs.0, &ty1.attrs.1));
-    inst
+    inst.mk_and_then(|| self.unify_subset_attrs(&ty1.attrs.0, &ty2.attrs.1))?;
+    inst.mk_and_then(|| self.unify_subset_attrs(&ty2.attrs.0, &ty1.attrs.1))?;
+    Ok(inst)
   }
 
   /// InstCollection.UnifyBasicFrm
-  fn unify_basic_formula(&mut self, f1: &Formula, f2: &Formula) -> Dnf<FVarId, EqClassId> {
+  fn unify_basic_formula(
+    &mut self, f1: &Formula, f2: &Formula,
+  ) -> Result<Dnf<FVarId, EqClassId>, Overflow> {
     match (f1, f2) {
       (Formula::Pred { nr: n1, args: args1 }, Formula::Pred { nr: n2, args: args2 }) => {
         let (n1, args1) = Formula::adjust_pred(*n1, args1, &self.0.g.constrs);
@@ -1140,7 +1173,7 @@ impl UnifyWithConst<'_> {
         if n1 == n2 {
           self.unify_terms(args1, args2)
         } else {
-          Dnf::FALSE
+          Ok(Dnf::FALSE)
         }
       }
       (
@@ -1157,19 +1190,19 @@ impl UnifyWithConst<'_> {
         if n1 == n2 {
           self.unify_terms(args1, args2)
         } else {
-          Dnf::FALSE
+          Ok(Dnf::FALSE)
         }
       }
       (Formula::Is { term: t1, ty: ty1 }, Formula::Is { term: t2, ty: ty2 }) => {
-        let mut inst = self.unify_term(t1, t2);
-        inst.mk_and_then(|| self.unify_type(ty1, ty2));
-        inst
+        let mut inst = self.unify_term(t1, t2)?;
+        inst.mk_and_then(|| self.unify_type(ty1, ty2))?;
+        Ok(inst)
       }
       (Formula::Neg { .. }, _)
       | (Formula::And { .. }, _)
       | (Formula::FlexAnd { .. }, _)
       | (Formula::True, _) => unreachable!(),
-      _ => Dnf::FALSE,
+      _ => Ok(Dnf::FALSE),
     }
   }
 }

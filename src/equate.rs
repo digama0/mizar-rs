@@ -656,7 +656,7 @@ impl Instantiate<'_> {
         if n1 == n2 {
           let mut res = Dnf::True;
           for (a, b) in args1.iter().zip(args2) {
-            res.mk_and_then(|| self.inst_term(a, b))
+            res.mk_and_then(|| Ok(self.inst_term(a, b))).unwrap()
           }
           res
         } else {
@@ -673,7 +673,7 @@ impl Instantiate<'_> {
       ) if n1 == n2 => {
         let mut res = Dnf::True;
         for (a, b) in args1.iter().zip(&**args2) {
-          res.mk_and_then(|| self.inst_term(a, b))
+          res.mk_and_then(|| Ok(self.inst_term(a, b))).unwrap()
         }
         res
       }
@@ -686,7 +686,7 @@ impl Instantiate<'_> {
         match src {
           &Term::Locus(v) => {
             let mut z = self.inst_type(&self.subst[v.0 as usize], et);
-            z.mk_and_then(|| Dnf::single(Conjunct::single(v, self.terms[et].id)));
+            z.mk_and_then(|| Ok(Dnf::single(Conjunct::single(v, self.terms[et].id)))).unwrap();
             z
           }
           Term::Numeral(mut n) => Dnf::mk_bool(self.terms[et].number == Some(n)),
@@ -697,7 +697,7 @@ impl Instantiate<'_> {
               if let Term::Functor { nr: n2, args: args2 } = &self.lc.marks[m].0 {
                 let (n2, args2) = Term::adjust(*n2, args2, &self.g.constrs);
                 if n1 == n2 {
-                  res.mk_or_else(|| self.inst_terms(args1, args2))
+                  res.mk_or_else(|| Ok(self.inst_terms(args1, args2))).unwrap()
                 }
               }
             }
@@ -708,7 +708,7 @@ impl Instantiate<'_> {
             for &m in &self.terms[et].eq_class {
               if let Term::Selector { nr: n2, args: args2 } = &self.lc.marks[m].0 {
                 if n1 == n2 {
-                  res.mk_or_else(|| self.inst_terms(args1, args2))
+                  res.mk_or_else(|| Ok(self.inst_terms(args1, args2))).unwrap()
                 }
               }
             }
@@ -719,7 +719,7 @@ impl Instantiate<'_> {
             for &m in &self.terms[et].eq_class {
               if let Term::Aggregate { nr: n2, args: args2 } = &self.lc.marks[m].0 {
                 if n1 == n2 {
-                  res.mk_or_else(|| self.inst_terms(args1, args2))
+                  res.mk_or_else(|| Ok(self.inst_terms(args1, args2))).unwrap()
                 }
               }
             }
@@ -737,7 +737,7 @@ impl Instantiate<'_> {
     assert!(args1.len() == args2.len());
     let mut res = Dnf::True;
     for (a, b) in args1.iter().zip(args2) {
-      res.mk_and_then(|| self.inst_term(a, b))
+      res.mk_and_then(|| Ok(self.inst_term(a, b))).unwrap()
     }
     res
   }
@@ -750,7 +750,7 @@ impl Instantiate<'_> {
       TypeKind::Struct(_) =>
         for ty2 in &self.terms[et].ty_class {
           if ty.kind == ty2.kind {
-            res.mk_or(self.inst_terms(&ty.args, &ty2.args));
+            res.mk_or(self.inst_terms(&ty.args, &ty2.args)).unwrap();
             if let Dnf::True = res {
               break
             }
@@ -762,7 +762,7 @@ impl Instantiate<'_> {
           if let TypeKind::Mode(n2) = ty2.kind {
             let (n2, args2) = Type::adjust(n2, &ty2.args, &self.g.constrs);
             if n == n2 {
-              res.mk_or(self.inst_terms(args, args2));
+              res.mk_or(self.inst_terms(args, args2)).unwrap();
               if let Dnf::True = res {
                 break
               }
@@ -785,13 +785,13 @@ impl Instantiate<'_> {
       for a2 in sc {
         let (n2, args2) = a2.adjust(&self.g.constrs);
         if n1 == n2 && a1.pos == a2.pos {
-          z.mk_or(self.inst_terms(args1, args2));
+          z.mk_or(self.inst_terms(args1, args2)).unwrap();
           if let Dnf::True = z {
             continue 'next
           }
         }
       }
-      res.mk_and(z);
+      res.mk_and(z).unwrap();
     }
     // vprintln!("and_inst {attrs:?} <> {:?} -> {:?}", self.terms[et], res);
   }
@@ -1902,7 +1902,7 @@ impl<'a> Equalizer<'a> {
           let inst = self.instantiate(&cl.primary);
           let mut r = inst.inst_term(&cl.term, &Term::EqMark(self.terms[i].mark));
           if let Some(ty) = &cl.ty {
-            r.mk_and_then(|| inst.inst_type(ty, i))
+            r.mk_and_then(|| Ok(inst.inst_type(ty, i))).unwrap()
           }
           added |= self.round_up_one_supercluster(i, attrs, &r)?;
         }

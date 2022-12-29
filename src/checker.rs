@@ -79,10 +79,10 @@ impl<'a> Checker<'a> {
       // eprintln!("interned {} @ {:?}:{:?}:\n  {check_f:?}", self.idx, self.article, self.pos);
 
       let mut atoms = Atoms::default();
-      let Dnf::Or(mut normal_form) = atoms.normalize(self.g, self.lc, check_f, true)
+      let Dnf::Or(mut normal_form) = atoms.normalize(self.g, self.lc, check_f, true).unwrap()
       else { panic!("it is not true") };
 
-      self.process_is(&mut atoms, &mut normal_form);
+      self.process_is(&mut atoms, &mut normal_form).unwrap();
 
       self.g.recursive_round_up = true;
       for f in normal_form {
@@ -98,32 +98,36 @@ impl<'a> Checker<'a> {
           Unifier::new(eq, &res).run()
         })();
         // assert!(sat.is_err(), "failed to justify");
-        if sat.is_ok() {
-          stat("failure");
-          if crate::CHECKER_RESULT {
-            eprintln!(
-              "FAILED TO JUSTIFY {} @ {:?}:{:?}: {:#?}",
-              self.idx,
-              self.article,
-              self.pos,
-              f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
-            );
+        match sat {
+          Err(Unsat) => {
+            stat("success");
+            if crate::CHECKER_RESULT {
+              eprintln!(
+                "proved {} @ {:?}:{:?}! {:#?}",
+                self.idx,
+                self.article,
+                self.pos,
+                f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
+              );
+            }
           }
-          if crate::PANIC_ON_FAIL {
-            panic!("failed to justify {} @ {:?}:{:?}", self.idx, self.article, self.pos);
-          } else {
-            println!("failed to justify {} @ {:?}:{:?}", self.idx, self.article, self.pos);
-          }
-        } else {
-          stat("success");
-          if crate::CHECKER_RESULT {
-            eprintln!(
-              "proved {} @ {:?}:{:?}! {:#?}",
-              self.idx,
-              self.article,
-              self.pos,
-              f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
-            );
+          Ok(true) => panic!("overflow"),
+          Ok(false) => {
+            stat("failure");
+            if crate::CHECKER_RESULT {
+              eprintln!(
+                "FAILED TO JUSTIFY {} @ {:?}:{:?}: {:#?}",
+                self.idx,
+                self.article,
+                self.pos,
+                f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
+              );
+            }
+            if crate::PANIC_ON_FAIL {
+              panic!("failed to justify {} @ {:?}:{:?}", self.idx, self.article, self.pos);
+            } else {
+              println!("failed to justify {} @ {:?}:{:?}", self.idx, self.article, self.pos);
+            }
           }
         }
       }
@@ -134,7 +138,9 @@ impl<'a> Checker<'a> {
     self.lc.term_cache.get_mut().close_scope();
   }
 
-  fn process_is(&self, atoms: &mut Atoms, normal_form: &mut Vec<Conjunct<AtomId, bool>>) {
+  fn process_is(
+    &self, atoms: &mut Atoms, normal_form: &mut Vec<Conjunct<AtomId, bool>>,
+  ) -> Result<(), Overflow> {
     let (mut i, mut len) = (0, normal_form.len());
     while i < len {
       let conj = &normal_form[i];
@@ -169,7 +175,7 @@ impl<'a> Checker<'a> {
           let ty3 = Type { kind: ty.kind, attrs: (attrs.clone(), attrs), args: ty.args.clone() };
           let f3 = Formula::Is { term: term.clone(), ty: Box::new(ty3) };
           let a3 = atoms.insert(self.g, self.lc, Cow::Owned(f3));
-          Dnf::insert_and_absorb(&mut inst1, Conjunct::single(a3, true));
+          Dnf::insert_and_absorb(&mut inst1, Conjunct::single(a3, true))?;
         }
         let mut inst2 = vec![Conjunct::single(a2, false)];
         if let TypeKind::Struct(n) = ty.kind {
@@ -184,20 +190,21 @@ impl<'a> Checker<'a> {
                 ty: Box::new(tm2.get_type_uncached(self.g, self.lc)),
               };
               let a3 = atoms.insert(self.g, self.lc, Cow::Owned(f3));
-              Dnf::insert_and_absorb(&mut inst3, Conjunct::single(a3, false));
+              Dnf::insert_and_absorb(&mut inst3, Conjunct::single(a3, false))?;
             }
-            Dnf::mk_and_core(&mut inst2, inst3)
+            Dnf::mk_and_core(&mut inst2, inst3)?
           }
         }
         let mut inst1 = Dnf::Or(inst1);
-        inst1.mk_or(Dnf::Or(inst2));
-        inst.mk_and(inst1);
+        inst1.mk_or(Dnf::Or(inst2))?;
+        inst.mk_and(inst1)?;
       }
       let Dnf::Or(inst) = &mut inst else { unreachable!() };
       normal_form.remove(i);
       len -= 1;
       normal_form.append(inst);
     }
+    Ok(())
   }
 }
 
@@ -573,6 +580,9 @@ where Conjunct<K, V>: std::fmt::Debug
   }
 }
 
+#[derive(Debug)]
+pub struct Overflow;
+
 impl<K: Ord + Clone, V: PartialEq + Clone> Dnf<K, V>
 where Conjunct<K, V>: std::fmt::Debug
 {
@@ -599,33 +609,42 @@ where Conjunct<K, V>: std::fmt::Debug
   }
 
   /// PreInstCollection.InsertAndAbsorb
-  pub fn insert_and_absorb(this: &mut Vec<Conjunct<K, V>>, conj: Conjunct<K, V>) {
+  pub fn insert_and_absorb(
+    this: &mut Vec<Conjunct<K, V>>, conj: Conjunct<K, V>,
+  ) -> Result<(), Overflow> {
     for (i, conj1) in this.iter_mut().enumerate() {
       if conj1.weaker_than(&conj) {
-        return
+        return Ok(())
       }
       if conj.weaker_than(conj1) {
         this.retain_mut_from(i + 1, |conj2| !conj.weaker_than(conj2));
         this[i] = conj;
-        return
+        return Ok(())
       }
     }
-    this.push(conj)
+    this.push(conj);
+    if this.len() > MAX_DISJUNCTS {
+      return Err(Overflow)
+    }
+    Ok(())
   }
 
   /// PreInstCollection.UnionWith
-  pub fn mk_or(&mut self, other: Self) {
-    let Dnf::Or(this) = self else { return };
-    let Dnf::Or(other) = other else { *self = Dnf::True; return };
-    other.into_iter().for_each(|conj| Self::insert_and_absorb(this, conj));
+  pub fn mk_or(&mut self, other: Self) -> Result<(), Overflow> {
+    let Dnf::Or(this) = self else { return Ok(()) };
+    let Dnf::Or(other) = other else { *self = Dnf::True; return Ok(()) };
+    other.into_iter().try_for_each(|conj| Self::insert_and_absorb(this, conj))
   }
 
   /// PreInstCollection.UnionWith
   #[inline]
-  pub fn mk_or_else(&mut self, other: impl FnOnce() -> Self) {
+  pub fn mk_or_else(
+    &mut self, other: impl FnOnce() -> Result<Self, Overflow>,
+  ) -> Result<(), Overflow> {
     if matches!(self, Dnf::Or(_)) {
-      self.mk_or(other())
+      self.mk_or(other()?)?
     }
+    Ok(())
   }
 
   pub fn mk_and_single(&mut self, k: K, v: V) {
@@ -637,7 +656,9 @@ where Conjunct<K, V>: std::fmt::Debug
     }
   }
 
-  fn mk_and_core(this: &mut Vec<Conjunct<K, V>>, other: Vec<Conjunct<K, V>>) {
+  fn mk_and_core(
+    this: &mut Vec<Conjunct<K, V>>, other: Vec<Conjunct<K, V>>,
+  ) -> Result<(), Overflow> {
     if let [conj2] = &*other {
       this.retain_mut(|conj1| conj1.mk_and(conj2).is_ok())
     } else {
@@ -645,45 +666,52 @@ where Conjunct<K, V>: std::fmt::Debug
         for conj2 in &other {
           let mut conj = conj1.clone();
           if let Ok(()) = conj.mk_and(conj2) {
-            Self::insert_and_absorb(this, conj);
-            assert!(this.len() <= MAX_DISJUNCTS);
+            Self::insert_and_absorb(this, conj)?;
+            if this.len() > MAX_DISJUNCTS {
+              return Err(Overflow)
+            }
           }
         }
       }
     }
+    Ok(())
   }
 
   /// PreInstCollection.JoinWith
-  pub fn mk_and(&mut self, other: Self) {
+  pub fn mk_and(&mut self, other: Self) -> Result<(), Overflow> {
     match self {
       Dnf::True => *self = other,
       Dnf::Or(this) => match other {
         Dnf::True => {}
         _ if this.is_empty() => {}
         Dnf::Or(other) if other.is_empty() => this.clear(),
-        Dnf::Or(other) => Self::mk_and_core(this, other),
+        Dnf::Or(other) => Self::mk_and_core(this, other)?,
       },
     }
+    Ok(())
   }
 
-  pub fn mk_and_then(&mut self, other: impl FnOnce() -> Self) {
+  pub fn mk_and_then(
+    &mut self, other: impl FnOnce() -> Result<Self, Overflow>,
+  ) -> Result<(), Overflow> {
     if !self.is_false() {
-      self.mk_and(other())
+      self.mk_and(other()?)?
     }
+    Ok(())
   }
 
   /// PreInstCollection.JoinInstList
   /// Constructs the AND of a set of (nontrivial) DNF expressions.
-  pub fn and_many(mut dnfs: Vec<Vec<Conjunct<K, V>>>) -> Self {
+  pub fn and_many(mut dnfs: Vec<Vec<Conjunct<K, V>>>) -> Result<Self, Overflow> {
     // We sort the DNFs by length to prioritize a small accumulator
     dnfs.sort_unstable_by_key(|dnf| dnf.len());
     let mut it = dnfs.into_iter();
-    if let Some(mut this) = it.next() {
-      it.for_each(|other| Self::mk_and_core(&mut this, other));
+    Ok(if let Some(mut this) = it.next() {
+      it.try_for_each(|other| Self::mk_and_core(&mut this, other))?;
       Dnf::Or(this)
     } else {
       Dnf::True
-    }
+    })
   }
 }
 
@@ -692,22 +720,22 @@ impl Atoms {
   /// * pos = false: PreInstCollection.NormalizeAsFalse
   pub fn normalize(
     &mut self, g: &Global, lc: &LocalContext, f: Formula, pos: bool,
-  ) -> Dnf<AtomId, bool> {
+  ) -> Result<Dnf<AtomId, bool>, Overflow> {
     match f {
       Formula::Neg { f } => self.normalize(g, lc, *f, !pos),
       Formula::And { args } => {
         let mut res = Dnf::mk_bool(pos);
         if pos {
-          args.into_iter().for_each(|f| res.mk_and_then(|| self.normalize(g, lc, f, pos)))
+          args.into_iter().try_for_each(|f| res.mk_and_then(|| self.normalize(g, lc, f, pos)))?
         } else {
-          args.into_iter().for_each(|f| res.mk_or_else(|| self.normalize(g, lc, f, pos)));
+          args.into_iter().try_for_each(|f| res.mk_or_else(|| self.normalize(g, lc, f, pos)))?;
         }
-        res
+        Ok(res)
       }
-      Formula::True => Dnf::mk_bool(pos),
+      Formula::True => Ok(Dnf::mk_bool(pos)),
       _ => {
         let a = self.insert(g, lc, Cow::Owned(f));
-        Dnf::Or(vec![Conjunct::single(a, pos)])
+        Ok(Dnf::Or(vec![Conjunct::single(a, pos)]))
       }
     }
   }
