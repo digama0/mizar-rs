@@ -18,6 +18,7 @@ pub struct EqTerm {
   pub eq_class: Vec<EqMarkId>,
   pub ty_class: Vec<Type>,
   pub supercluster: Attrs,
+  pub number: Option<u32>,
   // TODO: polynomial_values
 }
 
@@ -31,6 +32,9 @@ impl std::fmt::Debug for EqTerm {
         f.debug_list().entries(&self.eq_class).finish()
       }
     })?;
+    if let Some(n) = self.number {
+      write!(f, " = {n}")?
+    }
     write!(f, ": {:?}{:?}", &self.supercluster, &self.ty_class)
   }
 }
@@ -188,6 +192,7 @@ impl Equalizer<'_> {
       eq_class: vec![],
       ty_class: vec![Type::ANY],
       supercluster: Attrs::default(),
+      number: None,
     });
     let m = self.lc.marks.push((std::mem::take(tm), et));
     *tm = Term::EqMark(m);
@@ -340,7 +345,7 @@ impl VisitMut for Y<'_, '_> {
     if self.abort() {
       return
     }
-    // vprintln!("y term {depth} <- {tm:?}");
+    // vprintln!("y term <- {tm:?}");
     let et = match tm {
       Term::Bound(_) | Term::EqClass(_) => return,
       &mut Term::Infer(nr) => {
@@ -349,9 +354,9 @@ impl VisitMut for Y<'_, '_> {
         } else {
           let (m, et) = self.new_eq_class(tm);
           *self.eq.infers.get_mut_extending(nr) = Some(self.eq.terms[et].mark);
-          // TODO: numeric_value
-          let ty = (self.eq.lc.infer_const.get_mut()[nr].ty)
-            .visit_cloned(&mut ExpandPrivFunc(&self.eq.g.constrs));
+          let ic = self.eq.lc.infer_const.get_mut();
+          let ty = ic[nr].ty.visit_cloned(&mut ExpandPrivFunc(&self.eq.g.constrs));
+          self.eq.terms[et].number = ic[nr].number;
           y_try!(self, self.insert_type(ty, et));
           *tm = Term::EqMark(self.terms[et].mark);
         }
@@ -461,7 +466,7 @@ impl VisitMut for Y<'_, '_> {
     let mut ty = tm.get_type_uncached(self.g, self.lc);
     y_try!(self, self.insert_type(ty, et));
     *tm = Term::EqMark(self.terms[et].mark);
-    // vprintln!("y term {depth} -> {tm:?} -> {:?}", tm.mark().map(|m| &self.lc.marks[m]));
+    // vprintln!("y term -> {tm:?} -> {:?}", tm.mark().map(|m| &self.lc.marks[m]));
   }
 }
 
@@ -499,14 +504,16 @@ impl Equalizer<'_> {
       }};
     }
     match &mut term {
-      Term::Numeral(n) => {
+      Term::Numeral(mut n) => {
         for (i, etm) in self.terms.enum_iter() {
-          // TODO: numeric_value
+          if !etm.eq_class.is_empty() && etm.number == Some(n) {
+            return Ok(self.lc.marks[etm.mark].1)
+          }
         }
-        // TODO: numeric_value
         let et = self.lc.marks[self.terms[fi].mark].1;
-        let m = self.lc.marks.push((term, fi));
-        self.terms[et].eq_class.push(m);
+        if matches!(self.terms[et].number.replace(n), Some(n2) if n != n2) {
+          return Err(Unsat)
+        }
         Ok(fi)
       }
       Term::Functor { mut nr, args } => {
@@ -642,7 +649,7 @@ impl Instantiate<'_> {
   fn inst_term(&self, src: &Term, tgt: &Term) -> Dnf<LocusId, EqClassId> {
     // vprintln!("inst_term {:?} <- {src:?} = {tgt:?}", self.subst);
     match (tgt.unmark(self.lc), src) {
-      (Term::Numeral(n), Term::Numeral(n2)) if n == n2 => Dnf::True,
+      (Term::Numeral(n), Term::Numeral(n2)) => Dnf::mk_bool(n == n2),
       (Term::Functor { nr: n1, args: args1 }, Term::Functor { nr: n2, args: args2 }) => {
         let (n1, args1) = Term::adjust(*n1, args1, &self.g.constrs);
         let (n2, args2) = Term::adjust(*n2, args2, &self.g.constrs);
@@ -682,19 +689,7 @@ impl Instantiate<'_> {
             z.mk_and_then(|| Dnf::single(Conjunct::single(v, self.terms[et].id)));
             z
           }
-          // TODO: numeric_value
-          // &Term::Numeral(n) if numeric_value => {}
-          Term::Numeral(n) => {
-            let mut res = Dnf::FALSE;
-            for &m in &self.terms[et].eq_class {
-              if let Term::Numeral(n2) = &self.lc.marks[m].0 {
-                if n == n2 {
-                  return Dnf::True
-                }
-              }
-            }
-            res
-          }
+          Term::Numeral(mut n) => Dnf::mk_bool(self.terms[et].number == Some(n)),
           Term::Functor { nr: n1, args: args1 } => {
             let (n1, args1) = Term::adjust(*n1, args1, &self.g.constrs);
             let mut res = Dnf::FALSE;
@@ -767,7 +762,7 @@ impl Instantiate<'_> {
           if let TypeKind::Mode(n2) = ty2.kind {
             let (n2, args2) = Type::adjust(n2, &ty2.args, &self.g.constrs);
             if n == n2 {
-              res.mk_or(self.inst_terms(&ty.args, args2));
+              res.mk_or(self.inst_terms(args, args2));
               if let Dnf::True = res {
                 break
               }
@@ -897,7 +892,11 @@ impl<'a> Equalizer<'a> {
     //   self.terms[y].eq_class.iter().map(|&x| Term::EqMark(x)).collect_vec(),
     // );
     self.clash = true;
-    // TODO: numeric_value
+    if let Some(n1) = self.terms[from].number {
+      if matches!(self.terms[to].number.replace(n1), Some(n2) if n1 != n2) {
+        return Err(Unsat)
+      }
+    }
     for &m in &self.terms[from].eq_class {
       let m = self.terms[self.lc.marks[m].1].mark;
       self.lc.marks[m].1 = to;
@@ -944,13 +943,7 @@ impl<'a> Equalizer<'a> {
           et.eq_class.iter().any(|&m| matches!(self.lc.marks[m].0, Term::Infer(n2) if n == n2))
         })
         .map(|et| et.mark),
-      Term::Numeral(nr) => (self.terms.0.iter())
-        .find(|et| {
-          et.eq_class
-            .iter()
-            .any(|&m| matches!(&self.lc.marks[m].0, Term::Numeral(nr2) if nr == *nr2))
-        })
-        .map(|et| et.mark), // TODO: numeric_value
+      Term::Numeral(nr) => self.terms.0.iter().find(|et| et.number == Some(nr)).map(|et| et.mark),
       Term::Functor { nr, ref args } => (self.terms.0.iter())
         .find(|et| {
           et.eq_class.iter().any(|&m| {
@@ -1427,6 +1420,11 @@ impl<'a> Equalizer<'a> {
       }
     }
 
+    // vprintln!("start");
+    // for (et, etm) in self.terms.enum_iter() {
+    //   vprintln!("state: {et:?}' {:#?}", etm);
+    // }
+
     let [mut neg_bas, mut pos_bas] = bas.into_array();
     self.add_symm(&pos_bas, &mut neg_bas, PropertyKind::Asymmetry);
     self.add_symm(&neg_bas, &mut pos_bas, PropertyKind::Connectedness);
@@ -1678,7 +1676,11 @@ impl<'a> Equalizer<'a> {
                 }
               }
             }
-            // TODO: numeric_value
+            if let (Some(n1), Some(n2)) = (self.terms[et1].number, self.terms[et1].number) {
+              if n1 > n2 {
+                return Err(Unsat)
+              }
+            }
           } else if self.g.reqs.belongs_to() == Some(nr) {
             let [arg1, arg2] = args else { unreachable!() };
             let et1 = self.lc.marks[arg1.mark().unwrap()].1;
@@ -1799,7 +1801,11 @@ impl<'a> Equalizer<'a> {
                     .supercluster
                     .try_insert(&self.g.constrs, Attr::new0(positive, true))?;
               }
-              // TODO: numeric_value
+              if let (Some(n1), Some(n2)) = (self.terms[et1].number, self.terms[et1].number) {
+                if n1 <= n2 {
+                  return Err(Unsat)
+                }
+              }
             } else if self.g.reqs.belongs_to() == Some(nr) {
               if let (Some(element), Some(empty)) = (self.g.reqs.element(), self.g.reqs.empty()) {
                 let [arg1, arg2] = args else { unreachable!() };
@@ -1892,6 +1898,7 @@ impl<'a> Equalizer<'a> {
         }
         for (mut j, attrs) in &allowed.fcl {
           let cl = &self.g.clusters.functor.vec[j];
+          // vprintln!("\nround up [{j}] = {cl:#?}\n in {:?}", self.terms[i]);
           let inst = self.instantiate(&cl.primary);
           let mut r = inst.inst_term(&cl.term, &Term::EqMark(self.terms[i].mark));
           if let Some(ty) = &cl.ty {
@@ -1927,8 +1934,10 @@ impl<'a> Equalizer<'a> {
     ineqs.base = ineqs.ineqs.len();
     self.check_refl(&pos_bas, PropertyKind::Irreflexivity, &mut ineqs)?;
     self.check_refl(&neg_bas, PropertyKind::Reflexivity, &mut ineqs)?;
-    for (etm1, etm2) in
-      self.terms.0.iter().filter(|etm| !etm.eq_class.is_empty()).tuple_combinations()
+    ineqs.process(self, &mut neg_bas)?;
+    for (etm1, etm2) in (self.terms.0.iter())
+      .filter(|etm| !etm.eq_class.is_empty() && !etm.supercluster.attrs().is_empty())
+      .tuple_combinations()
     {
       if etm1.supercluster.contradicts(&self.g.constrs, &etm2.supercluster) {
         ineqs.push(etm1.mark, etm2.mark)

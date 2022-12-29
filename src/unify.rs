@@ -13,6 +13,7 @@ struct EqTerm {
   ty_class: Vec<Type>,
   supercluster: Attrs,
   terms: EnumMap<ComplexTermKind, Vec<EqMarkId>>,
+  number: Option<u32>,
 }
 
 impl std::fmt::Debug for EqTerm {
@@ -24,6 +25,9 @@ impl std::fmt::Debug for EqTerm {
         f.debug_list().entries(self.terms.values().flatten()).finish()
       }
     })?;
+    if let Some(n) = self.number {
+      write!(f, " = {n}")?
+    }
     write!(f, ": {:?}{:?}", &self.supercluster, &self.ty_class)
   }
 }
@@ -82,12 +86,12 @@ impl<'a> Unifier<'a> {
             Some(k) => ec.terms[k].push(m),
             None => match *t {
               Term::Infer(i) => drop(u.infer.insert(i, etm.id)),
-              Term::Numeral(_) => {}
+              Term::Numeral(n) => {}
               _ => unreachable!(),
             },
           }
         }
-        // TODO: numeric_value
+        ec.number = etm.number;
         ec.ty_class = etm.ty_class;
         ec.supercluster = etm.supercluster;
       }
@@ -555,7 +559,23 @@ impl Unify<'_> {
               inst.mk_or_else(|| self.unify_formula(f, f2));
             }
           }
-          // TODO: numeric_value
+          for (ec1, etm1) in self.eq_class.enum_iter() {
+            if let Some(n1) = etm1.number {
+              let mut inst1 = self.unify_term(arg1, &Term::EqClass(ec1));
+              if !inst1.is_false() {
+                let mut inst2 = Dnf::FALSE;
+                for (ec2, etm2) in self.eq_class.enum_iter() {
+                  if let Some(n2) = etm2.number {
+                    if (n1 <= n2) != pos {
+                      inst2.mk_or(self.unify_term(arg2, &Term::EqClass(ec2)));
+                    }
+                  }
+                }
+                inst1.mk_and(inst2);
+                inst.mk_or(inst1);
+              }
+            }
+          }
           if let (Some(positive), Some(negative)) = (self.g.reqs.positive(), self.g.reqs.negative())
           {
             for (ec1, etm1) in self.eq_class.enum_iter() {
@@ -589,9 +609,28 @@ impl Unify<'_> {
             skip = true
           }
         } else if self.g.reqs.equals_to() == Some(nr) {
-          let [arg1, arg2] = args else { unreachable!() };
-          // TODO: numeric_value
-          if !pos {
+          if pos {
+            let [arg1, arg2] = args else { unreachable!() };
+            for (ec, etm) in self.eq_class.enum_iter() {
+              if let Some(n1) = etm.number {
+                let t = Term::EqClass(ec);
+                let mut inst1 = self.unify_term(arg1, &t);
+                if !inst1.is_false() {
+                  let mut inst2 = Dnf::FALSE;
+                  for (ec2, etm2) in self.eq_class.enum_iter() {
+                    if ec != ec2 {
+                      if let Some(n2) = etm2.number {
+                        assert!(n1 != n2);
+                        inst2.mk_or(self.unify_term(arg2, &t));
+                      }
+                    }
+                  }
+                  inst1.mk_and(inst2);
+                  inst.mk_or(inst1)
+                }
+              }
+            }
+          } else {
             skip = true
           }
         }
@@ -773,16 +812,12 @@ impl Unify<'_> {
   fn unify_func(&mut self, n1: FuncId, args1: &[Term], t2: &Term) -> Dnf<FVarId, EqClassId> {
     let Term::Functor { nr: mut n2, args: args2 } = t2 else { return Dnf::FALSE };
     // vprintln!("unify: {:?} =?= {:?}", args1, t2);
+    let (n1, args1) = Term::adjust(n1, args1, &self.g.constrs);
+    let (n2, args2) = Term::adjust(n2, args2, &self.g.constrs);
     if n1 == n2 {
       self.unify_terms(args1, args2)
     } else {
-      let (n1, args1) = Term::adjust(n1, args1, &self.g.constrs);
-      let (n2, args2) = Term::adjust(n2, args2, &self.g.constrs);
-      if n1 == n2 {
-        self.unify_terms(args1, args2)
-      } else {
-        Dnf::FALSE
-      }
+      Dnf::FALSE
     }
   }
 
@@ -1158,14 +1193,8 @@ impl EquateClass<'_> {
     }
     match *tm {
       Term::EqClass(ec) => Some(ec),
-      Term::Numeral(i) => {
-        (self.eq_class.enum_iter())
-          .find(|(ec, etm)| {
-            // TODO: numeric_value
-            false
-          })
-          .map(|p| p.0)
-      }
+      Term::Numeral(n) =>
+        self.eq_class.enum_iter().find(|(ec, etm)| etm.number == Some(n)).map(|p| p.0),
       Term::Infer(n) => self.infer.get(&n).copied(),
       Term::Functor { nr, ref args } => {
         let ecs = args.iter().map(|t| self.get(g, lc, t)).collect::<Option<Vec<_>>>()?;
@@ -1173,17 +1202,14 @@ impl EquateClass<'_> {
           for &m in &etm.terms[CTK::Functor] {
             let Term::Functor { nr: nr2, args: ref args2 } = lc.marks[m].0
             else { unreachable!() };
-            let it = if nr == nr2 {
-              args2.iter().zip(&*ecs)
-            } else {
-              let (nr, adj) = Term::adjust(nr, args, &g.constrs);
-              let (nr2, adj2) = Term::adjust(nr2, args2, &g.constrs);
-              if nr != nr2 {
-                continue
-              }
-              adj2.iter().zip(&ecs[args.len() - adj.len()..])
-            };
-            if { it }.all(|(arg, &ec2)| arg.unmark(lc).class() == Some(ec2)) {
+            let (nr, adj) = Term::adjust(nr, args, &g.constrs);
+            let (nr2, adj2) = Term::adjust(nr2, args2, &g.constrs);
+            if nr != nr2 {
+              continue
+            }
+            if (adj2.iter().zip(&ecs[args.len() - adj.len()..]))
+              .all(|(arg, &ec2)| arg.unmark(lc).class() == Some(ec2))
+            {
               return Some(ec)
             }
           }

@@ -1,5 +1,5 @@
 use crate::types::*;
-use crate::{CmpStyle, MizPath, RequirementIndexes};
+use crate::{CmpStyle, MizPath, OnVarMut, RequirementIndexes, VisitMut};
 use enum_map::Enum;
 use quick_xml::escape::unescape;
 use quick_xml::events::{BytesStart, Event};
@@ -77,6 +77,8 @@ struct XmlReader<'a> {
   /// false = InMMLFileObj or InEnvFileObj, true = InVRFFileObj
   two_clusters: bool,
   ctx: MaybeMut<'a, Constructors>,
+  depth: u32,
+  suppress_bvar_errors: bool,
 }
 
 impl MizPath {
@@ -93,7 +95,7 @@ impl MizPath {
     r.expand_empty_elements(true);
     r.check_end_names(true);
     assert!(matches!(r.read_event(&mut buf).unwrap(), Event::Decl(_)));
-    Ok((XmlReader { r, two_clusters, ctx: ctx.into() }, buf))
+    Ok((XmlReader { r, two_clusters, ctx: ctx.into(), depth: 0, suppress_bvar_errors: false }, buf))
   }
 
   /// two_clusters: false = InMMLFileObj or InEnvFileObj, true = InVRFFileObj
@@ -904,6 +906,15 @@ impl XmlReader<'_> {
     Property { article, abs_nr, primary, ty, kind }
   }
 
+  fn lower(&self) -> impl VisitMut + '_ {
+    OnVarMut(|nr| {
+      if *nr >= self.depth {
+        assert!(*nr != self.depth || self.suppress_bvar_errors);
+        *nr -= 1
+      }
+    })
+  }
+
   fn parse_elem(&mut self, buf: &mut Vec<u8>) -> Elem {
     if let Event::Start(e) = self.read_event(buf) {
       macro_rules! parse_var {
@@ -992,12 +1003,17 @@ impl XmlReader<'_> {
           let mut args = vec![];
           let scope = loop {
             match self.parse_elem(buf) {
-              Elem::Type(ty) => args.push(ty),
+              Elem::Type(mut ty) => {
+                ty.visit(&mut self.lower());
+                args.push(ty);
+                self.depth += 1;
+              }
               Elem::Term(scope) => break Box::new(scope),
               _ => panic!("expected scope term"),
             }
           };
           let compr = Box::new(self.parse_formula(buf).unwrap());
+          self.depth -= args.len() as u32;
           self.end_tag(buf);
           Elem::Term(Term::Fraenkel { args: args.into_boxed_slice(), scope, compr })
         }
@@ -1060,8 +1076,11 @@ impl XmlReader<'_> {
           //     var_id = self.get_attr(&attr.value)
           //   }
           // }
-          let dom = Box::new(self.parse_type(buf).unwrap());
+          let mut dom = Box::new(self.parse_type(buf).unwrap());
+          dom.visit(&mut self.lower());
+          self.depth += 1;
           let scope = Box::new(self.parse_formula(buf).unwrap());
+          self.depth -= 1;
           self.end_tag(buf);
           Elem::Formula(Formula::ForAll { dom, scope })
         }
@@ -1572,6 +1591,11 @@ impl ArticleParser<'_> {
           ArticleElem::Item(Item::Block { kind, pos: (start, end), label, items })
         }
         b"Reservation" => {
+          // Note: <Var> elements inside reservations are seriously broken. For example, in:
+          //   reserve A for set, f for Function of A, {x where x is Nat : x = A};
+          // both x and A in the equality are represented as <Var nr="1"/>.
+          // Luckily, the checker doesn't really care about reservations, so we just skip them.
+          self.r.suppress_bvar_errors = true;
           let mut ids = vec![];
           let ty = loop {
             match self.r.parse_elem(&mut self.buf) {
@@ -1580,6 +1604,7 @@ impl ArticleParser<'_> {
               _ => panic!("unexpected reservation item"),
             }
           };
+          self.r.suppress_bvar_errors = false;
           self.r.end_tag(&mut self.buf);
           ArticleElem::Item(Item::Reservation { ids, ty })
         }
@@ -1980,6 +2005,10 @@ impl ArticleParser<'_> {
           ArticleElem::Pattern(self.r.parse_pattern_body(&mut self.buf, attrs))
         }
         b"BlockThesis" => {
+          // Note: It seems to be somewhat rare, but there is a bvar error in the block thesis
+          // at ring_2.miz:2267 indicating some kind of bvar bug in the analyzer.
+          // This is in the <Thesis> element which is ignored here, so we just suppress the error.
+          self.r.suppress_bvar_errors = true;
           let f = loop {
             match self.r.parse_elem(&mut self.buf) {
               Elem::Formula(f) => break f,
@@ -1987,6 +2016,7 @@ impl ArticleParser<'_> {
               _ => panic!("unexpected block thesis element"),
             }
           };
+          self.r.suppress_bvar_errors = false;
           self.r.end_tag(&mut self.buf);
           ArticleElem::BlockThesis(f)
         }

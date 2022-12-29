@@ -184,7 +184,7 @@ impl<'a> Pretty<'a> {
   ) -> Doc<'a> {
     let lc = self.lc.unwrap();
     assert_eq!(len as usize, args.len());
-    let vis = (!SHOW_INVISIBLE).then_some(vis);
+    let vis = (!SHOW_INVISIBLE || vis.len() == args.len()).then_some(vis);
     let (left, right) = if let Some(vis) = vis {
       assert_eq!(vis.len(), (left + right) as usize);
       (left, right)
@@ -350,16 +350,17 @@ impl<'a> Pretty<'a> {
         assert_eq!(vis.len(), n as usize);
         let (v0, vis) = vis.split_last().unwrap();
         assert_eq!(*v0 as usize, args.len());
-        let vis = (!SHOW_INVISIBLE).then_some(vis);
+        let vis = (!SHOW_INVISIBLE || vis.len() == args.len()).then_some(vis);
         let sym = if SHOW_ORIG {
           self.text(format!("{}[{}]", lc.formatter.symbols[&sym.into()], nr.0))
         } else {
           self.text(&lc.formatter.symbols[&sym.into()])
         };
-        return match vis.map_or(args.len(), |v| v.len()) {
-          0 => sym,
-          1 => self.term(true, &args[vis.map_or(0, |v| v[0] as usize)], depth).append(sym),
-          _ => self.terms(vis, args, depth).parens().append(sym),
+        return match (vis, args) {
+          (None, []) | (Some([]), _) => sym,
+          (Some(&[v]), _) => self.term(true, &args[v as usize], depth).append(sym),
+          (Some(vis), _) => self.terms(Some(vis), args, depth).parens().append(sym),
+          (None, _) => sym.append(self.terms(None, args, depth).parens()),
         }
       }
     }
@@ -394,7 +395,7 @@ impl<'a> Pretty<'a> {
           {
             assert_eq!(len as usize, ty.args.len());
             assert_eq!(vis.len(), args as usize);
-            ovis = Some(&**vis);
+            ovis = (!SHOW_INVISIBLE || vis.len() == ty.args.len()).then_some(&**vis);
             s = Some(if SHOW_ORIG {
               Cow::Owned(format!("{}({})", &*lc.formatter.symbols[&sym.into()], n.0))
             } else {
@@ -405,7 +406,7 @@ impl<'a> Pretty<'a> {
           if let Some(&(len, ref vis, FormatMode { sym, args })) = lc.formatter.mode.get(&n) {
             assert_eq!(len as usize, ty.args.len());
             assert_eq!(vis.len(), args as usize);
-            ovis = Some(&**vis);
+            ovis = (!SHOW_INVISIBLE || vis.len() == ty.args.len()).then_some(&**vis);
             s = Some(if SHOW_ORIG {
               Cow::Owned(format!("{}[{}]", &*lc.formatter.symbols[&sym.into()], n.0))
             } else {
@@ -425,12 +426,12 @@ impl<'a> Pretty<'a> {
     });
     let doc = match ovis.map_or(ty.args.len(), |vis| vis.len()) {
       0 => doc,
-      _ => {
+      n => {
         let of = match ty.kind {
           TypeKind::Mode(_) => " of ",
           TypeKind::Struct(_) => " over ",
         };
-        doc.append(of).append(self.terms(ovis, &ty.args, depth))
+        doc.append(of).append(self.parens_if(n != 1, self.terms(ovis, &ty.args, depth)))
       }
     };
     doc.group()
@@ -520,26 +521,26 @@ impl<'a> Pretty<'a> {
 
 impl std::fmt::Debug for Term {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.term(false, self, 0).render_fmt(100, f))
+    Pretty::with(|p| p.term(false, self, 0).nest(2).render_fmt(100, f))
   }
 }
 impl std::fmt::Debug for Formula {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.formula(false, true, self, 0).render_fmt(100, f))
+    Pretty::with(|p| p.formula(false, true, self, 0).nest(2).render_fmt(100, f))
   }
 }
 impl std::fmt::Debug for Attr {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.attr(self, false, 0).render_fmt(100, f))
+    Pretty::with(|p| p.attr(self, false, 0).nest(2).render_fmt(100, f))
   }
 }
 impl std::fmt::Debug for Attrs {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.attrs(self, false, 0).render_fmt(100, f))
+    Pretty::with(|p| p.attrs(self, false, 0).nest(2).render_fmt(100, f))
   }
 }
 impl std::fmt::Debug for Type {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.ty(self, 0).render_fmt(100, f))
+    Pretty::with(|p| p.ty(self, 0).nest(2).render_fmt(100, f))
   }
 }

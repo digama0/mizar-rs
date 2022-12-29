@@ -626,14 +626,11 @@ trait Equate {
       | (Infer(InferId(n1)), Infer(InferId(n2)))
         if n1 == n2 =>
         true,
-      (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) =>
-        if n1 == n2 {
-          self.eq_terms(g, lc, args1, args2)
-        } else {
-          let (n1, args1) = Term::adjust(*n1, args1, &g.constrs);
-          let (n2, args2) = Term::adjust(*n2, args2, &g.constrs);
-          n1 == n2 && self.eq_terms(g, lc, args1, args2)
-        },
+      (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) => {
+        let (n1, args1) = Term::adjust(*n1, args1, &g.constrs);
+        let (n2, args2) = Term::adjust(*n2, args2, &g.constrs);
+        n1 == n2 && self.eq_terms(g, lc, args1, args2)
+      }
       (SchFunc { nr: SchFuncId(n1), args: args1 }, SchFunc { nr: SchFuncId(n2), args: args2 })
       | (Aggregate { nr: AggrId(n1), args: args1 }, Aggregate { nr: AggrId(n2), args: args2 })
       | (
@@ -667,18 +664,15 @@ trait Equate {
   /// for (): TypObj.EqRadices
   fn eq_radices(&mut self, g: &Global, lc: &LocalContext, ty1: &Type, ty2: &Type) -> bool {
     match (ty1.kind, ty2.kind) {
-      (TypeKind::Mode(n1), TypeKind::Mode(n2)) =>
-        if n1 == n2 {
-          self.eq_terms(g, lc, &ty1.args, &ty2.args)
+      (TypeKind::Mode(n1), TypeKind::Mode(n2)) => {
+        let (n1, args1) = if Self::ADJUST_LEFT {
+          Type::adjust(n1, &ty1.args, &g.constrs)
         } else {
-          let (n1, args1) = if Self::ADJUST_LEFT {
-            Type::adjust(n1, &ty1.args, &g.constrs)
-          } else {
-            (n1, &*ty1.args)
-          };
-          let (n2, args2) = Type::adjust(n2, &ty2.args, &g.constrs);
-          n1 == n2 && self.eq_terms(g, lc, args1, args2)
-        },
+          (n1, &*ty1.args)
+        };
+        let (n2, args2) = Type::adjust(n2, &ty2.args, &g.constrs);
+        n1 == n2 && self.eq_terms(g, lc, args1, args2)
+      }
       (TypeKind::Struct(n1), TypeKind::Struct(n2)) =>
         n1 == n2 && self.eq_terms(g, lc, &ty1.args, &ty2.args),
       _ => false,
@@ -1634,8 +1628,7 @@ impl Attrs {
 
   /// ContradictoryAttrs(aClu1 = self, aClu2 = other)
   pub fn contradicts(&self, ctx: &Constructors, other: &Self) -> bool {
-    let Self::Consistent(this) = self else { return true };
-    let Self::Consistent(other) = other else { return true };
+    let (Self::Consistent(this), Self::Consistent(other)) = (self, other) else { return true };
     itertools::merge_join_by(this, other, |a, b| a.cmp_abs(ctx, b, CmpStyle::Strict))
       .any(|item| matches!(item, EitherOrBoth::Both(attr1, attr2) if attr1.pos != attr2.pos))
   }
@@ -1933,10 +1926,13 @@ impl<'a> InternConst<'a> {
           ty.round_up_with_self(self.g, self.lc);
           let def = std::mem::take(tm);
           // TODO: numeric_value
+          let number = if let Term::Numeral(n) = def { Some(n) } else { None };
           ic = self.lc.infer_const.borrow_mut();
           let has_numbers = HasNumbers::get(self.g, &ic, |hn| hn.visit_term(&def));
-          let nr =
-            ic.insert_at(i, Assignment { def, ty, has_numbers, eq_const: Default::default() });
+          let nr = ic.insert_at(
+            i,
+            Assignment { def, ty, has_numbers, number, eq_const: Default::default() },
+          );
           // vprintln!("insert ?{nr:?} : {:?} := {:?}", ic[nr].ty, ic[nr].def);
           let mut ty = ic[nr].ty.clone();
           drop(ic);
@@ -2188,6 +2184,7 @@ struct Assignment {
   def: Term,
   ty: Type,
   has_numbers: bool,
+  number: Option<u32>,
   eq_const: BTreeSet<InferId>,
   // numeric_value: Option<Complex>,
 }
