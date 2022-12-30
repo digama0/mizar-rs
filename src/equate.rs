@@ -1920,6 +1920,10 @@ impl<'a> Equalizer<'a> {
         }
       }
     }
+    // vprintln!("after round up");
+    // for (et, etm) in self.terms.enum_iter() {
+    //   vprintln!("state: {et:?}' {:#?}", etm);
+    // }
 
     // PreUnification
     let mut ineqs = Ineqs::default();

@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 const ENABLE_FORMATTER: bool = true;
 const SHOW_INFER: bool = false;
+const SHOW_ONLY_INFER: bool = false;
 const SHOW_MARKS: bool = false;
 const SHOW_INVISIBLE: bool = false;
 const SHOW_ORIG: bool = false;
@@ -237,11 +238,13 @@ impl<'a> Pretty<'a> {
         self.text(format!("m{}", nr.0))
       }
       Term::Infer(nr) => {
-        if let Some(ic) = self.lc.and_then(|lc| lc.infer_const.try_borrow().ok()) {
-          return if SHOW_INFER {
-            self.text(format!("?{}=", nr.0)).append(self.term(true, &ic[*nr].def, depth))
-          } else {
-            self.term(prec, &ic[*nr].def, depth)
+        if !SHOW_ONLY_INFER {
+          if let Some(ic) = self.lc.and_then(|lc| lc.infer_const.try_borrow().ok()) {
+            return if SHOW_INFER {
+              self.text(format!("?{}=", nr.0)).append(self.term(true, &ic[*nr].def, depth))
+            } else {
+              self.term(prec, &ic[*nr].def, depth)
+            }
           }
         }
         self.text(format!("?{}", nr.0))

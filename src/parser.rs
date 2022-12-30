@@ -910,7 +910,7 @@ impl XmlReader<'_> {
     OnVarMut(|nr| {
       if *nr >= self.depth {
         assert!(*nr != self.depth || self.suppress_bvar_errors);
-        *nr -= 1
+        *nr = nr.saturating_sub(1)
       }
     })
   }

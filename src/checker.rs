@@ -81,8 +81,10 @@ impl<'a> Checker<'a> {
       let mut atoms = Atoms::default();
       let Dnf::Or(mut normal_form) = atoms.normalize(self.g, self.lc, check_f, true).unwrap()
       else { panic!("it is not true") };
+      // eprintln!("normalized {} @ {:?}:{:?}:\n  {normal_form:?}", self.idx, self.article, self.pos);
 
       self.process_is(&mut atoms, &mut normal_form).unwrap();
+      // eprintln!("process_is {} @ {:?}:{:?}:\n  {normal_form:?}", self.idx, self.article, self.pos);
 
       self.g.recursive_round_up = true;
       for f in normal_form {
@@ -98,36 +100,32 @@ impl<'a> Checker<'a> {
           Unifier::new(eq, &res).run()
         })();
         // assert!(sat.is_err(), "failed to justify");
-        match sat {
-          Err(Unsat) => {
-            stat("success");
-            if crate::CHECKER_RESULT {
-              eprintln!(
-                "proved {} @ {:?}:{:?}! {:#?}",
-                self.idx,
-                self.article,
-                self.pos,
-                f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
-              );
-            }
+        if sat.is_err() {
+          stat("success");
+          if crate::CHECKER_RESULT {
+            eprintln!(
+              "proved {} @ {:?}:{:?}! {:#?}",
+              self.idx,
+              self.article,
+              self.pos,
+              f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
+            );
           }
-          Ok(true) => panic!("overflow"),
-          Ok(false) => {
-            stat("failure");
-            if crate::CHECKER_RESULT {
-              eprintln!(
-                "FAILED TO JUSTIFY {} @ {:?}:{:?}: {:#?}",
-                self.idx,
-                self.article,
-                self.pos,
-                f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
-              );
-            }
-            if crate::PANIC_ON_FAIL {
-              panic!("failed to justify {} @ {:?}:{:?}", self.idx, self.article, self.pos);
-            } else {
-              println!("failed to justify {} @ {:?}:{:?}", self.idx, self.article, self.pos);
-            }
+        } else {
+          stat("failure");
+          if crate::CHECKER_RESULT {
+            eprintln!(
+              "FAILED TO JUSTIFY {} @ {:?}:{:?}: {:#?}",
+              self.idx,
+              self.article,
+              self.pos,
+              f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
+            );
+          }
+          if crate::PANIC_ON_FAIL {
+            panic!("failed to justify {} @ {:?}:{:?}", self.idx, self.article, self.pos);
+          } else {
+            println!("failed to justify {} @ {:?}:{:?}", self.idx, self.article, self.pos);
           }
         }
       }

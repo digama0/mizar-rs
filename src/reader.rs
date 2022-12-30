@@ -409,19 +409,20 @@ impl Reader {
   fn push_identify(&mut self, id: &Identify) {
     if let IdentifyKind::Func { lhs, rhs } = &id.kind {
       let mut ic = self.lc.infer_const.borrow();
-      let mut i = InferId::default();
-      while let Some(asgn) = ic.get(i) {
+      // Note that the infer_const array can grow in the loop,
+      // but the loop itself only goes over the elements which are there at the beginning
+      for i in 0..ic.len() {
+        let asgn = &ic.0[i];
         if matches!(asgn.def, Term::Functor { .. }) {
           if let Some(subst) = id.try_apply_lhs(&self.g, &self.lc, lhs, &asgn.def) {
             let mut tm = subst.inst_term(rhs, 0);
             drop(ic);
             tm.visit(&mut self.intern_const());
             let Term::Infer(n) = tm else { unreachable!() };
-            self.lc.infer_const.borrow_mut()[i].eq_const.insert(n);
+            self.lc.infer_const.borrow_mut().0[i].eq_const.insert(n);
             ic = self.lc.infer_const.borrow();
           }
         }
-        i.0 += 1;
       }
       let Term::Functor { nr, args } = lhs else { unreachable!() };
       let k = ConstrKind::Func(Term::adjusted_nr(*nr, &self.g.constrs));

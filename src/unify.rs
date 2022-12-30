@@ -233,6 +233,8 @@ impl<'a> Unifier<'a> {
       }
     }
 
+    // This is a super sketchy test, since it is non-monotonic -
+    // rejecting more possibilities can cause more proofs to check
     if complementary.len() != 1 {
       return Ok(Ok(()))
     }
@@ -259,7 +261,7 @@ impl<'a> Unifier<'a> {
   }
 
   /// Unification
-  pub fn run(&mut self) -> OrUnsat<bool> {
+  pub fn run(&mut self) -> OrUnsat<()> {
     let univ =
       self.bas[true].0 .0.iter().filter(|f| matches!(f, Formula::ForAll { .. })).collect_vec();
     let mut overflow = false;
@@ -308,7 +310,8 @@ impl<'a> Unifier<'a> {
         }
       }
     }
-    Ok(overflow)
+    assert!(!overflow);
+    Ok(())
   }
 }
 
@@ -1115,7 +1118,8 @@ impl UnifyWithConst<'_> {
   ) -> Result<Dnf<FVarId, EqClassId>, Overflow> {
     let Attrs::Consistent(attrs1) = attrs1 else { unreachable!() };
     let Attrs::Consistent(attrs2) = attrs2 else { unreachable!() };
-    if attrs1.len() > attrs2.len() {
+    // This test is wrong, but it is needed because of non-monotonicity in resolution()
+    if attrs1.len() < attrs2.len() {
       return Ok(Dnf::FALSE)
     }
     let mut inst = Dnf::True;
