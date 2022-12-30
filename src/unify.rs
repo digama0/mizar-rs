@@ -625,17 +625,16 @@ impl Unify<'_> {
         } else if self.g.reqs.equals_to() == Some(nr) {
           if pos {
             let [arg1, arg2] = args else { unreachable!() };
-            for (ec, etm) in self.eq_class.enum_iter() {
-              if let Some(n1) = etm.number {
-                let t = Term::EqClass(ec);
-                let mut inst1 = self.unify_term(arg1, &t)?;
+            for (ec1, etm1) in self.eq_class.enum_iter() {
+              if let Some(n1) = etm1.number {
+                let mut inst1 = self.unify_term(arg1, &Term::EqClass(ec1))?;
                 if !inst1.is_false() {
                   let mut inst2 = Dnf::FALSE;
                   for (ec2, etm2) in self.eq_class.enum_iter() {
-                    if ec != ec2 {
+                    if ec1 != ec2 {
                       if let Some(n2) = etm2.number {
                         assert!(n1 != n2);
-                        inst2.mk_or(self.unify_term(arg2, &t)?)?;
+                        inst2.mk_or(self.unify_term(arg2, &Term::EqClass(ec2))?)?;
                       }
                     }
                   }

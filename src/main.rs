@@ -1881,6 +1881,43 @@ impl VisitMut for ExpandPrivFunc<'_> {
   }
 }
 
+impl Term {
+  fn try_to_number(&self, g: &Global, lc: &LocalContext) -> Option<u32> {
+    match *self {
+      Term::Numeral(n) => Some(n),
+      Term::Functor { nr, ref args } => {
+        let (nr, args) = Term::adjust(nr, args, &g.constrs);
+        macro_rules! op {
+          (|$x:ident, $y:ident| $e:expr) => {{
+            let [arg1, arg2] = args else { unreachable!() };
+            let Term::Infer(i1) = *arg1.skip_priv_func() else { unreachable!() };
+            let Term::Infer(i2) = *arg2.skip_priv_func() else { unreachable!() };
+            let ic = lc.infer_const.borrow();
+            let ($x, $y) = (ic[i1].number?, ic[i2].number?);
+            $e
+          }};
+          (|$x:ident| $e:expr) => {{
+            let [arg1] = args else { unreachable!() };
+            let Term::Infer(i1) = *arg1.skip_priv_func() else { unreachable!() };
+            let ic = lc.infer_const.borrow();
+            let $x = ic[i1].number?;
+            $e
+          }};
+        }
+        match g.reqs.rev.get(nr) {
+          // TODO: ImaginaryUnit, RealDiv, RealInv
+          Some(Some(Requirement::RealAdd)) => op!(|x, y| x.checked_add(y)),
+          Some(Some(Requirement::RealMult)) => op!(|x, y| x.checked_mul(y)),
+          Some(Some(Requirement::RealDiff)) => op!(|x, y| x.checked_sub(y)),
+          Some(Some(Requirement::RealNeg)) => op!(|x| x.checked_neg()),
+          _ => None,
+        }
+      }
+      _ => None,
+    }
+  }
+}
+
 pub struct InternConst<'a> {
   g: &'a Global,
   lc: &'a LocalContext,
@@ -1925,14 +1962,9 @@ impl<'a> InternConst<'a> {
           let mut ty = *tm.round_up_type(self.g, self.lc).to_owned();
           ty.round_up_with_self(self.g, self.lc);
           let def = std::mem::take(tm);
-          // TODO: numeric_value
-          let number = if let Term::Numeral(n) = def { Some(n) } else { None };
+          let number = def.try_to_number(self.g, self.lc);
           ic = self.lc.infer_const.borrow_mut();
-          let has_numbers = HasNumbers::get(self.g, &ic, |hn| hn.visit_term(&def));
-          let nr = ic.insert_at(
-            i,
-            Assignment { def, ty, has_numbers, number, eq_const: Default::default() },
-          );
+          let nr = ic.insert_at(i, Assignment { def, ty, number, eq_const: Default::default() });
           // vprintln!("insert ?{nr:?} : {:?} := {:?}", ic[nr].ty, ic[nr].def);
           let mut ty = ic[nr].ty.clone();
           drop(ic);
@@ -2008,7 +2040,6 @@ impl VisitMut for InternConst<'_> {
       Term::Locus(_) | Term::Bound(_) | Term::FreeVar(_) | Term::LambdaVar(_) =>
         self.only_constants = false,
       &mut Term::Constant(nr) => {
-        let mut has_numbers = false;
         let mut eq = BTreeSet::new();
         if let Some(fv) = &self.lc.fixed_var[nr].def {
           let mut fv = (**fv).clone();
@@ -2017,7 +2048,6 @@ impl VisitMut for InternConst<'_> {
           if self.only_constants {
             let Term::Infer(nr) = fv else { unreachable!() };
             eq.insert(nr);
-            has_numbers |= self.lc.infer_const.borrow()[nr].has_numbers;
           }
           self.only_constants = true;
         }
@@ -2025,7 +2055,6 @@ impl VisitMut for InternConst<'_> {
         let Term::Infer(nr) = *tm else { unreachable!() };
         let asgn = &mut self.lc.infer_const.borrow_mut()[nr];
         asgn.eq_const.extend(eq);
-        asgn.has_numbers |= has_numbers;
       }
       Term::Infer(_) => {}
       Term::SchFunc { args, .. } | Term::Aggregate { args, .. } | Term::Selector { args, .. } => {
@@ -2050,10 +2079,7 @@ impl VisitMut for InternConst<'_> {
               self.equals_expansion_level = equals_expansion_level;
               let tm = self.lc.infer_const.borrow()[nr].def.clone();
               let eq = self.collect_equals_const(&tm);
-              let mut ic = self.lc.infer_const.borrow_mut();
-              let has_numbers = eq.iter().any(|&i| ic[i].has_numbers);
-              ic[nr].eq_const.extend(eq);
-              ic[nr].has_numbers |= has_numbers;
+              self.lc.infer_const.borrow_mut()[nr].eq_const.extend(eq);
             }
           }
         }
@@ -2110,48 +2136,6 @@ impl VisitMut for ExpandConsts<'_> {
   }
 }
 
-struct HasNumbers<'a> {
-  g: &'a Global,
-  ic: &'a IdxVec<InferId, Assignment>,
-  found: bool,
-}
-impl<'a> HasNumbers<'a> {
-  pub fn get(
-    g: &'a Global, ic: &'a IdxVec<InferId, Assignment>, f: impl FnOnce(&mut Self),
-  ) -> bool {
-    let mut cb = Self { g, ic, found: false };
-    f(&mut cb);
-    cb.found
-  }
-}
-impl Visit for HasNumbers<'_> {
-  fn abort(&self) -> bool { self.found }
-  fn visit_term(&mut self, tm: &Term) {
-    match tm {
-      Term::Functor { nr, .. } =>
-        if let Some(Some(n)) = self.g.reqs.rev.get(Term::adjusted_nr(*nr, &self.g.constrs)) {
-          match n {
-            Requirement::RealAdd
-            | Requirement::RealMult
-            | Requirement::RealNeg
-            | Requirement::RealInv
-            | Requirement::RealDiff
-            | Requirement::RealDiv
-            | Requirement::ImaginaryUnit
-            | Requirement::Succ
-            | Requirement::Omega
-            | Requirement::ZeroNumber => self.found = true,
-            _ => {}
-          }
-        },
-      Term::Numeral(_) => self.found = true,
-      &Term::Infer(i) => self.found |= self.ic[i].has_numbers,
-      _ => {}
-    }
-    self.super_visit_term(tm);
-  }
-}
-
 struct Renumber(HashMap<InferId, InferId>);
 
 impl Renumber {
@@ -2183,7 +2167,6 @@ struct Assignment {
   /// Must be Term::Functor
   def: Term,
   ty: Type,
-  has_numbers: bool,
   number: Option<u32>,
   eq_const: BTreeSet<InferId>,
   // numeric_value: Option<Complex>,

@@ -339,7 +339,6 @@ impl Reader {
                 let Term::Infer(nr) = t else { unreachable!() };
                 ic = self.lc.infer_const.borrow_mut();
                 ic.0[i].eq_const.insert(nr);
-                ic.0[i].has_numbers |= ic[nr].has_numbers;
               }
             }
           }

@@ -383,7 +383,7 @@ impl VisitMut for Y<'_, '_> {
         self.constrs.functor.insert(nr2, m);
         y_try!(self, self.insert_type(ty, et));
         if self.g.reqs.zero_number() == Some(Term::adjusted_nr(nr2, &self.g.constrs)) {
-          // TODO: numeric_value
+          self.terms[et].number = Some(0);
         }
         let constr = &self.g.constrs.functor[nr];
         if constr.properties.get(PropertyKind::Commutativity) {
@@ -533,8 +533,11 @@ impl Equalizer<'_> {
         } else {
           None
         };
-        // TODO: ImaginaryUnit, ZeroNumber
         let et = self.lc.marks[self.terms[fi].mark].1;
+        // TODO: ImaginaryUnit
+        if self.g.reqs.zero_number() == Some(nr) {
+          self.terms[et].number = Some(0)
+        }
         let m = self.lc.marks.push((Term::Functor { nr: nr1, args: args1.to_vec().into() }, fi));
         self.constrs.functor.insert(nr1, m);
         self.terms[et].eq_class.push(m);
