@@ -148,7 +148,7 @@ impl<I, T> IdxVec<I, T> {
   }
 
   /// An iterator including the indexes, like `iter().enumerate()`, as `BlockId`s.
-  pub fn enum_iter(&self) -> impl Iterator<Item = (I, &T)>
+  pub fn enum_iter(&self) -> impl Iterator<Item = (I, &T)> + Clone
   where I: Idx {
     self.0.iter().enumerate().map(|(n, val)| (I::from_usize(n), val))
   }

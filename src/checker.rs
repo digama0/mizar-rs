@@ -4,8 +4,8 @@ use crate::retain_mut_from::RetainMutFrom;
 use crate::types::*;
 use crate::unify::Unifier;
 use crate::{
-  set_verbose, stat, vprintln, Assignment, Equate, ExpandPrivFunc, FixedVar, Global, HasNumbers,
-  Inst, InternConst, LocalContext, OnVarMut, Subst, Visit, VisitMut,
+  set_verbose, stat, vprintln, Assignment, Equate, ExpandPrivFunc, FixedVar, Global, Inst,
+  InternConst, LocalContext, OnVarMut, Subst, Visit, VisitMut,
 };
 use itertools::{EitherOrBoth, Itertools};
 use std::borrow::Cow;
@@ -44,89 +44,76 @@ impl<'a> Checker<'a> {
       eprintln!();
     }
     let mut conjs = vec![];
-    if HasNumbers::get(self.g, &self.lc.infer_const.borrow(), |hn| {
-      premises.iter().for_each(|f| hn.visit_formula(f))
-    }) {
-      stat("numbers");
-      for f in premises {
-        if crate::CHECKER_INPUTS {
-          eprintln!("input: {f:?}");
-        }
+    for f in premises {
+      if crate::CHECKER_INPUTS {
+        eprintln!("input: {f:?}");
       }
-      if crate::CHECKER_HEADER {
-        eprintln!("checking {} @ {:?} skipped", self.idx, self.pos);
+      let mut f = f.clone();
+      Expand { g: self.g, lc: self.lc, expansions: self.expansions }.expand(&mut f, true);
+      // vprintln!("expand: {f:?}");
+      f.distribute_quantifiers(&self.g.constrs, 0);
+      // vprintln!("distributed: {f:?}");
+      f.append_conjuncts_to(&mut conjs);
+    }
+    let mut check_f = Formula::mk_and(conjs);
+    if crate::CHECKER_HEADER {
+      eprintln!("checking {} @ {:?}:{:?}:\n  {check_f:?}", self.idx, self.article, self.pos);
+    }
+
+    OpenAsConst(self).open_quantifiers(&mut check_f, true);
+    // vprintln!("opened {} @ {:?}:{:?}:\n  {check_f:?}", self.idx, self.article, self.pos);
+
+    check_f.visit(&mut self.intern_const());
+    // vprintln!("interned {} @ {:?}:{:?}:\n  {check_f:?}", self.idx, self.article, self.pos);
+
+    let mut atoms = Atoms::default();
+    let Dnf::Or(mut normal_form) = atoms.normalize(self.g, self.lc, check_f, true).unwrap()
+    else { panic!("it is not true") };
+    // vprintln!("normalized {} @ {:?}:{:?}:\n  {normal_form:?}", self.idx, self.article, self.pos);
+
+    self.process_is(&mut atoms, &mut normal_form).unwrap();
+    // vprintln!("process_is {} @ {:?}:{:?}:\n  {normal_form:?}", self.idx, self.article, self.pos);
+
+    self.g.recursive_round_up = true;
+    for f in normal_form {
+      if crate::CHECKER_CONJUNCTS {
+        eprintln!(
+          "falsifying: {:#?}",
+          f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
+        );
       }
-    } else {
-      for f in premises {
-        if crate::CHECKER_INPUTS {
-          eprintln!("input: {f:?}");
-        }
-        let mut f = f.clone();
-        Expand { g: self.g, lc: self.lc, expansions: self.expansions }.expand(&mut f, true);
-        f.distribute_quantifiers(&self.g.constrs, 0);
-        // eprintln!("distributed: {f:?}");
-        f.append_conjuncts_to(&mut conjs);
-      }
-      let mut check_f = Formula::mk_and(conjs);
-      if crate::CHECKER_HEADER {
-        eprintln!("checking {} @ {:?}:{:?}:\n  {check_f:?}", self.idx, self.article, self.pos);
-      }
-
-      OpenAsConst(self).open_quantifiers(&mut check_f, true);
-      // eprintln!("opened {} @ {:?}:{:?}:\n  {check_f:?}", self.idx, self.article, self.pos);
-
-      check_f.visit(&mut self.intern_const());
-      // eprintln!("interned {} @ {:?}:{:?}:\n  {check_f:?}", self.idx, self.article, self.pos);
-
-      let mut atoms = Atoms::default();
-      let Dnf::Or(mut normal_form) = atoms.normalize(self.g, self.lc, check_f, true).unwrap()
-      else { panic!("it is not true") };
-      // eprintln!("normalized {} @ {:?}:{:?}:\n  {normal_form:?}", self.idx, self.article, self.pos);
-
-      self.process_is(&mut atoms, &mut normal_form).unwrap();
-      // eprintln!("process_is {} @ {:?}:{:?}:\n  {normal_form:?}", self.idx, self.article, self.pos);
-
-      self.g.recursive_round_up = true;
-      for f in normal_form {
-        if crate::CHECKER_CONJUNCTS {
+      let sat = (|| {
+        let mut eq = Equalizer::new(self);
+        let res = eq.run(&atoms, &f)?;
+        Unifier::new(eq, &res).run()
+      })();
+      // assert!(sat.is_err(), "failed to justify");
+      if sat.is_err() {
+        stat("success");
+        if crate::CHECKER_RESULT {
           eprintln!(
-            "falsifying: {:#?}",
+            "proved {} @ {:?}:{:?}! {:#?}",
+            self.idx,
+            self.article,
+            self.pos,
             f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
           );
         }
-        let sat = (|| {
-          let mut eq = Equalizer::new(self);
-          let res = eq.run(&atoms, &f)?;
-          Unifier::new(eq, &res).run()
-        })();
-        // assert!(sat.is_err(), "failed to justify");
-        if sat.is_err() {
-          stat("success");
-          if crate::CHECKER_RESULT {
-            eprintln!(
-              "proved {} @ {:?}:{:?}! {:#?}",
-              self.idx,
-              self.article,
-              self.pos,
-              f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
-            );
-          }
+      } else {
+        stat("failure");
+        if crate::CHECKER_RESULT {
+          eprintln!(
+            "FAILED TO JUSTIFY {} @ {:?}:{:?}: {:#?}",
+            self.idx,
+            self.article,
+            self.pos,
+            f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
+          );
+        }
+        if crate::PANIC_ON_FAIL {
+          panic!("failed to justify {} @ {:?}:{:?}", self.idx, self.article, self.pos);
         } else {
-          stat("failure");
-          if crate::CHECKER_RESULT {
-            eprintln!(
-              "FAILED TO JUSTIFY {} @ {:?}:{:?}: {:#?}",
-              self.idx,
-              self.article,
-              self.pos,
-              f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
-            );
-          }
-          if crate::PANIC_ON_FAIL {
-            panic!("failed to justify {} @ {:?}:{:?}", self.idx, self.article, self.pos);
-          } else {
-            println!("failed to justify {} @ {:?}:{:?}", self.idx, self.article, self.pos);
-          }
+          println!("failed to justify {} @ {:?}:{:?}", self.idx, self.article, self.pos);
         }
       }
     }
@@ -258,7 +245,13 @@ impl Expand<'_> {
           };
           let mut conjs = vec![f1.maybe_neg(pos)];
           f2.maybe_neg(pos).append_conjuncts_to(&mut conjs);
-          self.expand_flex(terms, expansion, &mut conjs, pos);
+          if pos {
+            self.expand_flex(terms, expansion, &mut conjs, pos);
+          } else {
+            let mut conjs2 = vec![];
+            self.expand_flex(terms, expansion, &mut conjs2, pos);
+            Formula::mk_and(conjs2).mk_neg().append_conjuncts_to(&mut conjs);
+          }
           *f = Formula::mk_and(conjs).maybe_neg(pos)
         },
       Formula::SchPred { .. }

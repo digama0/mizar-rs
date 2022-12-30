@@ -535,7 +535,7 @@ impl Equalizer<'_> {
         };
         let et = self.lc.marks[self.terms[fi].mark].1;
         // TODO: ImaginaryUnit
-        if self.g.reqs.zero_number() == Some(nr) {
+        if self.g.reqs.zero_number() == Some(nr1) {
           self.terms[et].number = Some(0)
         }
         let m = self.lc.marks.push((Term::Functor { nr: nr1, args: args1.to_vec().into() }, fi));
@@ -1030,6 +1030,28 @@ impl<'a> Equalizer<'a> {
     Ok(())
   }
 
+  fn set_number(&mut self, et: EqTermId, val: u32) -> OrUnsat<()> {
+    if let Some(n) = self.terms[et].number {
+      if val != n {
+        return Err(Unsat)
+      }
+    } else {
+      for et2 in (0..self.terms.len()).map(EqTermId::from_usize) {
+        if !self.terms[et2].eq_class.is_empty() && self.terms[et2].number == Some(val) {
+          vprintln!("[{et:?}] = [{et2:?}] = {val}");
+          self.union_terms(et, et2)?
+        }
+      }
+      self.clash = true;
+      self.terms[et].number = Some(val);
+      vprintln!("set_number[{et:?}] := {val}");
+      for (et, etm) in self.terms.enum_iter() {
+        vprintln!("state: {et:?}' {:#?}", etm);
+      }
+    }
+    Ok(())
+  }
+
   /// ClearPolynomialValues
   fn clear_polynomial_values(&mut self) -> OrUnsat<()> {
     // TODO
@@ -1039,6 +1061,17 @@ impl<'a> Equalizer<'a> {
   /// EquatePolynomials
   fn equate_polynomials(&mut self) -> OrUnsat<()> {
     // TODO
+    for et1 in (0..self.terms.len()).map(EqTermId::from_usize) {
+      if !self.terms[et1].eq_class.is_empty() {
+        if let Some(n) = self.terms[et1].number {
+          for et2 in (et1.into_usize() + 1..self.terms.len()).map(EqTermId::from_usize) {
+            if !self.terms[et2].eq_class.is_empty() && self.terms[et2].number == Some(n) {
+              self.union_terms(et1, et2)?
+            }
+          }
+        }
+      }
+    }
     Ok(())
   }
 
@@ -1054,6 +1087,7 @@ impl<'a> Equalizer<'a> {
   /// Identities(aArithmIncl = arith)
   fn identities(&mut self, arith: bool) -> OrUnsat<()> {
     let mut to_union = vec![];
+    let mut to_number = vec![];
     loop {
       for marks in self.constrs.aggregate.0.values() {
         let mut iter = marks.iter().copied();
@@ -1126,6 +1160,19 @@ impl<'a> Equalizer<'a> {
             }
           }
         }
+        macro_rules! op {
+          (|$x:ident| $e:expr) => {
+            for &m in marks {
+              let (Term::Functor { ref args, .. }, et) = self.lc.marks[m] else { unreachable!() };
+              let et1 = self.lc.marks[args[0].mark().unwrap()].1;
+              if let Some($x) = self.terms[et1].number {
+                if let Some(val) = $e {
+                  to_number.push((self.lc.marks[self.terms[et].mark].1, val))
+                }
+              }
+            }
+          };
+        }
         match self.g.reqs.rev.get(i).copied().flatten() {
           Some(Requirement::Union) =>
             for &m in marks {
@@ -1164,19 +1211,62 @@ impl<'a> Equalizer<'a> {
                 to_union.push((self.lc.marks[self.terms[et].mark].1, et1))
               }
             },
-          Some(Requirement::Succ) => {
-            // TODO: numbers
+          Some(Requirement::Succ) => op!(|x| x.checked_add(1)),
+          // TODO: numbers
+          Some(Requirement::RealAdd) if arith =>
+            for &m in marks {
+              let (Term::Functor { ref args, .. }, et) = self.lc.marks[m] else { unreachable!() };
+              let et1 = self.lc.marks[args[0].mark().unwrap()].1;
+              if let Some(x1) = self.terms[et1].number {
+                let et2 = self.lc.marks[args[1].mark().unwrap()].1;
+                if x1 == 0 {
+                  to_union.push((self.lc.marks[self.terms[et].mark].1, et2))
+                } else if let Some(x2) = self.terms[et2].number {
+                  if let Some(val) = x1.checked_add(x2) {
+                    to_number.push((self.lc.marks[self.terms[et].mark].1, val))
+                  }
+                }
+              }
+            },
+          Some(Requirement::RealMult) if arith =>
+            for &m in marks {
+              let (Term::Functor { ref args, .. }, et) = self.lc.marks[m] else { unreachable!() };
+              let et1 = self.lc.marks[args[0].mark().unwrap()].1;
+              if let Some(x1) = self.terms[et1].number {
+                let et2 = self.lc.marks[args[1].mark().unwrap()].1;
+                match x1 {
+                  0 => to_union.push((self.lc.marks[self.terms[et].mark].1, et1)),
+                  1 => to_union.push((self.lc.marks[self.terms[et].mark].1, et2)),
+                  _ =>
+                    if let Some(x2) = self.terms[et2].number {
+                      if let Some(val) = x1.checked_mul(x2) {
+                        to_number.push((self.lc.marks[self.terms[et].mark].1, val))
+                      }
+                    },
+                }
+              }
+            },
+          Some(Requirement::RealNeg) if arith => op!(|x| x.checked_neg()),
+          Some(Requirement::RealInv) if arith => {
             stat("numbers");
             return Err(Unsat)
           }
-          Some(Requirement::RealAdd)
-          | Some(Requirement::RealMult)
-          | Some(Requirement::RealNeg)
-          | Some(Requirement::RealInv)
-          | Some(Requirement::RealDiff)
-          | Some(Requirement::RealDiv)
-            if arith =>
-          {
+          Some(Requirement::RealDiff) if arith =>
+            for &m in marks {
+              let (Term::Functor { ref args, .. }, et) = self.lc.marks[m] else { unreachable!() };
+              let et2 = self.lc.marks[args[1].mark().unwrap()].1;
+              if let Some(x2) = self.terms[et2].number {
+                let et1 = self.lc.marks[args[0].mark().unwrap()].1;
+                if x2 == 0 {
+                  to_union.push((self.lc.marks[self.terms[et].mark].1, et1))
+                } else if let Some(x1) = self.terms[et1].number {
+                  if let Some(val) = x1.checked_sub(x2) {
+                    to_number.push((self.lc.marks[self.terms[et].mark].1, val))
+                  }
+                }
+              }
+            },
+          Some(Requirement::RealDiv) if arith => {
             stat("numbers");
             return Err(Unsat)
           }
@@ -1186,7 +1276,9 @@ impl<'a> Equalizer<'a> {
       for (x, y) in to_union.drain(..) {
         self.union_terms(x, y)?;
       }
-
+      for (x, y) in to_number.drain(..) {
+        self.set_number(x, y)?;
+      }
       if !self.clash {
         return Ok(())
       }

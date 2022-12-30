@@ -1906,6 +1906,7 @@ impl Term {
         }
         match g.reqs.rev.get(nr) {
           // TODO: ImaginaryUnit, RealDiv, RealInv
+          Some(Some(Requirement::Succ)) => op!(|x| x.checked_add(1)),
           Some(Some(Requirement::RealAdd)) => op!(|x, y| x.checked_add(y)),
           Some(Some(Requirement::RealMult)) => op!(|x, y| x.checked_mul(y)),
           Some(Some(Requirement::RealDiff)) => op!(|x, y| x.checked_sub(y)),
