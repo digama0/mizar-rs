@@ -1,3 +1,4 @@
+use crate::bignum::Complex;
 use crate::checker::{Atoms, Conjunct, Dnf, Open, OrUnsat, Overflow, Unsat};
 use crate::equate::Equalizer;
 use crate::types::*;
@@ -13,7 +14,7 @@ struct EqTerm {
   ty_class: Vec<Type>,
   supercluster: Attrs,
   terms: EnumMap<ComplexTermKind, Vec<EqMarkId>>,
-  number: Option<u32>,
+  number: Option<Complex>,
 }
 
 impl std::fmt::Debug for EqTerm {
@@ -25,7 +26,7 @@ impl std::fmt::Debug for EqTerm {
         f.debug_list().entries(self.terms.values().flatten()).finish()
       }
     })?;
-    if let Some(n) = self.number {
+    if let Some(n) = &self.number {
       write!(f, " = {n}")?
     }
     write!(f, ": {:?}{:?}", &self.supercluster, &self.ty_class)
@@ -574,12 +575,12 @@ impl Unify<'_> {
             }
           }
           for (ec1, etm1) in self.eq_class.enum_iter() {
-            if let Some(n1) = etm1.number {
+            if let Some(n1) = &etm1.number {
               let mut inst1 = self.unify_term(arg1, &Term::EqClass(ec1))?;
               if !inst1.is_false() {
                 let mut inst2 = Dnf::FALSE;
                 for (ec2, etm2) in self.eq_class.enum_iter() {
-                  if let Some(n2) = etm2.number {
+                  if let Some(n2) = &etm2.number {
                     if (n1 <= n2) != pos {
                       inst2.mk_or(self.unify_term(arg2, &Term::EqClass(ec2))?)?;
                     }
@@ -626,13 +627,13 @@ impl Unify<'_> {
           if pos {
             let [arg1, arg2] = args else { unreachable!() };
             for (ec1, etm1) in self.eq_class.enum_iter() {
-              if let Some(n1) = etm1.number {
+              if let Some(n1) = &etm1.number {
                 let mut inst1 = self.unify_term(arg1, &Term::EqClass(ec1))?;
                 if !inst1.is_false() {
                   let mut inst2 = Dnf::FALSE;
                   for (ec2, etm2) in self.eq_class.enum_iter() {
                     if ec1 != ec2 {
-                      if let Some(n2) = etm2.number {
+                      if let Some(n2) = &etm2.number {
                         assert!(n1 != n2);
                         inst2.mk_or(self.unify_term(arg2, &Term::EqClass(ec2))?)?;
                       }
@@ -1229,8 +1230,10 @@ impl EquateClass<'_> {
     }
     match *tm {
       Term::EqClass(ec) => Some(ec),
-      Term::Numeral(n) =>
-        self.eq_class.enum_iter().find(|(ec, etm)| etm.number == Some(n)).map(|p| p.0),
+      Term::Numeral(n) => {
+        let c = Some(n.into());
+        self.eq_class.enum_iter().find(|(ec, etm)| etm.number == c).map(|p| p.0)
+      }
       Term::Infer(n) => self.infer.get(&n).copied(),
       Term::Functor { nr, ref args } => {
         let ecs = args.iter().map(|t| self.get(g, lc, t)).collect::<Option<Vec<_>>>()?;

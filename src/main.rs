@@ -5,6 +5,7 @@
 
 use crate::reader::Reader;
 use crate::types::*;
+use bignum::Complex;
 use enum_map::EnumMap;
 use equate::EqTerm;
 use format::Formatter;
@@ -20,6 +21,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Mutex;
 
+mod bignum;
 mod checker;
 mod equate;
 mod format;
@@ -1882,9 +1884,9 @@ impl VisitMut for ExpandPrivFunc<'_> {
 }
 
 impl Term {
-  fn try_to_number(&self, g: &Global, lc: &LocalContext) -> Option<u32> {
+  fn try_to_number(&self, g: &Global, lc: &LocalContext) -> Option<Complex> {
     match *self {
-      Term::Numeral(n) => Some(n),
+      Term::Numeral(n) => Some(Complex::int(n)),
       Term::Functor { nr, ref args } => {
         let (nr, args) = Term::adjust(nr, args, &g.constrs);
         macro_rules! op {
@@ -1893,24 +1895,27 @@ impl Term {
             let Term::Infer(i1) = *arg1.skip_priv_func() else { unreachable!() };
             let Term::Infer(i2) = *arg2.skip_priv_func() else { unreachable!() };
             let ic = lc.infer_const.borrow();
-            let ($x, $y) = (ic[i1].number?, ic[i2].number?);
-            $e
+            let ($x, $y) = (ic[i1].number.clone()?, ic[i2].number.clone()?);
+            $e.ok()
           }};
           (|$x:ident| $e:expr) => {{
             let [arg1] = args else { unreachable!() };
             let Term::Infer(i1) = *arg1.skip_priv_func() else { unreachable!() };
             let ic = lc.infer_const.borrow();
-            let $x = ic[i1].number?;
-            $e
+            let $x = ic[i1].number.clone()?;
+            $e.ok()
           }};
         }
         match g.reqs.rev.get(nr) {
-          // TODO: ImaginaryUnit, RealDiv, RealInv
-          Some(Some(Requirement::Succ)) => op!(|x| x.checked_add(1)),
-          Some(Some(Requirement::RealAdd)) => op!(|x, y| x.checked_add(y)),
-          Some(Some(Requirement::RealMult)) => op!(|x, y| x.checked_mul(y)),
-          Some(Some(Requirement::RealDiff)) => op!(|x, y| x.checked_sub(y)),
-          Some(Some(Requirement::RealNeg)) => op!(|x| x.checked_neg()),
+          Some(Some(Requirement::ZeroNumber)) => Some(Complex::ZERO),
+          Some(Some(Requirement::ImaginaryUnit)) => Some(Complex::I),
+          Some(Some(Requirement::Succ)) => op!(|x| x + Complex::ONE),
+          Some(Some(Requirement::RealAdd)) => op!(|x, y| x + y),
+          Some(Some(Requirement::RealMult)) => op!(|x, y| x * y),
+          Some(Some(Requirement::RealDiff)) => op!(|x, y| x - y),
+          Some(Some(Requirement::RealNeg)) => op!(|x| -x),
+          Some(Some(Requirement::RealInv)) => op!(|x| x.inv()),
+          Some(Some(Requirement::RealDiv)) => op!(|x, y| x / y),
           _ => None,
         }
       }
@@ -2130,8 +2135,7 @@ impl VisitMut for ExpandConsts<'_> {
   /// ExpandInferConsts
   fn visit_term(&mut self, tm: &mut Term) {
     if let Term::Infer(nr) = *tm {
-      *tm = self.0[nr].def.clone();
-      OnVarMut(|v| *v += self.1).visit_term(tm)
+      *tm = self.0[nr].def.visit_cloned(&mut OnVarMut(|v| *v += self.1));
     }
     self.super_visit_term(tm);
   }
@@ -2168,7 +2172,7 @@ struct Assignment {
   /// Must be Term::Functor
   def: Term,
   ty: Type,
-  number: Option<u32>,
+  number: Option<Complex>,
   eq_const: BTreeSet<InferId>,
   // numeric_value: Option<Complex>,
 }
