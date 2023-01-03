@@ -4,13 +4,13 @@ use crate::retain_mut_from::RetainMutFrom;
 use crate::types::*;
 use crate::unify::Unifier;
 use crate::{
-  set_verbose, stat, vprintln, Assignment, Equate, ExpandPrivFunc, FixedVar, Global, Inst,
-  InternConst, LocalContext, OnVarMut, Subst, Visit, VisitMut,
+  set_verbose, stat, vprintln, Assignment, CheckBound, Equate, ExpandPrivFunc, FixedVar, Global,
+  Inst, InternConst, LocalContext, OnVarMut, Subst, Visit, VisitMut,
 };
 use itertools::{EitherOrBoth, Itertools};
 use std::borrow::Cow;
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::marker::PhantomData;
 use std::ops::ControlFlow;
 
@@ -37,7 +37,7 @@ impl<'a> Checker<'a> {
       set_verbose(self.idx >= n);
     }
     self.lc.term_cache.get_mut().open_scope();
-    let infer_const = self.lc.infer_const.borrow().len();
+    let infer_const = self.lc.infer_const.get_mut().len();
     let fixed_var = self.lc.fixed_var.len();
 
     if crate::CHECKER_INPUTS {
@@ -190,6 +190,19 @@ impl<'a> Checker<'a> {
       normal_form.append(inst);
     }
     Ok(())
+  }
+
+  pub fn justify_scheme(&mut self, sch: &Scheme, premises: Vec<&'a Formula>, thesis: &'a Formula) {
+    if let Some(n) = crate::FIRST_VERBOSE_CHECKER {
+      set_verbose(self.idx >= n);
+    }
+    self.lc.term_cache.get_mut().open_scope();
+    assert!(premises.len() == sch.prems.len());
+    let mut ctx =
+      SchemeCtx { primary: &sch.primary, g: self.g, lc: self.lc, subst: Default::default() };
+    assert!(ctx.eq_formula(&sch.thesis, thesis, true));
+    assert!((sch.prems.iter().zip(premises.iter())).all(|(f1, f2)| ctx.eq_formula(f1, f2, true)));
+    self.lc.term_cache.get_mut().close_scope();
   }
 }
 
@@ -729,5 +742,249 @@ impl Atoms {
         Ok(Dnf::Or(vec![Conjunct::single(a, pos)]))
       }
     }
+  }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum PredKind {
+  Pred(PredId),
+  SchPred(SchPredId),
+  PrivPred(PrivPredId),
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum FuncKind {
+  Func(FuncId),
+  SchFunc(SchFuncId),
+  PrivFunc(PrivFuncId),
+}
+
+#[derive(Clone, Default)]
+struct SchemeSubst {
+  cnst: IdxVec<SchFuncId, Option<Term>>,
+  func: IdxVec<SchFuncId, Option<FuncKind>>,
+  pred: IdxVec<SchPredId, Option<(bool, PredKind)>>,
+}
+
+struct SchemeCtx<'a> {
+  g: &'a Global,
+  lc: &'a mut LocalContext,
+  primary: &'a [Type],
+  subst: SchemeSubst,
+}
+
+impl<'a> SchemeCtx<'a> {
+  fn observing(&mut self, f: impl FnOnce(&mut Self) -> bool) -> bool {
+    let orig = self.subst.clone();
+    f(self) || {
+      self.subst = orig;
+      false
+    }
+  }
+
+  fn eq_formula(&mut self, f1: &Formula, f2: &Formula, pos: bool) -> bool {
+    use Formula::*;
+    match (f1, f2) {
+      (Neg { f: f1 }, _) => self.eq_formula(f1, f2, !pos),
+      (_, Neg { f: f2 }) => self.eq_formula(f1, f2, !pos),
+      (SchPred { nr: n1, args: args1 }, _) => {
+        let (kind, args2) = match f2 {
+          Pred { nr, args } => (PredKind::Pred(*nr), args),
+          SchPred { nr, args } => (PredKind::SchPred(*nr), args),
+          PrivPred { nr, args, .. } => (PredKind::PrivPred(*nr), args),
+          _ => return false,
+        };
+        match self.subst.pred.get_mut_extending(*n1) {
+          Some(asgn) if *asgn == (pos, kind) => {}
+          Some(asgn) => return false,
+          x @ None => *x = Some((pos, kind)),
+        }
+        self.eq_terms(args1, args2)
+      }
+      (True, True) if pos => true,
+      (Is { term: t1, ty: ty1 }, Is { term: t2, ty: ty2 }) if pos =>
+        self.eq_term(t1, t2) && self.eq_type(ty1, ty2),
+      (And { args: args1 }, And { args: args2 }) if pos => self.eq_formulas(args1, args2),
+      (
+        PrivPred { nr: PrivPredId(n1), args: args1, .. },
+        PrivPred { nr: PrivPredId(n2), args: args2, .. },
+      ) if pos => n1 == n2 && self.eq_terms(args1, args2),
+      (Attr { nr: n1, args: args1 }, Attr { nr: n2, args: args2 }) if pos => {
+        let (n1, args1) = Formula::adjust_attr(*n1, args1, &self.g.constrs);
+        let (n2, args2) = Formula::adjust_attr(*n2, args2, &self.g.constrs);
+        n1 == n2 && self.eq_terms(args1, args2)
+      }
+      (Pred { nr: n1, args: args1 }, Pred { nr: n2, args: args2 }) if pos => {
+        let (n1, args1) = Formula::adjust_pred(*n1, args1, &self.g.constrs);
+        let (n2, args2) = Formula::adjust_pred(*n2, args2, &self.g.constrs);
+        n1 == n2 && self.eq_terms(args1, args2)
+      }
+      (ForAll { dom: dom1, scope: sc1, .. }, ForAll { dom: dom2, scope: sc2, .. }) if pos =>
+        self.eq_type(dom1, dom2) && {
+          self.lc.term_cache.get_mut().open_scope();
+          self.lc.bound_var.0.push((**dom2).clone());
+          let r = self.eq_formula(sc1, sc2, true);
+          self.lc.bound_var.0.pop();
+          self.lc.term_cache.get_mut().close_scope();
+          r
+        },
+      #[allow(clippy::explicit_auto_deref)]
+      (FlexAnd { orig: orig1, .. }, FlexAnd { orig: orig2, .. }) if pos =>
+        self.eq_formulas(&**orig1, &**orig2),
+      _ => false,
+    }
+  }
+
+  fn eq_terms(&mut self, t1: &[Term], t2: &[Term]) -> bool {
+    t1.len() == t2.len() && t1.iter().zip(t2).all(|(t1, t2)| self.eq_term(t1, t2))
+  }
+
+  fn wider(&mut self, tgt: &Type, src: &Type) -> bool {
+    self.is_subset_of(&tgt.attrs.0, &src.attrs.1, |this, a1, a2| this.eq_attr(a1, a2))
+      && (self.observing(|this| this.eq_radices(tgt, src))
+        || match (tgt.kind, src.kind) {
+          (TypeKind::Mode(n1), TypeKind::Mode(n2)) if n1 != n2 => {
+            let mut src = CowBox::Borrowed(src);
+            loop {
+              let Some(w) = src.widening(self.g) else { return false };
+              let Some(w) = tgt.widening_of(self.g, &w) else { return false };
+              if self.observing(|this| this.eq_radices(tgt, &w)) {
+                return true
+              }
+              if self.g.constrs.mode[n1].redefines.is_some() {
+                return false
+              }
+              src = CowBox::Owned(w.to_owned());
+            }
+          }
+          (TypeKind::Struct(n1), TypeKind::Struct(n2)) if n1 != n2 => {
+            let Some(src) = tgt.widening_of(self.g, src) else { return false };
+            tgt.kind == src.kind && self.eq_radices(tgt, &src)
+          }
+          _ => false,
+        })
+  }
+
+  fn eq_term(&mut self, t1: &Term, t2: &Term) -> bool {
+    use Term::*;
+    match (t1, t2) {
+      (SchFunc { nr: n1, args: args1 }, _) =>
+        if args1.is_empty() {
+          let depth = self.lc.bound_var.len() as u32;
+          if CheckBound::get(depth, |cb| cb.visit_term(t2)) {
+            return false
+          }
+          let t2 = t2.visit_cloned(&mut OnVarMut(|n| *n -= depth));
+          if let Some(tm) = self.subst.cnst.get_mut_extending(*n1) {
+            ().eq_term(self.g, self.lc, &t2, tm)
+          } else if self.wider(&self.primary[Idx::into_usize(*n1)], &t2.get_type(self.g, self.lc)) {
+            self.subst.cnst[*n1] = Some(t2);
+            true
+          } else {
+            false
+          }
+        } else {
+          let (kind, args2) = match t2 {
+            Functor { nr, args } => (FuncKind::Func(*nr), args),
+            SchFunc { nr, args } => (FuncKind::SchFunc(*nr), args),
+            PrivFunc { nr, args, .. } => (FuncKind::PrivFunc(*nr), args),
+            Infer(n2) => {
+              let tm = (self.lc.infer_const.get_mut()[*n2].def)
+                .visit_cloned(&mut OnVarMut(|v| *v += self.lc.bound_var.len() as u32));
+              return self.eq_term(t1, &tm)
+            }
+            _ => return false,
+          };
+          match self.subst.func.get_mut_extending(*n1) {
+            Some(asgn) if *asgn == kind => {}
+            Some(asgn) => return false,
+            x @ None => *x = Some(kind),
+          }
+          self.eq_terms(args1, args2)
+        },
+      (Locus(LocusId(n1)), Locus(LocusId(n2)))
+      | (Bound(BoundId(n1)), Bound(BoundId(n2)))
+      | (Constant(ConstId(n1)), Constant(ConstId(n2)))
+      | (FreeVar(FVarId(n1)), FreeVar(FVarId(n2)))
+      | (Numeral(n1), Numeral(n2)) => n1 == n2,
+      (Infer(InferId(n1)), Infer(InferId(n2))) if n1 == n2 => true,
+      (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) => {
+        let (n1, args1) = Term::adjust(*n1, args1, &self.g.constrs);
+        let (n2, args2) = Term::adjust(*n2, args2, &self.g.constrs);
+        n1 == n2 && self.eq_terms(args1, args2)
+      }
+      (Aggregate { nr: AggrId(n1), args: args1 }, Aggregate { nr: AggrId(n2), args: args2 })
+      | (Selector { nr: SelId(n1), args: args1 }, Selector { nr: SelId(n2), args: args2 }) =>
+        n1 == n2 && self.eq_terms(args1, args2),
+      (Choice { ty: ty1 }, Choice { ty: ty2 }) => self.eq_type(ty1, ty2),
+      (
+        Fraenkel { args: args1, scope: sc1, compr: c1 },
+        Fraenkel { args: args2, scope: sc2, compr: c2 },
+      ) =>
+        args1.len() == args2.len() && {
+          self.lc.term_cache.get_mut().open_scope();
+          let n = self.lc.bound_var.len();
+          let r = args1.iter().zip(&**args2).all(|(ty1, ty2)| {
+            let r = self.eq_type(ty1, ty2);
+            self.lc.bound_var.0.push(ty2.clone());
+            r
+          }) && self.eq_term(sc1, sc2)
+            && self.eq_formula(c1, c2, true);
+          self.lc.bound_var.0.truncate(n);
+          self.lc.term_cache.get_mut().close_scope();
+          r
+        },
+      (_, &Infer(nr)) => {
+        let t = self.lc.infer_const.get_mut()[nr].def.clone();
+        self.eq_term(t1, &t)
+      }
+      (&Infer(nr), _) => {
+        let t = self.lc.infer_const.get_mut()[nr].def.clone();
+        self.eq_term(&t, t2)
+      }
+      _ => false,
+    }
+  }
+
+  fn eq_radices(&mut self, ty1: &Type, ty2: &Type) -> bool {
+    match (ty1.kind, ty2.kind) {
+      (TypeKind::Mode(n1), TypeKind::Mode(n2)) => {
+        let (n1, args1) = Type::adjust(n1, &ty1.args, &self.g.constrs);
+        let (n2, args2) = Type::adjust(n2, &ty2.args, &self.g.constrs);
+        n1 == n2 && self.eq_terms(args1, args2)
+      }
+      (TypeKind::Struct(n1), TypeKind::Struct(n2)) =>
+        n1 == n2 && self.eq_terms(&ty1.args, &ty2.args),
+      _ => false,
+    }
+  }
+
+  fn is_subset_of(
+    &mut self, attrs1: &Attrs, attrs2: &Attrs, mut eq: impl FnMut(&mut Self, &Attr, &Attr) -> bool,
+  ) -> bool {
+    match (attrs1, attrs2) {
+      (Attrs::Inconsistent, Attrs::Consistent(_)) => false,
+      (Attrs::Consistent(this), Attrs::Consistent(other)) =>
+        other.len() >= this.len()
+          && this.iter().all(|i| other.iter().any(|j| self.observing(|this| eq(this, i, j)))),
+      (_, Attrs::Inconsistent) => true,
+    }
+  }
+
+  fn eq_type(&mut self, ty1: &Type, ty2: &Type) -> bool {
+    self.is_subset_of(&ty1.attrs.0, &ty2.attrs.1, |this, a1, a2| this.eq_attr(a1, a2))
+      && self.is_subset_of(&ty2.attrs.0, &ty1.attrs.1, |this, a2, a1| this.eq_attr(a1, a2))
+      && self.eq_radices(ty1, ty2)
+  }
+
+  fn eq_attr(&mut self, a1: &Attr, a2: &Attr) -> bool {
+    let (n1, args1) = a1.adjust(&self.g.constrs);
+    let (n2, args2) = a2.adjust(&self.g.constrs);
+    n1 == n2 && a1.pos == a2.pos && self.eq_terms(args1, args2)
+  }
+
+  fn eq_formulas(&mut self, args1: &[Formula], args2: &[Formula]) -> bool {
+    args1.len() == args2.len()
+      && args1.iter().zip(args2).all(|(f1, f2)| self.eq_formula(f1, f2, true))
   }
 }

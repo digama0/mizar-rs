@@ -295,7 +295,7 @@ impl Reader {
 
   fn read_scheme(&mut self, SchemeBlock { nr, decls, prems, thesis, just, .. }: &SchemeBlock) {
     self.scope(None, false, |this| {
-      let sch_funcs = this.lc.sch_func_ty.len();
+      assert!(this.lc.sch_func_ty.is_empty());
       let infer_consts = this.lc.infer_const.get_mut().0.len();
       for decl in decls {
         if let SchemeDecl::Func { ty, .. } = decl {
@@ -312,7 +312,7 @@ impl Reader {
         .collect();
       let mut thesis = this.intern(&thesis.f);
       this.read_justification(&thesis, just);
-      let primary = this.lc.sch_func_ty.0.drain(sch_funcs..).collect();
+      let primary = this.lc.sch_func_ty.0.drain(..).collect();
       this.lc.expand_consts(|c| (&mut prems, &mut thesis).visit(c));
       this.lc.infer_const.get_mut().truncate(infer_consts);
       this.libs.sch.insert((ArticleId::SELF, *nr), Scheme { primary, prems, thesis });
@@ -528,6 +528,23 @@ impl Reader {
   }
 
   fn read_inference(&mut self, thesis: &Formula, it: &Inference) {
+    let refs = it.refs.iter().map(|r| match r.kind {
+      ReferenceKind::Priv(lab) => &self.props[self.labels[lab].unwrap()],
+      ReferenceKind::Thm(thm) => &self.libs.thm[&thm],
+      ReferenceKind::Def(def) => &self.libs.def[&def],
+    });
+    let mut ck = Checker {
+      g: &mut self.g,
+      lc: &mut self.lc,
+      expansions: &self.expansions,
+      equals: &self.equals,
+      identify: &self.identify,
+      func_ids: &self.func_ids,
+      reductions: &self.reductions,
+      article: self.article,
+      idx: self.inference_nr,
+      pos: it.pos,
+    };
     match it.kind {
       InferenceKind::By { linked } => {
         let neg_thesis = thesis.clone().mk_neg();
@@ -535,27 +552,12 @@ impl Reader {
         if linked {
           premises.push(self.props.last().unwrap());
         }
-        premises.extend(it.refs.iter().map(|r| match r.kind {
-          ReferenceKind::Priv(lab) => &self.props[self.labels[lab].unwrap()],
-          ReferenceKind::Thm(thm) => &self.libs.thm[&thm],
-          ReferenceKind::Def(def) => &self.libs.def[&def],
-        }));
-        Checker {
-          g: &mut self.g,
-          lc: &mut self.lc,
-          expansions: &self.expansions,
-          equals: &self.equals,
-          identify: &self.identify,
-          func_ids: &self.func_ids,
-          reductions: &self.reductions,
-          article: self.article,
-          idx: self.inference_nr,
-          pos: it.pos,
-        }
-        .justify(premises);
+        premises.extend(refs);
+        ck.justify(premises);
         self.inference_nr += 1;
       }
-      InferenceKind::From { sch } => stat("from"),
+      InferenceKind::From { sch } =>
+        ck.justify_scheme(&self.libs.sch[&sch], refs.collect(), thesis),
     }
   }
 
