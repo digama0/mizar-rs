@@ -516,7 +516,7 @@ impl Equalizer<'_> {
     }
     match &mut term {
       Term::Numeral(mut n) => {
-        let c = Complex::int(n);
+        let c = n.into();
         for (i, etm) in self.terms.enum_iter() {
           if !etm.eq_class.is_empty() && etm.number.as_ref() == Some(&c) {
             return Ok(self.lc.marks[etm.mark].1)
@@ -1170,12 +1170,7 @@ impl<'a> Equalizer<'a> {
               let (Term::Functor { ref args, .. }, et) = self.lc.marks[m] else { unreachable!() };
               let et1 = self.lc.marks[args[0].mark().unwrap()].1;
               if let Some($x) = &self.terms[et1].number {
-                if let Ok(val) = $e {
-                  to_number.push((self.lc.marks[self.terms[et].mark].1, val))
-                } else {
-                  stat("bignum");
-                  return Err(Unsat)
-                }
+                to_number.push((self.lc.marks[self.terms[et].mark].1, $e))
               }
             }
           };
@@ -1185,12 +1180,7 @@ impl<'a> Equalizer<'a> {
               let et1 = self.lc.marks[args[0].mark().unwrap()].1;
               let et2 = self.lc.marks[args[1].mark().unwrap()].1;
               if let (Some($x), Some($y)) = (&self.terms[et1].number, &self.terms[et2].number) {
-                if let Ok(val) = $e {
-                  to_number.push((self.lc.marks[self.terms[et].mark].1, val))
-                } else {
-                  stat("bignum");
-                  return Err(Unsat)
-                }
+                to_number.push((self.lc.marks[self.terms[et].mark].1, $e))
               }
             }
           };
@@ -1243,12 +1233,7 @@ impl<'a> Equalizer<'a> {
                 if *x1 == Complex::ZERO {
                   to_union.push((self.lc.marks[self.terms[et].mark].1, et2))
                 } else if let Some(x2) = &self.terms[et2].number {
-                  if let Ok(val) = x1.clone() + x2.clone() {
-                    to_number.push((self.lc.marks[self.terms[et].mark].1, val))
-                  } else {
-                    stat("bignum");
-                    return Err(Unsat)
-                  }
+                  to_number.push((self.lc.marks[self.terms[et].mark].1, x1.clone() + x2.clone()))
                 }
               }
             },
@@ -1258,23 +1243,26 @@ impl<'a> Equalizer<'a> {
               let et1 = self.lc.marks[args[0].mark().unwrap()].1;
               if let Some(x1) = &self.terms[et1].number {
                 let et2 = self.lc.marks[args[1].mark().unwrap()].1;
-                match *x1 {
-                  Complex::ZERO => to_union.push((self.lc.marks[self.terms[et].mark].1, et1)),
-                  Complex::ONE => to_union.push((self.lc.marks[self.terms[et].mark].1, et2)),
-                  _ =>
-                    if let Some(x2) = &self.terms[et2].number {
-                      if let Ok(val) = x1.clone() * x2.clone() {
-                        to_number.push((self.lc.marks[self.terms[et].mark].1, val))
-                      } else {
-                        stat("bignum");
-                        return Err(Unsat)
-                      }
-                    },
+                if *x1 == Complex::ZERO {
+                  to_union.push((self.lc.marks[self.terms[et].mark].1, et1))
+                } else if *x1 == Complex::ONE {
+                  to_union.push((self.lc.marks[self.terms[et].mark].1, et2))
+                } else if let Some(x2) = &self.terms[et2].number {
+                  to_number.push((self.lc.marks[self.terms[et].mark].1, x1.clone() * x2.clone()))
                 }
               }
             },
           Some(Requirement::RealNeg) if arith => op!(|x| -x.clone()),
-          Some(Requirement::RealInv) if arith => op!(|x| x.clone().inv()),
+          Some(Requirement::RealInv) if arith =>
+            for &m in marks {
+              let (Term::Functor { ref args, .. }, et) = self.lc.marks[m] else { unreachable!() };
+              let et1 = self.lc.marks[args[0].mark().unwrap()].1;
+              if let Some(x) = &self.terms[et1].number {
+                if *x != Complex::ZERO {
+                  to_number.push((self.lc.marks[self.terms[et].mark].1, x.clone().inv()))
+                }
+              }
+            },
           Some(Requirement::RealDiff) if arith =>
             for &m in marks {
               let (Term::Functor { ref args, .. }, et) = self.lc.marks[m] else { unreachable!() };
@@ -1284,12 +1272,7 @@ impl<'a> Equalizer<'a> {
                 if *x2 == Complex::ZERO {
                   to_union.push((self.lc.marks[self.terms[et].mark].1, et1))
                 } else if let Some(x1) = &self.terms[et1].number {
-                  if let Ok(val) = x1.clone() - x2.clone() {
-                    to_number.push((self.lc.marks[self.terms[et].mark].1, val))
-                  } else {
-                    stat("bignum");
-                    return Err(Unsat)
-                  }
+                  to_number.push((self.lc.marks[self.terms[et].mark].1, x1.clone() - x2.clone()))
                 }
               }
             },
@@ -1299,14 +1282,13 @@ impl<'a> Equalizer<'a> {
               let et1 = self.lc.marks[args[0].mark().unwrap()].1;
               let et2 = self.lc.marks[args[1].mark().unwrap()].1;
               match (&self.terms[et1].number, &self.terms[et2].number) {
-                (Some(Complex::ZERO), _) | (_, Some(Complex::ONE)) =>
+                (Some(x1), _) if *x1 == Complex::ZERO =>
+                  to_union.push((self.lc.marks[self.terms[et].mark].1, et1)),
+                (_, Some(x2)) if *x2 == Complex::ONE =>
                   to_union.push((self.lc.marks[self.terms[et].mark].1, et1)),
                 (Some(x1), Some(x2)) =>
-                  if let Ok(val) = x1.clone() / x2.clone() {
-                    to_number.push((self.lc.marks[self.terms[et].mark].1, val))
-                  } else {
-                    stat("bignum");
-                    return Err(Unsat)
+                  if *x2 != Complex::ZERO {
+                    to_number.push((self.lc.marks[self.terms[et].mark].1, x1.clone() / x2.clone()))
                   },
                 _ => {}
               }
@@ -1412,22 +1394,21 @@ impl<'a> Equalizer<'a> {
       if et2 != et3 && !etm.eq_class.is_empty() {
         for mut p2 in std::mem::take(&mut etm.eq_polys) {
           if p2.contains(et) {
-            if p2.subst(et, p).is_ok() {
-              if let Some(c) = p2.is_const() {
-                if let Some(c2) = &etm.number {
-                  if c != *c2 {
-                    return Err(Unsat)
-                  }
-                } else {
-                  if let Some(pending) = &mut pending {
-                    pending.insert(et);
-                  }
-                  etm.number = Some(c)
+            p2.subst(et, p);
+            if let Some(c) = p2.is_const() {
+              if let Some(c2) = &etm.number {
+                if c != *c2 {
+                  return Err(Unsat)
                 }
+              } else {
+                if let Some(pending) = &mut pending {
+                  pending.insert(et);
+                }
+                etm.number = Some(c)
               }
-              progress = true;
-              etm.eq_polys.insert(p2);
             }
+            progress = true;
+            etm.eq_polys.insert(p2);
           } else {
             etm.eq_polys.insert(p2);
           }
@@ -1590,14 +1571,13 @@ impl<'a> Equalizer<'a> {
       if let (Some(q1), Some(q2)) =
         (self.terms[et1].eq_polys.first(), self.terms[et2].eq_polys.first())
       {
-        if let Ok(p) = q1.clone().sub(q2.clone()) {
-          if let Some(c) = p.is_const() {
-            if c != Complex::ZERO {
-              return Err(Unsat)
-            }
-          } else {
-            polys.insert(p);
+        let p = q1.clone().sub(q2.clone());
+        if let Some(c) = p.is_const() {
+          if c != Complex::ZERO {
+            return Err(Unsat)
           }
+        } else {
+          polys.insert(p);
         }
       }
     }
@@ -1958,18 +1938,14 @@ impl<'a> Equalizer<'a> {
                   (|$x:ident| $e:expr) => {{
                     let [Term::EqMark(m1)] = **args else { unreachable!() };
                     let $x = op!(@poly m1);
-                    if let Ok(p) = $e {
-                      self.terms[et].eq_polys.insert(p);
-                      pending.insert(et);
-                    }
+                    self.terms[et].eq_polys.insert($e);
+                    pending.insert(et);
                   }};
                   (|$x:ident, $y:ident| $e:expr) => {{
                     let [Term::EqMark(m1), Term::EqMark(m2)] = **args else { unreachable!() };
                     let ($x, $y) = (op!(@poly m1), op!(@poly m2));
-                    if let Ok(p) = $e {
-                      self.terms[et].eq_polys.insert(p);
-                      pending.insert(et);
-                    }
+                    self.terms[et].eq_polys.insert($e);
+                    pending.insert(et);
                   }};
                 }
                 match self.g.reqs.rev.get(nr).copied().flatten() {
@@ -1980,8 +1956,7 @@ impl<'a> Equalizer<'a> {
                   }
                   Some(Requirement::RealAdd) => op!(|p1, p2| p1.add(p2)),
                   Some(Requirement::RealMult) => op!(|p1, p2| p1.mul(&p2)),
-                  Some(Requirement::RealDiff) =>
-                    op!(|p1, p2| p2.smul(&Complex::NEG_ONE).and_then(|p2| p1.add(p2))),
+                  Some(Requirement::RealDiff) => op!(|p1, p2| p1.add(p2.smul(&Complex::NEG_ONE))),
                   Some(Requirement::RealNeg) => op!(|p1| p1.smul(&Complex::NEG_ONE)),
                   Some(Requirement::RealInv) => {
                     etm.eq_polys.insert(Polynomial::single(Monomial::atom(et)));
@@ -1990,10 +1965,10 @@ impl<'a> Equalizer<'a> {
                     let [Term::EqMark(m1), Term::EqMark(m2)] = **args else { unreachable!() };
                     let et1 = self.lc.marks[self.terms[self.lc.marks[m1].1].mark].1;
                     let et2 = self.lc.marks[self.terms[self.lc.marks[m2].1].mark].1;
-                    if let Ok(p) = (self.terms[et2].number.clone().ok_or(()))
-                      .and_then(|p| Polynomial::single(Monomial::atom(et1)).smul(&p.inv()?))
+                    if let Some(p) = self.terms[et2].number.clone().filter(|p| *p != Complex::ZERO)
                     {
-                      self.terms[et].eq_polys.insert(p);
+                      let q = Polynomial::single(Monomial::atom(et1)).smul(&p.inv());
+                      self.terms[et].eq_polys.insert(q);
                       pending.insert(et);
                     } else {
                       self.terms[et].eq_polys.insert(Polynomial::single(Monomial::atom(et)));

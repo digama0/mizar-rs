@@ -63,17 +63,16 @@ impl Monomial {
   }
   pub fn degree(&self) -> u32 { self.powers.iter().map(|p| p.1).sum() }
 
-  fn mul(&self, other: &Self) -> Result<Self, ()> {
-    let coeff = (self.coeff.clone() * other.coeff.clone())?;
+  fn mul(&self, other: &Self) -> Self {
+    let coeff = self.coeff.clone() * other.coeff.clone();
     let mut powers = BTreeMap::new();
     for item in self.powers.iter().merge_join_by(&other.powers, |a, b| a.0.cmp(b.0)) {
       match item {
         EitherOrBoth::Left((&et, &n)) | EitherOrBoth::Right((&et, &n)) => powers.insert(et, n),
-        EitherOrBoth::Both((&et, &n1), (_, &n2)) =>
-          powers.insert(et, n1.checked_add(n2).ok_or(())?),
+        EitherOrBoth::Both((&et, &n1), (_, &n2)) => powers.insert(et, n1.checked_add(n2).unwrap()),
       };
     }
-    Ok(Monomial { coeff, powers })
+    Monomial { coeff, powers }
   }
 
   fn lex(&self, other: &Self) -> Ordering {
@@ -111,18 +110,17 @@ impl Monomial {
     }
   }
 
-  pub fn pow(&mut self, n: u32) -> Result<(), ()> {
+  pub fn pow(&mut self, n: u32) {
     match n {
       0 => *self = Monomial::cnst(Complex::ONE),
       1 => {}
       _ => {
-        self.coeff = std::mem::take(&mut self.coeff).pow(n)?;
+        self.coeff = std::mem::take(&mut self.coeff).pow(n.into());
         for i in self.powers.values_mut() {
-          *i = i.checked_mul(n).ok_or(())?;
+          *i = i.checked_mul(n).unwrap();
         }
       }
     }
-    Ok(())
   }
 }
 
@@ -174,34 +172,32 @@ impl Polynomial {
     }
   }
 
-  pub fn add(mut self, other: Polynomial) -> Result<Polynomial, ()> {
+  pub fn add(mut self, other: Polynomial) -> Polynomial {
     let mut out = Polynomial::ZERO;
     for item in self.0.into_iter().merge_join_by(other.0, Monomial::lex) {
       match item {
         EitherOrBoth::Left(mon) | EitherOrBoth::Right(mon) => out.0.push(mon),
         EitherOrBoth::Both(mut m1, m2) => {
-          m1.coeff = (m1.coeff + m2.coeff)?;
+          m1.coeff = m1.coeff + m2.coeff;
           if m1.coeff != Complex::ZERO {
             out.0.push(m1)
           }
         }
       }
     }
-    Ok(out)
+    out
   }
 
-  pub fn sub(mut self, other: Polynomial) -> Result<Polynomial, ()> {
-    self.add(other.smul(&Complex::NEG_ONE)?)
-  }
+  pub fn sub(mut self, other: Polynomial) -> Polynomial { self.add(other.smul(&Complex::NEG_ONE)) }
 
   pub fn is_zero(&self) -> bool { self.0.is_empty() }
 
-  fn dedup(&mut self) -> Result<(), ()> {
+  fn dedup(&mut self) {
     let mut it = std::mem::take(&mut self.0).into_iter();
     if let Some(mut mon) = it.next() {
       for m2 in it {
         if mon == m2 {
-          mon.coeff = (mon.coeff + m2.coeff)?;
+          mon.coeff = mon.coeff + m2.coeff;
         } else {
           if mon.coeff != Complex::ZERO {
             self.0.push(mon)
@@ -213,54 +209,53 @@ impl Polynomial {
         self.0.push(mon)
       }
     }
-    Ok(())
   }
 
-  pub fn mul(&self, other: &Polynomial) -> Result<Polynomial, ()> {
+  pub fn mul(&self, other: &Polynomial) -> Polynomial {
     if self.is_zero() || other.is_zero() {
-      return Ok(Polynomial::ZERO)
+      return Polynomial::ZERO
     }
     let mut out = Polynomial::ZERO;
     for i in &self.0 {
       for j in &other.0 {
-        let mon = i.mul(j)?;
+        let mon = i.mul(j);
         out.0.push(mon)
       }
     }
     out.0.sort_unstable_by(Monomial::lex);
-    out.dedup()?;
-    Ok(out)
+    out.dedup();
+    out
   }
 
-  pub fn smul(mut self, other: &Complex) -> Result<Polynomial, ()> {
+  pub fn smul(mut self, other: &Complex) -> Polynomial {
     if *other == Complex::ZERO {
-      return Ok(Polynomial::ZERO)
+      return Polynomial::ZERO
     }
     if *other == Complex::ONE {
-      return Ok(self)
+      return self
     }
     for mon in &mut self.0 {
-      mon.coeff = (std::mem::take(&mut mon.coeff) * other.clone())?
+      mon.coeff = std::mem::take(&mut mon.coeff) * other.clone()
     }
-    Ok(self)
+    self
   }
 
-  pub fn mmul(mut self, other: &Monomial) -> Result<Polynomial, ()> {
+  pub fn mmul(mut self, other: &Monomial) -> Polynomial {
     if other.coeff == Complex::ZERO {
-      return Ok(Polynomial::ZERO)
+      return Polynomial::ZERO
     }
     if other.is_const() == Some(Complex::ONE) {
-      return Ok(self)
+      return self
     }
     for mon in &mut self.0 {
-      mon.coeff = (std::mem::take(&mut mon.coeff) * other.coeff.clone())?;
+      mon.coeff = std::mem::take(&mut mon.coeff) * other.coeff.clone();
       for (&et, &i) in &other.powers {
         let v = mon.powers.entry(et).or_default();
-        *v = v.checked_add(i).ok_or(())?;
+        *v = v.checked_add(i).unwrap();
       }
     }
     self.0.sort_unstable_by(Monomial::lex);
-    Ok(self)
+    self
   }
 
   pub fn is_var(&self) -> Option<EqTermId> {
@@ -295,37 +290,37 @@ impl Polynomial {
 
   pub fn contains(&self, et: EqTermId) -> bool { self.0.iter().any(|mon| mon.contains(et)) }
 
-  pub fn pow(&self, n: u32) -> Result<Polynomial, ()> {
-    Ok(match n {
+  pub fn pow(&self, n: u32) -> Polynomial {
+    match n {
       0 => Polynomial::single(Monomial::cnst(Complex::ONE)),
       1 => self.clone(),
       _ => match *self.0 {
         [] => Polynomial::ZERO,
         [ref mon] => {
           let mut mon = mon.clone();
-          mon.pow(n)?;
+          mon.pow(n);
           Polynomial(vec![mon])
         }
         _ => {
           let mut out = self.clone();
           for i in (0..n.ilog2()).rev() {
-            out = out.mul(&out)?;
+            out = out.mul(&out);
             if (n >> i) & 1 != 0 {
-              out = out.mul(self)?;
+              out = out.mul(self);
             }
           }
           out
         }
       },
-    })
+    }
   }
 
   /// computes self = self[et |-> p]
-  pub fn subst(&mut self, et: EqTermId, p: &Polynomial) -> Result<(), ()> {
+  pub fn subst(&mut self, et: EqTermId, p: &Polynomial) {
     for mut mon in std::mem::take(&mut self.0) {
       if let Some(n) = mon.powers.remove(&et) {
         if !p.is_zero() {
-          self.0.append(&mut p.pow(n)?.mmul(&mon)?.0);
+          self.0.append(&mut p.pow(n).mmul(&mon).0);
         }
       } else {
         self.0.push(mon)

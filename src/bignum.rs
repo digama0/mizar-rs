@@ -1,10 +1,156 @@
+use num_bigint::BigInt;
+use num_traits::sign::Signed;
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::fmt::{Debug, Display};
 
+#[derive(PartialEq, Eq, Clone, Debug)]
+enum Integer {
+  Small(i32),
+  Large(Box<BigInt>),
+}
+impl From<i32> for Integer {
+  fn from(v: i32) -> Self { Self::Small(v) }
+}
+impl From<BigInt> for Integer {
+  fn from(v: BigInt) -> Self { Self::large(v) }
+}
+
+impl Display for Integer {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      Integer::Small(n) => Display::fmt(n, f),
+      Integer::Large(n) => Display::fmt(n, f),
+    }
+  }
+}
+
+impl Integer {
+  const ZERO: Self = Self::Small(0);
+  const ONE: Self = Self::Small(1);
+  const NEG_ONE: Self = Self::Small(-1);
+
+  fn large(i: BigInt) -> Self {
+    match i.try_into() {
+      Ok(n) => Self::Small(n),
+      Err(n) => Self::Large(Box::new(n.into_original())),
+    }
+  }
+
+  fn as_large(&self) -> Cow<'_, BigInt> {
+    match self {
+      &Integer::Small(n) => Cow::Owned(n.into()),
+      Integer::Large(n) => Cow::Borrowed(n),
+    }
+  }
+
+  fn gcd(mut self, mut rhs: Self) -> Self {
+    if self >= rhs {
+      std::mem::swap(&mut self, &mut rhs)
+    }
+    loop {
+      if self == Self::ZERO {
+        return rhs
+      }
+      (self, rhs) = (rhs % self.clone(), self)
+    }
+  }
+
+  fn abs(self) -> Self {
+    if let Integer::Small(a) = self {
+      if let Some(out) = a.checked_abs() {
+        return out.into()
+      }
+    }
+    self.as_large().abs().into()
+  }
+}
+
+impl std::ops::Add for Integer {
+  type Output = Self;
+  fn add(self, rhs: Self) -> Self {
+    if let (&Integer::Small(a), &Integer::Small(b)) = (&self, &rhs) {
+      if let Some(out) = a.checked_add(b) {
+        return out.into()
+      }
+    }
+    self.as_large().into_owned().add(&*rhs.as_large()).into()
+  }
+}
+
+impl std::ops::Neg for Integer {
+  type Output = Self;
+  fn neg(self) -> Self {
+    if let Integer::Small(a) = self {
+      if let Some(out) = a.checked_neg() {
+        return out.into()
+      }
+    }
+    self.as_large().into_owned().neg().into()
+  }
+}
+
+impl std::ops::Sub for Integer {
+  type Output = Self;
+  fn sub(self, rhs: Self) -> Self { self + (-rhs) }
+}
+
+impl std::ops::Mul for Integer {
+  type Output = Self;
+  fn mul(self, rhs: Self) -> Self {
+    if let (&Integer::Small(a), &Integer::Small(b)) = (&self, &rhs) {
+      if let Some(out) = a.checked_mul(b) {
+        return out.into()
+      }
+    }
+    self.as_large().into_owned().mul(&*rhs.as_large()).into()
+  }
+}
+
+// panics on division by zero
+impl std::ops::Div for Integer {
+  type Output = Self;
+  fn div(self, rhs: Self) -> Self::Output {
+    if let (&Integer::Small(a), &Integer::Small(b)) = (&self, &rhs) {
+      if let Some(out) = a.checked_div(b) {
+        return out.into()
+      }
+    }
+    self.as_large().into_owned().div(&*rhs.as_large()).into()
+  }
+}
+
+// panics on division by zero
+impl std::ops::Rem for Integer {
+  type Output = Self;
+  fn rem(self, rhs: Self) -> Self {
+    if let (&Integer::Small(a), &Integer::Small(b)) = (&self, &rhs) {
+      if let Some(out) = a.checked_rem(b) {
+        return out.into()
+      }
+    }
+    self.as_large().into_owned().rem(&*rhs.as_large()).into()
+  }
+}
+
+impl Ord for Integer {
+  fn cmp(&self, other: &Self) -> Ordering {
+    if let (Integer::Small(a), Integer::Small(b)) = (self, other) {
+      a.cmp(b)
+    } else {
+      self.as_large().cmp(&other.as_large())
+    }
+  }
+}
+
+impl PartialOrd for Integer {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
+}
+
 #[derive(PartialEq, Eq, Clone)]
 pub struct Rational {
-  num: i32,
-  den: u32, // Invariant: positive
+  num: Integer,
+  den: Integer, // Invariant: positive
 }
 
 impl Default for Rational {
@@ -13,7 +159,7 @@ impl Default for Rational {
 
 impl Display for Rational {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    if self.den == 1 {
+    if self.den == Integer::ONE {
       write!(f, "{}", self.num)
     } else {
       write!(f, "{}/{}", self.num, self.den)
@@ -21,20 +167,8 @@ impl Display for Rational {
   }
 }
 
-fn gcd(mut a: u32, mut b: u32) -> u32 {
-  if a >= b {
-    std::mem::swap(&mut a, &mut b)
-  }
-  loop {
-    match a {
-      0 => return b,
-      _ => (a, b) = (b % a, a),
-    }
-  }
-}
-
 impl Rational {
-  pub const fn int(num: i32) -> Self { Self { num, den: 1 } }
+  pub const fn int(num: i32) -> Self { Self { num: Integer::Small(num), den: Integer::ONE } }
   pub const ZERO: Self = Self::int(0);
   pub const ONE: Self = Self::int(1);
   pub const NEG_ONE: Self = Self::int(-1);
@@ -45,78 +179,60 @@ impl Rational {
 }
 
 impl std::ops::Add for Rational {
-  type Output = Result<Self, ()>;
+  type Output = Self;
   fn add(self, rhs: Self) -> Self::Output {
-    let g = gcd(self.den, rhs.den);
-    Ok(if g == 1 {
-      Self {
-        num: (self.num as i64 * rhs.den as i64 + rhs.num as i64 * self.den as i64)
-          .try_into()
-          .map_err(|_| ())?,
-        den: self.den.checked_mul(rhs.den).ok_or(())?,
-      }
+    let g = self.den.clone().gcd(rhs.den.clone());
+    if g == Integer::ONE {
+      Self { num: self.num * rhs.den.clone() + rhs.num * self.den.clone(), den: self.den * rhs.den }
     } else {
-      let den = (self.den / g) as i64 * rhs.den as i64;
-      let num = (self.num as i64) * (rhs.den / g) as i64 + rhs.num as i64 * (self.den / g) as i64;
-      let g1 = gcd((num.abs() % g as i64) as u32, g);
-      if g1 == 1 {
-        Self { num: num.try_into().map_err(|_| ())?, den: den.try_into().map_err(|_| ())? }
+      let den = (self.den.clone() / g.clone()) * rhs.den.clone();
+      let num = self.num * (rhs.den / g.clone()) + rhs.num * (self.den / g.clone());
+      let g1 = (num.clone().abs() % g.clone()).gcd(g);
+      if g1 == Integer::ONE {
+        Self { num, den }
       } else {
-        Self {
-          num: (num / g1 as i64).try_into().map_err(|_| ())?,
-          den: (den / g1 as i64).try_into().map_err(|_| ())?,
-        }
+        Self { num: num / g1.clone(), den: den / g1 }
       }
-    })
+    }
   }
 }
 
 impl std::ops::Neg for Rational {
-  type Output = Result<Self, ()>;
-  fn neg(self) -> Self::Output {
-    Ok(Self { num: self.num.checked_neg().ok_or(())?, den: self.den })
-  }
+  type Output = Self;
+  fn neg(self) -> Self::Output { Self { num: -self.num, den: self.den } }
 }
 
 impl std::ops::Sub for Rational {
-  type Output = Result<Self, ()>;
-  fn sub(self, rhs: Self) -> Self::Output { self + (-rhs)? }
+  type Output = Self;
+  fn sub(self, rhs: Self) -> Self::Output { self + (-rhs) }
 }
 
 impl std::ops::Mul for Rational {
-  type Output = Result<Self, ()>;
+  type Output = Self;
   fn mul(self, rhs: Self) -> Self::Output {
-    let g1 = gcd(self.num.unsigned_abs(), rhs.den);
-    let g2 = gcd(rhs.num.unsigned_abs(), self.den);
-    Ok(Self {
-      num: ((self.num as i64 / g1 as i64) * (rhs.num as i64 / g2 as i64))
-        .try_into()
-        .map_err(|_| ())?,
-      den: ((self.den as i64 / g2 as i64) * (rhs.den as i64 / g1 as i64))
-        .try_into()
-        .map_err(|_| ())?,
-    })
+    let g1 = self.num.clone().abs().gcd(rhs.den.clone());
+    let g2 = rhs.num.clone().abs().gcd(self.den.clone());
+    Self {
+      num: (self.num / g1.clone()) * (rhs.num / g2.clone()),
+      den: (self.den / g2) * (rhs.den / g1),
+    }
   }
 }
 
 impl Rational {
-  pub fn inv(self) -> Result<Self, ()> {
-    match self.num.cmp(&0) {
-      Ordering::Less => Ok(Self {
-        num: (-(self.den as i64)).try_into().map_err(|_| ())?,
-        den: -(self.num as i64) as u32,
-      }),
-      Ordering::Equal => Err(()),
-      Ordering::Greater =>
-        Ok(Self { num: self.den.try_into().map_err(|_| ())?, den: self.num as u32 }),
+  pub fn inv(self) -> Self {
+    match self.num.cmp(&Integer::ZERO) {
+      Ordering::Less => Self { num: -self.den, den: -self.num },
+      Ordering::Equal => panic!("division by zero"),
+      Ordering::Greater => Self { num: self.den, den: self.num },
     }
   }
 }
 
 impl std::ops::Div for Rational {
-  type Output = Result<Self, ()>;
+  type Output = Self;
   #[allow(clippy::suspicious_arithmetic_impl)]
-  fn div(self, rhs: Self) -> Self::Output { self * rhs.inv()? }
+  fn div(self, rhs: Self) -> Self::Output { self * rhs.inv() }
 }
 
 impl Ord for Rational {
@@ -134,14 +250,14 @@ impl Ord for Rational {
 impl PartialOrd for Rational {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
   fn lt(&self, other: &Self) -> bool {
-    if self.num < 0 && other.num >= 0 {
+    if self.num < Integer::ZERO && other.num >= Integer::ZERO {
       true
-    } else if self.num == 0 {
-      0 < other.num
-    } else if 0 < self.num && other.num <= 0 {
+    } else if self.num == Integer::ZERO {
+      Integer::ZERO < other.num
+    } else if Integer::ZERO < self.num && other.num <= Integer::ZERO {
       false
     } else {
-      self.num as i64 * (other.den as i64) < other.num as i64 * self.den as i64
+      self.num.clone() * other.den.clone() < other.num.clone() * self.den.clone()
     }
   }
   fn le(&self, other: &Self) -> bool { !other.lt(self) }
@@ -182,25 +298,25 @@ impl Debug for Complex {
 impl Complex {
   pub const fn real(re: Rational) -> Self { Self { re, im: Rational::ZERO } }
   // TODO: this should be infallible
-  pub fn int(num: u32) -> Self { Self::real(Rational::int(num.try_into().unwrap())) }
+  pub fn int(num: u64) -> Self { Self::real(Rational::int(num.try_into().unwrap())) }
   pub const ZERO: Self = Self::real(Rational::ZERO);
   pub const ONE: Self = Self::real(Rational::ONE);
   pub const NEG_ONE: Self = Self::real(Rational::NEG_ONE);
   pub const I: Self = Self { re: Rational::ZERO, im: Rational::ONE };
 
-  pub fn pow(mut self, n: u32) -> Result<Self, ()> {
+  pub fn pow(mut self, n: u64) -> Self {
     match n {
-      0 => Ok(Complex::ONE),
-      1 => Ok(self),
+      0 => Complex::ONE,
+      1 => self,
       _ => {
         let a = self.clone();
         for i in (0..n.ilog2()).rev() {
-          self = (self.clone() * self)?;
+          self = self.clone() * self;
           if (n >> i) & 1 != 0 {
-            self = (self * a.clone())?;
+            self = self * a.clone();
           }
         }
-        Ok(self)
+        self
       }
     }
   }
@@ -209,47 +325,43 @@ impl From<Rational> for Complex {
   fn from(value: Rational) -> Self { Self::real(value) }
 }
 impl From<u32> for Complex {
-  fn from(value: u32) -> Self { Self::int(value) }
+  fn from(value: u32) -> Self { Self::int(value.into()) }
 }
 
 impl std::ops::Add for Complex {
-  type Output = Result<Self, ()>;
-  fn add(self, rhs: Self) -> Self::Output {
-    Ok(Self { re: (self.re + rhs.re)?, im: (self.im + rhs.im)? })
-  }
+  type Output = Self;
+  fn add(self, rhs: Self) -> Self::Output { Self { re: self.re + rhs.re, im: self.im + rhs.im } }
 }
 
 impl std::ops::Neg for Complex {
-  type Output = Result<Self, ()>;
-  fn neg(self) -> Self::Output { Ok(Self { re: (-self.re)?, im: (-self.im)? }) }
+  type Output = Self;
+  fn neg(self) -> Self::Output { Self { re: -self.re, im: -self.im } }
 }
 
 impl std::ops::Sub for Complex {
-  type Output = Result<Self, ()>;
-  fn sub(self, rhs: Self) -> Self::Output {
-    Ok(Self { re: (self.re - rhs.re)?, im: (self.im - rhs.im)? })
-  }
+  type Output = Self;
+  fn sub(self, rhs: Self) -> Self::Output { Self { re: self.re - rhs.re, im: self.im - rhs.im } }
 }
 
 impl std::ops::Mul for Complex {
-  type Output = Result<Self, ()>;
+  type Output = Self;
   fn mul(self, rhs: Self) -> Self::Output {
-    Ok(Self {
-      re: ((self.re.clone() * rhs.re.clone())? - (self.im.clone() * rhs.im.clone())?)?,
-      im: ((self.re * rhs.im)? + (rhs.re * self.im)?)?,
-    })
+    Self {
+      re: self.re.clone() * rhs.re.clone() - self.im.clone() * rhs.im.clone(),
+      im: self.re * rhs.im + rhs.re * self.im,
+    }
   }
 }
 
 impl Complex {
-  pub fn inv(self) -> Result<Self, ()> {
-    let d = ((self.re.clone() * self.re.clone())? + (self.im.clone() * self.im.clone())?)?.inv()?;
-    Ok(Self { re: (self.re * d.clone())?, im: ((-self.im)? * d)? })
+  pub fn inv(self) -> Self {
+    let d = (self.re.clone() * self.re.clone() + self.im.clone() * self.im.clone()).inv();
+    Self { re: self.re * d.clone(), im: -self.im * d }
   }
 }
 
 impl std::ops::Div for Complex {
-  type Output = Result<Self, ()>;
+  type Output = Self;
   #[allow(clippy::suspicious_arithmetic_impl)]
-  fn div(self, rhs: Self) -> Self::Output { self * rhs.inv()? }
+  fn div(self, rhs: Self) -> Self::Output { self * rhs.inv() }
 }

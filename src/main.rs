@@ -1954,7 +1954,7 @@ impl VisitMut for ExpandPrivFunc<'_> {
 impl Term {
   fn try_to_number(&self, g: &Global, lc: &LocalContext) -> Option<Complex> {
     match *self {
-      Term::Numeral(n) => Some(Complex::int(n)),
+      Term::Numeral(n) => Some(n.into()),
       Term::Functor { nr, ref args } => {
         let (nr, args) = Term::adjust(nr, args, &g.constrs);
         macro_rules! op {
@@ -1964,26 +1964,28 @@ impl Term {
             let Term::Infer(i2) = *arg2.skip_priv_func(Some(lc)) else { unreachable!() };
             let ic = lc.infer_const.borrow();
             let ($x, $y) = (ic[i1].number.clone()?, ic[i2].number.clone()?);
-            $e.ok()
+            $e
           }};
           (|$x:ident| $e:expr) => {{
             let [arg1] = args else { unreachable!() };
             let Term::Infer(i1) = *arg1.skip_priv_func(Some(lc)) else { unreachable!() };
             let ic = lc.infer_const.borrow();
             let $x = ic[i1].number.clone()?;
-            $e.ok()
+            $e
           }};
         }
         match g.reqs.rev.get(nr) {
           // Some(Some(Requirement::ZeroNumber)) => Some(Complex::ZERO),
           // Some(Some(Requirement::Succ)) => op!(|x| x + Complex::ONE),
           Some(Some(Requirement::ImaginaryUnit)) => Some(Complex::I),
-          Some(Some(Requirement::RealAdd)) => op!(|x, y| x + y),
-          Some(Some(Requirement::RealMult)) => op!(|x, y| x * y),
-          Some(Some(Requirement::RealDiff)) => op!(|x, y| x - y),
-          Some(Some(Requirement::RealNeg)) => op!(|x| -x),
-          Some(Some(Requirement::RealInv)) => op!(|x| x.inv()),
-          Some(Some(Requirement::RealDiv)) => op!(|x, y| x / y),
+          Some(Some(Requirement::RealAdd)) => op!(|x, y| Some(x + y)),
+          Some(Some(Requirement::RealMult)) => op!(|x, y| Some(x * y)),
+          Some(Some(Requirement::RealDiff)) => op!(|x, y| Some(x - y)),
+          Some(Some(Requirement::RealNeg)) => op!(|x| Some(-x)),
+          Some(Some(Requirement::RealInv)) =>
+            op!(|x| if x == Complex::ZERO { None } else { Some(x.inv()) }),
+          Some(Some(Requirement::RealDiv)) =>
+            op!(|x, y| if y == Complex::ZERO { None } else { Some(x / y) }),
           _ => None,
         }
       }
