@@ -1487,13 +1487,13 @@ pub struct References {
 
 #[derive(Debug)]
 pub struct Scheme {
-  pub primary: Box<[Type]>,
+  pub sch_funcs: Box<[Type]>,
   pub prems: Box<[Formula]>,
   pub thesis: Formula,
 }
 impl<V: VisitMut> Visitable<V> for Scheme {
   fn visit(&mut self, v: &mut V) {
-    v.with_locus_tys(&mut self.primary, |v| {
+    v.with_sch_func_tys(&mut self.sch_funcs, |v| {
       self.prems.visit(v);
       self.thesis.visit(v);
     })
@@ -1679,6 +1679,15 @@ pub enum PrivateStatement {
   IterEquality { start: Position, label: Option<LabelId>, lhs: Term, steps: Vec<(Term, Inference)> },
   Now { pos: (Position, Position), label: Option<LabelId>, thesis: Formula, items: Box<[Item]> },
 }
+impl PrivateStatement {
+  pub fn pos(&self) -> Position {
+    match self {
+      PrivateStatement::Proposition { prop, .. } => prop.pos,
+      PrivateStatement::IterEquality { start, .. } => *start,
+      PrivateStatement::Now { pos, .. } => pos.0,
+    }
+  }
+}
 
 #[derive(Debug)]
 pub struct GivenItem {
@@ -1817,6 +1826,7 @@ pub enum Item {
   Given(GivenItem),
   Thus(PrivateStatement),
   /// itAssumption
+  /// invariant: not empty
   Assume(Vec<Proposition>),
   /// itSimpleExemplification
   Take(Term),
@@ -2030,7 +2040,7 @@ impl PatternKind {
       PatternKind::Func(_) => b'K',
       PatternKind::Sel(_) => b'U',
       PatternKind::Aggr(_) => b'G',
-      PatternKind::ForgetFunc(_) => b'j',
+      PatternKind::ForgetFunc(_) => b'J',
     }
   }
 }

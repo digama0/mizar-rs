@@ -49,7 +49,7 @@ impl Formatter {
         assert!(pat.visible.iter().all(|i| (*i as usize) < pat.primary.len()));
         map.entry(i).or_insert((pat.primary.len() as u8, pat.visible.clone(), f));
         // FIXME: this isn't true? Redefinitions are not always marked
-        // assert!(map.insert(i, (pat.visible.clone(), f)).is_none())
+        // assert!(map.insert(i, (pat.primary.len() as u8, pat.visible.clone(), f)).is_none())
       }
     }
     match (pat.kind, self.formats[pat.fmt]) {
@@ -163,10 +163,11 @@ impl<'a> Pretty<'a> {
   fn commas(&self, docs: impl IntoIterator<Item = Doc<'a>>) -> Doc<'a> {
     self.intersperse(docs, self.comma.clone()).nest(2).group()
   }
-  fn terms(&self, vis: Option<&[u8]>, tms: &[Term], depth: u32) -> Doc<'a> {
+  fn terms(&self, vis: Option<&[u8]>, tms: &[Term], depth: u32, lift: u32) -> Doc<'a> {
     match vis {
-      Some(vis) => self.commas(vis.iter().map(|&i| self.term(false, &tms[i as usize], depth))),
-      None => self.commas(tms.iter().map(|tm| self.term(false, tm, depth))),
+      Some(vis) =>
+        self.commas(vis.iter().map(|&i| self.term(false, &tms[i as usize], depth, lift))),
+      None => self.commas(tms.iter().map(|tm| self.term(false, tm, depth, lift))),
     }
   }
 
@@ -181,7 +182,7 @@ impl<'a> Pretty<'a> {
   #[allow(clippy::too_many_arguments)]
   fn infix_term(
     &self, prec: bool, len: u8, vis: &[u8], orig: u32, sym: SymbolKind, left: u8, right: u8,
-    args: &[Term], depth: u32,
+    args: &[Term], depth: u32, lift: u32,
   ) -> Doc<'a> {
     let lc = self.lc.unwrap();
     assert_eq!(len as usize, args.len());
@@ -194,9 +195,9 @@ impl<'a> Pretty<'a> {
     };
     let doc = match (left, vis) {
       (_, None) | (0, _) => self.nil(),
-      (1, Some(vis)) => self.term(true, &args[vis[0] as usize], depth).append(self.space()),
+      (1, Some(vis)) => self.term(true, &args[vis[0] as usize], depth, lift).append(self.space()),
       (_, Some(vis)) =>
-        self.terms(Some(&vis[..left as usize]), args, depth).parens().append(self.space()),
+        self.terms(Some(&vis[..left as usize]), args, depth, lift).parens().append(self.space()),
     };
     let doc = if SHOW_ORIG {
       doc.append(self.text(format!("{}[{}]", &lc.formatter.symbols[&sym], orig)))
@@ -207,20 +208,20 @@ impl<'a> Pretty<'a> {
       0 => doc,
       1 => {
         let i = vis.map_or(0, |v| v[left as usize] as usize);
-        doc.append(self.line()).append(self.term(true, &args[i], depth))
+        doc.append(self.line()).append(self.term(true, &args[i], depth, lift))
       }
       _ => doc
         .append(self.line())
-        .append(self.terms(vis.map(|v| &v[left as usize..]), args, depth).parens()),
+        .append(self.terms(vis.map(|v| &v[left as usize..]), args, depth, lift).parens()),
     };
     let doc = doc.group();
     return if prec && left + right != 0 { doc.parens() } else { doc }
   }
 
-  fn term(&self, prec: bool, tm: &Term, depth: u32) -> Doc<'a> {
+  fn term(&self, prec: bool, tm: &Term, depth: u32, lift: u32) -> Doc<'a> {
     match tm {
       Term::Locus(nr) => self.text(format!("a{}", nr.0)),
-      Term::Bound(nr) => self.text(format!("b{}", nr.0)),
+      Term::Bound(nr) => self.text(format!("b{}", nr.0 + lift)),
       Term::Constant(nr) => self.text(format!("c{}", nr.0)),
       Term::EqClass(nr) => self.text(format!("e{}", nr.0)),
       Term::EqMark(nr) => {
@@ -230,9 +231,10 @@ impl<'a> Pretty<'a> {
               true,
               &lc.marks[*nr].0,
               depth,
+              lift,
             ))
           } else {
-            self.term(prec, &lc.marks[*nr].0, depth)
+            self.term(prec, &lc.marks[*nr].0, depth, lift)
           }
         }
         self.text(format!("m{}", nr.0))
@@ -241,16 +243,17 @@ impl<'a> Pretty<'a> {
         if !SHOW_ONLY_INFER {
           if let Some(ic) = self.lc.and_then(|lc| lc.infer_const.try_borrow().ok()) {
             return if SHOW_INFER {
-              self.text(format!("?{}=", nr.0)).append(self.term(true, &ic[*nr].def, depth))
+              let doc = self.term(true, &ic[*nr].def, depth, depth);
+              self.text(format!("?{}=", nr.0)).append(doc)
             } else {
-              self.term(prec, &ic[*nr].def, depth)
+              self.term(prec, &ic[*nr].def, depth, depth)
             }
           }
         }
         self.text(format!("?{}", nr.0))
       }
       Term::SchFunc { nr, args } =>
-        self.text(format!("S{}", nr.0)).append(self.terms(None, args, depth).parens()),
+        self.text(format!("S{}", nr.0)).append(self.terms(None, args, depth, lift).parens()),
       Term::Aggregate { nr, args } => {
         let (mut doc, mut ovis) = (None, None);
         if let Some(lc) = self.lc {
@@ -266,16 +269,18 @@ impl<'a> Pretty<'a> {
           }
         }
         let doc = doc.unwrap_or_else(|| self.text(format!("G{}", nr.0)));
-        self.terms(ovis, args, depth).enclose(doc.append("(#"), "#)")
+        self.terms(ovis, args, depth, lift).enclose(doc.append("(#"), "#)")
       }
       Term::PrivFunc { nr, args, .. } =>
-        self.text(format!("$F{}", nr.0)).append(self.terms(None, args, depth).parens()),
+        self.text(format!("$F{}", nr.0)).append(self.terms(None, args, depth, lift).parens()),
       Term::Functor { nr, args } => {
         let mut ovis = None;
         if let Some(lc) = self.lc {
           match lc.formatter.func.get(nr) {
-            Some(&(len, ref vis, FormatFunc::Func { sym, left, right })) =>
-              return self.infix_term(prec, len, vis, nr.0, sym.into(), left, right, args, depth),
+            Some(&(len, ref vis, FormatFunc::Func { sym, left, right })) => {
+              let sym = sym.into();
+              return self.infix_term(prec, len, vis, nr.0, sym, left, right, args, depth, lift)
+            }
             Some(&(len, ref vis, FormatFunc::Bracket { lsym, rsym, args: n })) => {
               assert_eq!(len as usize, args.len());
               assert_eq!(vis.len(), n as usize);
@@ -285,7 +290,7 @@ impl<'a> Pretty<'a> {
                 self.text(&*lc.formatter.symbols[&lsym.into()])
               };
               return self
-                .terms(Some(vis), args, depth)
+                .terms(Some(vis), args, depth, lift)
                 .enclose(left, &lc.formatter.symbols[&rsym.into()])
             }
             None => {}
@@ -294,7 +299,7 @@ impl<'a> Pretty<'a> {
         let doc = self.text(format!("F{}", nr.0));
         match args.len() {
           0 => doc,
-          _ => doc.append(self.terms(ovis, args, depth).parens()),
+          _ => doc.append(self.terms(ovis, args, depth, lift).parens()),
         }
       }
       Term::Numeral(nr) => self.as_string(nr),
@@ -313,31 +318,32 @@ impl<'a> Pretty<'a> {
           Some(sym) => format!("the {sym} of"),
           None => format!("the Sel{} of", nr.0),
         });
-        let doc = doc.append(self.line()).append(self.terms(ovis, args, depth)).group();
+        let doc = doc.append(self.line()).append(self.terms(ovis, args, depth, lift)).group();
         self.parens_if(prec, doc)
       }
       Term::FreeVar(nr) => self.text(format!("v{}", nr.0)),
       Term::LambdaVar(nr) => self.text(format!("l{nr}")),
       Term::Qua { value, ty } => {
         let doc = self
-          .term(true, value, depth)
+          .term(true, value, depth, lift)
           .append(self.line())
           .append("qua ")
-          .append(self.ty(ty, depth))
+          .append(self.ty(ty, depth, lift))
           .group();
         self.parens_if(prec, doc)
       }
       Term::Choice { ty } =>
-        self.parens_if(prec, self.text("the ").append(self.ty(ty, depth)).group()),
+        self.parens_if(prec, self.text("the ").append(self.ty(ty, depth, lift)).group()),
       Term::Fraenkel { args, scope, compr } => {
-        let doc = self.term(false, scope, depth + args.len() as u32).append(self.line());
+        let doc = self.term(false, scope, depth + args.len() as u32, lift).append(self.line());
         let inner = self
           .text("where ")
           .append(self.commas(args.iter().enumerate().map(|(i, ty)| {
-            self.text(format!("b{}: ", depth + i as u32)).append(self.ty(ty, depth + i as u32))
+            let doc = self.ty(ty, depth + i as u32, lift);
+            self.text(format!("b{}: ", depth + i as u32)).append(doc)
           })))
           .append(" : ")
-          .append(self.formula(false, true, compr, depth + args.len() as u32))
+          .append(self.formula(false, true, compr, depth + args.len() as u32, lift))
           .nest(2)
           .group();
         doc.append(inner).group().braces()
@@ -346,7 +352,7 @@ impl<'a> Pretty<'a> {
     }
   }
 
-  fn adjective(&self, nr: AttrId, args: &[Term], depth: u32) -> Doc<'a> {
+  fn adjective(&self, nr: AttrId, args: &[Term], depth: u32, lift: u32) -> Doc<'a> {
     if let Some(lc) = self.lc {
       if let Some(&(len, ref vis, FormatAttr { sym, args: n })) = lc.formatter.attr.get(&nr) {
         assert_eq!(len as usize, args.len() + 1);
@@ -361,34 +367,34 @@ impl<'a> Pretty<'a> {
         };
         return match (vis, args) {
           (None, []) | (Some([]), _) => sym,
-          (Some(&[v]), _) => self.term(true, &args[v as usize], depth).append(sym),
-          (Some(vis), _) => self.terms(Some(vis), args, depth).parens().append(sym),
-          (None, _) => sym.append(self.terms(None, args, depth).parens()),
+          (Some(&[v]), _) => self.term(true, &args[v as usize], depth, lift).append(sym),
+          (Some(vis), _) => self.terms(Some(vis), args, depth, lift).parens().append(sym),
+          (None, _) => sym.append(self.terms(None, args, depth, lift).parens()),
         }
       }
     }
     let doc = self.text(format!("A{}", nr.0));
     match args.len() {
       0 => doc,
-      _ => doc.append(self.terms(None, args, depth).parens()),
+      _ => doc.append(self.terms(None, args, depth, lift).parens()),
     }
   }
 
-  fn attr(&self, attr: &Attr, plus: bool, depth: u32) -> Doc<'a> {
+  fn attr(&self, attr: &Attr, plus: bool, depth: u32, lift: u32) -> Doc<'a> {
     if plus { self.text("+") } else { self.nil() }
       .append(if attr.pos { self.nil() } else { self.text("non ") })
-      .append(self.adjective(attr.nr, &attr.args, depth))
+      .append(self.adjective(attr.nr, &attr.args, depth, lift))
   }
 
-  fn attrs(&self, attrs: &Attrs, plus: bool, depth: u32) -> Doc<'a> {
+  fn attrs(&self, attrs: &Attrs, plus: bool, depth: u32, lift: u32) -> Doc<'a> {
     match attrs {
       Attrs::Inconsistent => self.text("false").append(self.space()),
       Attrs::Consistent(attrs) =>
-        self.concat(attrs.iter().map(|a| self.attr(a, plus, depth).append(self.softline()))),
+        self.concat(attrs.iter().map(|a| self.attr(a, plus, depth, lift).append(self.softline()))),
     }
   }
 
-  fn ty(&self, ty: &Type, depth: u32) -> Doc<'a> {
+  fn ty(&self, ty: &Type, depth: u32, lift: u32) -> Doc<'a> {
     let (mut ovis, mut s) = (None, None);
     if let Some(lc) = self.lc {
       match ty.kind {
@@ -419,9 +425,10 @@ impl<'a> Pretty<'a> {
       }
     }
     let doc = if BOTH_CLUSTERS {
-      self.attrs(&ty.attrs.0, false, depth).append(self.attrs(&ty.attrs.1, true, depth))
+      self.attrs(&ty.attrs.0, false, depth, lift).append(self.attrs(&ty.attrs.1, true, depth, lift))
     } else {
-      self.attrs(if UPPER_CLUSTERS { &ty.attrs.1 } else { &ty.attrs.0 }, UPPER_CLUSTERS, depth)
+      let attrs = if UPPER_CLUSTERS { &ty.attrs.1 } else { &ty.attrs.0 };
+      self.attrs(attrs, UPPER_CLUSTERS, depth, lift)
     };
     let doc = doc.append(match s {
       Some(sym) => self.text(sym),
@@ -434,34 +441,36 @@ impl<'a> Pretty<'a> {
           TypeKind::Mode(_) => " of ",
           TypeKind::Struct(_) => " over ",
         };
-        doc.append(of).append(self.parens_if(n != 1, self.terms(ovis, &ty.args, depth)))
+        doc.append(of).append(self.parens_if(n != 1, self.terms(ovis, &ty.args, depth, lift)))
       }
     };
     doc.group()
   }
 
-  fn formula(&self, prec: bool, pos: bool, fmla: &Formula, depth: u32) -> Doc<'a> {
+  fn formula(&self, prec: bool, pos: bool, fmla: &Formula, depth: u32, lift: u32) -> Doc<'a> {
     match (pos, fmla) {
-      (false, f) if !NEGATION_SUGAR => self.text("¬").append(self.formula(true, true, fmla, depth)),
-      (pos, Formula::Neg { f }) => self.formula(prec, !pos, f, depth),
+      (false, f) if !NEGATION_SUGAR =>
+        self.text("¬").append(self.formula(true, true, fmla, depth, lift)),
+      (pos, Formula::Neg { f }) => self.formula(prec, !pos, f, depth, lift),
       (false, Formula::And { args }) => {
         let i = args.iter().position(|f| f.is_positive(false)).unwrap_or(args.len() - 1);
         let lhs = if i > 0 {
           let sep = self.text(" ∧").append(self.line());
-          let doc =
-            self.intersperse(args[..i].iter().map(|f| self.formula(true, true, f, depth)), sep);
+          let doc = self
+            .intersperse(args[..i].iter().map(|f| self.formula(true, true, f, depth, lift)), sep);
           doc.append(" →").append(self.line())
         } else {
           self.nil()
         };
         let sep = self.text(" ∨").append(self.line());
-        let doc =
-          self.intersperse(args[i..].iter().map(|f| self.formula(true, false, f, depth)), sep);
+        let doc = self
+          .intersperse(args[i..].iter().map(|f| self.formula(true, false, f, depth, lift)), sep);
         self.parens_if(prec, lhs.append(doc).nest(2).group())
       }
       (true, Formula::And { args }) => {
         let sep = self.text(" ∧").append(self.line());
-        let doc = self.intersperse(args.iter().map(|f| self.formula(true, true, f, depth)), sep);
+        let doc =
+          self.intersperse(args.iter().map(|f| self.formula(true, true, f, depth, lift)), sep);
         self.parens_if(prec, doc.nest(2).group())
       }
       (pos, Formula::ForAll { .. }) => {
@@ -469,7 +478,7 @@ impl<'a> Pretty<'a> {
         let mut depth = depth;
         let iter = std::iter::from_fn(|| {
           if let Formula::ForAll { dom, scope } = f {
-            let doc = self.text(format!(" b{depth}: ")).append(self.ty(dom, depth));
+            let doc = self.text(format!(" b{depth}: ")).append(self.ty(dom, depth, lift));
             f = scope;
             depth += 1;
             Some(doc)
@@ -481,69 +490,72 @@ impl<'a> Pretty<'a> {
           .text(if pos { "∀" } else { "∃" })
           .append(self.intersperse(iter, self.text(",")).group())
           .append(if pos { " holds" } else { " st" })
-          .append(self.line().append(self.formula(false, pos, f, depth)).nest(2));
+          .append(self.line().append(self.formula(false, pos, f, depth, lift)).nest(2));
         self.parens_if(prec, doc.group())
       }
       (pos, Formula::FlexAnd { orig, terms, expansion }) => {
         let doc = self
-          .formula(false, pos, &orig[0], depth)
+          .formula(false, pos, &orig[0], depth, lift)
           .append(if pos { " ∧ ... ∧" } else { " ∨ ... ∨" })
           .append(self.line())
-          .append(self.formula(false, pos, &orig[1], depth));
+          .append(self.formula(false, pos, &orig[1], depth, lift));
         self.parens_if(prec, doc.group())
       }
       (pos, Formula::True) => self.as_string(pos),
       (true, Formula::SchPred { nr, args }) =>
-        self.text(format!("SP{}", nr.0)).append(self.terms(None, args, depth).brackets()),
+        self.text(format!("SP{}", nr.0)).append(self.terms(None, args, depth, lift).brackets()),
       (true, Formula::Pred { nr, args }) => {
         let mut ovis = None;
         if let Some(lc) = self.lc {
           if let Some(&(len, ref vis, FormatPred { sym, left, right })) = lc.formatter.pred.get(nr)
           {
-            return self.infix_term(prec, len, vis, nr.0, sym.into(), left, right, args, depth)
+            return self.infix_term(prec, len, vis, nr.0, sym.into(), left, right, args, depth, lift)
           }
         }
-        self.text(format!("P{}", nr.0)).append(self.terms(ovis, args, depth).brackets())
+        self.text(format!("P{}", nr.0)).append(self.terms(ovis, args, depth, lift).brackets())
       }
       (true, Formula::Attr { nr, args }) => {
         let (arg0, args) = args.split_last().unwrap();
-        let doc =
-          self.term(false, arg0, depth).append(" is ").append(self.adjective(*nr, args, depth));
+        let doc = self
+          .term(false, arg0, depth, lift)
+          .append(" is ")
+          .append(self.adjective(*nr, args, depth, lift));
         self.parens_if(prec, doc.group())
       }
       (true, Formula::PrivPred { nr, args, value }) =>
-        self.text(format!("$P{}", nr.0)).append(self.terms(None, args, depth).brackets()),
+        self.text(format!("$P{}", nr.0)).append(self.terms(None, args, depth, lift).brackets()),
       (true, Formula::Is { term, ty }) => {
-        let doc = self.term(false, term, depth).append(" is ").append(self.ty(ty, depth));
+        let doc =
+          self.term(false, term, depth, lift).append(" is ").append(self.ty(ty, depth, lift));
         self.parens_if(prec, doc.group())
       }
-      (false, _) => self.text("¬").append(self.formula(true, true, fmla, depth)),
+      (false, _) => self.text("¬").append(self.formula(true, true, fmla, depth, lift)),
     }
   }
 }
 
 impl std::fmt::Debug for Term {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.term(false, self, 0).nest(2).render_fmt(100, f))
+    Pretty::with(|p| p.term(false, self, 0, 0).nest(2).render_fmt(100, f))
   }
 }
 impl std::fmt::Debug for Formula {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.formula(false, true, self, 0).nest(2).render_fmt(100, f))
+    Pretty::with(|p| p.formula(false, true, self, 0, 0).nest(2).render_fmt(100, f))
   }
 }
 impl std::fmt::Debug for Attr {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.attr(self, false, 0).nest(2).render_fmt(100, f))
+    Pretty::with(|p| p.attr(self, false, 0, 0).nest(2).render_fmt(100, f))
   }
 }
 impl std::fmt::Debug for Attrs {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.attrs(self, false, 0).nest(2).render_fmt(100, f))
+    Pretty::with(|p| p.attrs(self, false, 0, 0).nest(2).render_fmt(100, f))
   }
 }
 impl std::fmt::Debug for Type {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.ty(self, 0).nest(2).render_fmt(100, f))
+    Pretty::with(|p| p.ty(self, 0, 0).nest(2).render_fmt(100, f))
   }
 }

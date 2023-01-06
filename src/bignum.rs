@@ -1,11 +1,12 @@
 use std::cmp::Ordering;
 use std::fmt::{Debug, Display};
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(PartialEq, Eq, Clone)]
 pub struct Rational {
   num: i32,
   den: u32, // Invariant: positive
 }
+
 impl Default for Rational {
   fn default() -> Self { Self::ZERO }
 }
@@ -37,6 +38,10 @@ impl Rational {
   pub const ZERO: Self = Self::int(0);
   pub const ONE: Self = Self::int(1);
   pub const NEG_ONE: Self = Self::int(-1);
+
+  fn lex(&self, other: &Self) -> Ordering {
+    self.num.cmp(&other.num).then_with(|| self.den.cmp(&other.den))
+  }
 }
 
 impl std::ops::Add for Rational {
@@ -114,10 +119,48 @@ impl std::ops::Div for Rational {
   fn div(self, rhs: Self) -> Self::Output { self * rhs.inv()? }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Default)]
+impl Ord for Rational {
+  fn cmp(&self, other: &Self) -> Ordering {
+    #[allow(clippy::comparison_chain)]
+    if self < other {
+      Ordering::Less
+    } else if other < self {
+      Ordering::Greater
+    } else {
+      Ordering::Equal
+    }
+  }
+}
+impl PartialOrd for Rational {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
+  fn lt(&self, other: &Self) -> bool {
+    if self.num < 0 && other.num >= 0 {
+      true
+    } else if self.num == 0 {
+      0 < other.num
+    } else if 0 < self.num && other.num <= 0 {
+      false
+    } else {
+      self.num as i64 * (other.den as i64) < other.num as i64 * self.den as i64
+    }
+  }
+  fn le(&self, other: &Self) -> bool { !other.lt(self) }
+  fn gt(&self, other: &Self) -> bool { other < self }
+  fn ge(&self, other: &Self) -> bool { !self.lt(other) }
+}
+
+#[derive(PartialEq, Eq, Clone, Default)]
 pub struct Complex {
-  re: Rational,
-  im: Rational,
+  pub re: Rational,
+  pub im: Rational,
+}
+impl Ord for Complex {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.re.lex(&other.re).then_with(|| self.im.lex(&other.im))
+  }
+}
+impl PartialOrd for Complex {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
 }
 
 impl Display for Complex {

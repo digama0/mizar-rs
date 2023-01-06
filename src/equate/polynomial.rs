@@ -1,5 +1,5 @@
 use super::Equals;
-use crate::bignum::Complex;
+use crate::bignum::{Complex, Rational};
 use crate::checker::OrUnsat;
 use crate::equate::Equalizer;
 use crate::types::*;
@@ -13,6 +13,31 @@ pub struct Monomial {
   coeff: Complex,
   /// invariant: map does not contain zero powers
   powers: BTreeMap<EqTermId, u32>,
+}
+
+impl std::fmt::Debug for Monomial {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let mut strs = vec![];
+    if self.coeff != Complex::ONE {
+      if self.coeff.im != Rational::ZERO {
+        strs.push(format!("({})", self.coeff))
+      } else {
+        strs.push(format!("{}", self.coeff))
+      }
+    }
+    for (&et, &k) in &self.powers {
+      if k == 1 {
+        strs.push(format!("x{et:?}"))
+      } else {
+        strs.push(format!("x{et:?}^{k}"))
+      }
+    }
+    if strs.is_empty() {
+      write!(f, "1")
+    } else {
+      write!(f, "{}", strs.iter().format("*"))
+    }
+  }
 }
 
 // This ignores the coefficients
@@ -106,6 +131,16 @@ pub struct Polynomial(
   /// sorted by Monomial::lex
   Vec<Monomial>,
 );
+
+impl std::fmt::Debug for Polynomial {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    if self.0.is_empty() {
+      write!(f, "poly 0")
+    } else {
+      write!(f, "poly {:?}", self.0.iter().format(" + "))
+    }
+  }
+}
 
 impl Ord for Polynomial {
   fn cmp(&self, other: &Self) -> Ordering {

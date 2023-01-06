@@ -1,4 +1,4 @@
-use crate::bignum::Complex;
+use crate::bignum::{Complex, Rational};
 use crate::checker::{Atoms, Conjunct, Dnf, Open, OrUnsat, Overflow, Unsat};
 use crate::equate::Equalizer;
 use crate::types::*;
@@ -311,7 +311,9 @@ impl<'a> Unifier<'a> {
         }
       }
     }
-    assert!(!overflow);
+    if overflow {
+      vprintln!("note: at least one subproblem overflowed");
+    }
     Ok(())
   }
 }
@@ -367,7 +369,12 @@ impl Standardize<'_> {
   fn standardize_formula(&mut self, f: &mut Formula, pos: bool) {
     loop {
       match f {
-        Formula::Neg { f } => self.standardize_formula(f, !pos),
+        Formula::Neg { f: f2 } => {
+          self.standardize_formula(f2, !pos);
+          if let Formula::Neg { f: f3 } = &mut **f2 {
+            *f = std::mem::take(f3)
+          }
+        }
         Formula::And { args } => args.iter_mut().for_each(|f| self.standardize_formula(f, pos)),
         Formula::ForAll { dom, scope, .. } =>
           if pos {
@@ -581,7 +588,8 @@ impl Unify<'_> {
                 let mut inst2 = Dnf::FALSE;
                 for (ec2, etm2) in self.eq_class.enum_iter() {
                   if let Some(n2) = &etm2.number {
-                    if (n1 <= n2) != pos {
+                    if n1.im == Rational::ZERO && n2.im == Rational::ZERO && (n1.re <= n2.re) != pos
+                    {
                       inst2.mk_or(self.unify_term(arg2, &Term::EqClass(ec2))?)?;
                     }
                   }

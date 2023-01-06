@@ -36,6 +36,9 @@ impl<'a> Checker<'a> {
     if let Some(n) = crate::FIRST_VERBOSE_CHECKER {
       set_verbose(self.idx >= n);
     }
+    if crate::SKIP_TO_VERBOSE && !crate::verbose() {
+      return
+    }
     self.lc.term_cache.get_mut().open_scope();
     let infer_const = self.lc.infer_const.get_mut().len();
     let fixed_var = self.lc.fixed_var.len();
@@ -75,10 +78,11 @@ impl<'a> Checker<'a> {
     // vprintln!("process_is {} @ {:?}:{:?}:\n  {normal_form:?}", self.idx, self.article, self.pos);
 
     self.g.recursive_round_up = true;
-    for f in normal_form {
+    for (i, f) in normal_form.into_iter().enumerate() {
       if crate::CHECKER_CONJUNCTS {
         eprintln!(
-          "falsifying: {:#?}",
+          "falsifying {}.{i}: {:#?}",
+          self.idx,
           f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
         );
       }
@@ -92,7 +96,7 @@ impl<'a> Checker<'a> {
         stat("success");
         if crate::CHECKER_RESULT {
           eprintln!(
-            "proved {} @ {:?}:{:?}! {:#?}",
+            "proved {}.{i} @ {:?}:{:?}! {:#?}",
             self.idx,
             self.article,
             self.pos,
@@ -103,17 +107,16 @@ impl<'a> Checker<'a> {
         stat("failure");
         if crate::CHECKER_RESULT {
           eprintln!(
-            "FAILED TO JUSTIFY {} @ {:?}:{:?}: {:#?}",
+            "FAILED TO JUSTIFY {}.{i} @ {:?}:{:?}: {:#?}",
             self.idx,
             self.article,
             self.pos,
             f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
           );
         }
+        println!("failed to justify {}.{i} @ {:?}:{:?}", self.idx, self.article, self.pos);
         if crate::PANIC_ON_FAIL {
-          panic!("failed to justify {} @ {:?}:{:?}", self.idx, self.article, self.pos);
-        } else {
-          println!("failed to justify {} @ {:?}:{:?}", self.idx, self.article, self.pos);
+          panic!("failed to justify {}.{i} @ {:?}:{:?}", self.idx, self.article, self.pos);
         }
       }
     }
@@ -177,7 +180,7 @@ impl<'a> Checker<'a> {
               let a3 = atoms.insert(self.g, self.lc, Cow::Owned(f3));
               Dnf::insert_and_absorb(&mut inst3, Conjunct::single(a3, false))?;
             }
-            Dnf::mk_and_core(&mut inst2, inst3)?
+            Dnf::mk_and_core(&mut inst2, &inst3)?
           }
         }
         let mut inst1 = Dnf::Or(inst1);
@@ -196,12 +199,38 @@ impl<'a> Checker<'a> {
     if let Some(n) = crate::FIRST_VERBOSE_CHECKER {
       set_verbose(self.idx >= n);
     }
+    if crate::SKIP_TO_VERBOSE && !crate::verbose() {
+      return
+    }
     self.lc.term_cache.get_mut().open_scope();
+
+    if crate::CHECKER_INPUTS {
+      eprintln!();
+      for f in &premises {
+        eprintln!("input: {f:?}");
+      }
+      eprintln!("thesis: {thesis:?}");
+      eprintln!("scheme: {sch:#?}");
+    }
     assert!(premises.len() == sch.prems.len());
     let mut ctx =
-      SchemeCtx { primary: &sch.primary, g: self.g, lc: self.lc, subst: Default::default() };
-    assert!(ctx.eq_formula(&sch.thesis, thesis, true));
-    assert!((sch.prems.iter().zip(premises.iter())).all(|(f1, f2)| ctx.eq_formula(f1, f2, true)));
+      SchemeCtx { primary: &sch.sch_funcs, g: self.g, lc: self.lc, subst: Default::default() };
+    if ctx.eq_formula(&sch.thesis, thesis, true)
+      && (sch.prems.iter().zip(premises.iter())).all(|(f1, f2)| ctx.eq_formula(f1, f2, true))
+    {
+      if crate::CHECKER_RESULT {
+        eprintln!("proved sch {} @ {:?}:{:?}!", self.idx, self.article, self.pos);
+      }
+    } else {
+      stat("failure");
+      if crate::CHECKER_RESULT {
+        eprintln!("FAILED TO JUSTIFY sch {} @ {:?}:{:?}", self.idx, self.article, self.pos);
+      }
+      println!("failed to justify sch {} @ {:?}:{:?}", self.idx, self.article, self.pos);
+      if crate::PANIC_ON_FAIL {
+        panic!("failed to justify sch {} @ {:?}:{:?}", self.idx, self.article, self.pos);
+      }
+    }
     self.lc.term_cache.get_mut().close_scope();
   }
 }
@@ -219,7 +248,12 @@ struct Expand<'a> {
 impl Expand<'_> {
   fn expand(&mut self, f: &mut Formula, pos: bool) {
     match f {
-      Formula::Neg { f: arg } => self.expand(arg, !pos),
+      Formula::Neg { f: arg } => {
+        self.expand(arg, !pos);
+        if let Formula::Neg { f: f2 } = &mut **arg {
+          *f = std::mem::take(&mut **f2)
+        }
+      }
       Formula::And { args } => {
         let mut new_args = vec![];
         for mut f in std::mem::take(args) {
@@ -314,7 +348,7 @@ impl Expand<'_> {
         let mut inst = Inst0(if i == 0 { zero.clone().unwrap() } else { Term::Numeral(i) });
         let mut tm = scope.clone();
         inst.visit_formula(&mut tm);
-        tm.maybe_neg(!pos).append_conjuncts_to(conjs);
+        tm.maybe_neg(pos).append_conjuncts_to(conjs);
       }
     }
   }
@@ -342,7 +376,9 @@ impl Formula {
       match self {
         Formula::Neg { f: arg } => {
           arg.distribute_quantifiers(ctx, depth);
-          *self = std::mem::take(arg).mk_neg();
+          if let Formula::Neg { f: f2 } = &mut **arg {
+            *self = std::mem::take(&mut **f2)
+          }
         }
         Formula::And { args } => {
           let mut conjs = vec![];
@@ -615,29 +651,32 @@ where Conjunct<K, V>: std::fmt::Debug
   /// PreInstCollection.InsertAndAbsorb
   pub fn insert_and_absorb(
     this: &mut Vec<Conjunct<K, V>>, conj: Conjunct<K, V>,
-  ) -> Result<(), Overflow> {
+  ) -> Result<bool, Overflow> {
     for (i, conj1) in this.iter_mut().enumerate() {
       if conj1.weaker_than(&conj) {
-        return Ok(())
+        return Ok(false)
       }
       if conj.weaker_than(conj1) {
         this.retain_mut_from(i + 1, |conj2| !conj.weaker_than(conj2));
         this[i] = conj;
-        return Ok(())
+        return Ok(true)
       }
     }
     this.push(conj);
     if this.len() > MAX_DISJUNCTS {
       return Err(Overflow)
     }
-    Ok(())
+    Ok(true)
   }
 
   /// PreInstCollection.UnionWith
   pub fn mk_or(&mut self, other: Self) -> Result<(), Overflow> {
     let Dnf::Or(this) = self else { return Ok(()) };
     let Dnf::Or(other) = other else { *self = Dnf::True; return Ok(()) };
-    other.into_iter().try_for_each(|conj| Self::insert_and_absorb(this, conj))
+    other.into_iter().try_for_each(|conj| {
+      Self::insert_and_absorb(this, conj)?;
+      Ok(())
+    })
   }
 
   /// PreInstCollection.UnionWith
@@ -660,14 +699,13 @@ where Conjunct<K, V>: std::fmt::Debug
     }
   }
 
-  fn mk_and_core(
-    this: &mut Vec<Conjunct<K, V>>, other: Vec<Conjunct<K, V>>,
-  ) -> Result<(), Overflow> {
-    if let [conj2] = &*other {
+  fn mk_and_core(this: &mut Vec<Conjunct<K, V>>, other: &[Conjunct<K, V>]) -> Result<(), Overflow> {
+    if let [conj2] = other {
       this.retain_mut(|conj1| conj1.mk_and(conj2).is_ok())
     } else {
-      for conj1 in std::mem::take(this) {
-        for conj2 in &other {
+      let this1 = std::mem::take(this);
+      for conj2 in other {
+        for conj1 in &this1 {
           let mut conj = conj1.clone();
           if let Ok(()) = conj.mk_and(conj2) {
             Self::insert_and_absorb(this, conj)?;
@@ -689,7 +727,7 @@ where Conjunct<K, V>: std::fmt::Debug
         Dnf::True => {}
         _ if this.is_empty() => {}
         Dnf::Or(other) if other.is_empty() => this.clear(),
-        Dnf::Or(other) => Self::mk_and_core(this, other)?,
+        Dnf::Or(other) => Self::mk_and_core(this, &other)?,
       },
     }
     Ok(())
@@ -707,15 +745,23 @@ where Conjunct<K, V>: std::fmt::Debug
   /// PreInstCollection.JoinInstList
   /// Constructs the AND of a set of (nontrivial) DNF expressions.
   pub fn and_many(mut dnfs: Vec<Vec<Conjunct<K, V>>>) -> Result<Self, Overflow> {
-    // We sort the DNFs by length to prioritize a small accumulator
-    dnfs.sort_unstable_by_key(|dnf| dnf.len());
-    let mut it = dnfs.into_iter();
-    Ok(if let Some(mut this) = it.next() {
-      it.try_for_each(|other| Self::mk_and_core(&mut this, other))?;
-      Dnf::Or(this)
-    } else {
-      Dnf::True
-    })
+    'restart: loop {
+      // We sort the DNFs by length to prioritize a small accumulator
+      dnfs.sort_unstable_by_key(|dnf| !dnf.len());
+      let Some(mut this) = dnfs.pop() else { return Ok(Dnf::True) };
+      while !dnfs.is_empty() {
+        if let [conj1] = &*this {
+          // If 'this' is a single conjunct, we use it to reduce all future DNFs
+          for dnf in &mut dnfs {
+            dnf.retain_mut(|conj2| conj2.mk_and(conj1).is_ok())
+          }
+          continue 'restart
+        } else {
+          Self::mk_and_core(&mut this, &dnfs.pop().unwrap())?
+        }
+      }
+      return Ok(Dnf::Or(this))
+    }
   }
 }
 
@@ -784,7 +830,8 @@ impl<'a> SchemeCtx<'a> {
 
   fn eq_formula(&mut self, f1: &Formula, f2: &Formula, pos: bool) -> bool {
     use Formula::*;
-    match (f1, f2) {
+    // vprintln!("sch {pos}. {f1:?} <> {f2:?}");
+    let res = match (f1, f2) {
       (Neg { f: f1 }, _) => self.eq_formula(f1, f2, !pos),
       (_, Neg { f: f2 }) => self.eq_formula(f1, f2, !pos),
       (SchPred { nr: n1, args: args1 }, _) => {
@@ -831,8 +878,11 @@ impl<'a> SchemeCtx<'a> {
       #[allow(clippy::explicit_auto_deref)]
       (FlexAnd { orig: orig1, .. }, FlexAnd { orig: orig2, .. }) if pos =>
         self.eq_formulas(&**orig1, &**orig2),
+      (_, PrivPred { value, .. }) => self.eq_formula(f1, value, pos),
       _ => false,
-    }
+    };
+    // vprintln!("sch {pos}. {f1:?} <> {f2:?} -> {res}");
+    res
   }
 
   fn eq_terms(&mut self, t1: &[Term], t2: &[Term]) -> bool {
@@ -840,10 +890,11 @@ impl<'a> SchemeCtx<'a> {
   }
 
   fn wider(&mut self, tgt: &Type, src: &Type) -> bool {
+    // vprintln!("sch {tgt:?}\n  wider than {src:?}");
     self.is_subset_of(&tgt.attrs.0, &src.attrs.1, |this, a1, a2| this.eq_attr(a1, a2))
       && (self.observing(|this| this.eq_radices(tgt, src))
-        || match (tgt.kind, src.kind) {
-          (TypeKind::Mode(n1), TypeKind::Mode(n2)) if n1 != n2 => {
+        || tgt.kind != src.kind
+          && if let TypeKind::Mode(n1) = tgt.kind {
             let mut src = CowBox::Borrowed(src);
             loop {
               let Some(w) = src.widening(self.g) else { return false };
@@ -856,18 +907,16 @@ impl<'a> SchemeCtx<'a> {
               }
               src = CowBox::Owned(w.to_owned());
             }
-          }
-          (TypeKind::Struct(n1), TypeKind::Struct(n2)) if n1 != n2 => {
+          } else {
             let Some(src) = tgt.widening_of(self.g, src) else { return false };
             tgt.kind == src.kind && self.eq_radices(tgt, &src)
-          }
-          _ => false,
-        })
+          })
   }
 
   fn eq_term(&mut self, t1: &Term, t2: &Term) -> bool {
     use Term::*;
-    match (t1, t2) {
+    // vprintln!("sch {t1:?} <> {t2:?}");
+    let res = match (t1, t2) {
       (SchFunc { nr: n1, args: args1 }, _) =>
         if args1.is_empty() {
           let depth = self.lc.bound_var.len() as u32;
@@ -878,6 +927,7 @@ impl<'a> SchemeCtx<'a> {
           if let Some(tm) = self.subst.cnst.get_mut_extending(*n1) {
             ().eq_term(self.g, self.lc, &t2, tm)
           } else if self.wider(&self.primary[Idx::into_usize(*n1)], &t2.get_type(self.g, self.lc)) {
+            // vprintln!("assign S{n1:?}() := {t2:?}");
             self.subst.cnst[*n1] = Some(t2);
             true
           } else {
@@ -935,15 +985,19 @@ impl<'a> SchemeCtx<'a> {
           r
         },
       (_, &Infer(nr)) => {
-        let t = self.lc.infer_const.get_mut()[nr].def.clone();
+        let t = (self.lc.infer_const.get_mut()[nr].def)
+          .visit_cloned(&mut OnVarMut(|v| *v += self.lc.bound_var.len() as u32));
         self.eq_term(t1, &t)
       }
       (&Infer(nr), _) => {
-        let t = self.lc.infer_const.get_mut()[nr].def.clone();
+        let t = (self.lc.infer_const.get_mut()[nr].def)
+          .visit_cloned(&mut OnVarMut(|v| *v += self.lc.bound_var.len() as u32));
         self.eq_term(&t, t2)
       }
       _ => false,
-    }
+    };
+    // vprintln!("sch {t1:?} <> {t2:?} -> {res}");
+    res
   }
 
   fn eq_radices(&mut self, ty1: &Type, ty2: &Type) -> bool {
@@ -962,13 +1016,15 @@ impl<'a> SchemeCtx<'a> {
   fn is_subset_of(
     &mut self, attrs1: &Attrs, attrs2: &Attrs, mut eq: impl FnMut(&mut Self, &Attr, &Attr) -> bool,
   ) -> bool {
-    match (attrs1, attrs2) {
+    let res = match (attrs1, attrs2) {
       (Attrs::Inconsistent, Attrs::Consistent(_)) => false,
       (Attrs::Consistent(this), Attrs::Consistent(other)) =>
         other.len() >= this.len()
           && this.iter().all(|i| other.iter().any(|j| self.observing(|this| eq(this, i, j)))),
       (_, Attrs::Inconsistent) => true,
-    }
+    };
+    // vprintln!("sch {attrs1:?} c= {attrs2:?} -> {res}");
+    res
   }
 
   fn eq_type(&mut self, ty1: &Type, ty2: &Type) -> bool {

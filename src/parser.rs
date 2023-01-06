@@ -384,14 +384,14 @@ impl MizPath {
         }
       }
       if refs.sch.contains_key(&(lib_nr, sch_nr)) {
-        let primary = r.parse_arg_types(buf);
+        let sch_funcs = r.parse_arg_types(buf);
         let thesis = r.parse_formula(buf).unwrap();
         let mut prems = vec![];
         while let Some(f) = r.parse_formula(buf) {
           prems.push(f)
         }
         assert!(lib_nr != ArticleId::SELF);
-        libs.sch.insert((lib_nr, sch_nr), Scheme { primary, prems: prems.into(), thesis });
+        libs.sch.insert((lib_nr, sch_nr), Scheme { sch_funcs, prems: prems.into(), thesis });
       } else {
         r.read_to_end(b"Scheme", buf)
       }
@@ -461,7 +461,7 @@ impl XmlReader<'_> {
       attrs.push(attr)
     }
     if let Some(ctx) = self.ctx.get() {
-      attrs.sort_by(|a, b| a.cmp(ctx, b, CmpStyle::Strict));
+      attrs.sort_by(|a, b| a.cmp(ctx, None, b, CmpStyle::Strict));
     }
     Attrs::Consistent(attrs)
   }

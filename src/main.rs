@@ -111,7 +111,7 @@ impl Global {
         None => cl.term.round_up_type(self, lc),
         Some(ty) => CowBox::Borrowed(&**ty),
       };
-      attrs.enlarge_by(&self.constrs, &ty.attrs.1, |a| a.clone());
+      attrs.enlarge_by(&self.constrs, Some(lc), &ty.attrs.1, |a| a.clone());
       attrs.round_up_with(self, lc, &ty);
       self.clusters.functor[k].consequent.1 = attrs;
       lc.unload_locus_tys();
@@ -152,7 +152,7 @@ impl VisitMut for RoundUpTypes<'_> {
     ty.attrs.1 = ty.attrs.0.clone();
     if let TypeKind::Mode(n) = ty.kind {
       let new = self.g.constrs.mode[n].ty.attrs.1.visit_cloned(&mut Inst::new(&ty.args));
-      ty.attrs.1.enlarge_by(&self.g.constrs, &new, |a| a.clone());
+      ty.attrs.1.enlarge_by(&self.g.constrs, Some(self.lc), &new, |a| a.clone());
     }
     ty.round_up_with_self(self.g, self.lc)
   }
@@ -167,6 +167,17 @@ impl VisitMut for RoundUpTypes<'_> {
   fn pop_locus_tys(&mut self, n: usize) {
     assert!(self.lc.locus_ty.len() == n);
     self.lc.locus_ty.0.clear()
+  }
+
+  fn visit_push_sch_func_tys(&mut self, tys: &mut [Type]) {
+    for ty in tys {
+      self.visit_type(ty);
+      self.lc.sch_func_ty.push(ty.clone());
+    }
+  }
+  fn pop_sch_func_tys(&mut self, n: usize) {
+    assert!(self.lc.sch_func_ty.len() == n);
+    self.lc.sch_func_ty.0.clear()
   }
 }
 
@@ -201,14 +212,18 @@ impl Attr {
     }
   }
 
-  fn cmp_abs(&self, ctx: &Constructors, other: &Self, style: CmpStyle) -> Ordering {
+  fn cmp_abs(
+    &self, ctx: &Constructors, lc: Option<&LocalContext>, other: &Self, style: CmpStyle,
+  ) -> Ordering {
     let (n1, args1) = self.adjust(ctx);
     let (n2, args2) = other.adjust(ctx);
-    n1.cmp(&n2).then_with(|| Term::cmp_list(ctx, args1, args2, style))
+    n1.cmp(&n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style))
   }
 
-  fn cmp(&self, ctx: &Constructors, other: &Self, style: CmpStyle) -> Ordering {
-    self.cmp_abs(ctx, other, style).then_with(|| self.pos.cmp(&other.pos))
+  fn cmp(
+    &self, ctx: &Constructors, lc: Option<&LocalContext>, other: &Self, style: CmpStyle,
+  ) -> Ordering {
+    self.cmp_abs(ctx, lc, other, style).then_with(|| self.pos.cmp(&other.pos))
   }
 }
 
@@ -236,12 +251,15 @@ impl Term {
     ctx.functor[nr].c.redefines.unwrap_or(nr)
   }
 
-  fn skip_priv_func(&self) -> &Self {
+  fn skip_priv_func<'a>(&'a self, lc: Option<&'a LocalContext>) -> &'a Self {
     let mut t = self;
-    while let Term::PrivFunc { value, .. } = t {
-      t = value
+    loop {
+      match t {
+        Term::PrivFunc { value, .. } => t = value,
+        &Term::EqMark(m) if lc.is_some() => t = &lc.unwrap().marks[m].0,
+        _ => return t,
+      }
     }
-    t
   }
 
   /// SizeOfTrm(fTrm:TrmPtr)
@@ -262,17 +280,19 @@ impl Term {
   /// * CmpStyle::Strict: CompTrms(fTrm1 = self, fTrm2 = other)
   /// * CmpStyle::Red: CompRdTrms(fTrm1 = self, fTrm2 = other)
   /// * CmpStyle::Alt: CompareTrms(fTrm1 = self, fTrm2 = other)
-  fn cmp(&self, ctx: &Constructors, other: &Term, style: CmpStyle) -> Ordering {
+  fn cmp(
+    &self, ctx: &Constructors, lc: Option<&LocalContext>, other: &Term, style: CmpStyle,
+  ) -> Ordering {
     use Term::*;
     let (this, other) = match style {
       CmpStyle::Strict => (self, other),
-      CmpStyle::Red => (self.skip_priv_func(), other.skip_priv_func()),
+      CmpStyle::Red => (self.skip_priv_func(lc), other.skip_priv_func(lc)),
       CmpStyle::Alt => {
         match self.size().cmp(&other.size()) {
           Ordering::Equal => {}
           o => return o,
         }
-        (self.skip_priv_func(), other.skip_priv_func())
+        (self.skip_priv_func(lc), other.skip_priv_func(lc))
       }
     };
     this.discr().cmp(&other.discr()).then_with(|| match (this, other) {
@@ -287,11 +307,11 @@ impl Term {
       | (Numeral(n1), Numeral(n2)) => n1.cmp(n2),
       (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) => match style {
         CmpStyle::Strict | CmpStyle::Alt =>
-          n1.cmp(n2).then_with(|| Term::cmp_list(ctx, args1, args2, style)),
+          n1.cmp(n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style)),
         CmpStyle::Red => {
           let (n1, args1) = Term::adjust(*n1, args1, ctx);
           let (n2, args2) = Term::adjust(*n2, args2, ctx);
-          n1.cmp(&n2).then_with(|| Term::cmp_list(ctx, args1, args2, style))
+          n1.cmp(&n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style))
         }
       },
       (SchFunc { nr: SchFuncId(n1), args: args1 }, SchFunc { nr: SchFuncId(n2), args: args2 })
@@ -301,24 +321,26 @@ impl Term {
         PrivFunc { nr: PrivFuncId(n2), args: args2, .. },
       )
       | (Selector { nr: SelId(n1), args: args1 }, Selector { nr: SelId(n2), args: args2 }) =>
-        n1.cmp(n2).then_with(|| Term::cmp_list(ctx, args1, args2, style)),
-      (Choice { ty: ty1 }, Choice { ty: ty2 }) => ty1.cmp(ctx, ty2, style),
+        n1.cmp(n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style)),
+      (Choice { ty: ty1 }, Choice { ty: ty2 }) => ty1.cmp(ctx, lc, ty2, style),
       (
         Fraenkel { args: args1, scope: sc1, compr: c1 },
         Fraenkel { args: args2, scope: sc2, compr: c2 },
-      ) => sc1.cmp(ctx, sc2, style).then_with(|| {
-        c1.cmp(ctx, c2, style)
-          .then_with(|| cmp_list(args1, args2, |ty1, ty2| ty1.cmp(ctx, ty2, style)))
+      ) => sc1.cmp(ctx, lc, sc2, style).then_with(|| {
+        c1.cmp(ctx, lc, c2, style)
+          .then_with(|| cmp_list(args1, args2, |ty1, ty2| ty1.cmp(ctx, lc, ty2, style)))
       }),
       (It, It) => Ordering::Equal,
       (Qua { value: val1, ty: ty1 }, Qua { value: val2, ty: ty2 }) =>
-        val1.cmp(ctx, val2, style).then_with(|| ty1.cmp(ctx, ty2, style)),
+        val1.cmp(ctx, lc, val2, style).then_with(|| ty1.cmp(ctx, lc, ty2, style)),
       _ => unreachable!(),
     })
   }
 
-  fn cmp_list(ctx: &Constructors, tms1: &[Term], tms2: &[Term], style: CmpStyle) -> Ordering {
-    cmp_list(tms1, tms2, |tm1, tm2| tm1.cmp(ctx, tm2, style))
+  fn cmp_list(
+    ctx: &Constructors, lc: Option<&LocalContext>, tms1: &[Term], tms2: &[Term], style: CmpStyle,
+  ) -> Ordering {
+    cmp_list(tms1, tms2, |tm1, tm2| tm1.cmp(ctx, lc, tm2, style))
   }
 
   /// ReconSelectTrm
@@ -393,15 +415,19 @@ impl Type {
     }
   }
 
-  fn cmp(&self, ctx: &Constructors, other: &Type, style: CmpStyle) -> Ordering {
+  fn cmp(
+    &self, ctx: &Constructors, lc: Option<&LocalContext>, other: &Type, style: CmpStyle,
+  ) -> Ordering {
     self.kind.cmp(&other.kind).then_with(|| {
-      let o = self.attrs.0.cmp(ctx, &other.attrs.0, style);
-      o.then_with(|| Term::cmp_list(ctx, &self.args, &other.args, style))
+      let o = self.attrs.0.cmp(ctx, lc, &other.attrs.0, style);
+      o.then_with(|| Term::cmp_list(ctx, lc, &self.args, &other.args, style))
     })
   }
 
-  fn cmp_list(ctx: &Constructors, tys1: &[Type], tys2: &[Type], style: CmpStyle) -> Ordering {
-    cmp_list(tys1, tys2, |ty1, ty2| ty1.cmp(ctx, ty2, style))
+  fn cmp_list(
+    ctx: &Constructors, lc: Option<&LocalContext>, tys1: &[Type], tys2: &[Type], style: CmpStyle,
+  ) -> Ordering {
+    cmp_list(tys1, tys2, |ty1, ty2| ty1.cmp(ctx, lc, ty2, style))
   }
 
   /// SizeOfTyp(fTyp:TypPtr)
@@ -538,17 +564,21 @@ impl Formula {
     }
   }
 
-  fn cmp(&self, ctx: &Constructors, other: &Formula, style: CmpStyle) -> Ordering {
+  fn cmp(
+    &self, ctx: &Constructors, lc: Option<&LocalContext>, other: &Formula, style: CmpStyle,
+  ) -> Ordering {
     // vprintln!("{self:?} <?> {other:?}");
     self.discr().cmp(&other.discr()).then_with(|| {
       use Formula::*;
       match (self, other) {
         (True, True) => Ordering::Equal,
-        (Neg { f: f1 }, Neg { f: f2 }) => f1.cmp(ctx, f2, style),
+        (Neg { f: f1 }, Neg { f: f2 }) => f1.cmp(ctx, lc, f2, style),
         (Is { term: t1, ty: ty1 }, Is { term: t2, ty: ty2 }) =>
-          t1.cmp(ctx, t2, style).then_with(|| ty1.cmp(ctx, ty2, style)),
-        (And { args: args1 }, And { args: args2 }) =>
-          args1.len().cmp(&args2.len()).then_with(|| Formula::cmp_list(ctx, args1, args2, style)),
+          t1.cmp(ctx, lc, t2, style).then_with(|| ty1.cmp(ctx, lc, ty2, style)),
+        (And { args: args1 }, And { args: args2 }) => args1
+          .len()
+          .cmp(&args2.len())
+          .then_with(|| Formula::cmp_list(ctx, lc, args1, args2, style)),
         (
           SchPred { nr: SchPredId(n1), args: args1 },
           SchPred { nr: SchPredId(n2), args: args2 },
@@ -556,38 +586,41 @@ impl Formula {
         | (
           PrivPred { nr: PrivPredId(n1), args: args1, .. },
           PrivPred { nr: PrivPredId(n2), args: args2, .. },
-        ) => n1.cmp(n2).then_with(|| Term::cmp_list(ctx, args1, args2, style)),
+        ) => n1.cmp(n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style)),
         (Attr { nr: n1, args: args1 }, Attr { nr: n2, args: args2 }) => match style {
           CmpStyle::Strict | CmpStyle::Alt =>
-            n1.cmp(n2).then_with(|| Term::cmp_list(ctx, args1, args2, style)),
+            n1.cmp(n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style)),
           CmpStyle::Red => {
             let (n1, args1) = Formula::adjust_attr(*n1, args1, ctx);
             let (n2, args2) = Formula::adjust_attr(*n2, args2, ctx);
-            n1.cmp(&n2).then_with(|| Term::cmp_list(ctx, args1, args2, style))
+            n1.cmp(&n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style))
           }
         },
         (Pred { nr: n1, args: args1 }, Pred { nr: n2, args: args2 }) => match style {
           CmpStyle::Strict | CmpStyle::Alt =>
-            n1.cmp(n2).then_with(|| Term::cmp_list(ctx, args1, args2, style)),
+            n1.cmp(n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style)),
           CmpStyle::Red => {
             let (n1, args1) = Formula::adjust_pred(*n1, args1, ctx);
             let (n2, args2) = Formula::adjust_pred(*n2, args2, ctx);
-            n1.cmp(&n2).then_with(|| Term::cmp_list(ctx, args1, args2, style))
+            n1.cmp(&n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style))
           }
         },
         (ForAll { dom: dom1, scope: sc1, .. }, ForAll { dom: dom2, scope: sc2, .. }) =>
-          dom1.cmp(ctx, dom2, style).then_with(|| sc1.cmp(ctx, sc2, style)),
+          dom1.cmp(ctx, lc, dom2, style).then_with(|| sc1.cmp(ctx, lc, sc2, style)),
         #[allow(clippy::explicit_auto_deref)]
         (FlexAnd { orig: orig1, .. }, FlexAnd { orig: orig2, .. }) =>
-          Formula::cmp_list(ctx, &**orig1, &**orig2, style),
+          Formula::cmp_list(ctx, lc, &**orig1, &**orig2, style),
         _ => unreachable!(),
       }
     })
   }
 
-  fn cmp_list(ctx: &Constructors, fs1: &[Formula], fs2: &[Formula], style: CmpStyle) -> Ordering {
+  fn cmp_list(
+    ctx: &Constructors, lc: Option<&LocalContext>, fs1: &[Formula], fs2: &[Formula],
+    style: CmpStyle,
+  ) -> Ordering {
     // vprintln!("{fs1:?} <?> {fs2:?}");
-    cmp_list(fs1, fs2, |f1, f2| f1.cmp(ctx, f2, style))
+    cmp_list(fs1, fs2, |f1, f2| f1.cmp(ctx, lc, f2, style))
   }
 }
 
@@ -658,7 +691,7 @@ trait Equate {
       (&EqMark(nr), _) => self.eq_term(g, lc, &lc.marks[nr].0, t2),
       (_, &EqClass(nr)) => self.eq_class_right(g, lc, t1, nr),
       (PrivFunc { .. }, _) | (_, PrivFunc { .. }) =>
-        self.eq_term(g, lc, t1.skip_priv_func(), t2.skip_priv_func()),
+        self.eq_term(g, lc, t1.skip_priv_func(Some(lc)), t2.skip_priv_func(Some(lc))),
       _ => false,
     }
   }
@@ -880,6 +913,17 @@ macro_rules! mk_visit {
         }
       }
 
+      fn visit_flex_and(
+        &mut self, [orig_l, orig_r]: &$($mutbl)? [Formula; 2], [tm_l, tm_r]: &$($mutbl)? [Term; 2],
+        expansion: &$($mutbl)? Formula,
+      ) {
+        self.visit_formula(orig_l);
+        self.visit_formula(orig_r);
+        self.visit_formula(expansion);
+        self.visit_term(tm_l);
+        self.visit_term(tm_r);
+      }
+
       fn super_visit_formula(&mut self, f: &$($mutbl)? Formula) {
         if self.abort() { return }
         match f {
@@ -905,15 +949,8 @@ macro_rules! mk_visit {
             self.visit_formula(scope);
             self.pop_bound(1)
           }
-          Formula::FlexAnd { orig, terms, expansion } => {
-            let [orig_l, orig_r] = &$($mutbl)? **orig;
-            let [tm_l, tm_r] = &$($mutbl)? **terms;
-            self.visit_formula(orig_l);
-            self.visit_formula(orig_r);
-            self.visit_formula(expansion);
-            self.visit_term(tm_l);
-            self.visit_term(tm_r);
-          }
+          Formula::FlexAnd { orig, terms, expansion } =>
+            self.visit_flex_and(orig, terms, expansion),
           Formula::True => {}
         }
       }
@@ -933,6 +970,19 @@ macro_rules! mk_visit {
         self.visit_push_locus_tys(tys);
         f(self);
         self.pop_locus_tys(tys.len());
+      }
+
+      fn visit_push_sch_func_tys(&mut self, tys: &$($mutbl)? [Type]) {
+        for ty in tys {
+          self.visit_type(ty)
+        }
+      }
+      fn pop_sch_func_tys(&mut self, n: usize) {}
+
+      fn with_sch_func_tys(&mut self, tys: &$($mutbl)? [Type], f: impl FnOnce(&mut Self)) {
+        self.visit_push_sch_func_tys(tys);
+        f(self);
+        self.pop_sch_func_tys(tys.len());
       }
     }
   };
@@ -1040,7 +1090,7 @@ impl Term {
 
   /// RoundUpTrmType(fTrm = self)
   fn round_up_type<'a>(&self, g: &Global, lc: &'a LocalContext) -> CowBox<'a, Type> {
-    let tm = self.skip_priv_func();
+    let tm = self.skip_priv_func(Some(lc));
     let ty = Box::new(tm.get_type_uncached(g, lc));
     tm.round_up_type_from(g, lc, CowBox::Owned(ty))
   }
@@ -1167,7 +1217,7 @@ impl TermCollection {
 
   /// MSortedCollection.Search(self = self, Key = tm, out Index)
   fn find(&self, ctx: &Constructors, tm: &Term) -> Result<usize, usize> {
-    self.terms.binary_search_by(|a| a.0.cmp(ctx, tm, CmpStyle::Alt))
+    self.terms.binary_search_by(|a| a.0.cmp(ctx, None, tm, CmpStyle::Alt))
   }
 
   fn insert_raw(&mut self, ctx: &Constructors, tm: Term, ty: Type) -> usize {
@@ -1188,7 +1238,7 @@ impl TermCollection {
       tm
     {
       for tm in &**args {
-        let tm = tm.skip_priv_func();
+        let tm = tm.skip_priv_func(Some(lc));
         if let Term::Functor { .. } | Term::Selector { .. } | Term::Aggregate { .. } = tm {
           Self::insert(g, lc, tm);
         }
@@ -1533,9 +1583,14 @@ impl Attrs {
     }
   }
 
-  fn cmp(&self, ctx: &Constructors, other: &Attrs, style: CmpStyle) -> Ordering {
+  fn cmp(
+    &self, ctx: &Constructors, lc: Option<&LocalContext>, other: &Attrs, style: CmpStyle,
+  ) -> Ordering {
     let (this, other) = (self.attrs(), other.attrs());
-    this.len().cmp(&other.len()).then_with(|| cmp_list(this, other, |a, b| a.cmp(ctx, b, style)))
+    this
+      .len()
+      .cmp(&other.len())
+      .then_with(|| cmp_list(this, other, |a, b| a.cmp(ctx, lc, b, style)))
   }
 
   /// MAttrCollection.CopyAllowed(aTyp = (n, args), aOrigin = self)
@@ -1559,7 +1614,7 @@ impl Attrs {
   /// returns true if self changed
   pub fn insert(&mut self, ctx: &Constructors, item: Attr) -> bool {
     let Self::Consistent(this) = self else { return false };
-    match this.binary_search_by(|attr| attr.cmp_abs(ctx, &item, CmpStyle::Strict)) {
+    match this.binary_search_by(|attr| attr.cmp_abs(ctx, None, &item, CmpStyle::Strict)) {
       Ok(i) =>
         if this[i].pos != item.pos {
           *self = Self::Inconsistent;
@@ -1577,7 +1632,7 @@ impl Attrs {
   /// MAttrCollection.GetAttr(self = self, aAttrNr = item.nr, aAttrArgs = item.args)
   pub fn find(&self, ctx: &Constructors, item: &Attr) -> Option<&Attr> {
     let Self::Consistent(this) = self else { return None };
-    Some(&this[this.binary_search_by(|attr| attr.cmp_abs(ctx, item, CmpStyle::Strict)).ok()?])
+    Some(&this[this.binary_search_by(|attr| attr.cmp_abs(ctx, None, item, CmpStyle::Strict)).ok()?])
   }
 
   pub fn find0_abs(&self, ctx: &Constructors, nr: AttrId) -> Option<&Attr> {
@@ -1600,7 +1655,10 @@ impl Attrs {
   }
 
   /// MAttrCollection.EnlargeBy(self = self, aAnother = other, CopyAttribute = map)
-  pub fn enlarge_by(&mut self, ctx: &Constructors, other: &Self, map: impl FnMut(&Attr) -> Attr) {
+  pub fn enlarge_by(
+    &mut self, ctx: &Constructors, lc: Option<&LocalContext>, other: &Self,
+    map: impl FnMut(&Attr) -> Attr,
+  ) {
     if let Self::Consistent(this) = self {
       if let Self::Consistent(other) = other {
         if other.is_empty() {
@@ -1609,7 +1667,7 @@ impl Attrs {
         for item in itertools::merge_join_by(
           std::mem::take(this).into_iter(),
           other.iter().map(map),
-          |a, b| a.cmp_abs(ctx, b, CmpStyle::Strict),
+          |a, b| a.cmp_abs(ctx, None, b, CmpStyle::Strict),
         ) {
           match item {
             EitherOrBoth::Left(attr) | EitherOrBoth::Right(attr) => this.push(attr),
@@ -1631,7 +1689,7 @@ impl Attrs {
   /// ContradictoryAttrs(aClu1 = self, aClu2 = other)
   pub fn contradicts(&self, ctx: &Constructors, other: &Self) -> bool {
     let (Self::Consistent(this), Self::Consistent(other)) = (self, other) else { return true };
-    itertools::merge_join_by(this, other, |a, b| a.cmp_abs(ctx, b, CmpStyle::Strict))
+    itertools::merge_join_by(this, other, |a, b| a.cmp_abs(ctx, None, b, CmpStyle::Strict))
       .any(|item| matches!(item, EitherOrBoth::Both(attr1, attr2) if attr1.pos != attr2.pos))
   }
 
@@ -1703,7 +1761,9 @@ impl Attrs {
       let cl = &g.clusters.conditional.vec[last as usize];
       if let Some(subst) = cl.try_apply(g, lc, self, ty) {
         // eprintln!("enlarge {:?} by {:?}", self, cl.consequent.1);
-        self.enlarge_by(&g.constrs, &cl.consequent.1, |a| a.visit_cloned(&mut Inst::new(&subst)));
+        self.enlarge_by(&g.constrs, Some(lc), &cl.consequent.1, |a| {
+          a.visit_cloned(&mut Inst::new(&subst))
+        });
         state.handle_usage_and_fire(g, self)
       }
     }
@@ -1743,7 +1803,7 @@ impl<I> TyConstructor<I> {
     let mut attrs = self.ty.attrs.0.clone();
     if let TypeKind::Mode(nr) = self.ty.kind {
       let cl = g.constrs.mode[nr].ty.attrs.1.visit_cloned(&mut Inst::new(&self.ty.args));
-      attrs.enlarge_by(&g.constrs, &cl, |a| a.clone())
+      attrs.enlarge_by(&g.constrs, Some(lc), &cl, |a| a.clone())
     }
     lc.load_locus_tys(&self.primary);
     attrs.round_up_with(g, lc, &self.ty);
@@ -1786,7 +1846,9 @@ impl FunctorCluster {
         }
       }
       let subst = subst.finish();
-      attrs.enlarge_by(&g.constrs, &self.consequent.1, |a| a.visit_cloned(&mut Inst::new(&subst)));
+      attrs.enlarge_by(&g.constrs, Some(lc), &self.consequent.1, |a| {
+        a.visit_cloned(&mut Inst::new(&subst))
+      });
     }
     eq
   }
@@ -1866,6 +1928,12 @@ impl VisitMut for ExpandPrivFunc<'_> {
   /// CopyExpFrm
   fn visit_formula(&mut self, f: &mut Formula) {
     match f {
+      Formula::Neg { f: f2 } => {
+        self.visit_formula(f2);
+        if let Formula::Neg { f: f3 } = &mut **f2 {
+          *f = std::mem::take(f3)
+        }
+      }
       Formula::And { args } =>
         for mut f in std::mem::take(args) {
           self.visit_formula(&mut f);
@@ -1892,24 +1960,24 @@ impl Term {
         macro_rules! op {
           (|$x:ident, $y:ident| $e:expr) => {{
             let [arg1, arg2] = args else { unreachable!() };
-            let Term::Infer(i1) = *arg1.skip_priv_func() else { unreachable!() };
-            let Term::Infer(i2) = *arg2.skip_priv_func() else { unreachable!() };
+            let Term::Infer(i1) = *arg1.skip_priv_func(Some(lc)) else { unreachable!() };
+            let Term::Infer(i2) = *arg2.skip_priv_func(Some(lc)) else { unreachable!() };
             let ic = lc.infer_const.borrow();
             let ($x, $y) = (ic[i1].number.clone()?, ic[i2].number.clone()?);
             $e.ok()
           }};
           (|$x:ident| $e:expr) => {{
             let [arg1] = args else { unreachable!() };
-            let Term::Infer(i1) = *arg1.skip_priv_func() else { unreachable!() };
+            let Term::Infer(i1) = *arg1.skip_priv_func(Some(lc)) else { unreachable!() };
             let ic = lc.infer_const.borrow();
             let $x = ic[i1].number.clone()?;
             $e.ok()
           }};
         }
         match g.reqs.rev.get(nr) {
-          Some(Some(Requirement::ZeroNumber)) => Some(Complex::ZERO),
+          // Some(Some(Requirement::ZeroNumber)) => Some(Complex::ZERO),
+          // Some(Some(Requirement::Succ)) => op!(|x| x + Complex::ONE),
           Some(Some(Requirement::ImaginaryUnit)) => Some(Complex::I),
-          Some(Some(Requirement::Succ)) => op!(|x| x + Complex::ONE),
           Some(Some(Requirement::RealAdd)) => op!(|x, y| x + y),
           Some(Some(Requirement::RealMult)) => op!(|x, y| x * y),
           Some(Some(Requirement::RealDiff)) => op!(|x, y| x - y),
@@ -1961,7 +2029,7 @@ impl<'a> InternConst<'a> {
   fn collect_infer_const(&mut self, tm: &mut Term) {
     if self.only_constants {
       let mut ic = self.lc.infer_const.borrow_mut();
-      let nr = match ic.find_index(|a| a.def.cmp(&self.g.constrs, tm, CmpStyle::Strict)) {
+      let nr = match ic.find_index(|a| a.def.cmp(&self.g.constrs, None, tm, CmpStyle::Strict)) {
         Ok(nr) => nr,
         Err(i) => {
           drop(ic);
@@ -2041,7 +2109,9 @@ impl VisitMut for InternConst<'_> {
   fn visit_term(&mut self, tm: &mut Term) {
     let only_constants = std::mem::replace(&mut self.only_constants, true);
     let equals_expansion_level = std::mem::replace(&mut self.equals_expansion_level, 0);
-    // vprintln!("InternConst {tm:?}");
+    // static FOO: AtomicU32 = AtomicU32::new(0);
+    // let foo = FOO.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    // vprintln!("InternConst {foo} @ {} <- {tm:?}", self.depth);
     match tm {
       Term::Locus(_) | Term::Bound(_) | Term::FreeVar(_) | Term::LambdaVar(_) =>
         self.only_constants = false,
@@ -2075,7 +2145,7 @@ impl VisitMut for InternConst<'_> {
         self.visit_terms(args);
         if self.only_constants {
           let ic = self.lc.infer_const.borrow();
-          match ic.find_index(|a| a.def.cmp(&self.g.constrs, tm, CmpStyle::Strict)) {
+          match ic.find_index(|a| a.def.cmp(&self.g.constrs, None, tm, CmpStyle::Strict)) {
             Ok(nr) => *tm = Term::Infer(nr),
             _ => {
               // vprintln!("search for {tm:?} failed");
@@ -2112,6 +2182,7 @@ impl VisitMut for InternConst<'_> {
       Term::EqClass(_) | Term::EqMark(_) | Term::It | Term::Qua { .. } =>
         unreachable!("CollectConst::visit_term(EqConst | EqMark | It | Qua)"),
     }
+    // vprintln!("InternConst {foo} @ {} -> {tm:?}", self.depth);
     self.only_constants &= only_constants;
     self.equals_expansion_level = equals_expansion_level;
   }
@@ -2119,6 +2190,18 @@ impl VisitMut for InternConst<'_> {
   fn visit_attrs(&mut self, attrs: &mut Attrs) {
     attrs.reinsert_all(&self.g.constrs, |attr| self.visit_terms(&mut attr.args))
   }
+
+  fn visit_flex_and(
+    &mut self, [orig_l, orig_r]: &mut [Formula; 2], _: &mut [Term; 2], expansion: &mut Formula,
+  ) {
+    self.visit_formula(orig_l);
+    self.visit_formula(orig_r);
+    self.visit_formula(expansion);
+    // don't intern the endpoint terms
+  }
+
+  // locus types are not interned
+  fn visit_push_locus_tys(&mut self, tys: &mut [Type]) {}
 }
 
 pub struct ExpandConsts<'a>(&'a IdxVec<InferId, Assignment>, u32);
@@ -2305,7 +2388,7 @@ impl LocalContext {
     let mut i = Idx::from_usize(len);
     for asgn in old {
       if !has_local_const.contains(&i) {
-        match ic.find_index(|a| a.def.cmp(ctx, &asgn.def, CmpStyle::Strict)) {
+        match ic.find_index(|a| a.def.cmp(ctx, None, &asgn.def, CmpStyle::Strict)) {
           Ok(nr) => renumber.0.insert(i, nr),
           Err(idx) => {
             let j = ic.insert_at(idx, asgn);
@@ -2484,7 +2567,14 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
   // CollectConstInEnvConstructors
   let mut cc = &mut v.intern_const();
   let numeral_type = v.g.numeral_type.visit_cloned(cc);
-  let constrs = v.g.constrs.visit_cloned(cc);
+  let mut constrs = v.g.constrs.clone();
+  constrs.mode.visit(cc);
+  constrs.struct_mode.visit(cc);
+  // constrs.attribute.visit(cc); // no collection in attributes?
+  constrs.predicate.visit(cc);
+  constrs.functor.visit(cc);
+  constrs.selector.visit(cc);
+  constrs.aggregate.visit(cc);
   let mut clusters = v.g.clusters.clone();
   clusters.registered.iter_mut().for_each(|c| c.consequent.1.visit(cc));
   clusters.conditional.iter_mut().for_each(|c| c.consequent.1.visit(cc));
@@ -2499,14 +2589,11 @@ fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
 
   // InLibraries
   path.read_eth(&v.g.constrs, &refs, &mut v.libs).unwrap();
-  v.libs.visit(&mut RoundUpTypes { g: &v.g, lc: &mut v.lc });
   let cc = &mut InternConst::new(&v.g, &v.lc, &v.equals, &v.identify, &v.func_ids);
   v.libs.thm.values_mut().for_each(|f| f.visit(cc));
   v.libs.def.values_mut().for_each(|f| f.visit(cc));
-  const ONLY_THEOREMS: bool = true;
-  if !ONLY_THEOREMS {
-    path.read_esh(&v.g.constrs, &refs, &mut v.libs).unwrap();
-  }
+  path.read_esh(&v.g.constrs, &refs, &mut v.libs).unwrap();
+  v.libs.visit(&mut RoundUpTypes { g: &v.g, lc: &mut v.lc });
 
   if DUMP_LIBRARIES {
     for (&(ar, nr), th) in &v.libs.thm {
@@ -2575,14 +2662,16 @@ fn print_stats_and_exit() {
   std::process::exit(0)
 }
 
+const DEBUG: bool = cfg!(debug_assertions);
 const TOP_ITEM_HEADER: bool = false;
+const ALWAYS_VERBOSE_ITEM: bool = false;
 const ITEM_HEADER: bool = false;
-const CHECKER_INPUTS: bool = false;
-const CHECKER_HEADER: bool = false;
-const CHECKER_CONJUNCTS: bool = false;
-const CHECKER_RESULT: bool = false;
-const UNIFY_HEADER: bool = false;
-const UNIFY_INSTS: bool = false;
+const CHECKER_INPUTS: bool = DEBUG;
+const CHECKER_HEADER: bool = DEBUG;
+const CHECKER_CONJUNCTS: bool = DEBUG;
+const CHECKER_RESULT: bool = DEBUG;
+const UNIFY_HEADER: bool = DEBUG;
+const UNIFY_INSTS: bool = DEBUG;
 
 const DUMP_CONSTRUCTORS: bool = false;
 const DUMP_REQUIREMENTS: bool = false;
@@ -2591,10 +2680,11 @@ const DUMP_FORMATTER: bool = false;
 
 const FIRST_FILE: usize = 0;
 const ONE_FILE: bool = false;
-const PANIC_ON_FAIL: bool = true;
+const PANIC_ON_FAIL: bool = DEBUG;
 const FIRST_VERBOSE_TOP_ITEM: Option<usize> = None;
 const FIRST_VERBOSE_ITEM: Option<usize> = None;
-const FIRST_VERBOSE_CHECKER: Option<usize> = None;
+const FIRST_VERBOSE_CHECKER: Option<usize> = if DEBUG { Some(0) } else { None };
+const SKIP_TO_VERBOSE: bool = DEBUG;
 
 // files that take too damn long
 const BLACKLIST: &[&str] = &[];
@@ -2603,9 +2693,10 @@ fn main() {
   ctrlc::set_handler(print_stats_and_exit).expect("Error setting Ctrl-C handler");
   // set_verbose(true);
 
+  let first_file = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(FIRST_FILE);
   let mut stats = Default::default();
   let file = std::fs::read_to_string("../mizshare/mml.lar").unwrap();
-  for (i, s) in file.lines().enumerate().skip(FIRST_FILE) {
+  for (i, s) in file.lines().enumerate().skip(first_file) {
     if BLACKLIST.contains(&s) {
       continue
     }

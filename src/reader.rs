@@ -154,40 +154,40 @@ impl Reader {
     }
     if crate::ITEM_HEADER {
       eprint!("item[{}]: ", self.items);
-      if verbose() {
+      if crate::ALWAYS_VERBOSE_ITEM || verbose() {
         eprintln!("{it:#?}");
       } else {
         match it {
           Item::Let(_) => eprintln!("Let"),
-          Item::Given(_) => eprintln!("Given"),
-          Item::Thus(_) => eprintln!("Conclusion"),
-          Item::Assume(_) => eprintln!("Assume"),
+          Item::Given(it) => eprintln!("Given @ {:?}", it.prop.pos),
+          Item::Thus(it) => eprintln!("Thus @ {:?}", it.pos()),
+          Item::Assume(it) => eprintln!("Assume @ {:?}", it[0].pos),
           Item::Take(_) => eprintln!("Take"),
           Item::TakeAsVar(_, _) => eprintln!("TakeAsVar"),
-          Item::PerCases(_) => eprintln!("PerCases"),
+          Item::PerCases(it) => eprintln!("PerCases @ {:?}", it.pos.0),
           Item::AuxiliaryItem(it) => match it {
             AuxiliaryItem::PrivateStatement(it) => match it {
-              PrivateStatement::Proposition { .. } => eprintln!("Proposition"),
-              PrivateStatement::IterEquality { .. } => eprintln!("IterEquality"),
-              PrivateStatement::Now { .. } => eprintln!("Now"),
+              PrivateStatement::Proposition { .. } => eprintln!("Proposition @ {:?}", it.pos()),
+              PrivateStatement::IterEquality { .. } => eprintln!("IterEquality @ {:?}", it.pos()),
+              PrivateStatement::Now { .. } => eprintln!("Now @ {:?}", it.pos()),
             },
-            AuxiliaryItem::Consider { .. } => eprintln!("Consider"),
+            AuxiliaryItem::Consider { prop, .. } => eprintln!("Consider @ {:?}", prop.pos),
             AuxiliaryItem::Set { .. } => eprintln!("Set"),
-            AuxiliaryItem::Reconsider { .. } => eprintln!("Reconsider"),
+            AuxiliaryItem::Reconsider { prop, .. } => eprintln!("Reconsider @ {:?}", prop.pos),
             AuxiliaryItem::DefFunc { .. } => eprintln!("DefFunc"),
             AuxiliaryItem::DefPred { .. } => eprintln!("DefPred"),
           },
           Item::Registration(_) => eprintln!("Registration"),
-          Item::Scheme(_) => eprintln!("Scheme"),
-          Item::Theorem { .. } => eprintln!("Theorem"),
-          Item::DefTheorem { kind, .. } => eprintln!("DefTheorem {kind:?}"),
+          Item::Scheme(it) => eprintln!("Scheme @ {:?}", it.pos.0),
+          Item::Theorem { prop, .. } => eprintln!("Theorem @ {:?}", prop.pos),
+          Item::DefTheorem { kind, prop } => eprintln!("DefTheorem {kind:?} @ {:?}", prop.pos),
           Item::Reservation { .. } => eprintln!("Reservation"),
           Item::Section => eprintln!("Section"),
           Item::Canceled(_) => eprintln!("Canceled"),
-          Item::Definition(_) => eprintln!("Definition"),
-          Item::DefStruct(_) => eprintln!("DefStruct"),
+          Item::Definition(it) => eprintln!("Definition @ {:?}", it.pos),
+          Item::DefStruct(it) => eprintln!("DefStruct @ {:?}", it.pos),
           Item::Definiens(_) => eprintln!("Definiens"),
-          Item::Block { kind, .. } => eprintln!("{kind:?} block"),
+          Item::Block { kind, pos, .. } => eprintln!("{kind:?} block @ {:?}", pos.0),
           Item::Pattern(_) => eprintln!("Pattern"),
         }
       }
@@ -216,9 +216,9 @@ impl Reader {
               props.iter().for_each(|p| this.read_proposition(p));
               for it in items {
                 this.read_item(&it.0);
-                // if let Some(thesis) = &it.1 {
-                //   let _ = this.intern(&thesis.f);
-                // }
+                if let Some(thesis) = &it.1 {
+                  let _ = this.intern(&thesis.f);
+                }
               }
             });
           }
@@ -312,10 +312,10 @@ impl Reader {
         .collect();
       let mut thesis = this.intern(&thesis.f);
       this.read_justification(&thesis, just);
-      let primary = this.lc.sch_func_ty.0.drain(..).collect();
-      this.lc.expand_consts(|c| (&mut prems, &mut thesis).visit(c));
+      let mut primary = this.lc.sch_func_ty.0.drain(..).collect();
+      this.lc.expand_consts(|c| (&mut primary, (&mut prems, &mut thesis)).visit(c));
       this.lc.infer_const.get_mut().truncate(infer_consts);
-      this.libs.sch.insert((ArticleId::SELF, *nr), Scheme { primary, prems, thesis });
+      this.libs.sch.insert((ArticleId::SELF, *nr), Scheme { sch_funcs: primary, prems, thesis });
     });
   }
 
@@ -361,6 +361,9 @@ impl Reader {
         self.scope(*label, false, |this| {
           for it in items {
             this.read_item(&it.0);
+            if let Some(thesis) = &it.1 {
+              let _ = this.intern(&thesis.f);
+            }
           }
         });
       }
@@ -507,7 +510,7 @@ impl Reader {
             let mut attrs = asgn.ty.attrs.1.clone();
             let orig = attrs.attrs().len();
             // eprintln!("enlarge {:?} by {:?}", self, cl.consequent.1);
-            attrs.enlarge_by(&self.g.constrs, &cl.consequent.1, |a| {
+            attrs.enlarge_by(&self.g.constrs, Some(&self.lc), &cl.consequent.1, |a| {
               a.visit_cloned(&mut Inst::new(&subst))
             });
             assert!(matches!(attrs, Attrs::Consistent(_)));
