@@ -106,7 +106,7 @@ impl<'a> Unifier<'a> {
       }
       for (pos, ats) in u.bas.iter() {
         for f in &ats.0 .0 {
-          vprintln!("assume: {}{f:?}", if pos { "" } else { "¬" });
+          vprintln!("{}: {f:?}", if pos { "assume" } else { "goal" });
         }
       }
     }

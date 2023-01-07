@@ -39,7 +39,7 @@ impl<A: ?Sized + Clone> CowBox<'_, A> {
 }
 
 /// A trait for newtyped integers, that can be used as index types in vectors and sets.
-pub trait Idx: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug {
+pub trait Idx: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug + Default {
   /// Convert from `T` to `usize`
   fn into_usize(self) -> usize;
   /// Convert from `usize` to `T`

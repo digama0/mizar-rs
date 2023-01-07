@@ -1,24 +1,27 @@
 use super::Equals;
 use crate::bignum::{Complex, Rational};
-use crate::checker::OrUnsat;
+use crate::checker::{OrUnsat, Unsat};
 use crate::equate::Equalizer;
 use crate::types::*;
+use crate::{mk_id, vprintln};
 use itertools::{EitherOrBoth, Itertools};
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone)]
-pub struct Monomial {
+pub struct Monomial<I> {
   /// invariant: not zero inside polynomial
   coeff: Complex,
   /// invariant: map does not contain zero powers
-  powers: BTreeMap<EqTermId, u32>,
+  powers: BTreeMap<I, u32>,
 }
 
-impl std::fmt::Debug for Monomial {
+impl<I: Idx> std::fmt::Debug for Monomial<I> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     let mut strs = vec![];
-    if self.coeff != Complex::ONE {
+    if self.coeff == Complex::NEG_ONE {
+      write!(f, "-")?
+    } else if self.coeff != Complex::ONE {
       if self.coeff.im != Rational::ZERO {
         strs.push(format!("({})", self.coeff))
       } else {
@@ -41,26 +44,27 @@ impl std::fmt::Debug for Monomial {
 }
 
 // This ignores the coefficients
-impl Ord for Monomial {
+impl<I: Idx> Ord for Monomial<I> {
   fn cmp(&self, other: &Self) -> Ordering {
     self.degree().cmp(&other.degree()).then_with(|| {
       self.powers.len().cmp(&other.powers.len()).then_with(|| self.powers.cmp(&other.powers))
     })
   }
 }
-impl PartialOrd for Monomial {
+impl<I: Idx> PartialOrd for Monomial<I> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
 }
-impl PartialEq for Monomial {
+impl<I: Idx> PartialEq for Monomial<I> {
   fn eq(&self, other: &Self) -> bool { self.cmp(other) == Ordering::Equal }
 }
-impl Eq for Monomial {}
+impl<I: Idx> Eq for Monomial<I> {}
 
-impl Monomial {
+impl<I: Idx> Monomial<I> {
   pub const fn cnst(coeff: Complex) -> Self { Self { coeff, powers: BTreeMap::new() } }
-  pub fn atom(var: EqTermId) -> Self {
-    Self { coeff: Complex::ONE, powers: std::iter::once((var, 1)).collect() }
+  pub fn coeff_atom(coeff: Complex, var: I) -> Self {
+    Self { coeff, powers: std::iter::once((var, 1)).collect() }
   }
+  pub fn atom(var: I) -> Self { Self::coeff_atom(Complex::ONE, var) }
   pub fn degree(&self) -> u32 { self.powers.iter().map(|p| p.1).sum() }
 
   fn mul(&self, other: &Self) -> Self {
@@ -75,13 +79,15 @@ impl Monomial {
     Monomial { coeff, powers }
   }
 
-  fn lex(&self, other: &Self) -> Ordering {
-    self.powers.iter().map(|p| (p.0, !*p.1)).cmp(other.powers.iter().map(|p| (p.0, !*p.1)))
+  fn lex_powers(a: &BTreeMap<I, u32>, b: &BTreeMap<I, u32>) -> Ordering {
+    a.iter().map(|p| (p.0, !*p.1)).cmp(b.iter().map(|p| (p.0, !*p.1)))
   }
 
-  pub fn contains(&self, et: EqTermId) -> bool { self.powers.contains_key(&et) }
+  fn lex(&self, other: &Self) -> Ordering { Self::lex_powers(&self.powers, &other.powers) }
 
-  pub fn is_var(&self) -> Option<EqTermId> {
+  pub fn contains(&self, v: I) -> bool { self.powers.contains_key(&v) }
+
+  pub fn is_var(&self) -> Option<I> {
     if self.powers.len() != 1 || self.coeff != Complex::ONE {
       return None
     }
@@ -96,17 +102,6 @@ impl Monomial {
       Some(self.coeff.clone())
     } else {
       None
-    }
-  }
-
-  /// * Returns `Some(Some(v))` if the monomial is univariate in `v`
-  /// * Returns `Some(None)` if the monomial is a constant
-  /// * Returns `None` if the monomial uses two or more variables
-  pub fn is_univariate(&self) -> Option<Option<EqTermId>> {
-    match self.powers.len() {
-      0 => Some(None),
-      1 => Some(Some(*self.powers.first_key_value().unwrap().0)),
-      _ => None,
     }
   }
 
@@ -125,12 +120,12 @@ impl Monomial {
 }
 
 #[derive(Clone)]
-pub struct Polynomial(
+pub struct Polynomial<I>(
   /// sorted by Monomial::lex
-  Vec<Monomial>,
+  Vec<Monomial<I>>,
 );
 
-impl std::fmt::Debug for Polynomial {
+impl<I: Idx> std::fmt::Debug for Polynomial<I> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     if self.0.is_empty() {
       write!(f, "poly 0")
@@ -140,45 +135,26 @@ impl std::fmt::Debug for Polynomial {
   }
 }
 
-impl Ord for Polynomial {
-  fn cmp(&self, other: &Self) -> Ordering {
-    self.0.len().cmp(&other.0.len()).then_with(|| {
-      for (a, b) in self.0.iter().zip(&other.0) {
-        match a.cmp(b).then_with(|| a.coeff.cmp(&b.coeff)) {
-          Ordering::Equal => {}
-          non_eq => return non_eq,
-        }
-      }
-      Ordering::Equal
-    })
-  }
+impl<I: Idx> Ord for Polynomial<I> {
+  fn cmp(&self, other: &Self) -> Ordering { self.fcmp(other, |a, b| a.cmp(b)) }
 }
-impl PartialOrd for Polynomial {
+impl<I: Idx> PartialOrd for Polynomial<I> {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
 }
-impl PartialEq for Polynomial {
+impl<I: Idx> PartialEq for Polynomial<I> {
   fn eq(&self, other: &Self) -> bool { self.cmp(other) == Ordering::Equal }
 }
-impl Eq for Polynomial {}
+impl<I: Idx> Eq for Polynomial<I> {}
 
-impl Polynomial {
-  pub const ZERO: Self = Self(Vec::new());
-
-  pub fn single(mon: Monomial) -> Self {
-    if mon.coeff == Complex::ZERO {
-      Self(Vec::new())
-    } else {
-      Self(vec![mon])
-    }
-  }
-
-  pub fn add(mut self, other: Polynomial) -> Polynomial {
+impl<I: Idx> std::ops::Add for Polynomial<I> {
+  type Output = Self;
+  fn add(mut self, other: Self) -> Self {
     let mut out = Polynomial::ZERO;
     for item in self.0.into_iter().merge_join_by(other.0, Monomial::lex) {
       match item {
         EitherOrBoth::Left(mon) | EitherOrBoth::Right(mon) => out.0.push(mon),
         EitherOrBoth::Both(mut m1, m2) => {
-          m1.coeff = m1.coeff + m2.coeff;
+          m1.coeff += m2.coeff;
           if m1.coeff != Complex::ZERO {
             out.0.push(m1)
           }
@@ -187,31 +163,32 @@ impl Polynomial {
     }
     out
   }
+}
 
-  pub fn sub(mut self, other: Polynomial) -> Polynomial { self.add(other.smul(&Complex::NEG_ONE)) }
+impl<I: Idx> std::ops::Sub for Polynomial<I> {
+  type Output = Self;
+  fn sub(mut self, other: Self) -> Self { self + other * &Complex::NEG_ONE }
+}
 
-  pub fn is_zero(&self) -> bool { self.0.is_empty() }
-
-  fn dedup(&mut self) {
-    let mut it = std::mem::take(&mut self.0).into_iter();
-    if let Some(mut mon) = it.next() {
-      for m2 in it {
-        if mon == m2 {
-          mon.coeff = mon.coeff + m2.coeff;
-        } else {
-          if mon.coeff != Complex::ZERO {
-            self.0.push(mon)
-          }
-          mon = m2;
-        }
-      }
-      if mon.coeff != Complex::ZERO {
-        self.0.push(mon)
-      }
+impl<I: Idx> std::ops::Mul<&Complex> for Polynomial<I> {
+  type Output = Self;
+  fn mul(mut self, other: &Complex) -> Self {
+    if *other == Complex::ZERO {
+      return Polynomial::ZERO
     }
+    if *other == Complex::ONE {
+      return self
+    }
+    for mon in &mut self.0 {
+      mon.coeff = std::mem::take(&mut mon.coeff) * other.clone()
+    }
+    self
   }
+}
 
-  pub fn mul(&self, other: &Polynomial) -> Polynomial {
+impl<I: Idx> std::ops::Mul for &Polynomial<I> {
+  type Output = Polynomial<I>;
+  fn mul(self, other: Self) -> Polynomial<I> {
     if self.is_zero() || other.is_zero() {
       return Polynomial::ZERO
     }
@@ -226,21 +203,11 @@ impl Polynomial {
     out.dedup();
     out
   }
+}
 
-  pub fn smul(mut self, other: &Complex) -> Polynomial {
-    if *other == Complex::ZERO {
-      return Polynomial::ZERO
-    }
-    if *other == Complex::ONE {
-      return self
-    }
-    for mon in &mut self.0 {
-      mon.coeff = std::mem::take(&mut mon.coeff) * other.clone()
-    }
-    self
-  }
-
-  pub fn mmul(mut self, other: &Monomial) -> Polynomial {
+impl<I: Idx> std::ops::Mul<&Monomial<I>> for Polynomial<I> {
+  type Output = Self;
+  fn mul(mut self, other: &Monomial<I>) -> Self {
     if other.coeff == Complex::ZERO {
       return Polynomial::ZERO
     }
@@ -257,27 +224,67 @@ impl Polynomial {
     self.0.sort_unstable_by(Monomial::lex);
     self
   }
+}
 
-  pub fn is_var(&self) -> Option<EqTermId> {
+impl<I> Polynomial<I> {
+  pub const ZERO: Self = Self(Vec::new());
+
+  pub fn single(mon: Monomial<I>) -> Self {
+    if mon.coeff == Complex::ZERO {
+      Self(Vec::new())
+    } else {
+      Self(vec![mon])
+    }
+  }
+}
+
+impl<I: Idx> Polynomial<I> {
+  fn fcmp(&self, other: &Self, f: impl Fn(&Monomial<I>, &Monomial<I>) -> Ordering) -> Ordering {
+    self.0.len().cmp(&other.0.len()).then_with(|| {
+      for (a, b) in self.0.iter().zip(&other.0) {
+        match f(a, b).then_with(|| a.coeff.cmp(&b.coeff)) {
+          Ordering::Equal => {}
+          non_eq => return non_eq,
+        }
+      }
+      Ordering::Equal
+    })
+  }
+
+  pub fn is_zero(&self) -> bool { self.0.is_empty() }
+
+  fn dedup(&mut self) {
+    let mut it = std::mem::take(&mut self.0).into_iter();
+    if let Some(mut mon) = it.next() {
+      for m2 in it {
+        if mon == m2 {
+          mon.coeff += m2.coeff;
+        } else {
+          if mon.coeff != Complex::ZERO {
+            self.0.push(mon)
+          }
+          mon = m2;
+        }
+      }
+      if mon.coeff != Complex::ZERO {
+        self.0.push(mon)
+      }
+    }
+  }
+
+  pub fn is_var(&self) -> Option<I> {
     match *self.0 {
       [ref mon] => mon.is_var(),
       _ => None,
     }
   }
 
-  /// * Returns `Some(Some(v))` if the polynomial is univariate in `v`
-  /// * Returns `Some(None)` if the polynomial is a constant
-  /// * Returns `None` if the polynomial uses two or more variables
-  pub fn is_univariate(&self) -> Option<Option<EqTermId>> {
-    let mut v = None;
-    for mon in &self.0 {
-      if let Some(v2) = mon.is_univariate()? {
-        if matches!(v.replace(v2), Some(v1) if v1 != v2) {
-          return None
-        }
-      }
+  /// Returns `Some(v)` if the polynomial is a power of `v`
+  pub fn is_var_power(&self) -> Option<I> {
+    match &*self.0 {
+      [mon] if mon.powers.len() == 1 => Some(*mon.powers.first_key_value()?.0),
+      _ => None,
     }
-    Some(v)
   }
 
   pub fn is_const(&self) -> Option<Complex> {
@@ -288,9 +295,9 @@ impl Polynomial {
     }
   }
 
-  pub fn contains(&self, et: EqTermId) -> bool { self.0.iter().any(|mon| mon.contains(et)) }
+  pub fn contains(&self, v: I) -> bool { self.0.iter().any(|mon| mon.contains(v)) }
 
-  pub fn pow(&self, n: u32) -> Polynomial {
+  pub fn pow(&self, n: u32) -> Self {
     match n {
       0 => Polynomial::single(Monomial::cnst(Complex::ONE)),
       1 => self.clone(),
@@ -304,9 +311,9 @@ impl Polynomial {
         _ => {
           let mut out = self.clone();
           for i in (0..n.ilog2()).rev() {
-            out = out.mul(&out);
+            out = &out * &out;
             if (n >> i) & 1 != 0 {
-              out = out.mul(self);
+              out = &out * self;
             }
           }
           out
@@ -315,12 +322,12 @@ impl Polynomial {
     }
   }
 
-  /// computes self = self[et |-> p]
-  pub fn subst(&mut self, et: EqTermId, p: &Polynomial) {
+  /// computes self = self[v |-> p]
+  pub fn subst(&mut self, v: I, p: &Self) {
     for mut mon in std::mem::take(&mut self.0) {
-      if let Some(n) = mon.powers.remove(&et) {
+      if let Some(n) = mon.powers.remove(&v) {
         if !p.is_zero() {
-          self.0.append(&mut p.pow(n).mmul(&mon).0);
+          self.0.append(&mut (p.pow(n) * &mon).0);
         }
       } else {
         self.0.push(mon)
@@ -328,5 +335,254 @@ impl Polynomial {
     }
     self.0.sort_by(Monomial::lex);
     self.dedup()
+  }
+}
+
+#[derive(Clone, Default)]
+pub struct LinVar<I> {
+  coeff: Complex,
+  var: I,
+}
+
+// This ignores the coefficients
+impl<I: Idx> Ord for LinVar<I> {
+  fn cmp(&self, other: &Self) -> Ordering { self.var.cmp(&other.var) }
+}
+impl<I: Idx> PartialOrd for LinVar<I> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
+}
+impl<I: Idx> PartialEq for LinVar<I> {
+  fn eq(&self, other: &Self) -> bool { self.cmp(other) == Ordering::Equal }
+}
+impl<I: Idx> Eq for LinVar<I> {}
+
+impl<I: Idx> std::fmt::Debug for LinVar<I> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    if self.coeff == Complex::NEG_ONE {
+      write!(f, "-")?
+    } else if self.coeff != Complex::ONE {
+      if self.coeff.im != Rational::ZERO {
+        write!(f, "({})*", self.coeff)?
+      } else {
+        write!(f, "{}*", self.coeff)?
+      }
+    }
+    write!(f, "m{:?}", self.var)
+  }
+}
+
+#[derive(Clone)]
+pub struct LinPoly<I> {
+  cnst: Complex,
+  /// sorted
+  terms: Vec<LinVar<I>>,
+}
+impl<I> Default for LinPoly<I> {
+  fn default() -> Self { Self::ZERO }
+}
+
+impl<I: Idx> std::fmt::Debug for LinPoly<I> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "lin ")?;
+    for v in &self.terms {
+      write!(f, "{v:?} + ")?
+    }
+    write!(f, "{:?}", self.cnst)
+  }
+}
+
+impl<I: Idx> Ord for LinPoly<I> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    for (a, b) in self.terms.iter().zip(&other.terms) {
+      match a.var.cmp(&b.var).then_with(|| a.coeff.cmp(&b.coeff)) {
+        Ordering::Equal => {}
+        non_eq => return non_eq,
+      }
+    }
+    self.terms.len().cmp(&other.terms.len()).then_with(|| self.cnst.cmp(&other.cnst))
+  }
+}
+impl<I: Idx> PartialOrd for LinPoly<I> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
+}
+impl<I: Idx> PartialEq for LinPoly<I> {
+  fn eq(&self, other: &Self) -> bool { self.cmp(other) == Ordering::Equal }
+}
+impl<I: Idx> Eq for LinPoly<I> {}
+
+impl<I> std::ops::MulAssign<Complex> for LinPoly<I> {
+  fn mul_assign(&mut self, rhs: Complex) {
+    if rhs != Complex::ONE {
+      for v in &mut self.terms {
+        v.coeff *= rhs.clone();
+      }
+      self.cnst *= rhs
+    }
+  }
+}
+
+impl<I> std::ops::Mul<Complex> for LinPoly<I> {
+  type Output = Self;
+  fn mul(mut self, rhs: Complex) -> Self {
+    self *= rhs;
+    self
+  }
+}
+
+impl<I: Idx> std::ops::Add for LinPoly<I> {
+  type Output = Self;
+  fn add(mut self, other: Self) -> Self {
+    let mut out = LinPoly::cnst(self.cnst + other.cnst);
+    for item in self.terms.into_iter().merge_join_by(other.terms, Ord::cmp) {
+      match item {
+        EitherOrBoth::Left(mon) | EitherOrBoth::Right(mon) => out.terms.push(mon),
+        EitherOrBoth::Both(mut m1, m2) => {
+          m1.coeff += m2.coeff;
+          if m1.coeff != Complex::ZERO {
+            out.terms.push(m1)
+          }
+        }
+      }
+    }
+    out
+  }
+}
+
+impl<I: Idx> std::ops::Sub for LinPoly<I> {
+  type Output = Self;
+  fn sub(mut self, mut other: Self) -> Self { self + other * Complex::NEG_ONE }
+}
+impl<I: Idx> std::ops::SubAssign for LinPoly<I> {
+  fn sub_assign(&mut self, rhs: Self) { *self = std::mem::take(self) - rhs }
+}
+
+impl<I> LinPoly<I> {
+  const fn cnst(cnst: Complex) -> Self { Self { cnst, terms: vec![] } }
+  const ZERO: Self = Self::cnst(Complex::ZERO);
+}
+impl<I: Idx> LinPoly<I> {
+  fn dedup(&mut self) {
+    let mut it = std::mem::take(&mut self.terms).into_iter();
+    if let Some(mut mon) = it.next() {
+      for m2 in it {
+        if mon == m2 {
+          mon.coeff += m2.coeff;
+        } else {
+          if mon.coeff != Complex::ZERO {
+            self.terms.push(mon)
+          }
+          mon = m2;
+        }
+      }
+      if mon.coeff != Complex::ZERO {
+        self.terms.push(mon)
+      }
+    }
+  }
+}
+
+mk_id! { MonomialId, }
+
+pub(super) fn gaussian_elimination<I: Idx>(
+  vars: &mut SortedIdxVec<MonomialId, BTreeMap<I, u32>>, polys: BTreeSet<Polynomial<I>>,
+) -> OrUnsat<Vec<LinPoly<MonomialId>>> {
+  if polys.is_empty() {
+    return Ok(vec![])
+  }
+  let mut eqs = BTreeSet::new();
+  for p in polys {
+    let mut eq = LinPoly::ZERO;
+    for mut mon in p.0 {
+      if mon.powers.is_empty() {
+        eq.cnst += mon.coeff
+      } else {
+        let var = vars
+          .find_index(|m| Monomial::lex_powers(m, &mon.powers))
+          .unwrap_or_else(|idx| vars.insert_at(idx, mon.powers.clone()));
+        eq.terms.push(LinVar { coeff: mon.coeff, var });
+      }
+    }
+    eq.terms.sort_unstable();
+    eq.dedup();
+    if let [v, ..] = &*eq.terms {
+      eq *= v.coeff.clone().inv();
+      eqs.insert(eq);
+    } else if eq.cnst != Complex::ZERO {
+      return Err(Unsat)
+    }
+  }
+
+  // GaussElimination
+  if eqs.len() <= 1 {
+    return Ok(eqs.into_iter().collect())
+  }
+  let mut eqs2 = vec![];
+  while let Some(eq1) = eqs.pop_first() {
+    let v1 = eq1.terms[0].var;
+    while matches!(eqs.first(), Some(eq2) if eq2.terms[0].var == v1) {
+      let mut eq = eq1.clone() - eqs.pop_first().unwrap();
+      if let [v, ..] = &*eq.terms {
+        eq *= v.coeff.clone().inv();
+        eqs.insert(eq);
+      } else if eq.cnst != Complex::ZERO {
+        return Err(Unsat)
+      }
+    }
+    eqs2.push(eq1);
+  }
+  for i in 1..eqs2.len() {
+    let [lo @ .., eq1] = &mut eqs2[..=i] else { unreachable!() };
+    let v1 = eq1.terms[0].var;
+    for eq2 in lo {
+      if let Some(lv) = eq2.terms.iter().find(|lv| v1 <= lv.var) {
+        if v1 == lv.var {
+          let eq1 = eq1.clone() * lv.coeff.clone();
+          *eq2 = std::mem::take(eq2) - eq1;
+        }
+      }
+    }
+  }
+  let mut unsat = false;
+  eqs2.retain_mut(|eq| {
+    !eq.terms.is_empty() || {
+      unsat |= eq.cnst != Complex::ZERO;
+      false
+    }
+  });
+  if unsat {
+    return Err(Unsat)
+  }
+  Ok(eqs2)
+}
+
+impl<I: Idx> Polynomial<I> {
+  pub(super) fn reduce<J: Idx>(
+    self, vars: &SortedIdxVec<J, BTreeMap<I, u32>>, eqs: &[LinPoly<J>],
+  ) -> bool {
+    let mut eq = LinPoly::ZERO;
+    for mut mon in self.0 {
+      if mon.powers.is_empty() {
+        eq.cnst += mon.coeff
+      } else if let Ok(var) = vars.find_index(|m| Monomial::lex_powers(m, &mon.powers)) {
+        eq.terms.push(LinVar { coeff: mon.coeff, var })
+      } else {
+        return false
+      }
+    }
+    eq.terms.sort_unstable();
+    eq.dedup();
+
+    // LinearEquationReduce
+    let mut it = eqs.iter();
+    'next: loop {
+      let [v1, ..] = &*eq.terms else { return eq.cnst == Complex::ZERO };
+      for eq2 in it.by_ref() {
+        if v1.var == eq2.terms[0].var {
+          eq -= eq2.clone() * v1.coeff.clone();
+          continue 'next
+        }
+      }
+      return false
+    }
   }
 }

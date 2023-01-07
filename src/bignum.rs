@@ -311,9 +311,9 @@ impl Complex {
       _ => {
         let a = self.clone();
         for i in (0..n.ilog2()).rev() {
-          self = self.clone() * self;
+          self *= self.clone();
           if (n >> i) & 1 != 0 {
-            self = self * a.clone();
+            self *= a.clone();
           }
         }
         self
@@ -331,6 +331,9 @@ impl From<u32> for Complex {
 impl std::ops::Add for Complex {
   type Output = Self;
   fn add(self, rhs: Self) -> Self::Output { Self { re: self.re + rhs.re, im: self.im + rhs.im } }
+}
+impl std::ops::AddAssign for Complex {
+  fn add_assign(&mut self, rhs: Self) { *self = std::mem::take(self) + rhs }
 }
 
 impl std::ops::Neg for Complex {
@@ -351,6 +354,9 @@ impl std::ops::Mul for Complex {
       im: self.re * rhs.im + rhs.re * self.im,
     }
   }
+}
+impl std::ops::MulAssign for Complex {
+  fn mul_assign(&mut self, rhs: Self) { *self = std::mem::take(self) * rhs }
 }
 
 impl Complex {

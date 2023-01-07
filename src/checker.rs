@@ -218,6 +218,7 @@ impl<'a> Checker<'a> {
     if ctx.eq_formula(&sch.thesis, thesis, true)
       && (sch.prems.iter().zip(premises.iter())).all(|(f1, f2)| ctx.eq_formula(f1, f2, true))
     {
+      stat("success");
       if crate::CHECKER_RESULT {
         eprintln!("proved sch {} @ {:?}:{:?}!", self.idx, self.article, self.pos);
       }

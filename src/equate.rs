@@ -23,7 +23,7 @@ pub struct EqTerm {
   pub ty_class: Vec<Type>,
   pub supercluster: Attrs,
   pub number: Option<Complex>,
-  pub eq_polys: BTreeSet<Polynomial>,
+  pub eq_polys: BTreeSet<Polynomial<EqTermId>>,
 }
 
 impl std::fmt::Debug for EqTerm {
@@ -1130,9 +1130,7 @@ impl<'a> Equalizer<'a> {
             }
           }
         }
-        if c.properties.get(PropertyKind::Involutiveness)
-          && (arith || !(self.g.reqs.real_neg() == Some(i) || self.g.reqs.real_inv() == Some(i)))
-        {
+        if c.properties.get(PropertyKind::Involutiveness) {
           for &m in marks {
             let (Term::Functor { ref args, .. }, et) = self.lc.marks[m] else { unreachable!() };
             assert!(c.arg1 as usize + 1 == args.len());
@@ -1383,18 +1381,20 @@ impl<'a> Equalizer<'a> {
 
   /// SubstituteVariable
   fn subst_var(
-    &mut self, et: EqTermId, p: &Polynomial, mut pending: Option<&mut BTreeSet<EqTermId>>,
+    &mut self, from: EqTermId, p: &Polynomial<EqTermId>,
+    mut pending: Option<&mut BTreeSet<EqTermId>>,
   ) -> OrUnsat<bool> {
-    if p.contains(et) {
+    if p.contains(from) {
       return Ok(false)
     }
-    let et2 = self.lc.marks[self.terms[et].mark].1;
+    // vprintln!("subst {from:?}' := {p:?}");
+    let from2 = self.lc.marks[self.terms[from].mark].1;
     let mut progress = false;
-    for (et3, etm) in self.terms.enum_iter_mut() {
-      if et2 != et3 && !etm.eq_class.is_empty() {
+    for (v, etm) in self.terms.enum_iter_mut() {
+      if v != from && !etm.eq_class.is_empty() {
         for mut p2 in std::mem::take(&mut etm.eq_polys) {
-          if p2.contains(et) {
-            p2.subst(et, p);
+          if p2.contains(from) {
+            p2.subst(from, p);
             if let Some(c) = p2.is_const() {
               if let Some(c2) = &etm.number {
                 if c != *c2 {
@@ -1402,7 +1402,7 @@ impl<'a> Equalizer<'a> {
                 }
               } else {
                 if let Some(pending) = &mut pending {
-                  pending.insert(et);
+                  pending.insert(from);
                 }
                 etm.number = Some(c)
               }
@@ -1435,25 +1435,24 @@ impl<'a> Equalizer<'a> {
 
   /// EquatePolynomialValues
   fn equate_polynomial_values(&mut self, eqs: &mut Equals) -> OrUnsat<()> {
-    if let Some(complex) = self.g.reqs.complex() {
-      let mut to_subst = vec![];
-      let mut to_union = vec![];
-      let mut pending = BTreeSet::new();
-      loop {
-        for (v1, etm) in self.terms.enum_iter() {
-          if !etm.eq_class.is_empty() {
-            if let Some(p) = etm.eq_polys.first() {
-              if let Some(v2) = p.is_var() {
-                if v2 != v1 {
-                  if let Some(q) = self.terms[self.lc.marks[self.terms[v2].mark].1].eq_polys.first()
-                  {
-                    if let Some(v3) = q.is_var() {
-                      if v3 == v2 {
-                        if v1 > v2 {
-                          to_subst.push((v1, v2, q.clone()));
-                        } else {
-                          to_subst.push((v2, v1, Polynomial::single(Monomial::atom(v1))));
-                        }
+    if self.g.reqs.complex().is_none() {
+      return Ok(())
+    }
+    let mut to_subst = vec![];
+    let mut pending = BTreeSet::new();
+    loop {
+      for (v1, etm) in self.terms.enum_iter() {
+        if !etm.eq_class.is_empty() {
+          if let Some(p) = etm.eq_polys.first() {
+            if let Some(v2) = p.is_var() {
+              if v2 != v1 {
+                if let Some(q) = self.terms[self.lc.marks[self.terms[v2].mark].1].eq_polys.first() {
+                  if let Some(v3) = q.is_var() {
+                    if v3 == v2 {
+                      if v1 > v2 {
+                        to_subst.push((v1, v2, q.clone()));
+                      } else {
+                        to_subst.push((v2, v1, Polynomial::single(Monomial::atom(v1))));
                       }
                     }
                   }
@@ -1462,52 +1461,52 @@ impl<'a> Equalizer<'a> {
             }
           }
         }
-        for (v1, v2, p) in to_subst.drain(..) {
-          self.subst_var(v1, &p, Some(&mut pending))?;
-          self.union_terms(v1, v2)?;
-        }
-        self.subst_pending_vars(std::mem::take(&mut pending))?;
-        'next: for (x, y) in std::mem::take(&mut eqs.0) {
-          let et1 = self.lc.marks[self.terms[x].mark].1;
-          let et2 = self.lc.marks[self.terms[y].mark].1;
-          if let (Some(q1), Some(q2)) =
-            (self.terms[et1].eq_polys.first(), self.terms[et2].eq_polys.first())
-          {
-            for p1 in &self.terms[et1].eq_polys {
-              for p2 in &self.terms[et2].eq_polys {
-                if p1 == p2 {
-                  to_union.push((x, y));
-                  continue 'next
-                }
-              }
-            }
-            let u1 = q1.is_univariate();
-            let u2 = q2.is_univariate();
-            if u1.map_or(false, |u1| u1.map_or(true, |u1| u1 == et1)) {
-              if u2.map_or(false, |u2| u2.map_or(true, |u2| u2 == et2)) {
-                self.union_terms(et1, et2)?;
-                continue
-              }
-              if self.terms[et2].number.is_some() && self.terms[et2].eq_polys.len() == 1 {
-                self.subst_var(et1, &q2.clone(), Some(&mut pending))?;
-                self.union_terms(et1, et2)?;
-                continue
-              }
-            } else if self.terms[et1].number.is_some() && self.terms[et1].eq_polys.len() == 1 {
-              if u1.map_or(false, |u1| u1.map_or(true, |u1| u1 == y)) {
-                self.subst_var(et1, &q2.clone(), Some(&mut pending))?;
-                self.union_terms(et1, et2)?;
-                continue
-              } else if q1.is_const().is_some() {
-                return Err(Unsat) // TODO: why?
+      }
+      for (v1, v2, p) in to_subst.drain(..) {
+        self.subst_var(v1, &p, Some(&mut pending))?;
+        self.union_terms(v1, v2)?;
+      }
+      self.subst_pending_vars(std::mem::take(&mut pending))?;
+      'next: for (x, y) in std::mem::take(&mut eqs.0) {
+        let et1 = self.lc.marks[self.terms[x].mark].1;
+        let et2 = self.lc.marks[self.terms[y].mark].1;
+        if let (Some(q1), Some(q2)) =
+          (self.terms[et1].eq_polys.first(), self.terms[et2].eq_polys.first())
+        {
+          for p1 in &self.terms[et1].eq_polys {
+            for p2 in &self.terms[et2].eq_polys {
+              if p1 == p2 {
+                self.union_terms(x, y)?;
+                continue 'next
               }
             }
           }
-          eqs.0.insert((x, y));
+          let (u1, u2) = (q1.is_var_power(), q2.is_var_power());
+          if u1 == Some(et1) {
+            if u2 == Some(et2) {
+              self.union_terms(x, y)?;
+              continue
+            }
+            if self.terms[et2].number.is_some() && self.terms[et2].eq_polys.len() == 1 {
+              self.subst_var(x, &q2.clone(), Some(&mut pending))?;
+              self.union_terms(x, y)?;
+              continue
+            }
+          } else if self.terms[et1].number.is_some() && self.terms[et1].eq_polys.len() == 1 {
+            if u2 == Some(y) {
+              self.subst_var(y, &q2.clone(), Some(&mut pending))?;
+              self.union_terms(x, y)?;
+              continue
+            } else if let Some(c2) = q2.is_const() {
+              assert!(self.terms[et1].number.as_ref() != Some(&c2));
+              return Err(Unsat)
+            }
+          }
         }
-        if pending.is_empty() {
-          break
-        }
+        eqs.0.insert((x, y));
+      }
+      if pending.is_empty() {
+        break
       }
     }
     Ok(())
@@ -1536,11 +1535,13 @@ impl<'a> Equalizer<'a> {
 
   /// SubstitutePendingVars
   fn subst_pending_vars(&mut self, mut pending: BTreeSet<EqTermId>) -> OrUnsat<()> {
+    // vprintln!("subst_pending_vars {pending:?}");
     let mut first = true;
     loop {
       let mut progress = false;
       while let Some(et) = pending.pop_first() {
-        let etm = &self.terms[self.lc.marks[self.terms[et].mark].1];
+        let et = self.lc.marks[self.terms[et].mark].1;
+        let etm = &self.terms[et];
         assert!(!etm.eq_class.is_empty());
         if etm.eq_polys.len() == 1 {
           progress |=
@@ -1571,7 +1572,7 @@ impl<'a> Equalizer<'a> {
       if let (Some(q1), Some(q2)) =
         (self.terms[et1].eq_polys.first(), self.terms[et2].eq_polys.first())
       {
-        let p = q1.clone().sub(q2.clone());
+        let p = q1.clone() - q2.clone();
         if let Some(c) = p.is_const() {
           if c != Complex::ZERO {
             return Err(Unsat)
@@ -1581,12 +1582,22 @@ impl<'a> Equalizer<'a> {
         }
       }
     }
-    if polys.is_empty() {
-      return Ok(())
+    let mut vars = Default::default();
+    let eqs2 = polynomial::gaussian_elimination(&mut vars, polys)?;
+    for ((et1, etm1), (et2, etm2)) in (self.terms.enum_iter())
+      .filter(|(_, etm)| !etm.eq_polys.is_empty() && !etm.eq_polys.is_empty())
+      .tuple_combinations()
+    {
+      for p1 in &etm1.eq_polys {
+        for p2 in &etm2.eq_polys {
+          let q = p1.clone() - p2.clone();
+          if q.reduce(&vars, &eqs2) {
+            eqs.insert(et1, et2)
+          }
+        }
+      }
     }
-    // TODO: linear arithmetic
-    stat("linear");
-    Err(Unsat)
+    Ok(())
   }
 
   fn insert_non_attr0(&mut self, et1: EqTermId, et2: EqTermId, nr: AttrId) -> OrUnsat<()> {
@@ -1712,6 +1723,7 @@ impl<'a> Equalizer<'a> {
       for (i, f) in atoms.0.enum_iter() {
         // vprintln!("y pass atom {f:?}");
         if conj.0.get(&i).copied() == Some(pos) {
+          // vprintln!("{}: {f:?}", if pos { "assume" } else { "goal" });
           match f {
             Formula::Is { term, ty } if pos => {
               let x_type = self.y(|y| (**ty).visit_cloned(y))?;
@@ -1829,7 +1841,12 @@ impl<'a> Equalizer<'a> {
         }
       }
     }
-    self.drain_pending(&mut to_y_term, &mut eqs)?;
+    let mut eqs2 = Equals::default();
+    self.drain_pending(&mut to_y_term, &mut eqs2)?;
+    for (x, y) in eqs2.0 {
+      self.union_terms(x, y)?
+    }
+    // vprintln!("drain_pending -> {eqs:?}");
 
     self.process_reductions()?;
 
@@ -1954,10 +1971,10 @@ impl<'a> Equalizer<'a> {
                     etm.eq_polys.insert(Polynomial::single(Monomial::cnst(Complex::I)));
                     pending.insert(et);
                   }
-                  Some(Requirement::RealAdd) => op!(|p1, p2| p1.add(p2)),
-                  Some(Requirement::RealMult) => op!(|p1, p2| p1.mul(&p2)),
-                  Some(Requirement::RealDiff) => op!(|p1, p2| p1.add(p2.smul(&Complex::NEG_ONE))),
-                  Some(Requirement::RealNeg) => op!(|p1| p1.smul(&Complex::NEG_ONE)),
+                  Some(Requirement::RealAdd) => op!(|p1, p2| p1 + p2),
+                  Some(Requirement::RealMult) => op!(|p1, p2| &p1 * &p2),
+                  Some(Requirement::RealDiff) => op!(|p1, p2| p1 - p2),
+                  Some(Requirement::RealNeg) => op!(|p1| p1 * &Complex::NEG_ONE),
                   Some(Requirement::RealInv) => {
                     etm.eq_polys.insert(Polynomial::single(Monomial::atom(et)));
                   }
@@ -1967,7 +1984,7 @@ impl<'a> Equalizer<'a> {
                     let et2 = self.lc.marks[self.terms[self.lc.marks[m2].1].mark].1;
                     if let Some(p) = self.terms[et2].number.clone().filter(|p| *p != Complex::ZERO)
                     {
-                      let q = Polynomial::single(Monomial::atom(et1)).smul(&p.inv());
+                      let q = Polynomial::single(Monomial::atom(et1)) * &p.inv();
                       self.terms[et].eq_polys.insert(q);
                       pending.insert(et);
                     } else {
