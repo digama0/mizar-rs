@@ -9,7 +9,7 @@ use bignum::Complex;
 use enum_map::EnumMap;
 use equate::EqTerm;
 use format::Formatter;
-use itertools::EitherOrBoth;
+use itertools::{EitherOrBoth, Itertools};
 use once_cell::sync::Lazy;
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -2459,7 +2459,7 @@ impl Constructors {
   }
 }
 
-fn load(path: &MizPath, stats: &mut HashMap<&'static str, u32>) {
+fn load(path: &MizPath) {
   // MizPBlockObj.InitPrepData
   let mut refs = References::default();
   path.read_ref(&mut refs).unwrap();
@@ -2647,7 +2647,7 @@ macro_rules! vprintln {
 }
 
 static VERBOSE: AtomicBool = AtomicBool::new(false);
-pub fn verbose() -> bool { VERBOSE.load(std::sync::atomic::Ordering::SeqCst) }
+pub fn verbose() -> bool { DEBUG && VERBOSE.load(std::sync::atomic::Ordering::SeqCst) }
 pub fn set_verbose(b: bool) { VERBOSE.store(b, std::sync::atomic::Ordering::SeqCst) }
 
 static CALLS: AtomicU32 = AtomicU32::new(0);
@@ -2687,29 +2687,30 @@ const FIRST_VERBOSE_TOP_ITEM: Option<usize> = None;
 const FIRST_VERBOSE_ITEM: Option<usize> = None;
 const FIRST_VERBOSE_CHECKER: Option<usize> = if DEBUG { Some(0) } else { None };
 const SKIP_TO_VERBOSE: bool = DEBUG;
-
-// files that take too damn long
-const BLACKLIST: &[&str] = &[];
+const PARALLELISM: usize = if DEBUG || ONE_FILE { 1 } else { 7 };
 
 fn main() {
   ctrlc::set_handler(print_stats_and_exit).expect("Error setting Ctrl-C handler");
   // set_verbose(true);
 
   let first_file = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(FIRST_FILE);
-  let mut stats = Default::default();
   let file = std::fs::read_to_string("../mizshare/mml.lar").unwrap();
-  for (i, s) in file.lines().enumerate().skip(first_file) {
-    if BLACKLIST.contains(&s) {
-      continue
+  let jobs = &Mutex::new(file.lines().enumerate().skip(first_file).collect_vec().into_iter());
+  std::thread::scope(|s| {
+    for i in 0..PARALLELISM {
+      s.spawn(move || {
+        while let Some((i, s)) = {
+          let mut lock = jobs.lock().unwrap();
+          lock.next()
+        } {
+          println!("{i}: {s}");
+          load(&MizPath::new(s));
+          if ONE_FILE {
+            break
+          }
+        }
+      });
     }
-    println!("{i}: {s}");
-    let path = MizPath::new(s);
-    load(&path, &mut stats);
-    if ONE_FILE {
-      break
-    }
-  }
-  // let path = MizPath("../mizshare/mml/xcmplx_0".into());
-  // load(&path);
+  });
   print_stats_and_exit();
 }
