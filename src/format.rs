@@ -1,6 +1,6 @@
 use crate::types::*;
 use crate::{LocalContext, MizPath};
-use pretty::{Arena, DocAllocator, DocBuilder, RefDoc};
+use pretty::{Arena, DocAllocator, DocBuilder};
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -274,7 +274,6 @@ impl<'a> Pretty<'a> {
       Term::PrivFunc { nr, args, .. } =>
         self.text(format!("$F{}", nr.0)).append(self.terms(None, args, depth, lift).parens()),
       Term::Functor { nr, args } => {
-        let mut ovis = None;
         if let Some(lc) = self.lc {
           match lc.formatter.func.get(nr) {
             Some(&(len, ref vis, FormatFunc::Func { sym, left, right })) => {
@@ -299,7 +298,7 @@ impl<'a> Pretty<'a> {
         let doc = self.text(format!("F{}", nr.0));
         match args.len() {
           0 => doc,
-          _ => doc.append(self.terms(ovis, args, depth, lift).parens()),
+          _ => doc.append(self.terms(None, args, depth, lift).parens()),
         }
       }
       Term::Numeral(nr) => self.as_string(nr),
@@ -449,7 +448,7 @@ impl<'a> Pretty<'a> {
 
   fn formula(&self, prec: bool, pos: bool, fmla: &Formula, depth: u32, lift: u32) -> Doc<'a> {
     match (pos, fmla) {
-      (false, f) if !NEGATION_SUGAR =>
+      (false, _) if !NEGATION_SUGAR =>
         self.text("¬").append(self.formula(true, true, fmla, depth, lift)),
       (pos, Formula::Neg { f }) => self.formula(prec, !pos, f, depth, lift),
       (false, Formula::And { args }) => {
@@ -493,7 +492,7 @@ impl<'a> Pretty<'a> {
           .append(self.line().append(self.formula(false, pos, f, depth, lift)).nest(2));
         self.parens_if(prec, doc.group())
       }
-      (pos, Formula::FlexAnd { orig, terms, expansion }) => {
+      (pos, Formula::FlexAnd { orig, .. }) => {
         let doc = self
           .formula(false, pos, &orig[0], depth, lift)
           .append(if pos { " ∧ ... ∧" } else { " ∨ ... ∨" })
@@ -505,14 +504,13 @@ impl<'a> Pretty<'a> {
       (true, Formula::SchPred { nr, args }) =>
         self.text(format!("SP{}", nr.0)).append(self.terms(None, args, depth, lift).brackets()),
       (true, Formula::Pred { nr, args }) => {
-        let mut ovis = None;
         if let Some(lc) = self.lc {
           if let Some(&(len, ref vis, FormatPred { sym, left, right })) = lc.formatter.pred.get(nr)
           {
             return self.infix_term(prec, len, vis, nr.0, sym.into(), left, right, args, depth, lift)
           }
         }
-        self.text(format!("P{}", nr.0)).append(self.terms(ovis, args, depth, lift).brackets())
+        self.text(format!("P{}", nr.0)).append(self.terms(None, args, depth, lift).brackets())
       }
       (true, Formula::Attr { nr, args }) => {
         let (arg0, args) = args.split_last().unwrap();
@@ -522,7 +520,7 @@ impl<'a> Pretty<'a> {
           .append(self.adjective(*nr, args, depth, lift));
         self.parens_if(prec, doc.group())
       }
-      (true, Formula::PrivPred { nr, args, value }) =>
+      (true, Formula::PrivPred { nr, args, .. }) =>
         self.text(format!("$P{}", nr.0)).append(self.terms(None, args, depth, lift).brackets()),
       (true, Formula::Is { term, ty }) => {
         let doc =

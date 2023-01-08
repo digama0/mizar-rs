@@ -1,8 +1,6 @@
-use crate::{LocalContext, VisitMut};
+use crate::VisitMut;
 use enum_map::{Enum, EnumMap};
 use paste::paste;
-use std::borrow::Borrow;
-use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::marker::PhantomData;
@@ -605,17 +603,6 @@ impl Default for Term {
 }
 
 impl Term {
-  fn debug_args(
-    kind: &str, nr: u32, args: &[Term], f: &mut std::fmt::Formatter<'_>,
-  ) -> std::fmt::Result {
-    write!(f, "{kind}{nr}")?;
-    let mut s = f.debug_tuple("");
-    for arg in args {
-      s.field(arg);
-    }
-    s.finish()
-  }
-
   pub fn args(&self) -> Option<&[Term]> {
     match self {
       Term::SchFunc { args, .. }
@@ -1275,7 +1262,7 @@ pub struct ConstrDescr {
   pub primary: Box<[Type]>,
 }
 impl<V: VisitMut> Visitable<V> for ConstrDescr {
-  fn visit(&mut self, v: &mut V) { v.with_locus_tys(&mut self.primary, |v| {}) }
+  fn visit(&mut self, v: &mut V) { v.with_locus_tys(&mut self.primary, |_| {}) }
 }
 
 #[derive(Clone, Debug)]
@@ -1466,12 +1453,6 @@ impl<V: VisitMut> Visitable<V> for EqualsDef {
       self.pattern.1.visit(v)
     })
   }
-}
-
-#[derive(Default)]
-pub struct PropList {
-  vec: Vec<()>,
-  labeled: IdxVec<LabelId, u32>,
 }
 
 type ThmRef = (ArticleId, ThmId);
@@ -1910,7 +1891,7 @@ impl From<SelSymId> for SymbolKind {
 }
 
 impl SymbolKind {
-  fn discr(&self) -> u8 {
+  fn _discr(&self) -> u8 {
     match self {
       SymbolKind::Functor(_) => b'O',
       SymbolKind::LeftBrk(_) => b'K',
@@ -2031,7 +2012,7 @@ pub enum PatternKind {
 }
 
 impl PatternKind {
-  fn discr(&self) -> u8 {
+  fn _discr(&self) -> u8 {
     match self {
       PatternKind::Mode(_) | PatternKind::ExpandableMode => b'M',
       PatternKind::Struct(_) => b'L',

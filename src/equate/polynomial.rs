@@ -1,9 +1,7 @@
-use super::Equals;
 use crate::bignum::{Complex, Rational};
 use crate::checker::{OrUnsat, Unsat};
-use crate::equate::Equalizer;
+use crate::mk_id;
 use crate::types::*;
-use crate::{mk_id, vprintln};
 use itertools::{EitherOrBoth, Itertools};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -148,7 +146,7 @@ impl<I: Idx> Eq for Polynomial<I> {}
 
 impl<I: Idx> std::ops::Add for Polynomial<I> {
   type Output = Self;
-  fn add(mut self, other: Self) -> Self {
+  fn add(self, other: Self) -> Self {
     let mut out = Polynomial::ZERO;
     for item in self.0.into_iter().merge_join_by(other.0, Monomial::lex) {
       match item {
@@ -167,7 +165,7 @@ impl<I: Idx> std::ops::Add for Polynomial<I> {
 
 impl<I: Idx> std::ops::Sub for Polynomial<I> {
   type Output = Self;
-  fn sub(mut self, other: Self) -> Self { self + other * &Complex::NEG_ONE }
+  fn sub(self, other: Self) -> Self { self + other * &Complex::NEG_ONE }
 }
 
 impl<I: Idx> std::ops::Mul<&Complex> for Polynomial<I> {
@@ -431,7 +429,7 @@ impl<I> std::ops::Mul<Complex> for LinPoly<I> {
 
 impl<I: Idx> std::ops::Add for LinPoly<I> {
   type Output = Self;
-  fn add(mut self, other: Self) -> Self {
+  fn add(self, other: Self) -> Self {
     let mut out = LinPoly::cnst(self.cnst + other.cnst);
     for item in self.terms.into_iter().merge_join_by(other.terms, Ord::cmp) {
       match item {
@@ -450,7 +448,7 @@ impl<I: Idx> std::ops::Add for LinPoly<I> {
 
 impl<I: Idx> std::ops::Sub for LinPoly<I> {
   type Output = Self;
-  fn sub(mut self, mut other: Self) -> Self { self + other * Complex::NEG_ONE }
+  fn sub(self, other: Self) -> Self { self + other * Complex::NEG_ONE }
 }
 impl<I: Idx> std::ops::SubAssign for LinPoly<I> {
   fn sub_assign(&mut self, rhs: Self) { *self = std::mem::take(self) - rhs }
@@ -492,7 +490,7 @@ pub(super) fn gaussian_elimination<I: Idx>(
   let mut eqs = BTreeSet::new();
   for p in polys {
     let mut eq = LinPoly::ZERO;
-    for mut mon in p.0 {
+    for mon in p.0 {
       if mon.powers.is_empty() {
         eq.cnst += mon.coeff
       } else {
@@ -560,7 +558,7 @@ impl<I: Idx> Polynomial<I> {
     self, vars: &SortedIdxVec<J, BTreeMap<I, u32>>, eqs: &[LinPoly<J>],
   ) -> bool {
     let mut eq = LinPoly::ZERO;
-    for mut mon in self.0 {
+    for mon in self.0 {
       if mon.powers.is_empty() {
         eq.cnst += mon.coeff
       } else if let Ok(var) = vars.find_index(|m| Monomial::lex_powers(m, &mon.powers)) {

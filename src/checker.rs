@@ -1,21 +1,18 @@
 use crate::equate::Equalizer;
-use crate::reader::Reader;
-use crate::retain_mut_from::RetainMutFrom;
 use crate::types::*;
 use crate::unify::Unifier;
+use crate::util::RetainMutFrom;
 use crate::{
-  set_verbose, stat, vprintln, Assignment, CheckBound, Equate, ExpandPrivFunc, FixedVar, Global,
-  Inst, InternConst, LocalContext, OnVarMut, Subst, Visit, VisitMut,
+  set_verbose, stat, CheckBound, Equate, ExpandPrivFunc, FixedVar, Global, Inst, InternConst,
+  LocalContext, OnVarMut, Visit, VisitMut,
 };
-use itertools::{EitherOrBoth, Itertools};
+use itertools::Itertools;
 use std::borrow::Cow;
-use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::marker::PhantomData;
-use std::ops::ControlFlow;
 
 pub struct Checker<'a> {
-  pub g: &'a mut Global,
+  pub g: &'a Global,
   pub lc: &'a mut LocalContext,
   pub expansions: &'a [Definiens],
   pub equals: &'a BTreeMap<ConstrKind, Vec<EqualsDef>>,
@@ -77,7 +74,7 @@ impl<'a> Checker<'a> {
     self.process_is(&mut atoms, &mut normal_form).unwrap();
     // vprintln!("process_is {} @ {:?}:{:?}:\n  {normal_form:?}", self.idx, self.article, self.pos);
 
-    self.g.recursive_round_up = true;
+    self.lc.recursive_round_up = true;
     for (i, f) in normal_form.into_iter().enumerate() {
       if crate::CHECKER_CONJUNCTS {
         eprintln!(
@@ -120,7 +117,7 @@ impl<'a> Checker<'a> {
         }
       }
     }
-    self.g.recursive_round_up = false;
+    self.lc.recursive_round_up = false;
     self.lc.fixed_var.0.truncate(fixed_var);
     self.lc.infer_const.get_mut().truncate(infer_const);
     self.lc.term_cache.get_mut().close_scope();
@@ -274,7 +271,7 @@ impl Expand<'_> {
         f.conjdisj_many(pos, expansions);
       }
       Formula::Attr { nr, args } => {
-        let (n2, args2) = Formula::adjust_attr(*nr, args, &self.g.constrs);
+        let n2 = Formula::adjust_attr(*nr, args, &self.g.constrs).0;
         let expansions = self.well_matched_expansions(ConstrKind::Attr(n2), args);
         f.conjdisj_many(pos, expansions);
       }
@@ -288,7 +285,7 @@ impl Expand<'_> {
           };
           epf.visit_formula(&mut f1);
           let f2 = {
-            let Formula::FlexAnd { orig, terms, expansion } = &f1 else { unreachable!() };
+            let Formula::FlexAnd { expansion, .. } = &f1 else { unreachable!() };
             (**expansion).clone()
           };
           let mut conjs = vec![f1.maybe_neg(pos)];
@@ -409,7 +406,7 @@ impl Formula {
             *self = std::mem::take(scope);
           }
         }
-        Formula::PrivPred { args, value, .. } => {
+        Formula::PrivPred { value, .. } => {
           *self = std::mem::take(value);
           continue
         }
@@ -844,7 +841,7 @@ impl<'a> SchemeCtx<'a> {
         };
         match self.subst.pred.get_mut_extending(*n1) {
           Some(asgn) if *asgn == (pos, kind) => {}
-          Some(asgn) => return false,
+          Some(_) => return false,
           x @ None => *x = Some((pos, kind)),
         }
         self.eq_terms(args1, args2)
@@ -948,7 +945,7 @@ impl<'a> SchemeCtx<'a> {
           };
           match self.subst.func.get_mut_extending(*n1) {
             Some(asgn) if *asgn == kind => {}
-            Some(asgn) => return false,
+            Some(_) => return false,
             x @ None => *x = Some(kind),
           }
           self.eq_terms(args1, args2)

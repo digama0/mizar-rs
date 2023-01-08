@@ -28,7 +28,6 @@ impl Display for Integer {
 impl Integer {
   const ZERO: Self = Self::Small(0);
   const ONE: Self = Self::Small(1);
-  const NEG_ONE: Self = Self::Small(-1);
 
   fn large(i: BigInt) -> Self {
     match i.try_into() {

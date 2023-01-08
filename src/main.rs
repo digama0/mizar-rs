@@ -1,22 +1,14 @@
-#![allow(clippy::needless_range_loop)]
-#![allow(unused)]
-#![warn(unused_parens)]
-#![deny(unused_must_use)]
-
 use crate::reader::Reader;
 use crate::types::*;
 use bignum::Complex;
 use enum_map::EnumMap;
-use equate::EqTerm;
 use format::Formatter;
 use itertools::{EitherOrBoth, Itertools};
-use once_cell::sync::Lazy;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::File;
 use std::io;
-use std::iter::Peekable;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Mutex;
@@ -27,34 +19,9 @@ mod equate;
 mod format;
 mod parser;
 mod reader;
-mod retain_mut_from;
 mod types;
 mod unify;
-
-static MIZFILES: Lazy<PathBuf> = Lazy::new(|| {
-  std::env::var_os("MIZFILES").expect("MIZFILES environment variable is not set").into()
-});
-static PREL: Lazy<PathBuf> = Lazy::new(|| MIZFILES.join("prel"));
-
-pub struct MizPath(Article, PathBuf);
-
-// fn get_mml_article(article: &str) -> MizPath {
-//   let mut path = PREL.join(&article[..1]);
-//   path.push(article);
-//   MizPath(path)
-// }
-
-impl MizPath {
-  fn new(s: &str) -> Self {
-    Self(Article::from_bytes(s.as_bytes()), format!("../mizshare/mml/{s}").into())
-  }
-
-  fn open(&self, ext: &str) -> io::Result<File> {
-    let mut path = self.1.clone();
-    path.set_extension(ext);
-    File::open(path)
-  }
-}
+mod util;
 
 impl Global {
   /// TypReachable(fWider = wider, fNarrower = narrower)
@@ -104,14 +71,14 @@ impl Global {
     }
 
     for k in 0..self.clusters.functor.len() {
-      let mut cl = &self.clusters.functor[k];
+      let cl = &self.clusters.functor[k];
       lc.load_locus_tys(&cl.primary);
       let mut attrs = cl.consequent.1.clone();
       let ty = match &cl.ty {
         None => cl.term.round_up_type(self, lc),
         Some(ty) => CowBox::Borrowed(&**ty),
       };
-      attrs.enlarge_by(&self.constrs, Some(lc), &ty.attrs.1, |a| a.clone());
+      attrs.enlarge_by(&self.constrs, &ty.attrs.1, |a| a.clone());
       attrs.round_up_with(self, lc, &ty);
       self.clusters.functor[k].consequent.1 = attrs;
       lc.unload_locus_tys();
@@ -152,7 +119,7 @@ impl VisitMut for RoundUpTypes<'_> {
     ty.attrs.1 = ty.attrs.0.clone();
     if let TypeKind::Mode(n) = ty.kind {
       let new = self.g.constrs.mode[n].ty.attrs.1.visit_cloned(&mut Inst::new(&ty.args));
-      ty.attrs.1.enlarge_by(&self.g.constrs, Some(self.lc), &new, |a| a.clone());
+      ty.attrs.1.enlarge_by(&self.g.constrs, &new, |a| a.clone());
     }
     ty.round_up_with_self(self.g, self.lc)
   }
@@ -345,7 +312,7 @@ impl Term {
 
   /// ReconSelectTrm
   fn mk_select(g: &Global, nr: SelId, arg: &Term, ty: &Type) -> Term {
-    let TypeKind::Struct(s) = ty.kind else { panic!() };
+    assert!(matches!(ty.kind, TypeKind::Struct(_)));
     let mut args =
       Type::new(g.parent_struct(nr).into()).widening_of(g, ty).unwrap().to_owned().args;
     args.push(arg.clone());
@@ -422,12 +389,6 @@ impl Type {
       let o = self.attrs.0.cmp(ctx, lc, &other.attrs.0, style);
       o.then_with(|| Term::cmp_list(ctx, lc, &self.args, &other.args, style))
     })
-  }
-
-  fn cmp_list(
-    ctx: &Constructors, lc: Option<&LocalContext>, tys1: &[Type], tys2: &[Type], style: CmpStyle,
-  ) -> Ordering {
-    cmp_list(tys1, tys2, |ty1, ty2| ty1.cmp(ctx, lc, ty2, style))
   }
 
   /// SizeOfTyp(fTyp:TypPtr)
@@ -518,7 +479,7 @@ impl Type {
     }
     match self.kind {
       TypeKind::Mode(n) => {
-        let (n, args) = Type::adjust(n, &self.args, &g.constrs);
+        let n = Type::adjust(n, &self.args, &g.constrs).0;
         let mut w = CowBox::Borrowed(other);
         loop {
           let TypeKind::Mode(n2) = w.kind else { break };
@@ -637,7 +598,9 @@ trait Equate {
     t1.len() == t2.len() && t1.iter().zip(t2).all(|(t1, t2)| self.eq_term(g, lc, t1, t2))
   }
 
-  fn eq_class_right(&mut self, g: &Global, lc: &LocalContext, t1: &Term, ec: EqClassId) -> bool {
+  fn eq_class_right(
+    &mut self, _g: &Global, _lc: &LocalContext, _t1: &Term, _ec: EqClassId,
+  ) -> bool {
     false
   }
 
@@ -837,8 +800,8 @@ macro_rules! mk_visit {
   ($visit:ident$(, $mutbl:tt)?) => {
     pub trait $visit {
       #[inline] fn abort(&self) -> bool { false }
-      fn push_bound(&mut self, ty: &$($mutbl)? Type) {}
-      fn pop_bound(&mut self, n: u32) {}
+      fn push_bound(&mut self, _ty: &$($mutbl)? Type) {}
+      fn pop_bound(&mut self, _n: u32) {}
 
       fn super_visit_term(&mut self, tm: &$($mutbl)? Term) {
         if self.abort() { return }
@@ -964,7 +927,7 @@ macro_rules! mk_visit {
           self.visit_type(ty)
         }
       }
-      fn pop_locus_tys(&mut self, n: usize) {}
+      fn pop_locus_tys(&mut self, _n: usize) {}
 
       fn with_locus_tys(&mut self, tys: &$($mutbl)? [Type], f: impl FnOnce(&mut Self)) {
         self.visit_push_locus_tys(tys);
@@ -977,7 +940,7 @@ macro_rules! mk_visit {
           self.visit_type(ty)
         }
       }
-      fn pop_sch_func_tys(&mut self, n: usize) {}
+      fn pop_sch_func_tys(&mut self, _n: usize) {}
 
       fn with_sch_func_tys(&mut self, tys: &$($mutbl)? [Type], f: impl FnOnce(&mut Self)) {
         self.visit_push_sch_func_tys(tys);
@@ -1044,8 +1007,8 @@ impl<F: FnMut(FuncId, &[Term])> Visit for OnFunc<F> {
       (self.0)(*nr, args)
     }
   }
-  fn visit_type(&mut self, ty: &Type) {}
-  fn visit_formula(&mut self, f: &Formula) {}
+  fn visit_type(&mut self, _: &Type) {}
+  fn visit_formula(&mut self, _: &Formula) {}
 }
 
 fn has_func<'a>(ctx: &'a Constructors, nr: FuncId, found: &'a mut bool) -> impl Visit + 'a {
@@ -1259,7 +1222,7 @@ impl TermCollection {
     let ty = tm.get_type_uncached(g, lc);
 
     // 1. Insert the term with its type provisionally into the cache
-    let mut i = lc.term_cache.borrow_mut().insert_raw(&g.constrs, tm.clone(), ty);
+    let i = lc.term_cache.borrow_mut().insert_raw(&g.constrs, tm.clone(), ty);
 
     // clone the type so that we don't hold on to the cache for the next bit
     let ty = Box::new(lc.term_cache.borrow().terms[i].1.clone());
@@ -1286,19 +1249,6 @@ impl TermCollection {
   }
 
   fn clear(&mut self) { self.terms.clear() }
-}
-
-// fn ensure_has<T>(vec: &mut Vec<T>, i: usize, default: impl FnMut() -> T) {
-//   if i >= vec.len() {
-//     vec.resize_with(i + 1, default)
-//   }
-// }
-
-fn to_ptr<T>(x: &Option<Box<T>>) -> *const T {
-  match x {
-    Some(x) => &**x,
-    None => std::ptr::null(),
-  }
 }
 
 impl Subst {
@@ -1378,7 +1328,7 @@ impl Subst {
       // vprintln!("main {i:?}, subst = {:?} : {subst_ty:?}, tm = {tm:?}", self.subst_term);
       let mut orig_subst = self.subst_term.iter().map(Option::is_some).collect::<Vec<_>>();
       // let wty be the type of subst_term[i]
-      let wty = if g.recursive_round_up {
+      let wty = if lc.recursive_round_up {
         tm.round_up_type(g, lc)
       } else {
         CowBox::Owned(Box::new(tm.get_type(g, lc)))
@@ -1416,6 +1366,7 @@ impl Subst {
             continue 'main
           }
           // Unset anything that was set as a result of the unification
+          #[allow(clippy::needless_range_loop)]
           for j in 0..=i {
             match &mut self.subst_term[j] {
               x @ Some(_) if !orig_subst[j] => *x = None,
@@ -1655,10 +1606,7 @@ impl Attrs {
   }
 
   /// MAttrCollection.EnlargeBy(self = self, aAnother = other, CopyAttribute = map)
-  pub fn enlarge_by(
-    &mut self, ctx: &Constructors, lc: Option<&LocalContext>, other: &Self,
-    map: impl FnMut(&Attr) -> Attr,
-  ) {
+  pub fn enlarge_by(&mut self, ctx: &Constructors, other: &Self, map: impl FnMut(&Attr) -> Attr) {
     if let Self::Consistent(this) = self {
       if let Self::Consistent(other) = other {
         if other.is_empty() {
@@ -1761,9 +1709,7 @@ impl Attrs {
       let cl = &g.clusters.conditional.vec[last as usize];
       if let Some(subst) = cl.try_apply(g, lc, self, ty) {
         // eprintln!("enlarge {:?} by {:?}", self, cl.consequent.1);
-        self.enlarge_by(&g.constrs, Some(lc), &cl.consequent.1, |a| {
-          a.visit_cloned(&mut Inst::new(&subst))
-        });
+        self.enlarge_by(&g.constrs, &cl.consequent.1, |a| a.visit_cloned(&mut Inst::new(&subst)));
         state.handle_usage_and_fire(g, self)
       }
     }
@@ -1803,7 +1749,7 @@ impl<I> TyConstructor<I> {
     let mut attrs = self.ty.attrs.0.clone();
     if let TypeKind::Mode(nr) = self.ty.kind {
       let cl = g.constrs.mode[nr].ty.attrs.1.visit_cloned(&mut Inst::new(&self.ty.args));
-      attrs.enlarge_by(&g.constrs, Some(lc), &cl, |a| a.clone())
+      attrs.enlarge_by(&g.constrs, &cl, |a| a.clone())
     }
     lc.load_locus_tys(&self.primary);
     attrs.round_up_with(g, lc, &self.ty);
@@ -1846,9 +1792,7 @@ impl FunctorCluster {
         }
       }
       let subst = subst.finish();
-      attrs.enlarge_by(&g.constrs, Some(lc), &self.consequent.1, |a| {
-        a.visit_cloned(&mut Inst::new(&subst))
-      });
+      attrs.enlarge_by(&g.constrs, &self.consequent.1, |a| a.visit_cloned(&mut Inst::new(&subst)));
     }
     eq
   }
@@ -1942,7 +1886,7 @@ impl VisitMut for ExpandPrivFunc<'_> {
             _ => args.push(f),
           }
         },
-      Formula::PrivPred { nr, args, value } => {
+      Formula::PrivPred { value, .. } => {
         *f = std::mem::take(value);
         self.visit_formula(f)
       }
@@ -2094,7 +2038,7 @@ impl<'a> InternConst<'a> {
         let IdentifyKind::Func { lhs, rhs } = &id.kind else { unreachable!() };
         // vprintln!("applying {tm:?} <- {id:?}");
         if let Some(subst) = id.try_apply_lhs(self.g, self.lc, lhs, tm) {
-          let mut tm = subst.inst_term(rhs, self.depth);
+          let tm = subst.inst_term(rhs, self.depth);
           insert_one(self, tm);
         }
       }
@@ -2203,7 +2147,7 @@ impl VisitMut for InternConst<'_> {
   }
 
   // locus types are not interned
-  fn visit_push_locus_tys(&mut self, tys: &mut [Type]) {}
+  fn visit_push_locus_tys(&mut self, _: &mut [Type]) {}
 }
 
 pub struct ExpandConsts<'a>(&'a IdxVec<InferId, Assignment>, u32);
@@ -2271,7 +2215,7 @@ impl<V: VisitMut> Visitable<V> for Assignment {
 #[derive(Debug)]
 struct FuncDef {
   ty: Type,
-  value: Term,
+  _value: Term,
 }
 
 #[derive(Debug)]
@@ -2283,8 +2227,6 @@ pub struct Global {
   /// It is `set` until the NUMERALS requirement is read,
   /// and then it changes to `Element of omega`
   numeral_type: Type,
-  /// ItIsChecker in mizar
-  recursive_round_up: bool,
   /// AfterClusters
   rounded_up_clusters: bool,
 }
@@ -2293,6 +2235,8 @@ pub struct Global {
 pub struct LocalContext {
   // here for easy printing
   formatter: Formatter,
+  /// ItIsChecker in mizar
+  recursive_round_up: bool,
   /// LocArgTyp
   // FIXME: this is non-owning in mizar
   locus_ty: IdxVec<LocusId, Type>,
@@ -2325,7 +2269,7 @@ impl LocalContext {
     self.clear_term_cache()
   }
 
-  fn with_locus_tys<R>(&mut self, tys: &[Type], f: impl FnOnce(&mut Self) -> R) -> R {
+  fn _with_locus_tys<R>(&mut self, tys: &[Type], f: impl FnOnce(&mut Self) -> R) -> R {
     self.load_locus_tys(tys);
     let r = f(self);
     self.unload_locus_tys();
@@ -2345,7 +2289,7 @@ impl LocalContext {
       ic.truncate(len);
       return renumber
     }
-    let mut old: Vec<_> = ic.vec.0.drain(len..).collect();
+    let old = ic.vec.0.drain(len..).collect_vec();
     ic.sorted.retain(|t| Idx::into_usize(*t) < len);
     assert!(ic.sorted.len() == len);
     let mut has_local_const = HashSet::<InferId>::new();
@@ -2459,6 +2403,31 @@ impl Constructors {
   }
 }
 
+// static MIZFILES: Lazy<PathBuf> = Lazy::new(|| {
+//   std::env::var_os("MIZFILES").expect("MIZFILES environment variable is not set").into()
+// });
+// static PREL: Lazy<PathBuf> = Lazy::new(|| MIZFILES.join("prel"));
+
+pub struct MizPath(Article, PathBuf);
+
+// fn get_mml_article(article: &str) -> MizPath {
+//   let mut path = PREL.join(&article[..1]);
+//   path.push(article);
+//   MizPath(path)
+// }
+
+impl MizPath {
+  fn new(s: &str) -> Self {
+    Self(Article::from_bytes(s.as_bytes()), format!("../mizshare/mml/{s}").into())
+  }
+
+  fn open(&self, ext: &str) -> io::Result<File> {
+    let mut path = self.1.clone();
+    path.set_extension(ext);
+    File::open(path)
+  }
+}
+
 fn load(path: &MizPath) {
   // MizPBlockObj.InitPrepData
   let mut refs = References::default();
@@ -2560,14 +2529,14 @@ fn load(path: &MizPath) {
   }
 
   for (i, id) in v.identify.iter().enumerate() {
-    if let IdentifyKind::Func { lhs: Term::Functor { nr, args }, rhs } = &id.kind {
+    if let IdentifyKind::Func { lhs: Term::Functor { nr, .. }, .. } = &id.kind {
       let k = ConstrKind::Func(Term::adjusted_nr(*nr, &v.g.constrs));
       v.func_ids.entry(k).or_default().push(i);
     }
   }
 
   // CollectConstInEnvConstructors
-  let mut cc = &mut v.intern_const();
+  let cc = &mut v.intern_const();
   let numeral_type = v.g.numeral_type.visit_cloned(cc);
   let mut constrs = v.g.constrs.clone();
   constrs.mode.visit(cc);
@@ -2585,9 +2554,6 @@ fn load(path: &MizPath) {
   v.g.numeral_type = numeral_type;
   v.g.constrs = constrs;
   v.g.clusters = clusters;
-
-  let mut props = PropList::default();
-  // let mut loc_func = vec![];
 
   // InLibraries
   path.read_eth(&v.g.constrs, &refs, &mut v.libs).unwrap();
@@ -2650,8 +2616,8 @@ static VERBOSE: AtomicBool = AtomicBool::new(false);
 pub fn verbose() -> bool { DEBUG && VERBOSE.load(std::sync::atomic::Ordering::SeqCst) }
 pub fn set_verbose(b: bool) { VERBOSE.store(b, std::sync::atomic::Ordering::SeqCst) }
 
-static CALLS: AtomicU32 = AtomicU32::new(0);
-static CALLS2: AtomicU32 = AtomicU32::new(0);
+static _CALLS: AtomicU32 = AtomicU32::new(0);
+static _CALLS2: AtomicU32 = AtomicU32::new(0);
 static STATS: Mutex<Option<HashMap<&'static str, u32>>> = Mutex::new(None);
 
 fn print_stats_and_exit() {
@@ -2697,14 +2663,21 @@ fn main() {
   let file = std::fs::read_to_string("../mizshare/mml.lar").unwrap();
   let jobs = &Mutex::new(file.lines().enumerate().skip(first_file).collect_vec().into_iter());
   std::thread::scope(|s| {
-    for i in 0..PARALLELISM {
+    for _ in 0..PARALLELISM {
       s.spawn(move || {
         while let Some((i, s)) = {
           let mut lock = jobs.lock().unwrap();
           lock.next()
         } {
           println!("{i}: {s}");
-          load(&MizPath::new(s));
+          let path = MizPath::new(s);
+          load(&path);
+          // let output = std::process::Command::new("verifier")
+          //   .arg("-c")
+          //   .arg(format!("{}.miz", path.1.display()))
+          //   .output()
+          //   .unwrap();
+          // println!("{}", String::from_utf8(output.stdout).unwrap());
           if ONE_FILE {
             break
           }

@@ -1,7 +1,6 @@
 use crate::checker::Checker;
 use crate::types::*;
 use crate::*;
-use std::collections::HashSet;
 
 enum PendingDef {
   Constr(ConstrKind),
@@ -41,7 +40,6 @@ impl Reader {
         constrs: Default::default(),
         clusters: Default::default(),
         numeral_type,
-        recursive_round_up: false,
         rounded_up_clusters: false,
       },
       lc: LocalContext::default(),
@@ -106,18 +104,18 @@ impl Reader {
     let pending_defs = self.pending_defs.len();
     let priv_funcs = self.lc.priv_func.len();
     let infer_const = self.lc.infer_const.get_mut().len();
-    let sc = self.lc.term_cache.get_mut().scope;
+    // let sc = self.lc.term_cache.get_mut().scope;
     // vprintln!("open scope {:?}", (labels, fixed_var, props, priv_funcs, infer_const, sc));
     self.lc.term_cache.get_mut().open_scope();
 
     let r = f(self);
 
     self.lc.term_cache.get_mut().close_scope();
-    let labels2 = self.labels.len();
-    let fixed_var2 = self.lc.fixed_var.len();
-    let props2 = self.props.len();
-    let priv_funcs2 = self.lc.priv_func.len();
-    let infer_const2 = self.lc.infer_const.get_mut().len();
+    // let labels2 = self.labels.len();
+    // let fixed_var2 = self.lc.fixed_var.len();
+    // let props2 = self.props.len();
+    // let priv_funcs2 = self.lc.priv_func.len();
+    // let infer_const2 = self.lc.infer_const.get_mut().len();
     // vprintln!(
     //   "close scope {:?} <- {:?}",
     //   (labels, fixed_var, props, priv_funcs, infer_const, sc),
@@ -208,17 +206,18 @@ impl Reader {
         let fv = FixedVar { ty: self.intern(ty), def: Some(Box::new(self.intern(tm))) };
         self.lc.fixed_var.push(fv);
       }
-      Item::PerCases(PerCases { pos, label, block_thesis, cases, prop, just, thesis }) => {
+      Item::PerCases(PerCases { label, block_thesis, cases, prop, just, .. }) => {
         self.scope(*label, false, |this| {
-          for CaseOrSupposeBlock { pos, label, block_thesis, cs, items, thesis } in cases {
+          for CaseOrSupposeBlock { label, cs, items, .. } in cases {
             this.scope(*label, false, |this| {
               let (CaseOrSuppose::Case(props) | CaseOrSuppose::Suppose(props)) = cs;
               props.iter().for_each(|p| this.read_proposition(p));
               for it in items {
                 this.read_item(&it.0);
-                if let Some(thesis) = &it.1 {
-                  let _ = this.intern(&thesis.f);
-                }
+                // this is only needed if we want to match mizar numbering
+                // if let Some(thesis) = &it.1 {
+                //   let _ = this.intern(&thesis.f);
+                // }
               }
             });
           }
@@ -241,10 +240,10 @@ impl Reader {
         }
         self.read_just_prop(prop, just);
       }
-      Item::AuxiliaryItem(AuxiliaryItem::DefFunc { args, ty, value }) => {
-        self.lc.priv_func.push(FuncDef { ty: self.intern(ty), value: self.intern(value) });
+      Item::AuxiliaryItem(AuxiliaryItem::DefFunc { args: _, ty, value }) => {
+        self.lc.priv_func.push(FuncDef { ty: self.intern(ty), _value: self.intern(value) });
       }
-      Item::AuxiliaryItem(AuxiliaryItem::DefPred { args, value }) => {}
+      Item::AuxiliaryItem(AuxiliaryItem::DefPred { .. }) => {}
       Item::Registration(reg) => match reg {
         Registration::Cluster(cl) => self.read_cluster_decl(cl),
         Registration::Identify { kind, conds, corr } => {
@@ -259,10 +258,10 @@ impl Reader {
       },
       Item::Scheme(sch) => self.read_scheme(sch),
       Item::Theorem { prop, just } => self.read_just_prop(prop, just),
-      Item::DefTheorem { kind, prop } => self.read_proposition(prop),
+      Item::DefTheorem { prop, .. } => self.read_proposition(prop),
       Item::Canceled(_) => {}
       Item::Definition(d) => {
-        let Definition { pos, label, redef, kind, conds, corr, props, constr, patts } = d;
+        let Definition { conds, corr, props, constr, patts, .. } = d;
         self.read_corr_conds(conds, corr);
         for JustifiedProperty { prop, just, .. } in props {
           self.read_just_prop(prop, just)
@@ -272,7 +271,7 @@ impl Reader {
         }
         self.lc.formatter.extend(&self.g.constrs, patts)
       }
-      Item::DefStruct(DefStruct { pos, label, constrs, cl, conds, corr, patts }) => {
+      Item::DefStruct(DefStruct { constrs, cl, conds, corr, patts, .. }) => {
         for c in constrs {
           self.pending_defs.push(PendingDef::Constr(self.g.constrs.push(self.intern(c))));
         }
@@ -281,7 +280,7 @@ impl Reader {
         self.lc.formatter.extend(&self.g.constrs, patts)
       }
       Item::Definiens(df) => self.read_definiens(df),
-      Item::Block { kind, pos, label, items } => {
+      Item::Block { kind, label, items, .. } => {
         let check = matches!(kind, BlockKind::Definition | BlockKind::Registration);
         self.scope(*label, check, |this| {
           for it in items {
@@ -361,9 +360,10 @@ impl Reader {
         self.scope(*label, false, |this| {
           for it in items {
             this.read_item(&it.0);
-            if let Some(thesis) = &it.1 {
-              let _ = this.intern(&thesis.f);
-            }
+            // this is only needed if we want to match mizar numbering
+            // if let Some(thesis) = &it.1 {
+            //   let _ = this.intern(&thesis.f);
+            // }
           }
         });
       }
@@ -380,7 +380,7 @@ impl Reader {
   fn read_private_stmt(&mut self, it: &PrivateStatement) {
     match it {
       PrivateStatement::Proposition { prop, just } => self.read_just_prop(prop, just),
-      PrivateStatement::IterEquality { start, label, lhs, steps } => {
+      PrivateStatement::IterEquality { label, lhs, steps, .. } => {
         let mut lhs = self.intern(lhs);
         let llhs = lhs.clone();
         for (rhs, step) in steps {
@@ -426,8 +426,8 @@ impl Reader {
           }
         }
       }
-      let Term::Functor { nr, args } = lhs else { unreachable!() };
-      let k = ConstrKind::Func(Term::adjusted_nr(*nr, &self.g.constrs));
+      let Term::Functor { nr, .. } = *lhs else { unreachable!() };
+      let k = ConstrKind::Func(Term::adjusted_nr(nr, &self.g.constrs));
       self.func_ids.entry(k).or_default().push(self.identify.len());
     }
     self.identify.push(id.clone());
@@ -510,7 +510,7 @@ impl Reader {
             let mut attrs = asgn.ty.attrs.1.clone();
             let orig = attrs.attrs().len();
             // eprintln!("enlarge {:?} by {:?}", self, cl.consequent.1);
-            attrs.enlarge_by(&self.g.constrs, Some(&self.lc), &cl.consequent.1, |a| {
+            attrs.enlarge_by(&self.g.constrs, &cl.consequent.1, |a| {
               a.visit_cloned(&mut Inst::new(&subst))
             });
             assert!(matches!(attrs, Attrs::Consistent(_)));
@@ -521,7 +521,7 @@ impl Reader {
           }
         }
         self.g.clusters.conditional.push(&self.g.constrs, cl);
-        for (&i, mut attrs) in &mut rounded_up {
+        for (&i, attrs) in &mut rounded_up {
           attrs.visit(&mut self.intern_const());
           self.lc.infer_const.get_mut()[i].ty.attrs.1 = std::mem::take(attrs);
         }
@@ -550,13 +550,15 @@ impl Reader {
     };
     match it.kind {
       InferenceKind::By { linked } => {
-        let neg_thesis = thesis.clone().mk_neg();
-        let mut premises = vec![&neg_thesis];
-        if linked {
-          premises.push(self.props.last().unwrap());
+        if !self.treat_thm_as_axiom || linked || !it.refs.is_empty() {
+          let neg_thesis = thesis.clone().mk_neg();
+          let mut premises = vec![&neg_thesis];
+          if linked {
+            premises.push(self.props.last().unwrap());
+          }
+          premises.extend(refs);
+          ck.justify(premises);
         }
-        premises.extend(refs);
-        ck.justify(premises);
         self.inference_nr += 1;
       }
       InferenceKind::From { sch } =>
@@ -565,7 +567,7 @@ impl Reader {
   }
 
   #[allow(clippy::blocks_in_if_conditions)]
-  fn dbg_scope_check(&self) {
+  fn _dbg_scope_check(&self) {
     let ic = self.lc.infer_const.borrow();
     let infer_const = ic.len();
 
