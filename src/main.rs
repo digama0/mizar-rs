@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Mutex;
 
+mod ast;
 mod bignum;
 mod checker;
 mod equate;

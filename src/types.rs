@@ -929,19 +929,19 @@ impl TryFrom<&[u8]> for PropertyKind {
   type Error = ();
   fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
     match value {
-      b"Symmetry" => Ok(PropertyKind::Symmetry),
-      b"Reflexivity" => Ok(PropertyKind::Reflexivity),
-      b"Irreflexivity" => Ok(PropertyKind::Irreflexivity),
-      b"Associativity" => Ok(PropertyKind::Associativity),
-      b"Transitivity" => Ok(PropertyKind::Transitivity),
-      b"Commutativity" => Ok(PropertyKind::Commutativity),
-      b"Connectedness" => Ok(PropertyKind::Connectedness),
-      b"Asymmetry" => Ok(PropertyKind::Asymmetry),
-      b"Idempotence" => Ok(PropertyKind::Idempotence),
-      b"Involutiveness" => Ok(PropertyKind::Involutiveness),
-      b"Projectivity" => Ok(PropertyKind::Projectivity),
-      b"Sethood" => Ok(PropertyKind::Sethood),
-      b"Abstractness" => Ok(PropertyKind::Abstractness),
+      b"Symmetry" | b"symmetry" => Ok(PropertyKind::Symmetry),
+      b"Reflexivity" | b"reflexivity" => Ok(PropertyKind::Reflexivity),
+      b"Irreflexivity" | b"irreflexivity" => Ok(PropertyKind::Irreflexivity),
+      b"Associativity" | b"associativity" => Ok(PropertyKind::Associativity),
+      b"Transitivity" | b"transitivity" => Ok(PropertyKind::Transitivity),
+      b"Commutativity" | b"commutativity" => Ok(PropertyKind::Commutativity),
+      b"Connectedness" | b"connectedness" => Ok(PropertyKind::Connectedness),
+      b"Asymmetry" | b"asymmetry" => Ok(PropertyKind::Asymmetry),
+      b"Idempotence" | b"idempotence" => Ok(PropertyKind::Idempotence),
+      b"Involutiveness" | b"involutiveness" => Ok(PropertyKind::Involutiveness),
+      b"Projectivity" | b"projectivity" => Ok(PropertyKind::Projectivity),
+      b"Sethood" | b"sethood" => Ok(PropertyKind::Sethood),
+      b"Abstractness" | b"abstractness" => Ok(PropertyKind::Abstractness),
       _ => Err(()),
     }
   }

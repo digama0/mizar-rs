@@ -10,6 +10,7 @@ use std::io::{self, BufRead, BufReader, Read};
 use std::str::FromStr;
 
 mod article;
+mod msm;
 
 impl MizPath {
   pub fn read_ere(&self, idx: &mut RequirementIndexes) -> io::Result<()> {
