@@ -1,8 +1,7 @@
 use super::*;
-use crate::types::*;
 
 pub(super) struct ArticleParser<'a> {
-  pub r: XmlReader<'a>,
+  pub r: MizReader<'a>,
   pub buf: Vec<u8>,
 }
 
@@ -138,12 +137,10 @@ impl ArticleParser<'_> {
 
   fn parse_references(&mut self) -> Vec<Reference> {
     let mut refs = vec![];
-    while let Event::Start(e) = self.r.read_event(&mut self.buf) {
-      assert!(e.local_name() == b"Ref");
+    while let Ok(e) = self.r.try_read_start(&mut self.buf, Some(b"Ref")) {
       let (pos, label) = self.r.get_pos_and_label(&e);
       let (mut article_nr, mut nr, mut kind) = Default::default();
-      for attr in e.attributes() {
-        let attr = attr.unwrap();
+      for attr in e.attributes().map(Result::unwrap) {
         match attr.key {
           b"kind" => kind = attr.value[0],
           b"nr" => nr = self.r.get_attr(&attr.value),
@@ -164,22 +161,20 @@ impl ArticleParser<'_> {
   }
 
   fn parse_justification(&mut self) -> Justification {
-    let Event::Start(e) = self.r.read_event(&mut self.buf)
-    else { panic!("expected justification") };
+    let e = self.r.read_start(&mut self.buf, None);
     match e.local_name() {
       b"By" => {
         let linked =
           e.try_get_attribute(b"linked").unwrap().map_or(false, |attr| &*attr.value == b"true");
         Justification::Simple(Inference {
           kind: InferenceKind::By { linked },
-          pos: self.r.get_pos_and_label(&e).0,
+          pos: self.r.get_pos(&e),
           refs: self.parse_references(),
         })
       }
       b"From" => {
         let (mut article_nr, mut nr) = Default::default();
-        for attr in e.attributes() {
-          let attr = attr.unwrap();
+        for attr in e.attributes().map(Result::unwrap) {
           match attr.key {
             b"nr" => nr = self.r.get_attr(&attr.value),
             b"articlenr" => article_nr = self.r.get_attr(&attr.value),
@@ -188,7 +183,7 @@ impl ArticleParser<'_> {
         }
         Justification::Simple(Inference {
           kind: InferenceKind::From { sch: (ArticleId(article_nr), SchId(nr)) },
-          pos: self.r.get_pos_and_label(&e).0,
+          pos: self.r.get_pos(&e),
           refs: self.parse_references(),
         })
       }
@@ -352,7 +347,7 @@ impl ArticleParser<'_> {
           ArticleElem::Item(Item::Reservation { ids, ty })
         }
         b"SchemeBlock" => {
-          let start = self.r.get_pos_and_label(&e).0;
+          let start = self.r.get_pos(&e);
           let nr = self.r.get_attr(&e.try_get_attribute(b"schemenr").unwrap().unwrap().value);
           let mut decls = vec![];
           loop {
@@ -438,8 +433,7 @@ impl ArticleParser<'_> {
           let (start, label) = self.r.get_pos_and_label(&e);
           let lhs = self.r.parse_term(&mut self.buf).unwrap();
           let mut steps = vec![];
-          while let Event::Start(e) = self.r.read_event(&mut self.buf) {
-            assert!(e.local_name() == b"IterStep");
+          while self.r.try_read_start(&mut self.buf, Some(b"IterStep")).is_ok() {
             let rhs = self.r.parse_term(&mut self.buf).unwrap();
             let just = self.parse_simple_justification();
             self.r.end_tag(&mut self.buf);
@@ -544,8 +538,7 @@ impl ArticleParser<'_> {
         b"Definition" => {
           let (pos, label) = self.r.get_pos_and_label(&e);
           let (mut expand, mut redef, mut kind) = Default::default();
-          for attr in e.attributes() {
-            let attr = attr.unwrap();
+          for attr in e.attributes().map(Result::unwrap) {
             match attr.key {
               b"kind" => kind = attr.value[0],
               b"expandable" => expand = &*attr.value == b"true",
@@ -674,8 +667,7 @@ impl ArticleParser<'_> {
           ArticleElem::PerCasesJustification(prop, just)
         }
         b"Registration" => {
-          let Event::Start(e) = self.r.read_event(&mut self.buf)
-          else { panic!("expected property") };
+          let e = self.r.read_start(&mut self.buf, None);
           let kind = match self.r.parse_cluster_attrs(&e) {
             (aid, ClusterKind::R) => ClusterDeclKind::R(self.r.parse_rcluster(&mut self.buf, aid)),
             (aid, ClusterKind::F) => ClusterDeclKind::F(self.r.parse_fcluster(&mut self.buf, aid)),
@@ -685,24 +677,21 @@ impl ArticleParser<'_> {
           ArticleElem::Registration(Registration::Cluster(ClusterDecl { kind, conds, corr }))
         }
         b"IdentifyRegistration" => {
-          let Event::Start(e) = self.r.read_event(&mut self.buf)
-          else { panic!("expected identify") };
+          let e = self.r.read_start(&mut self.buf, Some(b"Identify"));
           let attrs = self.r.parse_identify_attrs(&e);
           let kind = self.r.parse_identify_body(&mut self.buf, attrs);
           let (conds, corr) = self.parse_cond_and_correctness();
           ArticleElem::Registration(Registration::Identify { kind, conds, corr })
         }
         b"ReductionRegistration" => {
-          let Event::Start(e) = self.r.read_event(&mut self.buf)
-          else { panic!("expected reduction") };
+          let e = self.r.read_start(&mut self.buf, Some(b"Reduction"));
           let attrs = self.r.parse_reduction_attrs(&e);
           let kind = self.r.parse_reduction_body(&mut self.buf, attrs);
           let (conds, corr) = self.parse_cond_and_correctness();
           ArticleElem::Registration(Registration::Reduction { kind, conds, corr })
         }
         b"PropertyRegistration" => {
-          let Event::Start(e) = self.r.read_event(&mut self.buf)
-          else { panic!("expected property") };
+          let e = self.r.read_start(&mut self.buf, Some(b"Property"));
           let attrs = self.r.parse_property_attrs(&e);
           let kind = self.r.parse_property_body(&mut self.buf, attrs);
           let prop = self.r.parse_proposition(&mut self.buf, false).unwrap();
@@ -730,8 +719,7 @@ impl ArticleParser<'_> {
           ArticleElem::Correctness(Correctness { conds, prop, just })
         }
         b"JustifiedProperty" => {
-          let Event::Start(e) = self.r.read_event(&mut self.buf)
-          else { panic!("expected property") };
+          let e = self.r.read_start(&mut self.buf, None);
           let kind = e.local_name().try_into().expect("unexpected property");
           self.r.end_tag(&mut self.buf);
           let prop = self.r.parse_proposition(&mut self.buf, false).unwrap();
@@ -764,7 +752,7 @@ impl ArticleParser<'_> {
           ArticleElem::BlockThesis(f)
         }
         b"EndPosition" => {
-          let end = self.r.get_pos_and_label(&e).0;
+          let end = self.r.get_pos(&e);
           self.r.end_tag(&mut self.buf);
           ArticleElem::EndPosition(end)
         }

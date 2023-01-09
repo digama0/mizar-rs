@@ -1,5 +1,3 @@
-mod article;
-
 use crate::parser::article::ArticleParser;
 use crate::types::*;
 use crate::{CmpStyle, MizPath, OnVarMut, RequirementIndexes, VisitMut};
@@ -10,6 +8,8 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
 use std::str::FromStr;
+
+mod article;
 
 impl MizPath {
   pub fn read_ere(&self, idx: &mut RequirementIndexes) -> io::Result<()> {
@@ -74,13 +74,125 @@ impl<'a, T> MaybeMut<'a, T> {
   }
 }
 
-struct XmlReader<'a> {
-  r: quick_xml::Reader<BufReader<File>>,
+struct XmlReader(quick_xml::Reader<BufReader<File>>);
+
+impl XmlReader {
+  fn new(file: File, buf: &mut Vec<u8>) -> Self {
+    let mut r = quick_xml::Reader::from_reader(BufReader::new(file));
+    r.trim_text(true);
+    r.expand_empty_elements(true);
+    r.check_end_names(true);
+    assert!(matches!(r.read_event(buf).unwrap(), Event::Decl(_)));
+    Self(r)
+  }
+
+  fn read_event<'a>(&mut self, buf: &'a mut Vec<u8>) -> Event<'a> {
+    buf.clear();
+    let e = self.0.read_event(buf).unwrap();
+    // eprintln!("{:w$}{:?}", "", e, w = backtrace::Backtrace::new().frames().len());
+    e
+  }
+
+  fn try_read_start<'a>(
+    &mut self, buf: &'a mut Vec<u8>, expecting: Option<&[u8]>,
+  ) -> Result<BytesStart<'a>, Event<'a>> {
+    match self.read_event(buf) {
+      Event::Start(e) => {
+        if let Some(expecting) = expecting {
+          assert_eq!(
+            e.local_name(),
+            expecting,
+            "expected <{}>",
+            std::str::from_utf8(expecting).unwrap()
+          )
+        }
+        Ok(e)
+      }
+      e => Err(e),
+    }
+  }
+
+  fn read_start<'a>(&mut self, buf: &'a mut Vec<u8>, expecting: Option<&[u8]>) -> BytesStart<'a> {
+    self.try_read_start(buf, expecting).unwrap_or_else(|e| panic!("{:?}", (e, self.dump()).0))
+  }
+
+  fn get_attr<F: FromStr>(&self, value: &[u8]) -> F {
+    self.0.decode_without_bom(value).unwrap().parse().ok().unwrap()
+  }
+
+  fn get_attr_unescaped(&self, value: &[u8]) -> String {
+    String::from_utf8(unescape(value).unwrap().into()).unwrap()
+  }
+
+  fn read_to_end(&mut self, tag: &[u8], buf: &mut Vec<u8>) {
+    buf.clear();
+    self.0.read_to_end(tag, buf).unwrap()
+  }
+
+  fn end_tag(&mut self, buf: &mut Vec<u8>) {
+    match self.read_event(buf) {
+      Event::End(_) => {}
+      e => panic!("{:?}", (e, self.dump()).0),
+    }
+  }
+
+  fn dump(&mut self) {
+    let r = self.0.get_mut();
+    r.seek_relative(-1024).unwrap();
+    let mut out = vec![];
+    r.read_to_end(&mut out).unwrap();
+    println!("{}", std::str::from_utf8(&out[..1024]).unwrap());
+  }
+
+  fn get_pos(&mut self, e: &BytesStart<'_>) -> Position {
+    let mut pos = Position::default();
+    for attr in e.attributes().map(Result::unwrap) {
+      match attr.key {
+        b"line" => pos.line = self.get_attr(&attr.value),
+        b"col" => pos.col = self.get_attr(&attr.value),
+        _ => {}
+      }
+    }
+    pos
+  }
+
+  fn get_pos_and_label(&mut self, e: &BytesStart<'_>) -> (Position, Option<LabelId>) {
+    let (mut pos, mut nr) = (Position::default(), 0u32);
+    for attr in e.attributes().map(Result::unwrap) {
+      match attr.key {
+        b"line" => pos.line = self.get_attr(&attr.value),
+        b"col" => pos.col = self.get_attr(&attr.value),
+        b"nr" => nr = self.get_attr(&attr.value),
+        _ => {}
+      }
+    }
+    (pos, nr.checked_sub(1).map(LabelId))
+  }
+
+  fn parse_int_list<T>(&mut self, buf: &mut Vec<u8>, f: impl Fn(u32) -> T) -> Box<[T]> {
+    let mut out = vec![];
+    while let Ok(e) = self.try_read_start(buf, Some(b"Int")) {
+      out.push(f(self.get_attr(&e.try_get_attribute(b"x").unwrap().unwrap().value)));
+      self.end_tag(buf);
+    }
+    out.into()
+  }
+}
+
+struct MizReader<'a> {
+  r: XmlReader,
   /// false = InMMLFileObj or InEnvFileObj, true = InVRFFileObj
   two_clusters: bool,
   ctx: MaybeMut<'a, Constructors>,
   depth: u32,
   suppress_bvar_errors: bool,
+}
+impl std::ops::Deref for MizReader<'_> {
+  type Target = XmlReader;
+  fn deref(&self) -> &Self::Target { &self.r }
+}
+impl std::ops::DerefMut for MizReader<'_> {
+  fn deref_mut(&mut self) -> &mut Self::Target { &mut self.r }
 }
 
 impl MizPath {
@@ -90,34 +202,29 @@ impl MizPath {
 
   fn open_xml_no_pi<'a>(
     &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, two_clusters: bool,
-  ) -> io::Result<(XmlReader<'a>, Vec<u8>)> {
-    let mut r = quick_xml::Reader::from_reader(BufReader::new(self.open(ext)?));
+  ) -> io::Result<(MizReader<'a>, Vec<u8>)> {
     let mut buf = vec![];
-    r.trim_text(true);
-    r.expand_empty_elements(true);
-    r.check_end_names(true);
-    assert!(matches!(r.read_event(&mut buf).unwrap(), Event::Decl(_)));
-    Ok((XmlReader { r, two_clusters, ctx: ctx.into(), depth: 0, suppress_bvar_errors: false }, buf))
+    let r = XmlReader::new(self.open(ext)?, &mut buf);
+    Ok((MizReader { r, two_clusters, ctx: ctx.into(), depth: 0, suppress_bvar_errors: false }, buf))
   }
 
   /// two_clusters: false = InMMLFileObj or InEnvFileObj, true = InVRFFileObj
   fn open_xml<'a>(
     &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, two_clusters: bool,
-  ) -> io::Result<(XmlReader<'a>, Vec<u8>)> {
+  ) -> io::Result<(MizReader<'a>, Vec<u8>)> {
     let mut r = self.open_xml_no_pi(ctx, ext, two_clusters)?;
-    assert!(matches!(r.0.r.read_event(&mut r.1).unwrap(), Event::PI(_)));
+    assert!(matches!(r.0.r.read_event(&mut r.1), Event::PI(_)));
     Ok(r)
   }
 
   pub fn read_dcx(&self, syms: &mut Symbols) -> io::Result<()> {
     let (mut r, mut buf) = self.open_xml_no_pi(MaybeMut::None, "dcx", false)?;
     let buf = &mut buf;
-    assert!(matches!(r.read_event(buf), Event::Start(e) if e.local_name() == b"Symbols"));
+    r.read_start(buf, Some(b"Symbols"));
     while let Event::Start(e) = r.read_event(buf) {
       assert!(e.local_name() == b"Symbol");
       let (mut kind, mut nr, mut name) = Default::default();
-      for attr in e.attributes() {
-        let attr = attr.unwrap();
+      for attr in e.attributes().map(Result::unwrap) {
         match attr.key {
           b"kind" => kind = r.get_attr_unescaped(&attr.value).chars().next().unwrap() as u8,
           b"nr" => nr = r.get_attr::<u32>(&attr.value),
@@ -146,14 +253,13 @@ impl MizPath {
   pub fn read_formats(&self, ext: &str, formats: &mut Formats) -> io::Result<()> {
     let (mut r, mut buf) = self.open_xml_no_pi(MaybeMut::None, ext, false)?;
     let buf = &mut buf;
-    assert!(matches!(r.read_event(buf), Event::Start(e) if e.local_name() == b"Formats"));
+    r.read_start(buf, Some(b"Formats"));
     while let Event::Start(e) = r.read_event(buf) {
       match e.local_name() {
         b"Format" => {
           assert!(formats.priority.is_empty(), "expected <Priority>");
           let (mut kind, mut sym, mut args, mut left, mut rsym) = Default::default();
-          for attr in e.attributes() {
-            let attr = attr.unwrap();
+          for attr in e.attributes().map(Result::unwrap) {
             match attr.key {
               b"kind" => kind = unescape(&attr.value).unwrap()[0],
               b"symbolnr" => sym = r.get_attr::<u32>(&attr.value) - 1,
@@ -189,8 +295,7 @@ impl MizPath {
         }
         b"Priority" => {
           let (mut kind, mut sym, mut value) = Default::default();
-          for attr in e.attributes() {
-            let attr = attr.unwrap();
+          for attr in e.attributes().map(Result::unwrap) {
             match attr.key {
               b"kind" => kind = attr.value[0],
               b"symbolnr" => sym = r.get_attr(&attr.value),
@@ -217,9 +322,8 @@ impl MizPath {
   pub fn read_eno(&self, notas: &mut Notations) -> io::Result<()> {
     let (mut r, mut buf) = self.open_xml(MaybeMut::None, "eno", false)?;
     let buf = &mut buf;
-    assert!(matches!(r.read_event(buf), Event::Start(e) if e.local_name() == b"Notations"));
-    while let Event::Start(e) = r.read_event(buf) {
-      assert!(e.local_name() == b"Pattern");
+    r.read_start(buf, Some(b"Notations"));
+    while let Ok(e) = r.try_read_start(buf, Some(b"Pattern")) {
       let attrs = r.parse_pattern_attrs(&e);
       notas.0.push(r.parse_pattern_body(buf, attrs))
     }
@@ -230,8 +334,8 @@ impl MizPath {
   pub fn read_atr(&self, constrs: &mut Constructors) -> io::Result<()> {
     let (mut r, mut buf) = self.open_xml(constrs, "atr", false)?;
     let buf = &mut buf;
-    assert!(matches!(r.read_event(buf), Event::Start(e) if e.local_name() == b"Constructors"));
-    while let Event::Start(e) = r.read_event(buf) {
+    r.read_start(buf, Some(b"Constructors"));
+    while let Ok(e) = r.try_read_start(buf, Some(b"Constructor")) {
       let attrs = r.parse_constructor_attrs(&e);
       let constr = r.parse_constructor_body(buf, attrs);
       let MaybeMut::Mut(constrs) = &mut r.ctx else { unreachable!() };
@@ -243,8 +347,7 @@ impl MizPath {
 
   pub fn read_ecl(&self, ctx: &Constructors, clusters: &mut Clusters) -> io::Result<()> {
     let (mut r, mut buf) = self.open_xml(ctx, "ecl", false)?;
-    assert!(matches!(r.read_event(&mut buf),
-      Event::Start(e) if e.local_name() == b"Registrations"));
+    r.read_start(&mut buf, Some(b"Registrations"));
     while let Event::Start(e) = r.read_event(&mut buf) {
       match r.parse_cluster_attrs(&e) {
         (aid, ClusterKind::R) => clusters.registered.push(r.parse_rcluster(&mut buf, aid)),
@@ -265,8 +368,8 @@ impl MizPath {
       r => r?,
     };
     let buf = &mut buf;
-    assert!(matches!(r.read_event(buf), Event::Start(e) if e.local_name() == b"Definientia"));
-    while let Event::Start(e) = r.read_event(buf) {
+    r.read_start(buf, Some(b"Definientia"));
+    while let Ok(e) = r.try_read_start(buf, Some(b"Definiens")) {
       let attrs = r.parse_definiens_attrs(e);
       defs.push(r.parse_definiens_body(buf, attrs))
     }
@@ -280,10 +383,8 @@ impl MizPath {
       r => r?,
     };
     let buf = &mut buf;
-    assert!(
-      matches!(r.read_event(buf), Event::Start(e) if e.local_name() == b"PropertyRegistration")
-    );
-    while let Event::Start(e) = r.read_event(buf) {
+    r.read_start(buf, Some(b"PropertyRegistration"));
+    while let Ok(e) = r.try_read_start(buf, Some(b"Property")) {
       let attrs = r.parse_property_attrs(&e);
       props.push(r.parse_property_body(buf, attrs))
     }
@@ -297,10 +398,8 @@ impl MizPath {
       r => r?,
     };
     let buf = &mut buf;
-    assert!(
-      matches!(r.read_event(buf), Event::Start(e) if e.local_name() == b"IdentifyRegistrations")
-    );
-    while let Event::Start(e) = r.read_event(buf) {
+    r.read_start(buf, Some(b"IdentifyRegistrations"));
+    while let Ok(e) = r.try_read_start(buf, Some(b"Identify")) {
       let attrs = r.parse_identify_attrs(&e);
       ids.push(r.parse_identify_body(buf, attrs));
     }
@@ -314,10 +413,8 @@ impl MizPath {
       r => r?,
     };
     let buf = &mut buf;
-    assert!(
-      matches!(r.read_event(buf), Event::Start(e) if e.local_name() == b"ReductionRegistrations")
-    );
-    while let Event::Start(e) = r.read_event(buf) {
+    r.read_start(buf, Some(b"ReductionRegistrations"));
+    while let Ok(e) = r.try_read_start(buf, Some(b"Reduction")) {
       let attrs = r.parse_reduction_attrs(&e);
       reds.push(r.parse_reduction_body(buf, attrs));
     }
@@ -333,12 +430,10 @@ impl MizPath {
       r => r?,
     };
     let buf = &mut buf;
-    assert!(matches!(r.read_event(buf), Event::Start(e) if e.local_name() == b"Theorems"));
-    while let Event::Start(e) = r.read_event(buf) {
-      assert!(e.local_name() == b"Theorem");
+    r.read_start(buf, Some(b"Theorems"));
+    while let Ok(e) = r.try_read_start(buf, Some(b"Theorem")) {
       let (mut lib_nr, mut thm_nr, mut kind) = Default::default();
-      for attr in e.attributes() {
-        let attr = attr.unwrap();
+      for attr in e.attributes().map(Result::unwrap) {
         match attr.key {
           b"articlenr" => lib_nr = r.get_attr(&attr.value),
           b"nr" => thm_nr = r.get_attr(&attr.value),
@@ -373,12 +468,10 @@ impl MizPath {
       r => r?,
     };
     let buf = &mut buf;
-    assert!(matches!(r.read_event(buf), Event::Start(e) if e.local_name() == b"Schemes"));
-    while let Event::Start(e) = r.read_event(buf) {
-      assert!(e.local_name() == b"Scheme");
+    r.read_start(buf, Some(b"Schemes"));
+    while let Ok(e) = r.try_read_start(buf, Some(b"Scheme")) {
       let (mut lib_nr, mut sch_nr) = Default::default();
-      for attr in e.attributes() {
-        let attr = attr.unwrap();
+      for attr in e.attributes().map(Result::unwrap) {
         match attr.key {
           b"articlenr" => lib_nr = r.get_attr(&attr.value),
           b"nr" => sch_nr = r.get_attr(&attr.value),
@@ -404,7 +497,7 @@ impl MizPath {
 
   pub fn read_xml(&self) -> io::Result<Vec<Item>> {
     let (mut r, mut buf) = self.open_xml(MaybeMut::None, "xml", true)?;
-    assert!(matches!(r.read_event(&mut buf), Event::Start(e) if e.local_name() == b"Article"));
+    r.read_start(&mut buf, Some(b"Article"));
     let mut p = ArticleParser { r, buf };
     let items = p.parse_items();
     assert!(matches!(p.r.read_event(&mut p.buf), Event::Eof));
@@ -412,42 +505,7 @@ impl MizPath {
   }
 }
 
-impl XmlReader<'_> {
-  fn get_attr<F: FromStr>(&self, value: &[u8]) -> F {
-    self.r.decode_without_bom(value).unwrap().parse().ok().unwrap()
-  }
-
-  fn get_attr_unescaped(&self, value: &[u8]) -> String {
-    String::from_utf8(unescape(value).unwrap().into()).unwrap()
-  }
-
-  fn read_event<'a>(&mut self, buf: &'a mut Vec<u8>) -> Event<'a> {
-    buf.clear();
-    let e = self.r.read_event(buf).unwrap();
-    // eprintln!("{:w$}{:?}", "", e, w = backtrace::Backtrace::new().frames().len());
-    e
-  }
-
-  fn read_to_end(&mut self, tag: &[u8], buf: &mut Vec<u8>) {
-    buf.clear();
-    self.r.read_to_end(tag, buf).unwrap()
-  }
-
-  fn end_tag(&mut self, buf: &mut Vec<u8>) {
-    match self.read_event(buf) {
-      Event::End(_) => {}
-      e => panic!("{:?}", (e, self.dump()).0),
-    }
-  }
-
-  fn dump(&mut self) {
-    let r = self.r.get_mut();
-    r.seek_relative(-1024).unwrap();
-    let mut out = vec![];
-    r.read_to_end(&mut out).unwrap();
-    println!("{}", std::str::from_utf8(&out[..1024]).unwrap());
-  }
-
+impl MizReader<'_> {
   fn parse_type(&mut self, buf: &mut Vec<u8>) -> Option<Type> {
     match self.parse_elem(buf) {
       Elem::Type(ty) => Some(ty),
@@ -456,7 +514,7 @@ impl XmlReader<'_> {
   }
 
   fn parse_attrs(&mut self, buf: &mut Vec<u8>) -> Attrs {
-    assert!(matches!(self.read_event(buf), Event::Start(e) if e.local_name() == b"Cluster"));
+    self.read_start(buf, Some(b"Cluster"));
     let mut attrs = vec![];
     while let Some(attr) = self.parse_attr(buf) {
       attrs.push(attr)
@@ -468,12 +526,10 @@ impl XmlReader<'_> {
   }
 
   fn parse_attr(&mut self, buf: &mut Vec<u8>) -> Option<Attr> {
-    if let Event::Start(e) = self.read_event(buf) {
-      assert!(e.local_name() == b"Adjective");
+    if let Ok(e) = self.try_read_start(buf, Some(b"Adjective")) {
       let mut nr = 0;
       let mut pos = true;
-      for attr in e.attributes() {
-        let attr = attr.unwrap();
+      for attr in e.attributes().map(Result::unwrap) {
         match attr.key {
           b"nr" => nr = self.get_attr(&attr.value),
           b"value" if &*attr.value != b"true" => pos = false,
@@ -489,8 +545,7 @@ impl XmlReader<'_> {
   fn get_basic_attrs(&mut self, e: &BytesStart<'_>) -> (u8, u32) {
     let mut kind = 0;
     let mut nr = 0;
-    for attr in e.attributes() {
-      let attr = attr.unwrap();
+    for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
         b"kind" => kind = attr.value[0],
         b"nr" => nr = self.get_attr(&attr.value),
@@ -500,25 +555,10 @@ impl XmlReader<'_> {
     (kind, nr)
   }
 
-  fn get_pos_and_label(&mut self, e: &BytesStart<'_>) -> (Position, Option<LabelId>) {
-    let (mut pos, mut nr) = (Position::default(), 0u32);
-    for attr in e.attributes() {
-      let attr = attr.unwrap();
-      match attr.key {
-        b"line" => pos.line = self.get_attr(&attr.value),
-        b"col" => pos.col = self.get_attr(&attr.value),
-        b"nr" => nr = self.get_attr(&attr.value),
-        _ => {}
-      }
-    }
-    (pos, nr.checked_sub(1).map(LabelId))
-  }
-
   fn parse_cluster_attrs(&mut self, e: &BytesStart<'_>) -> ((Article, u32), ClusterKind) {
     let mut article = Article::default();
     let mut abs_nr = 0;
-    for attr in e.attributes() {
-      let attr = attr.unwrap();
+    for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
         b"aid" => article = Article::from_bytes(&attr.value),
         b"nr" => abs_nr = self.get_attr(&attr.value),
@@ -575,11 +615,9 @@ impl XmlReader<'_> {
 
   fn parse_pairs(&mut self, buf: &mut Vec<u8>, name: &[u8], mut f: impl FnMut(u32, u32)) {
     assert!(matches!(self.read_event(buf), Event::Start(e) if e.local_name() == name));
-    while let Event::Start(e) = self.read_event(buf) {
-      assert!(e.local_name() == b"Pair");
+    while let Ok(e) = self.try_read_start(buf, Some(b"Pair")) {
       let (mut x, mut y) = (0, 0);
-      for attr in e.attributes() {
-        let attr = attr.unwrap();
+      for attr in e.attributes().map(Result::unwrap) {
         match attr.key {
           b"x" => x = self.get_attr(&attr.value),
           b"y" => y = self.get_attr(&attr.value),
@@ -600,12 +638,10 @@ impl XmlReader<'_> {
   fn parse_pattern_attrs(
     &mut self, e: &BytesStart<'_>,
   ) -> (u32, Article, u8, FormatId, u32, Option<u32>, u32, bool) {
-    assert!(e.local_name() == b"Pattern");
     let (mut abs_nr, mut article, mut kind, mut fmt, mut constr, mut redefines, mut pid) =
       Default::default();
     let mut pos = true;
-    for attr in e.attributes() {
-      let attr = attr.unwrap();
+    for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
         b"nr" => abs_nr = self.get_attr(&attr.value),
         b"aid" => article = Article::from_bytes(&attr.value),
@@ -635,11 +671,9 @@ impl XmlReader<'_> {
     ),
   ) -> Pattern {
     let primary = self.parse_arg_types(buf);
-    assert!(matches!(self.read_event(buf),
-      Event::Start(e) if e.local_name() == b"Visible"));
+    self.read_start(buf, Some(b"Visible"));
     let visible = self.parse_int_list(buf, |n| n as u8 - 1);
-    let expansion = if let Event::Start(e) = self.read_event(buf) {
-      assert!(e.local_name() == b"Expansion");
+    let expansion = if self.try_read_start(buf, Some(b"Expansion")).is_ok() {
       let ty = Box::new(self.parse_type(buf).unwrap());
       self.end_tag(buf);
       self.end_tag(buf);
@@ -665,11 +699,9 @@ impl XmlReader<'_> {
   fn parse_constructor_attrs(
     &mut self, e: &BytesStart<'_>,
   ) -> (Article, u32, u32, u8, u8, u32, u32) {
-    assert!(e.local_name() == b"Constructor");
     let (mut article, mut abs_nr, mut redefines, mut superfluous, mut kind, mut aggr, mut base) =
       Default::default();
-    for attr in e.attributes() {
-      let attr = attr.unwrap();
+    for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
         b"kind" => kind = attr.value[0],
         b"nr" => abs_nr = self.get_attr(&attr.value),
@@ -760,8 +792,7 @@ impl XmlReader<'_> {
 
   fn parse_constr_kind(&mut self, e: &BytesStart<'_>) -> Option<ConstrKind> {
     let (mut constr_nr, mut constr_kind) = Default::default();
-    for attr in e.attributes() {
-      let attr = attr.unwrap();
+    for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
         b"constrkind" => constr_kind = attr.value[0],
         b"constrnr" => constr_nr = self.get_attr::<u32>(&attr.value) - 1,
@@ -779,10 +810,8 @@ impl XmlReader<'_> {
   }
 
   fn parse_definiens_attrs(&mut self, e: BytesStart<'_>) -> (u32, Article, ConstrKind) {
-    assert!(e.local_name() == b"Definiens");
     let (mut article, mut def_nr) = Default::default();
-    for attr in e.attributes() {
-      let attr = attr.unwrap();
+    for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
         b"aid" => article = Article::from_bytes(&attr.value),
         b"defnr" => def_nr = self.get_attr(&attr.value),
@@ -818,10 +847,8 @@ impl XmlReader<'_> {
   }
 
   fn parse_identify_attrs(&mut self, e: &BytesStart<'_>) -> (Article, u32, u8) {
-    assert!(e.local_name() == b"Identify");
     let (mut article, mut abs_nr, mut kind) = Default::default();
-    for attr in e.attributes() {
-      let attr = attr.unwrap();
+    for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
         b"aid" => article = Article::from_bytes(&attr.value),
         b"nr" => abs_nr = self.get_attr(&attr.value),
@@ -855,10 +882,8 @@ impl XmlReader<'_> {
   }
 
   fn parse_reduction_attrs(&mut self, e: &BytesStart<'_>) -> (Article, u32) {
-    assert!(e.local_name() == b"Reduction");
     let (mut abs_nr, mut article) = Default::default();
-    for attr in e.attributes() {
-      let attr = attr.unwrap();
+    for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
         b"aid" => article = Article::from_bytes(&attr.value),
         b"nr" => abs_nr = self.get_attr(&attr.value),
@@ -884,10 +909,8 @@ impl XmlReader<'_> {
   }
 
   fn parse_property_attrs(&mut self, e: &BytesStart<'_>) -> (Article, u32, PropertyKind) {
-    assert!(e.local_name() == b"Property");
     let (mut abs_nr, mut article, mut kind) = Default::default();
-    for attr in e.attributes() {
-      let attr = attr.unwrap();
+    for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
         b"aid" => article = Article::from_bytes(&attr.value),
         b"nr" => abs_nr = self.get_attr(&attr.value),
@@ -945,8 +968,7 @@ impl XmlReader<'_> {
         }
         b"Properties" => {
           let mut args = (0, 0, PropertySet::default());
-          for attr in e.attributes() {
-            let attr = attr.unwrap();
+          for attr in e.attributes().map(Result::unwrap) {
             match attr.key {
               b"propertyarg1" => args.0 = self.get_attr::<u32>(&attr.value).saturating_sub(1),
               b"propertyarg2" => args.1 = self.get_attr::<u32>(&attr.value).saturating_sub(1),
@@ -968,8 +990,7 @@ impl XmlReader<'_> {
         }
         b"Fields" => {
           let mut fields = vec![];
-          while let Event::Start(e) = self.read_event(buf) {
-            assert!(e.local_name() == b"Field");
+          while let Ok(e) = self.try_read_start(buf, Some(b"Field")) {
             let attr = e.attributes().next().unwrap().unwrap();
             assert!(attr.key == b"nr");
             fields.push(SelId(self.get_attr::<u32>(&attr.value) - 1));
@@ -1071,8 +1092,7 @@ impl XmlReader<'_> {
         }
         b"For" => {
           // let mut var_id = 0;
-          // for attr in e.attributes() {
-          //   let attr = attr.unwrap();
+          // for attr in e.attributes().map(Result::unwrap) {
           //   if let b"vid" = attr.key {
           //     var_id = self.get_attr(&attr.value)
           //   }
@@ -1168,10 +1188,10 @@ impl XmlReader<'_> {
     }
   }
 
-  fn parse_proposition(&mut self, buf: &mut Vec<u8>, quot: bool) -> Option<Proposition> {
+  fn parse_proposition(&mut self, buf: &mut Vec<u8>, quotable: bool) -> Option<Proposition> {
     match self.parse_elem(buf) {
       Elem::Proposition(f) => {
-        assert!(quot || f.label.is_none());
+        assert!(quotable || f.label.is_none());
         Some(f)
       }
       _ => None,
@@ -1183,16 +1203,6 @@ impl XmlReader<'_> {
       Elem::ArgTypes(tys) => tys,
       _ => panic!("expected <ArgTypes>"),
     }
-  }
-
-  fn parse_int_list<T>(&mut self, buf: &mut Vec<u8>, f: impl Fn(u32) -> T) -> Box<[T]> {
-    let mut out = vec![];
-    while let Event::Start(e) = self.read_event(buf) {
-      assert!(e.local_name() == b"Int");
-      out.push(f(self.get_attr(&e.try_get_attribute(b"x").unwrap().unwrap().value)));
-      self.end_tag(buf);
-    }
-    out.into()
   }
 
   fn parse_def_body<T>(

@@ -196,7 +196,7 @@ macro_rules! mk_id {
     $(
       #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
       pub struct $id(pub u32);
-      impl Idx for $id {
+      impl $crate::Idx for $id {
         fn from_usize(n: usize) -> Self { Self(n as u32) }
         fn into_usize(self) -> usize { self.0 as usize }
       }
@@ -1455,9 +1455,9 @@ impl<V: VisitMut> Visitable<V> for EqualsDef {
   }
 }
 
-type ThmRef = (ArticleId, ThmId);
-type DefRef = (ArticleId, DefId);
-type SchRef = (ArticleId, SchId);
+pub type ThmRef = (ArticleId, ThmId);
+pub type DefRef = (ArticleId, DefId);
+pub type SchRef = (ArticleId, SchId);
 
 #[derive(Default, Debug)]
 pub struct References {
@@ -1805,6 +1805,7 @@ pub enum Item {
   Let(Vec<Type>),
   /// itExistentialAssumption
   Given(GivenItem),
+  /// itConclusion
   Thus(PrivateStatement),
   /// itAssumption
   /// invariant: not empty
