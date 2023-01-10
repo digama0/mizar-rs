@@ -1728,6 +1728,21 @@ pub enum CorrCondKind {
   Reducibility,
 }
 
+impl TryFrom<&[u8]> for CorrCondKind {
+  type Error = ();
+  fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+    match value {
+      b"coherence" => Ok(CorrCondKind::Coherence),
+      b"compatibility" => Ok(CorrCondKind::Compatibility),
+      b"consistency" => Ok(CorrCondKind::Consistency),
+      b"existence" => Ok(CorrCondKind::Existence),
+      b"uniqueness" => Ok(CorrCondKind::Uniqueness),
+      b"reducibility" => Ok(CorrCondKind::Reducibility),
+      _ => Err(()),
+    }
+  }
+}
+
 #[derive(Debug)]
 pub struct SimpleCorrCond {
   pub kind: CorrCondKind,

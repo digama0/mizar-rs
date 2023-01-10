@@ -100,11 +100,11 @@ impl XmlReader {
     match self.read_event(buf) {
       Event::Start(e) => {
         if let Some(expecting) = expecting {
-          assert_eq!(
-            e.local_name(),
-            expecting,
-            "expected <{}>",
-            std::str::from_utf8(expecting).unwrap()
+          assert!(
+            e.local_name() == expecting,
+            "expected <{}>, got <{}>",
+            std::str::from_utf8(expecting).unwrap(),
+            std::str::from_utf8(e.local_name()).unwrap()
           )
         }
         Ok(e)

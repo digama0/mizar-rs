@@ -2673,6 +2673,11 @@ fn main() {
           println!("{i}: {s}");
           let path = MizPath::new(s);
           load(&path);
+          // let items = path.open_wsx().unwrap().parse_items();
+          // println!("parsed {s}, {} wsx items", items.len());
+          // path.open_msx().unwrap().parse_items();
+          // println!("parsed {s}, {} msx items", items.len());
+
           // let output = std::process::Command::new("verifier")
           //   .arg("-c")
           //   .arg(format!("{}.miz", path.1.display()))
