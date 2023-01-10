@@ -544,6 +544,9 @@ impl<V, A: Visitable<V>, B: Visitable<V>> Visitable<V> for (A, B) {
 
 #[derive(Clone)]
 pub enum Term {
+  /// Invariant: nr != 0. Zero is not a numeral (!),
+  /// it is a `Functor` using Requirement::ZeroNumber
+  Numeral(u32),
   /// Locus numbers are shifted from mizar to start at 0
   Locus(LocusId),
   /// Bound var numbers are shifted from mizar to start at 0
@@ -573,20 +576,12 @@ pub enum Term {
     nr: FuncId,
     args: Box<[Term]>,
   },
-  /// Invariant: nr != 0. Zero is not a numeral (!),
-  /// it is a `Functor` using Requirement::ZeroNumber
-  Numeral(u32),
   Selector {
     nr: SelId,
     args: Box<[Term]>,
   },
   FreeVar(FVarId),
-  LambdaVar(u32),
-  Qua {
-    value: Box<Term>,
-    ty: Box<Type>,
-  },
-  Choice {
+  The {
     ty: Box<Type>,
   },
   Fraenkel {
@@ -594,12 +589,10 @@ pub enum Term {
     scope: Box<Term>,
     compr: Box<Formula>,
   },
-  // Should not appear in checker imports
-  It,
 }
 
 impl Default for Term {
-  fn default() -> Self { Self::It }
+  fn default() -> Self { Self::Numeral(0) }
 }
 
 impl Term {
@@ -635,11 +628,8 @@ impl Term {
       Term::Numeral(_) => b'N',
       Term::Selector { .. } => b'U',
       Term::FreeVar(_) => b'X',
-      Term::LambdaVar(_) => b'Z',
-      Term::Qua { .. } => 213,
-      Term::Choice { .. } => 216,
+      Term::The { .. } => 216,
       Term::Fraenkel { .. } => 232,
-      Term::It { .. } => 234,
     }
   }
 }
@@ -758,7 +748,6 @@ pub enum Formula {
   },
   /// ikFrmVerum
   True,
-  // Thesis,
 }
 
 impl Default for Formula {
@@ -1655,17 +1644,17 @@ impl<V: VisitMut> Visitable<V> for Proposition {
   fn visit(&mut self, v: &mut V) { self.f.visit(v) }
 }
 #[derive(Debug)]
-pub enum PrivateStatement {
+pub enum Statement {
   Proposition { prop: Proposition, just: Justification },
   IterEquality { start: Position, label: Option<LabelId>, lhs: Term, steps: Vec<(Term, Inference)> },
   Now { pos: (Position, Position), label: Option<LabelId>, thesis: Formula, items: Box<[Item]> },
 }
-impl PrivateStatement {
+impl Statement {
   pub fn pos(&self) -> Position {
     match self {
-      PrivateStatement::Proposition { prop, .. } => prop.pos,
-      PrivateStatement::IterEquality { start, .. } => *start,
-      PrivateStatement::Now { pos, .. } => pos.0,
+      Statement::Proposition { prop, .. } => prop.pos,
+      Statement::IterEquality { start, .. } => *start,
+      Statement::Now { pos, .. } => pos.0,
     }
   }
 }
@@ -1679,7 +1668,7 @@ pub struct GivenItem {
 
 #[derive(Debug)]
 pub enum AuxiliaryItem {
-  PrivateStatement(PrivateStatement),
+  Statement(Statement),
   /// itChoice
   Consider {
     prop: Proposition,
@@ -1821,7 +1810,7 @@ pub enum Item {
   /// itExistentialAssumption
   Given(GivenItem),
   /// itConclusion
-  Thus(PrivateStatement),
+  Thus(Statement),
   /// itAssumption
   /// invariant: not empty
   Assume(Vec<Proposition>),

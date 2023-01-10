@@ -321,17 +321,7 @@ impl<'a> Pretty<'a> {
         self.parens_if(prec, doc)
       }
       Term::FreeVar(nr) => self.text(format!("v{}", nr.0)),
-      Term::LambdaVar(nr) => self.text(format!("l{nr}")),
-      Term::Qua { value, ty } => {
-        let doc = self
-          .term(true, value, depth, lift)
-          .append(self.line())
-          .append("qua ")
-          .append(self.ty(ty, depth, lift))
-          .group();
-        self.parens_if(prec, doc)
-      }
-      Term::Choice { ty } =>
+      Term::The { ty } =>
         self.parens_if(prec, self.text("the ").append(self.ty(ty, depth, lift)).group()),
       Term::Fraenkel { args, scope, compr } => {
         let doc = self.term(false, scope, depth + args.len() as u32, lift).append(self.line());
@@ -347,7 +337,6 @@ impl<'a> Pretty<'a> {
           .group();
         doc.append(inner).group().braces()
       }
-      Term::It => self.text("it"),
     }
   }
 

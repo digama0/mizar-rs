@@ -62,7 +62,7 @@ impl Term {
       Term::Aggregate { .. } => Some(CTK::Aggregate),
       Term::Selector { .. } => Some(CTK::Selector),
       Term::Fraenkel { .. } => Some(CTK::Fraenkel),
-      Term::Choice { .. } => Some(CTK::Choice),
+      Term::The { .. } => Some(CTK::Choice),
       _ => None,
     }
   }
@@ -936,12 +936,12 @@ impl Unify<'_> {
         self.base = base;
         inst
       }
-      Term::Choice { ref ty } => {
+      Term::The { ref ty } => {
         let mut inst =
-          if let Term::Choice { ty: ty2 } = t2 { self.unify_type(ty, ty2)? } else { Dnf::FALSE };
+          if let Term::The { ty: ty2 } = t2 { self.unify_type(ty, ty2)? } else { Dnf::FALSE };
         if let Some(ec) = self.get_eq_class(t2) {
           for &m in &self.eq_class[ec].terms[CTK::Choice] {
-            let Term::Choice { ty: ty2 } = &self.lc.marks[m].0 else { unreachable!() };
+            let Term::The { ty: ty2 } = &self.lc.marks[m].0 else { unreachable!() };
             inst.mk_or_else(|| self.unify_type(ty, ty2))?
           }
         }
@@ -951,7 +951,7 @@ impl Unify<'_> {
       Term::Numeral(_) | Term::Constant(_) | Term::Infer(_) =>
         Dnf::mk_bool(Some(self.get_eq_class(t1).unwrap()) == self.get_eq_class(t2)),
       Term::EqMark(m) => self.unify_term(&self.lc.marks[m].0, t2)?,
-      Term::Locus(_) | Term::LambdaVar(_) | Term::Qua { .. } | Term::It => unreachable!(),
+      Term::Locus(_) => unreachable!(),
     };
     // vprintln!("unify_term {t1:?} <> {t2:?} -> {res:?}");
     Ok(res)
@@ -1263,12 +1263,11 @@ impl EquateClass<'_> {
       Term::Fraenkel { .. } => (self.eq_class.enum_iter())
         .find(|p| p.1.terms[CTK::Fraenkel].iter().any(|&m| self.eq_term(g, lc, tm, &lc.marks[m].0)))
         .map(|p| p.0),
-      Term::Choice { .. } => (self.eq_class.enum_iter())
+      Term::The { .. } => (self.eq_class.enum_iter())
         .find(|p| p.1.terms[CTK::Choice].iter().any(|&m| self.eq_term(g, lc, tm, &lc.marks[m].0)))
         .map(|p| p.0),
       Term::EqMark(m) => self.get(g, lc, &lc.marks[m].0),
-      Term::Constant(_) | Term::FreeVar(_) | Term::LambdaVar(_) | Term::Qua { .. } | Term::It =>
-        unreachable!(),
+      Term::Constant(_) | Term::FreeVar(_) => unreachable!(),
     }
     // vprintln!("get_eq_class {tm:?} -> {res:?}");
   }

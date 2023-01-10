@@ -197,7 +197,7 @@ impl MsmParser {
     Some(Box::new(Proposition { label, f: *f }))
   }
 
-  fn parse_private_stmt(&mut self, shape: Shape) -> PrivateStatement {
+  fn parse_stmt(&mut self, shape: Shape) -> Statement {
     match shape {
       Shape::DiffuseStatement => {
         let (label, bl) = match self.parse_elem() {
@@ -206,13 +206,13 @@ impl MsmParser {
           _ => panic!("expected block"),
         };
         self.r.end_tag(&mut self.buf);
-        PrivateStatement::Now { end: bl.pos.1, label, items: bl.items }
+        Statement::Now { end: bl.pos.1, label, items: bl.items }
       }
       Shape::CompactStatement => {
         let prop = self.parse_proposition().unwrap();
         let just = self.parse_justification();
         self.r.end_tag(&mut self.buf);
-        PrivateStatement::Proposition { prop, just }
+        Statement::Proposition { prop, just }
       }
       Shape::IterativeEquality => {
         let prop = self.parse_proposition().unwrap();
@@ -226,7 +226,7 @@ impl MsmParser {
           });
           self.r.end_tag(&mut self.buf);
         }
-        PrivateStatement::IterEquality { prop, just, steps }
+        Statement::IterEquality { prop, just, steps }
       }
     }
   }
@@ -281,10 +281,10 @@ impl MsmParser {
           }
         }
         let args = self.parse_terms();
-        Adjective::Positive { pos, sym: (sym, spelling), args }
+        Adjective::Attr { pos, sym: (sym, spelling), args }
       }
       b"NegatedAdjective" => {
-        let attr = Adjective::Negative {
+        let attr = Adjective::Non {
           pos: self.r.get_pos(&e),
           attr: Box::new(self.parse_adjective().unwrap()),
         };
@@ -469,22 +469,20 @@ impl MsmParser {
         };
         ItemKind::Reconsider { vars, ty, just: self.parse_justification() }
       }
-      b"Private-Functor-Definition" => ItemKind::PrivFuncDefinition {
+      b"Private-Functor-Definition" => ItemKind::DefFunc {
         var: self.parse_variable().unwrap(),
         tys: self.parse_types(),
         value: self.parse_term().unwrap(),
       },
-      b"Private-Predicate-Definition" => ItemKind::PrivPredDefinition {
+      b"Private-Predicate-Definition" => ItemKind::DefPred {
         var: self.parse_variable().unwrap(),
         tys: self.parse_types(),
         value: self.parse_formula(),
       },
-      b"Constant-Definition" => ItemKind::ConstantDefinition {
-        var: self.parse_variable().unwrap(),
-        value: self.parse_term().unwrap(),
-      },
-      b"Generalization" => ItemKind::Generalization { var: self.parse_binder() },
-      b"Loci-Declaration" => ItemKind::LociDeclaration { var: self.parse_binder() },
+      b"Constant-Definition" =>
+        ItemKind::Set { var: self.parse_variable().unwrap(), value: self.parse_term().unwrap() },
+      b"Generalization" => ItemKind::Let { var: self.parse_binder() },
+      b"Loci-Declaration" => ItemKind::LetLocus { var: self.parse_binder() },
       b"Existential-Assumption" => {
         let mut vars = vec![];
         let conds = loop {
@@ -494,7 +492,7 @@ impl MsmParser {
             _ => panic!("expected <Conditions>"),
           }
         };
-        ItemKind::ExistentialAssumption { vars, conds }
+        ItemKind::Given { vars, conds }
       }
       b"Exemplification" => {
         let (mut var, mut term) = (None, None);
@@ -507,23 +505,28 @@ impl MsmParser {
           }
         }
         end_tag = true;
-        ItemKind::Exemplification { var, term }
+        ItemKind::Take { var, term }
       }
       b"Per-Cases" => ItemKind::PerCases { just: self.parse_justification() },
       b"Regular-Statement" => {
         let shape = (*shape).try_into().unwrap();
         end_tag = true;
-        ItemKind::RegularStatement(self.parse_private_stmt(shape))
+        ItemKind::Statement(self.parse_stmt(shape))
       }
       b"Conclusion" => {
         let shape = (*shape).try_into().unwrap();
         end_tag = true;
-        ItemKind::Conclusion(self.parse_private_stmt(shape))
+        ItemKind::Thus(self.parse_stmt(shape))
       }
       b"Case-Block" => {
-        let bl = self.parse_block().unwrap();
+        let mut bl = self.parse_block().unwrap();
         let BlockKind::CS(kind) = bl.kind else { panic!("expected case or suppose block") };
-        ItemKind::CaseOrSuppose { end: bl.pos.1, kind, items: bl.items }
+        let hyp = Box::new(match (&kind, bl.items.remove(0).kind) {
+          (CaseOrSupposeKind::Case, ItemKind::CaseHead(hyp))
+          | (CaseOrSupposeKind::Suppose, ItemKind::SupposeHead(hyp)) => hyp,
+          _ => panic!("missing case/suppose head"),
+        });
+        ItemKind::CaseOrSuppose { end: bl.pos.1, kind, hyp, items: bl.items }
       }
       b"Case-Head" => ItemKind::CaseHead(self.parse_assumption()),
       b"Suppose-Head" => ItemKind::SupposeHead(self.parse_assumption()),
@@ -997,7 +1000,7 @@ impl MsmParser {
                 _ => {}
               }
             }
-            return Elem::Term(Box::new(Term::PrivateFunctor {
+            return Elem::Term(Box::new(Term::PrivFunc {
               pos,
               sym: (nr, spelling),
               args: self.parse_terms(),
@@ -1032,7 +1035,7 @@ impl MsmParser {
               }
             }
             let (rsym, args) = (self.parse_right_pattern(), self.parse_terms());
-            return Elem::Term(Box::new(Term::Circumfix { pos, lsym: (lsym, lsp), rsym, args }))
+            return Elem::Term(Box::new(Term::Bracket { pos, lsym: (lsym, lsp), rsym, args }))
           }
           b"Aggregate-Term" => {
             let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
@@ -1060,7 +1063,7 @@ impl MsmParser {
               }
             }
             let arg = self.parse_term().unwrap();
-            Elem::Term(Box::new(Term::ForgetfulFunctor { pos, sym: (sym, spelling), arg }))
+            Elem::Term(Box::new(Term::ForgetFunc { pos, sym: (sym, spelling), arg }))
           }
           b"Selector-Term" => {
             let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
@@ -1093,12 +1096,12 @@ impl MsmParser {
             let pos = self.r.get_pos(&e);
             let term = self.parse_term().unwrap();
             let ty = self.parse_type().unwrap();
-            Elem::Term(Box::new(Term::Qualification { pos, term, ty }))
+            Elem::Term(Box::new(Term::Qua { pos, term, ty }))
           }
           b"Global-Choice-Term" => {
             let pos = self.r.get_pos(&e);
             let ty = self.parse_type().unwrap();
-            Elem::Term(Box::new(Term::GlobalChoice { pos, ty }))
+            Elem::Term(Box::new(Term::The { pos, ty }))
           }
           b"Simple-Fraenkel-Term" => {
             let pos = self.r.get_pos(&e);

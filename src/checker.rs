@@ -964,7 +964,7 @@ impl<'a> SchemeCtx<'a> {
       (Aggregate { nr: AggrId(n1), args: args1 }, Aggregate { nr: AggrId(n2), args: args2 })
       | (Selector { nr: SelId(n1), args: args1 }, Selector { nr: SelId(n2), args: args2 }) =>
         n1 == n2 && self.eq_terms(args1, args2),
-      (Choice { ty: ty1 }, Choice { ty: ty2 }) => self.eq_type(ty1, ty2),
+      (The { ty: ty1 }, The { ty: ty2 }) => self.eq_type(ty1, ty2),
       (
         Fraenkel { args: args1, scope: sc1, compr: c1 },
         Fraenkel { args: args2, scope: sc2, compr: c2 },

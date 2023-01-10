@@ -17,7 +17,7 @@ enum ArticleElem {
   Definition(Definition),
   DefStruct(DefStruct),
   Canceled(CancelKind),
-  Thus(PrivateStatement),
+  Thus(Statement),
   PerCases(PerCases),
   PerCasesJustification(Proposition, Justification),
   Registration(Registration),
@@ -93,8 +93,8 @@ impl ArticleParser<'_> {
   }
 
   fn finish_proposition(&mut self, prop: Proposition) -> Item {
-    let s = PrivateStatement::Proposition { prop, just: self.parse_justification() };
-    Item::AuxiliaryItem(AuxiliaryItem::PrivateStatement(s))
+    let s = Statement::Proposition { prop, just: self.parse_justification() };
+    Item::AuxiliaryItem(AuxiliaryItem::Statement(s))
   }
 
   fn parse_block_thesis(&mut self) -> Option<Formula> {
@@ -439,21 +439,21 @@ impl ArticleParser<'_> {
             self.r.end_tag(&mut self.buf);
             steps.push((rhs, just));
           }
-          let s = PrivateStatement::IterEquality { start, label, lhs, steps };
-          ArticleElem::AuxiliaryItem(AuxiliaryItem::PrivateStatement(s))
+          let s = Statement::IterEquality { start, label, lhs, steps };
+          ArticleElem::AuxiliaryItem(AuxiliaryItem::Statement(s))
         }
         b"Now" => {
           let (start, label) = self.r.get_pos_and_label(&e);
           let (items, end) = self.parse_reasoning(true);
           let thesis = self.parse_block_thesis().unwrap();
           self.r.end_tag(&mut self.buf);
-          let s = PrivateStatement::Now {
+          let s = Statement::Now {
             pos: (start, end),
             label,
             thesis,
             items: items.into_iter().map(|p| p.0).collect(),
           };
-          ArticleElem::AuxiliaryItem(AuxiliaryItem::PrivateStatement(s))
+          ArticleElem::AuxiliaryItem(AuxiliaryItem::Statement(s))
         }
         b"Consider" => {
           let prop = self.r.parse_proposition(&mut self.buf, false).unwrap();
@@ -623,9 +623,9 @@ impl ArticleParser<'_> {
         }
         b"Conclusion" => {
           let s = match self.parse_elem() {
-            ArticleElem::AuxiliaryItem(AuxiliaryItem::PrivateStatement(s)) => s,
+            ArticleElem::AuxiliaryItem(AuxiliaryItem::Statement(s)) => s,
             ArticleElem::Proposition(prop) =>
-              PrivateStatement::Proposition { prop, just: self.parse_justification() },
+              Statement::Proposition { prop, just: self.parse_justification() },
             _ => panic!("expected justified proposition"),
           };
           self.r.end_tag(&mut self.buf);

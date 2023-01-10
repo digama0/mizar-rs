@@ -16,17 +16,37 @@ pub enum Term {
   Placeholder { pos: Position, nr: u32 },
   Numeral { pos: Position, value: u32 },
   Simple { pos: Position, sym: (u32, String) },
-  PrivateFunctor { pos: Position, sym: (u32, String), args: Vec<Term> },
+  PrivFunc { pos: Position, sym: (u32, String), args: Vec<Term> },
   Infix { pos: Position, sym: (u32, String), left: Vec<Term>, right: Vec<Term> },
-  Circumfix { pos: Position, lsym: (u32, String), rsym: (u32, String), args: Vec<Term> },
+  Bracket { pos: Position, lsym: (u32, String), rsym: (u32, String), args: Vec<Term> },
   Aggregate { pos: Position, sym: (u32, String), args: Vec<Term> },
-  ForgetfulFunctor { pos: Position, sym: (u32, String), arg: Box<Term> },
+  ForgetFunc { pos: Position, sym: (u32, String), arg: Box<Term> },
   Selector { pos: Position, sym: (u32, String), arg: Box<Term> },
   InternalSelector { pos: Position, sym: (u32, String) },
-  Qualification { pos: Position, term: Box<Term>, ty: Box<Type> },
-  GlobalChoice { pos: Position, ty: Box<Type> },
+  Qua { pos: Position, term: Box<Term>, ty: Box<Type> },
+  The { pos: Position, ty: Box<Type> },
   Fraenkel { pos: Position, vars: Vec<BinderGroup>, scope: Box<Term>, compr: Option<Box<Formula>> },
   It { pos: Position },
+}
+impl Term {
+  pub fn pos(&self) -> Position {
+    match self {
+      Term::Placeholder { pos, .. }
+      | Term::Numeral { pos, .. }
+      | Term::Simple { pos, .. }
+      | Term::PrivFunc { pos, .. }
+      | Term::Infix { pos, .. }
+      | Term::Bracket { pos, .. }
+      | Term::Aggregate { pos, .. }
+      | Term::ForgetFunc { pos, .. }
+      | Term::Selector { pos, .. }
+      | Term::InternalSelector { pos, .. }
+      | Term::Qua { pos, .. }
+      | Term::The { pos, .. }
+      | Term::Fraenkel { pos, .. }
+      | Term::It { pos } => *pos,
+    }
+  }
 }
 
 #[derive(Debug)]
@@ -35,6 +55,16 @@ pub enum Type {
   Struct { pos: Position, sym: (u32, String), args: Vec<Term> },
   Cluster { pos: Position, attrs: Vec<Adjective>, ty: Box<Type> },
   Reservation { pos: Position, sym: (u32, String), nr: u32, subst: Vec<[u32; 3]> },
+}
+impl Type {
+  pub fn pos(&self) -> Position {
+    match self {
+      Type::Standard { pos, .. }
+      | Type::Struct { pos, .. }
+      | Type::Cluster { pos, .. }
+      | Type::Reservation { pos, .. } => *pos,
+    }
+  }
 }
 
 #[derive(Debug)]
@@ -70,14 +100,30 @@ pub struct PredRhs {
 pub enum Formula {
   Not { pos: Position, f: Box<Formula> },
   Binop { kind: FormulaBinop, pos: Position, f: [Box<Formula>; 2] },
-  False { pos: Position },
   Pred { pos: Position, f: Pred },
   ChainPred { pos: Position, first: Pred, rest: Vec<PredRhs> },
   PrivPred { pos: Position, sym: (u32, String), args: Vec<Term> },
   Attr { pos: Position, term: Box<Term>, attrs: Vec<Adjective> },
   Is { pos: Position, term: Box<Term>, ty: Box<Type> },
   Binder { kind: FormulaBinder, pos: Position, var: Box<BinderGroup>, f: Box<Formula> },
+  False { pos: Position },
   Thesis { pos: Position },
+}
+impl Formula {
+  pub fn pos(&self) -> Position {
+    match self {
+      Formula::Not { pos, .. }
+      | Formula::Binop { pos, .. }
+      | Formula::False { pos, .. }
+      | Formula::Pred { pos, .. }
+      | Formula::ChainPred { pos, .. }
+      | Formula::PrivPred { pos, .. }
+      | Formula::Attr { pos, .. }
+      | Formula::Is { pos, .. }
+      | Formula::Binder { pos, .. }
+      | Formula::Thesis { pos } => *pos,
+    }
+  }
 }
 
 #[derive(Debug)]
@@ -233,8 +279,8 @@ pub enum PatternRedefKind {
 
 #[derive(Debug)]
 pub enum Adjective {
-  Positive { pos: Position, sym: (u32, String), args: Vec<Term> },
-  Negative { pos: Position, attr: Box<Adjective> },
+  Attr { pos: Position, sym: (u32, String), args: Vec<Term> },
+  Non { pos: Position, attr: Box<Adjective> },
 }
 
 #[derive(Debug)]
@@ -271,7 +317,7 @@ pub enum Reference {
 }
 
 #[derive(Debug)]
-pub enum PrivateStatement {
+pub enum Statement {
   Proposition {
     prop: Box<Proposition>,
     just: Box<Justification>,
@@ -378,35 +424,102 @@ pub struct Reduction {
 
 #[derive(Debug)]
 pub enum ItemKind {
-  Block { end: Position, kind: BlockKind, items: Vec<Item> },
+  Block {
+    end: Position,
+    kind: BlockKind,
+    items: Vec<Item>,
+  },
   SchemeBlock(Box<SchemeBlock>),
-  SchemeHead(Box<SchemeHead>),
-  Theorem { prop: Box<Proposition>, just: Box<Justification> },
+  Theorem {
+    prop: Box<Proposition>,
+    just: Box<Justification>,
+  },
   Reservation(Box<Reservation>),
   Section,
-  Conclusion(PrivateStatement),
-  RegularStatement(PrivateStatement),
-  Consider { vars: Vec<BinderGroup>, conds: Vec<Proposition>, just: Box<Justification> },
-  Reconsider { vars: Vec<ReconsiderVar>, ty: Box<Type>, just: Box<Justification> },
-  PrivFuncDefinition { var: Box<Variable>, tys: Vec<Type>, value: Box<Term> },
-  PrivPredDefinition { var: Box<Variable>, tys: Vec<Type>, value: Box<Formula> },
-  ConstantDefinition { var: Box<Variable>, value: Box<Term> },
-  Generalization { var: Box<BinderGroup> },
-  LociDeclaration { var: Box<BinderGroup> },
-  ExistentialAssumption { vars: Vec<BinderGroup>, conds: Vec<Proposition> },
-  Exemplification { var: Option<Box<Variable>>, term: Option<Box<Term>> },
-  PerCases { just: Box<Justification> },
-  CaseOrSuppose { end: Position, kind: CaseOrSupposeKind, items: Vec<Item> },
-  CaseHead(Assumption),
-  SupposeHead(Assumption),
+  /// itConclusion
+  Thus(Statement),
+  Statement(Statement),
+  /// itChoice
+  Consider {
+    vars: Vec<BinderGroup>,
+    conds: Vec<Proposition>,
+    just: Box<Justification>,
+  },
+  Reconsider {
+    vars: Vec<ReconsiderVar>,
+    ty: Box<Type>,
+    just: Box<Justification>,
+  },
+  /// itPrivFuncDefinition
+  DefFunc {
+    var: Box<Variable>,
+    tys: Vec<Type>,
+    value: Box<Term>,
+  },
+  /// itPrivPredDefinition
+  DefPred {
+    var: Box<Variable>,
+    tys: Vec<Type>,
+    value: Box<Formula>,
+  },
+  /// itConstantDefinition
+  Set {
+    var: Box<Variable>,
+    value: Box<Term>,
+  },
+  /// itGeneralization
+  Let {
+    var: Box<BinderGroup>,
+  },
+  /// itLociDeclaration
+  LetLocus {
+    var: Box<BinderGroup>,
+  },
+  /// itExistentialAssumption
+  Given {
+    vars: Vec<BinderGroup>,
+    conds: Vec<Proposition>,
+  },
+  /// itExemplification
+  Take {
+    var: Option<Box<Variable>>,
+    term: Option<Box<Term>>,
+  },
+  PerCases {
+    just: Box<Justification>,
+  },
+  CaseOrSuppose {
+    end: Position,
+    kind: CaseOrSupposeKind,
+    hyp: Box<Assumption>,
+    items: Vec<Item>,
+  },
   Assumption(Assumption),
-  Property { prop: PropertyKind, just: Box<Justification> },
+  Property {
+    prop: PropertyKind,
+    just: Box<Justification>,
+  },
   Definition(Box<Definition>),
   DefStruct(Box<DefStruct>),
-  PatternRedef { kind: PatternRedefKind, orig: Pattern, new: Pattern },
+  PatternRedef {
+    kind: PatternRedefKind,
+    orig: Pattern,
+    new: Pattern,
+  },
   Cluster(Box<Cluster>),
   Identify(Box<Identify>),
   Reduction(Box<Reduction>),
-  SethoodRegistration { ty: Box<Type>, just: Box<Justification> },
-  Pragma { spelling: String },
+  SethoodRegistration {
+    ty: Box<Type>,
+    just: Box<Justification>,
+  },
+  Pragma {
+    spelling: String,
+  },
+  /// parser internal use only
+  SchemeHead(Box<SchemeHead>),
+  /// parser internal use only
+  CaseHead(Assumption),
+  /// parser internal use only
+  SupposeHead(Assumption),
 }

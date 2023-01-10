@@ -164,10 +164,10 @@ impl Reader {
           Item::TakeAsVar(_, _) => eprintln!("TakeAsVar"),
           Item::PerCases(it) => eprintln!("PerCases @ {:?}", it.pos.0),
           Item::AuxiliaryItem(it) => match it {
-            AuxiliaryItem::PrivateStatement(it) => match it {
-              PrivateStatement::Proposition { .. } => eprintln!("Proposition @ {:?}", it.pos()),
-              PrivateStatement::IterEquality { .. } => eprintln!("IterEquality @ {:?}", it.pos()),
-              PrivateStatement::Now { .. } => eprintln!("Now @ {:?}", it.pos()),
+            AuxiliaryItem::Statement(it) => match it {
+              Statement::Proposition { .. } => eprintln!("Proposition @ {:?}", it.pos()),
+              Statement::IterEquality { .. } => eprintln!("IterEquality @ {:?}", it.pos()),
+              Statement::Now { .. } => eprintln!("Now @ {:?}", it.pos()),
             },
             AuxiliaryItem::Consider { prop, .. } => eprintln!("Consider @ {:?}", prop.pos),
             AuxiliaryItem::Set { .. } => eprintln!("Set"),
@@ -225,8 +225,7 @@ impl Reader {
         });
         self.push_prop(*label, self.intern(block_thesis))
       }
-      Item::AuxiliaryItem(AuxiliaryItem::PrivateStatement(it)) | Item::Thus(it) =>
-        self.read_private_stmt(it),
+      Item::AuxiliaryItem(AuxiliaryItem::Statement(it)) | Item::Thus(it) => self.read_stmt(it),
       Item::AuxiliaryItem(AuxiliaryItem::Consider { prop, just, fixed, intro }) => {
         self.read_just_prop(prop, just);
         self.read_fixed_vars(fixed);
@@ -377,10 +376,10 @@ impl Reader {
     self.push_prop(prop.label, f);
   }
 
-  fn read_private_stmt(&mut self, it: &PrivateStatement) {
+  fn read_stmt(&mut self, it: &Statement) {
     match it {
-      PrivateStatement::Proposition { prop, just } => self.read_just_prop(prop, just),
-      PrivateStatement::IterEquality { label, lhs, steps, .. } => {
+      Statement::Proposition { prop, just } => self.read_just_prop(prop, just),
+      Statement::IterEquality { label, lhs, steps, .. } => {
         let mut lhs = self.intern(lhs);
         let llhs = lhs.clone();
         for (rhs, step) in steps {
@@ -390,7 +389,7 @@ impl Reader {
         }
         self.push_prop(*label, self.g.reqs.mk_eq(llhs, lhs))
       }
-      PrivateStatement::Now { label, thesis, items, .. } => {
+      Statement::Now { label, thesis, items, .. } => {
         self.scope(*label, true, |this| {
           for it in &**items {
             this.read_item(it);

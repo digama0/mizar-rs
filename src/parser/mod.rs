@@ -1040,20 +1040,10 @@ impl MizReader<'_> {
           self.end_tag(buf);
           Elem::Term(Term::Fraenkel { args: args.into_boxed_slice(), scope, compr })
         }
-        b"Qua" => {
-          let value = Box::new(self.parse_term(buf).unwrap());
-          let ty = Box::new(self.parse_type(buf).unwrap());
-          self.end_tag(buf);
-          Elem::Term(Term::Qua { value, ty })
-        }
         b"Choice" => {
           let ty = Box::new(self.parse_type(buf).unwrap());
           self.end_tag(buf);
-          Elem::Term(Term::Choice { ty })
-        }
-        b"It" => {
-          self.end_tag(buf);
-          Elem::Term(Term::It)
+          Elem::Term(Term::The { ty })
         }
         b"Not" => {
           let f = Box::new(self.parse_formula(buf).unwrap());

@@ -449,7 +449,7 @@ impl VisitMut for Y<'_, '_> {
         let Some(et) = self.add_binder_into(tm, |c| &mut c.fraenkel) else { return };
         et
       }
-      Term::Choice { ref mut ty } => {
+      Term::The { ref mut ty } => {
         self.visit_type(ty);
         let Some(et) = self.add_binder_into(tm, |c| &mut c.choice) else { return };
         et
@@ -458,13 +458,7 @@ impl VisitMut for Y<'_, '_> {
         Term::Bound(_) | Term::EqClass(_) => return,
         _ => unreachable!("already marked"),
       },
-      Term::Locus(_)
-      | Term::Constant(_)
-      | Term::FreeVar(_)
-      | Term::LambdaVar(_)
-      | Term::Numeral(_)
-      | Term::Qua { .. }
-      | Term::It => unreachable!(),
+      Term::Locus(_) | Term::Constant(_) | Term::FreeVar(_) | Term::Numeral(_) => unreachable!(),
     };
     let ty = tm.get_type_uncached(self.g, self.lc);
     y_try!(self, self.insert_type(ty, et));
@@ -593,19 +587,13 @@ impl Equalizer<'_> {
         })?;
         Ok(self.yy_binder(term, fi, |c| &mut c.fraenkel))
       }
-      Term::Choice { ref mut ty } => {
+      Term::The { ref mut ty } => {
         self.y(|y| y.visit_type(ty))?;
         Ok(self.yy_binder(term, fi, |c| &mut c.choice))
       }
       Term::Infer(_) | Term::Constant(_) => Ok(fi),
-      Term::Locus(_)
-      | Term::Bound(_)
-      | Term::EqClass(_)
-      | Term::EqMark(_)
-      | Term::FreeVar(_)
-      | Term::LambdaVar(_)
-      | Term::Qua { .. }
-      | Term::It => unreachable!(),
+      Term::Locus(_) | Term::Bound(_) | Term::EqClass(_) | Term::EqMark(_) | Term::FreeVar(_) =>
+        unreachable!(),
     }
   }
 }
@@ -1347,7 +1335,7 @@ impl<'a> Equalizer<'a> {
                   {
                     to_union.push((et1, et2))
                   },
-                (Term::Choice { ty: ty1 }, Term::Choice { ty: ty2 }) =>
+                (Term::The { ty: ty1 }, Term::The { ty: ty2 }) =>
                   if EqMarks.eq_type(self.g, self.lc, ty1, ty2) {
                     to_union.push((et1, et2))
                   },
@@ -1995,7 +1983,7 @@ impl<'a> Equalizer<'a> {
                     },
                 }
               }
-              Term::Choice { .. } => {}
+              Term::The { .. } => {}
               _ => unreachable!(),
             }
           }

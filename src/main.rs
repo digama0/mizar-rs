@@ -238,8 +238,7 @@ impl Term {
       | Term::Functor { args, .. }
       | Term::Selector { args, .. } => args.iter().map(|t| t.size()).sum::<u32>() + 1,
       Term::PrivFunc { value, .. } => value.size(),
-      Term::Qua { value, ty } => value.size() + ty.size(),
-      Term::Choice { ty } => ty.size(),
+      Term::The { ty } => ty.size(),
       // Term::Fraenkel { .. } => {} // FIXME?
       _ => 1,
     }
@@ -269,7 +268,6 @@ impl Term {
       | (Constant(ConstId(n1)), Constant(ConstId(n2)))
       | (Infer(InferId(n1)), Infer(InferId(n2)))
       | (FreeVar(FVarId(n1)), FreeVar(FVarId(n2)))
-      | (LambdaVar(n1), LambdaVar(n2))
       | (EqClass(EqClassId(n1)), EqClass(EqClassId(n2)))
       | (EqMark(EqMarkId(n1)), EqMark(EqMarkId(n2)))
       | (Numeral(n1), Numeral(n2)) => n1.cmp(n2),
@@ -290,7 +288,7 @@ impl Term {
       )
       | (Selector { nr: SelId(n1), args: args1 }, Selector { nr: SelId(n2), args: args2 }) =>
         n1.cmp(n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style)),
-      (Choice { ty: ty1 }, Choice { ty: ty2 }) => ty1.cmp(ctx, lc, ty2, style),
+      (The { ty: ty1 }, The { ty: ty2 }) => ty1.cmp(ctx, lc, ty2, style),
       (
         Fraenkel { args: args1, scope: sc1, compr: c1 },
         Fraenkel { args: args2, scope: sc2, compr: c2 },
@@ -298,9 +296,6 @@ impl Term {
         c1.cmp(ctx, lc, c2, style)
           .then_with(|| cmp_list(args1, args2, |ty1, ty2| ty1.cmp(ctx, lc, ty2, style)))
       }),
-      (It, It) => Ordering::Equal,
-      (Qua { value: val1, ty: ty1 }, Qua { value: val2, ty: ty2 }) =>
-        val1.cmp(ctx, lc, val2, style).then_with(|| ty1.cmp(ctx, lc, ty2, style)),
       _ => unreachable!(),
     })
   }
@@ -618,7 +613,6 @@ trait Equate {
       (Bound(BoundId(n1)), Bound(BoundId(n2)))
       | (Constant(ConstId(n1)), Constant(ConstId(n2)))
       | (FreeVar(FVarId(n1)), FreeVar(FVarId(n2)))
-      | (LambdaVar(n1), LambdaVar(n2))
       | (Numeral(n1), Numeral(n2)) => n1 == n2,
       (EqClass(EqClassId(n1)), EqClass(EqClassId(n2)))
       | (EqMark(EqMarkId(n1)), EqMark(EqMarkId(n2)))
@@ -638,7 +632,7 @@ trait Equate {
       )
       | (Selector { nr: SelId(n1), args: args1 }, Selector { nr: SelId(n2), args: args2 }) =>
         n1 == n2 && self.eq_terms(g, lc, args1, args2),
-      (Choice { ty: ty1 }, Choice { ty: ty2 }) => self.eq_type(g, lc, ty1, ty2),
+      (The { ty: ty1 }, The { ty: ty2 }) => self.eq_type(g, lc, ty1, ty2),
       (
         Fraenkel { args: args1, scope: sc1, compr: c1 },
         Fraenkel { args: args2, scope: sc2, compr: c2 },
@@ -647,8 +641,6 @@ trait Equate {
           && args1.iter().zip(&**args2).all(|(ty1, ty2)| self.eq_type(g, lc, ty1, ty2))
           && self.eq_term(g, lc, sc1, sc2)
           && self.eq_formula(g, lc, c1, c2),
-      (It, It) => true,
-      (Qua { .. }, Qua { .. }) => panic!("invalid qua"),
       (_, &Infer(nr)) => self.eq_term(g, lc, t1, &lc.infer_const.borrow()[nr].def),
       (&Infer(nr), _) => self.eq_term(g, lc, &lc.infer_const.borrow()[nr].def, t2),
       (_, &EqMark(nr)) => self.eq_term(g, lc, t1, &lc.marks[nr].0),
@@ -813,9 +805,7 @@ macro_rules! mk_visit {
           | Term::EqClass(_)
           | Term::EqMark(_)
           | Term::Infer(_)
-          | Term::FreeVar(_)
-          | Term::LambdaVar(_)
-          | Term::It => {}
+          | Term::FreeVar(_) => {}
           Term::SchFunc { args, .. }
           | Term::Aggregate { args, .. }
           | Term::Functor { args, .. }
@@ -825,11 +815,7 @@ macro_rules! mk_visit {
             self.visit_term(value)
           }
           Term::Numeral { .. } => {}
-          Term::Qua { value, ty } => {
-            self.visit_term(value);
-            self.visit_type(ty);
-          }
-          Term::Choice { ty } => self.visit_type(ty),
+          Term::The { ty } => self.visit_type(ty),
           Term::Fraenkel { args, scope, compr } => {
             for ty in &$($mutbl)? **args {
               self.visit_type(ty);
@@ -1152,11 +1138,9 @@ impl Term {
       Term::Aggregate { nr, ref args } =>
         g.constrs.aggregate[nr].ty.visit_cloned(&mut Inst::new(args)),
       Term::Fraenkel { .. } => Type::SET,
-      Term::It => (**lc.it_type.as_ref().unwrap()).clone(),
-      Term::Choice { ref ty } | Term::Qua { ref ty, .. } => (**ty).clone(),
+      Term::The { ref ty } => (**ty).clone(),
       Term::EqMark(m) => lc.marks[m].0.get_type_uncached(g, lc),
-      Term::EqClass(_) | Term::FreeVar(_) | Term::LambdaVar(_) =>
-        unreachable!("get_type_uncached(EqClass | FreeVar | LambdaVar)"),
+      Term::EqClass(_) | Term::FreeVar(_) => unreachable!("get_type_uncached(EqClass | FreeVar)"),
     };
     // vprintln!("[{:?}] get_type {:?} -> {:?}", lc.infer_const.borrow().len(), self, ty);
     ty
@@ -1448,13 +1432,7 @@ impl Equate for Subst {
         *x = Some(Box::new(t2.clone()));
         true
       }
-      Some(tm) => {
-        let v = match **tm {
-          Term::Qua { ref value, .. } => value,
-          _ => tm,
-        };
-        ().eq_term(g, lc, t2, v)
-      }
+      Some(tm) => ().eq_term(g, lc, t2, tm),
     }
   }
 }
@@ -2060,8 +2038,7 @@ impl VisitMut for InternConst<'_> {
     // let foo = FOO.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     // vprintln!("InternConst {foo} @ {} <- {tm:?}", self.depth);
     match tm {
-      Term::Locus(_) | Term::Bound(_) | Term::FreeVar(_) | Term::LambdaVar(_) =>
-        self.only_constants = false,
+      Term::Locus(_) | Term::Bound(_) | Term::FreeVar(_) => self.only_constants = false,
       &mut Term::Constant(nr) => {
         let mut eq = BTreeSet::new();
         if let Some(fv) = &self.lc.fixed_var[nr].def {
@@ -2108,7 +2085,7 @@ impl VisitMut for InternConst<'_> {
         }
       }
       Term::Numeral(_) => self.collect_infer_const(tm),
-      Term::Choice { ty } => {
+      Term::The { ty } => {
         self.visit_type(ty);
         self.collect_infer_const(tm)
       }
@@ -2126,8 +2103,8 @@ impl VisitMut for InternConst<'_> {
           self.collect_infer_const(tm)
         }
       }
-      Term::EqClass(_) | Term::EqMark(_) | Term::It | Term::Qua { .. } =>
-        unreachable!("CollectConst::visit_term(EqConst | EqMark | It | Qua)"),
+      Term::EqClass(_) | Term::EqMark(_) =>
+        unreachable!("CollectConst::visit_term(EqConst | EqMark)"),
     }
     // vprintln!("InternConst {foo} @ {} -> {tm:?}", self.depth);
     self.only_constants &= only_constants;
@@ -2253,8 +2230,6 @@ pub struct LocalContext {
   priv_func: IdxVec<PrivFuncId, FuncDef>,
   /// gTermCollection
   term_cache: RefCell<TermCollection>,
-  /// ItTyp
-  it_type: Option<Box<Type>>,
   /// Not in mizar, used in equalizer for TrmInfo marks
   marks: IdxVec<EqMarkId, (Term, EqTermId)>,
 }
@@ -2428,176 +2403,177 @@ impl MizPath {
     File::open(path)
   }
 }
+impl MizPath {
+  fn run_checker(&self) {
+    // MizPBlockObj.InitPrepData
+    let mut refs = References::default();
+    self.read_ref(&mut refs).unwrap();
 
-fn load(path: &MizPath) {
-  // MizPBlockObj.InitPrepData
-  let mut refs = References::default();
-  path.read_ref(&mut refs).unwrap();
-
-  // Load_EnvConstructors
-  let mut reqs = RequirementIndexes::default();
-  path.read_ere(&mut reqs).unwrap();
-  let mut has_omega = false;
-  let numeral_type = if let (Some(element), Some(omega)) = (reqs.element(), reqs.omega()) {
-    has_omega = true;
-    Type {
-      kind: TypeKind::Mode(element),
-      attrs: Default::default(),
-      args: vec![Term::Functor { nr: omega, args: Box::new([]) }],
+    // Load_EnvConstructors
+    let mut reqs = RequirementIndexes::default();
+    self.read_ere(&mut reqs).unwrap();
+    let mut has_omega = false;
+    let numeral_type = if let (Some(element), Some(omega)) = (reqs.element(), reqs.omega()) {
+      has_omega = true;
+      Type {
+        kind: TypeKind::Mode(element),
+        attrs: Default::default(),
+        args: vec![Term::Functor { nr: omega, args: Box::new([]) }],
+      }
+    } else {
+      Type::SET
+    };
+    let mut v = Reader::new(reqs, numeral_type, self.0);
+    self.read_atr(&mut v.g.constrs).unwrap();
+    let old = v.lc.start_stash();
+    v.lc.formatter.init(&v.g.constrs, self);
+    if DUMP_CONSTRUCTORS {
+      v.g.constrs.mode.enum_iter().for_each(|p| v.g.constrs.dump_mode(p.0));
+      v.g.constrs.struct_mode.enum_iter().for_each(|p| v.g.constrs.dump_struct(p.0));
+      v.g.constrs.attribute.enum_iter().for_each(|p| v.g.constrs.dump_attr(p.0));
+      v.g.constrs.predicate.enum_iter().for_each(|p| v.g.constrs.dump_pred(p.0));
+      v.g.constrs.functor.enum_iter().for_each(|p| v.g.constrs.dump_func(p.0));
+      v.g.constrs.selector.enum_iter().for_each(|p| v.g.constrs.dump_sel(p.0));
+      v.g.constrs.aggregate.enum_iter().for_each(|p| v.g.constrs.dump_aggr(p.0));
     }
-  } else {
-    Type::SET
-  };
-  let mut v = Reader::new(reqs, numeral_type, path.0);
-  path.read_atr(&mut v.g.constrs).unwrap();
-  let old = v.lc.start_stash();
-  v.lc.formatter.init(&v.g.constrs, path);
-  if DUMP_CONSTRUCTORS {
-    v.g.constrs.mode.enum_iter().for_each(|p| v.g.constrs.dump_mode(p.0));
-    v.g.constrs.struct_mode.enum_iter().for_each(|p| v.g.constrs.dump_struct(p.0));
-    v.g.constrs.attribute.enum_iter().for_each(|p| v.g.constrs.dump_attr(p.0));
-    v.g.constrs.predicate.enum_iter().for_each(|p| v.g.constrs.dump_pred(p.0));
-    v.g.constrs.functor.enum_iter().for_each(|p| v.g.constrs.dump_func(p.0));
-    v.g.constrs.selector.enum_iter().for_each(|p| v.g.constrs.dump_sel(p.0));
-    v.g.constrs.aggregate.enum_iter().for_each(|p| v.g.constrs.dump_aggr(p.0));
-  }
-  if DUMP_REQUIREMENTS {
-    for (req, _) in &v.g.reqs.fwd {
-      if let Some(val) = v.g.reqs.get(req) {
-        eprint!("req[{req:?}[{}]] = ", req as u8);
-        match val {
-          RequirementKind::Func(nr) => v.g.constrs.dump_func(nr),
-          RequirementKind::Mode(nr) => v.g.constrs.dump_mode(nr),
-          RequirementKind::Pred(nr) => v.g.constrs.dump_pred(nr),
-          RequirementKind::Attr(nr) => v.g.constrs.dump_attr(nr),
+    if DUMP_REQUIREMENTS {
+      for (req, _) in &v.g.reqs.fwd {
+        if let Some(val) = v.g.reqs.get(req) {
+          eprint!("req[{req:?}[{}]] = ", req as u8);
+          match val {
+            RequirementKind::Func(nr) => v.g.constrs.dump_func(nr),
+            RequirementKind::Mode(nr) => v.g.constrs.dump_mode(nr),
+            RequirementKind::Pred(nr) => v.g.constrs.dump_pred(nr),
+            RequirementKind::Attr(nr) => v.g.constrs.dump_attr(nr),
+          }
         }
       }
     }
-  }
-  path.read_ecl(&v.g.constrs, &mut v.g.clusters).unwrap();
-  let mut attrs = Attrs::default();
-  if let Some(zero) = v.g.reqs.zero() {
-    attrs.push(Attr::new0(zero, false))
-  }
-  if has_omega {
-    if let Some(positive) = v.g.reqs.positive() {
-      attrs.push(Attr::new0(positive, true))
+    self.read_ecl(&v.g.constrs, &mut v.g.clusters).unwrap();
+    let mut attrs = Attrs::default();
+    if let Some(zero) = v.g.reqs.zero() {
+      attrs.push(Attr::new0(zero, false))
     }
-  }
-  attrs.round_up_with(&v.g, &v.lc, &v.g.numeral_type);
-  v.g.numeral_type.attrs.1 = attrs;
-  v.lc.clear_term_cache();
-  v.g.round_up_clusters(&mut v.lc);
-
-  // LoadEqualities
-  path.read_definitions(&v.g.constrs, "dfe", &mut v.equalities).unwrap();
-
-  // LoadExpansions
-  path.read_definitions(&v.g.constrs, "dfx", &mut v.expansions).unwrap();
-
-  // LoadPropertiesReg
-  path.read_epr(&v.g.constrs, &mut v.properties).unwrap();
-
-  // LoadIdentify
-  path.read_eid(&v.g.constrs, &mut v.identify).unwrap();
-
-  // LoadReductions
-  path.read_erd(&v.g.constrs, &mut v.reductions).unwrap();
-
-  // in mizar this was done inside the parser
-  let rr = &mut RoundUpTypes { g: &v.g, lc: &mut v.lc };
-  v.equalities.visit(rr);
-  v.expansions.visit(rr);
-  v.properties.visit(rr);
-  v.identify.visit(rr);
-  v.reductions.visit(rr);
-
-  for df in &v.equalities {
-    if let Some(func) = df.equals_expansion() {
-      let nr = func.pattern.0;
-      if !func.expansion.has_func(&v.g.constrs, nr) {
-        v.equals.entry(df.constr).or_default().push(func);
+    if has_omega {
+      if let Some(positive) = v.g.reqs.positive() {
+        attrs.push(Attr::new0(positive, true))
       }
     }
+    attrs.round_up_with(&v.g, &v.lc, &v.g.numeral_type);
+    v.g.numeral_type.attrs.1 = attrs;
+    v.lc.clear_term_cache();
+    v.g.round_up_clusters(&mut v.lc);
+
+    // LoadEqualities
+    self.read_definitions(&v.g.constrs, "dfe", &mut v.equalities).unwrap();
+
+    // LoadExpansions
+    self.read_definitions(&v.g.constrs, "dfx", &mut v.expansions).unwrap();
+
+    // LoadPropertiesReg
+    self.read_epr(&v.g.constrs, &mut v.properties).unwrap();
+
+    // LoadIdentify
+    self.read_eid(&v.g.constrs, &mut v.identify).unwrap();
+
+    // LoadReductions
+    self.read_erd(&v.g.constrs, &mut v.reductions).unwrap();
+
+    // in mizar this was done inside the parser
+    let rr = &mut RoundUpTypes { g: &v.g, lc: &mut v.lc };
+    v.equalities.visit(rr);
+    v.expansions.visit(rr);
+    v.properties.visit(rr);
+    v.identify.visit(rr);
+    v.reductions.visit(rr);
+
+    for df in &v.equalities {
+      if let Some(func) = df.equals_expansion() {
+        let nr = func.pattern.0;
+        if !func.expansion.has_func(&v.g.constrs, nr) {
+          v.equals.entry(df.constr).or_default().push(func);
+        }
+      }
+    }
+
+    for id in &mut v.identify {
+      for i in 0..id.primary.len() {
+        v.lc.load_locus_tys(&id.primary);
+        id.primary[i].round_up_with_self(&v.g, &v.lc);
+        v.lc.unload_locus_tys();
+      }
+    }
+
+    for (i, id) in v.identify.iter().enumerate() {
+      if let IdentifyKind::Func { lhs: Term::Functor { nr, .. }, .. } = &id.kind {
+        let k = ConstrKind::Func(Term::adjusted_nr(*nr, &v.g.constrs));
+        v.func_ids.entry(k).or_default().push(i);
+      }
+    }
+
+    // CollectConstInEnvConstructors
+    let cc = &mut v.intern_const();
+    let numeral_type = v.g.numeral_type.visit_cloned(cc);
+    let mut constrs = v.g.constrs.clone();
+    constrs.mode.visit(cc);
+    constrs.struct_mode.visit(cc);
+    // constrs.attribute.visit(cc); // no collection in attributes?
+    constrs.predicate.visit(cc);
+    constrs.functor.visit(cc);
+    constrs.selector.visit(cc);
+    constrs.aggregate.visit(cc);
+    let mut clusters = v.g.clusters.clone();
+    clusters.registered.iter_mut().for_each(|c| c.consequent.1.visit(cc));
+    clusters.conditional.iter_mut().for_each(|c| c.consequent.1.visit(cc));
+    // note: collecting in the functor term breaks the sort order
+    clusters.functor.vec.0.iter_mut().for_each(|c| c.consequent.1.visit(cc));
+    v.g.numeral_type = numeral_type;
+    v.g.constrs = constrs;
+    v.g.clusters = clusters;
+
+    // InLibraries
+    self.read_eth(&v.g.constrs, &refs, &mut v.libs).unwrap();
+    let cc = &mut InternConst::new(&v.g, &v.lc, &v.equals, &v.identify, &v.func_ids);
+    v.libs.thm.values_mut().for_each(|f| f.visit(cc));
+    v.libs.def.values_mut().for_each(|f| f.visit(cc));
+    self.read_esh(&v.g.constrs, &refs, &mut v.libs).unwrap();
+    v.libs.visit(&mut RoundUpTypes { g: &v.g, lc: &mut v.lc });
+
+    if DUMP_LIBRARIES {
+      for (&(ar, nr), th) in &v.libs.thm {
+        eprintln!("art {ar:?}:{nr:?} = {th:?}");
+      }
+      for (&(ar, nr), th) in &v.libs.def {
+        eprintln!("art {ar:?}:def {nr:?} = {th:?}");
+      }
+    }
+
+    // Prepare
+    let r = self.read_xml().unwrap();
+    println!("parsed {:?}, {} items", self.0, r.len());
+    for (i, it) in r.iter().enumerate() {
+      assert!(matches!(
+        it,
+        Item::AuxiliaryItem(_)
+          | Item::Scheme(_)
+          | Item::Theorem { .. }
+          | Item::DefTheorem { .. }
+          | Item::Reservation { .. }
+          | Item::Canceled(_)
+          | Item::Definiens(_)
+          | Item::Block { .. }
+      ));
+      // stat(s);
+      if let Some(n) = FIRST_VERBOSE_TOP_ITEM {
+        set_verbose(i >= n);
+      }
+      if TOP_ITEM_HEADER {
+        eprintln!("item {i}: {it:?}");
+      }
+      v.read_item(it);
+    }
+    LocalContext::end_stash(old);
   }
-
-  for id in &mut v.identify {
-    for i in 0..id.primary.len() {
-      v.lc.load_locus_tys(&id.primary);
-      id.primary[i].round_up_with_self(&v.g, &v.lc);
-      v.lc.unload_locus_tys();
-    }
-  }
-
-  for (i, id) in v.identify.iter().enumerate() {
-    if let IdentifyKind::Func { lhs: Term::Functor { nr, .. }, .. } = &id.kind {
-      let k = ConstrKind::Func(Term::adjusted_nr(*nr, &v.g.constrs));
-      v.func_ids.entry(k).or_default().push(i);
-    }
-  }
-
-  // CollectConstInEnvConstructors
-  let cc = &mut v.intern_const();
-  let numeral_type = v.g.numeral_type.visit_cloned(cc);
-  let mut constrs = v.g.constrs.clone();
-  constrs.mode.visit(cc);
-  constrs.struct_mode.visit(cc);
-  // constrs.attribute.visit(cc); // no collection in attributes?
-  constrs.predicate.visit(cc);
-  constrs.functor.visit(cc);
-  constrs.selector.visit(cc);
-  constrs.aggregate.visit(cc);
-  let mut clusters = v.g.clusters.clone();
-  clusters.registered.iter_mut().for_each(|c| c.consequent.1.visit(cc));
-  clusters.conditional.iter_mut().for_each(|c| c.consequent.1.visit(cc));
-  // note: collecting in the functor term breaks the sort order
-  clusters.functor.vec.0.iter_mut().for_each(|c| c.consequent.1.visit(cc));
-  v.g.numeral_type = numeral_type;
-  v.g.constrs = constrs;
-  v.g.clusters = clusters;
-
-  // InLibraries
-  path.read_eth(&v.g.constrs, &refs, &mut v.libs).unwrap();
-  let cc = &mut InternConst::new(&v.g, &v.lc, &v.equals, &v.identify, &v.func_ids);
-  v.libs.thm.values_mut().for_each(|f| f.visit(cc));
-  v.libs.def.values_mut().for_each(|f| f.visit(cc));
-  path.read_esh(&v.g.constrs, &refs, &mut v.libs).unwrap();
-  v.libs.visit(&mut RoundUpTypes { g: &v.g, lc: &mut v.lc });
-
-  if DUMP_LIBRARIES {
-    for (&(ar, nr), th) in &v.libs.thm {
-      eprintln!("art {ar:?}:{nr:?} = {th:?}");
-    }
-    for (&(ar, nr), th) in &v.libs.def {
-      eprintln!("art {ar:?}:def {nr:?} = {th:?}");
-    }
-  }
-
-  // Prepare
-  let r = path.read_xml().unwrap();
-  println!("parsed {:?}, {} items", path.0, r.len());
-  for (i, it) in r.iter().enumerate() {
-    assert!(matches!(
-      it,
-      Item::AuxiliaryItem(_)
-        | Item::Scheme(_)
-        | Item::Theorem { .. }
-        | Item::DefTheorem { .. }
-        | Item::Reservation { .. }
-        | Item::Canceled(_)
-        | Item::Definiens(_)
-        | Item::Block { .. }
-    ));
-    // stat(s);
-    if let Some(n) = FIRST_VERBOSE_TOP_ITEM {
-      set_verbose(i >= n);
-    }
-    if TOP_ITEM_HEADER {
-      eprintln!("item {i}: {it:?}");
-    }
-    v.read_item(it);
-  }
-  LocalContext::end_stash(old);
 }
 
 pub fn stat(s: &'static str) {
@@ -2672,7 +2648,7 @@ fn main() {
         } {
           println!("{i}: {s}");
           let path = MizPath::new(s);
-          load(&path);
+          path.run_checker();
           // let items = path.open_wsx().unwrap().parse_items();
           // println!("parsed {s}, {} wsx items", items.len());
           // path.open_msx().unwrap().parse_items();
