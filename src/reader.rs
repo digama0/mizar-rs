@@ -32,6 +32,141 @@ pub struct Reader {
   inference_nr: usize,
 }
 
+impl MizPath {
+  pub fn with_reader(&self, f: impl FnOnce(&mut Reader)) {
+    // MizPBlockObj.InitPrepData
+    let mut refs = References::default();
+    self.read_ref(&mut refs).unwrap();
+
+    // Load_EnvConstructors
+    let mut reqs = RequirementIndexes::default();
+    self.read_ere(&mut reqs).unwrap();
+    let mut has_omega = false;
+    let numeral_type = if let (Some(element), Some(omega)) = (reqs.element(), reqs.omega()) {
+      has_omega = true;
+      Type {
+        kind: TypeKind::Mode(element),
+        attrs: Default::default(),
+        args: vec![Term::Functor { nr: omega, args: Box::new([]) }],
+      }
+    } else {
+      Type::SET
+    };
+    let mut v = Reader::new(reqs, numeral_type, self.0);
+    self.read_atr(&mut v.g.constrs).unwrap();
+    let old = v.lc.start_stash();
+    v.lc.formatter.init(&v.g.constrs, self);
+    if DUMP_CONSTRUCTORS {
+      v.g.constrs.dump()
+    }
+    if DUMP_REQUIREMENTS {
+      v.g.reqs.dump(&v.g.constrs)
+    }
+    self.read_ecl(&v.g.constrs, &mut v.g.clusters).unwrap();
+    let mut attrs = Attrs::default();
+    if let Some(zero) = v.g.reqs.zero() {
+      attrs.push(Attr::new0(zero, false))
+    }
+    if has_omega {
+      if let Some(positive) = v.g.reqs.positive() {
+        attrs.push(Attr::new0(positive, true))
+      }
+    }
+    attrs.round_up_with(&v.g, &v.lc, &v.g.numeral_type, false);
+    v.g.numeral_type.attrs.1 = attrs;
+    v.lc.clear_term_cache();
+    v.g.round_up_clusters(&mut v.lc);
+
+    // LoadEqualities
+    self.read_definitions(&v.g.constrs, "dfe", &mut v.equalities).unwrap();
+
+    // LoadExpansions
+    self.read_definitions(&v.g.constrs, "dfx", &mut v.expansions).unwrap();
+
+    // LoadPropertiesReg
+    self.read_epr(&v.g.constrs, &mut v.properties).unwrap();
+
+    // LoadIdentify
+    self.read_eid(&v.g.constrs, &mut v.identify).unwrap();
+
+    // LoadReductions
+    self.read_erd(&v.g.constrs, &mut v.reductions).unwrap();
+
+    // in mizar this was done inside the parser
+    let rr = &mut RoundUpTypes { g: &v.g, lc: &mut v.lc };
+    v.equalities.visit(rr);
+    v.expansions.visit(rr);
+    v.properties.visit(rr);
+    v.identify.visit(rr);
+    v.reductions.visit(rr);
+
+    for df in &v.equalities {
+      if let Some(func) = df.equals_expansion() {
+        let nr = func.pattern.0;
+        if !func.expansion.has_func(&v.g.constrs, nr) {
+          v.equals.entry(df.constr).or_default().push(func);
+        }
+      }
+    }
+
+    for id in &mut v.identify {
+      for i in 0..id.primary.len() {
+        v.lc.load_locus_tys(&id.primary);
+        id.primary[i].round_up_with_self(&v.g, &v.lc, false);
+        v.lc.unload_locus_tys();
+      }
+    }
+
+    for (i, id) in v.identify.iter().enumerate() {
+      if let IdentifyKind::Func { lhs: Term::Functor { nr, .. }, .. } = &id.kind {
+        let k = ConstrKind::Func(Term::adjusted_nr(*nr, &v.g.constrs));
+        v.func_ids.entry(k).or_default().push(i);
+      }
+    }
+
+    // CollectConstInEnvConstructors
+    let cc = &mut v.intern_const();
+    let numeral_type = v.g.numeral_type.visit_cloned(cc);
+    let mut constrs = v.g.constrs.clone();
+    constrs.mode.visit(cc);
+    constrs.struct_mode.visit(cc);
+    // constrs.attribute.visit(cc); // no collection in attributes?
+    constrs.predicate.visit(cc);
+    constrs.functor.visit(cc);
+    constrs.selector.visit(cc);
+    constrs.aggregate.visit(cc);
+    let mut clusters = v.g.clusters.clone();
+    clusters.registered.iter_mut().for_each(|c| c.consequent.1.visit(cc));
+    clusters.conditional.iter_mut().for_each(|c| c.consequent.1.visit(cc));
+    // note: collecting in the functor term breaks the sort order
+    clusters.functor.vec.0.iter_mut().for_each(|c| c.consequent.1.visit(cc));
+    v.g.numeral_type = numeral_type;
+    v.g.constrs = constrs;
+    v.g.clusters = clusters;
+
+    // InLibraries
+    self.read_eth(&v.g.constrs, &refs, &mut v.libs).unwrap();
+    let cc = &mut InternConst::new(&v.g, &v.lc, &v.equals, &v.identify, &v.func_ids);
+    v.libs.thm.values_mut().for_each(|f| f.visit(cc));
+    v.libs.def.values_mut().for_each(|f| f.visit(cc));
+    self.read_esh(&v.g.constrs, &refs, &mut v.libs).unwrap();
+    v.libs.visit(&mut RoundUpTypes { g: &v.g, lc: &mut v.lc });
+
+    if DUMP_LIBRARIES {
+      for (&(ar, nr), th) in &v.libs.thm {
+        eprintln!("art {ar:?}:{nr:?} = {th:?}");
+      }
+      for (&(ar, nr), th) in &v.libs.def {
+        eprintln!("art {ar:?}:def {nr:?} = {th:?}");
+      }
+    }
+
+    f(&mut v);
+
+    LocalContext::end_stash(old);
+  }
+}
+
 impl Reader {
   pub fn new(reqs: RequirementIndexes, numeral_type: Type, article: Article) -> Self {
     Reader {
@@ -144,6 +279,33 @@ impl Reader {
 
     // self.dbg_scope_check();
     r
+  }
+
+  /// Prepare
+  pub fn run_checker(&mut self, path: &MizPath) {
+    let r = path.read_xml().unwrap();
+    println!("parsed {:?}, {} items", path.0, r.len());
+    for (i, it) in r.iter().enumerate() {
+      assert!(matches!(
+        it,
+        Item::AuxiliaryItem(_)
+          | Item::Scheme(_)
+          | Item::Theorem { .. }
+          | Item::DefTheorem { .. }
+          | Item::Reservation { .. }
+          | Item::Canceled(_)
+          | Item::Definiens(_)
+          | Item::Block { .. }
+      ));
+      // stat(s);
+      if let Some(n) = FIRST_VERBOSE_TOP_ITEM {
+        set_verbose(i >= n);
+      }
+      if TOP_ITEM_HEADER {
+        eprintln!("item {i}: {it:?}");
+      }
+      self.read_item(it);
+    }
   }
 
   pub fn read_item(&mut self, it: &Item) {
