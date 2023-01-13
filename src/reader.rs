@@ -446,8 +446,8 @@ impl Reader {
         | Term::Aggregate { args, .. }
         | Term::SchFunc { args, .. } => {
           if args.iter().any(|t| matches!(t, Term::Infer(i) if rounded_up.contains_key(i))) {
-            let mut ty = asgn.def.round_up_type(&self.g, &self.lc).to_owned();
-            ty.attrs.1.round_up_with(&self.g, &self.lc, &asgn.ty);
+            let mut ty = asgn.def.round_up_type(&self.g, &self.lc, false).to_owned();
+            ty.attrs.1.round_up_with(&self.g, &self.lc, &asgn.ty, false);
             drop(ic);
             ty.attrs.1.visit(&mut self.intern_const());
             self.lc.infer_const.borrow_mut()[i].ty = *ty;
@@ -456,7 +456,7 @@ impl Reader {
         }
         Term::Numeral(_) => {
           let mut attrs = asgn.ty.attrs.1.clone();
-          attrs.round_up_with(&self.g, &self.lc, &asgn.ty);
+          attrs.round_up_with(&self.g, &self.lc, &asgn.ty, false);
           attrs.visit(&mut self.intern_const());
           drop(ic);
           self.lc.infer_const.borrow_mut()[i].ty.attrs.1 = attrs;
@@ -484,9 +484,9 @@ impl Reader {
         for (i, asgn) in self.lc.infer_const.borrow().enum_iter() {
           let mut attrs = asgn.ty.attrs.1.clone();
           let orig = attrs.attrs().len();
-          cl.round_up_with(&self.g, &self.lc, &asgn.def, &asgn.ty, &mut attrs);
+          cl.round_up_with(&self.g, &self.lc, &asgn.def, &asgn.ty, &mut attrs, false);
           assert!(matches!(attrs, Attrs::Consistent(_)));
-          attrs.round_up_with(&self.g, &self.lc, &asgn.ty);
+          attrs.round_up_with(&self.g, &self.lc, &asgn.ty, false);
           if attrs.attrs().len() > orig {
             rounded_up.insert(i, attrs);
           }
@@ -505,7 +505,7 @@ impl Reader {
         cl.consequent.1.visit(&mut self.intern_const());
         let mut rounded_up = BTreeMap::new();
         for (i, asgn) in self.lc.infer_const.borrow().enum_iter() {
-          if let Some(subst) = cl.try_apply(&self.g, &self.lc, &asgn.ty.attrs.1, &asgn.ty) {
+          if let Some(subst) = cl.try_apply(&self.g, &self.lc, &asgn.ty.attrs.1, &asgn.ty, false) {
             let mut attrs = asgn.ty.attrs.1.clone();
             let orig = attrs.attrs().len();
             // eprintln!("enlarge {:?} by {:?}", self, cl.consequent.1);
@@ -513,7 +513,7 @@ impl Reader {
               a.visit_cloned(&mut Inst::new(&subst))
             });
             assert!(matches!(attrs, Attrs::Consistent(_)));
-            attrs.round_up_with(&self.g, &self.lc, &asgn.ty);
+            attrs.round_up_with(&self.g, &self.lc, &asgn.ty, false);
             if attrs.attrs().len() > orig {
               rounded_up.insert(i, attrs);
             }

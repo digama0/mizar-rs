@@ -374,7 +374,7 @@ impl VisitMut for Y<'_, '_> {
         let ty = if CheckE::with(&self.lc.marks, |ce| ce.visit_terms(&orig)) {
           Term::Functor { nr, args: orig }.get_type_uncached(self.g, self.lc)
         } else {
-          *Term::Functor { nr, args: orig }.round_up_type(self.g, self.lc).to_owned()
+          *Term::Functor { nr, args: orig }.round_up_type(self.g, self.lc, true).to_owned()
         };
         let (nr2, args2) = Term::adjust(nr, args, &self.g.constrs);
         if let Some(m) = self.constrs.functor.find(self.g, self.lc, nr2, args2) {

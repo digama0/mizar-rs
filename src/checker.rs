@@ -74,7 +74,6 @@ impl<'a> Checker<'a> {
     self.process_is(&mut atoms, &mut normal_form).unwrap();
     // vprintln!("process_is {} @ {:?}:{:?}:\n  {normal_form:?}", self.idx, self.article, self.pos);
 
-    self.lc.recursive_round_up = true;
     for (i, f) in normal_form.into_iter().enumerate() {
       if crate::CHECKER_CONJUNCTS {
         eprintln!(
@@ -117,7 +116,6 @@ impl<'a> Checker<'a> {
         }
       }
     }
-    self.lc.recursive_round_up = false;
     self.lc.fixed_var.0.truncate(fixed_var);
     self.lc.infer_const.get_mut().truncate(infer_const);
     self.lc.term_cache.get_mut().close_scope();
@@ -924,7 +922,9 @@ impl<'a> SchemeCtx<'a> {
           let t2 = t2.visit_cloned(&mut OnVarMut(|n| *n -= depth));
           if let Some(tm) = self.subst.cnst.get_mut_extending(*n1) {
             ().eq_term(self.g, self.lc, &t2, tm)
-          } else if self.wider(&self.primary[Idx::into_usize(*n1)], &t2.get_type(self.g, self.lc)) {
+          } else if self
+            .wider(&self.primary[Idx::into_usize(*n1)], &t2.get_type(self.g, self.lc, false))
+          {
             // vprintln!("assign S{n1:?}() := {t2:?}");
             self.subst.cnst[*n1] = Some(t2);
             true
@@ -950,8 +950,8 @@ impl<'a> SchemeCtx<'a> {
           }
           self.eq_terms(args1, args2)
         },
-      (Locus(LocusId(n1)), Locus(LocusId(n2)))
-      | (Bound(BoundId(n1)), Bound(BoundId(n2)))
+      (Locus(LocusId(n1)), Locus(LocusId(n2))) => n1 == n2,
+      (Bound(BoundId(n1)), Bound(BoundId(n2)))
       | (Constant(ConstId(n1)), Constant(ConstId(n2)))
       | (FreeVar(FVarId(n1)), FreeVar(FVarId(n2)))
       | (Numeral(n1), Numeral(n2)) => n1 == n2,

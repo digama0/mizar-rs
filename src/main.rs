@@ -59,14 +59,14 @@ impl Global {
       for l in 0..cl.primary.len() {
         lc.load_locus_tys(&cl.primary);
         let mut attrs = cl.primary[l].attrs.1.clone();
-        attrs.round_up_with(self, lc, &cl.primary[l]);
+        attrs.round_up_with(self, lc, &cl.primary[l], false);
         self.clusters.registered[k].primary[l].attrs.1 = attrs;
         cl = &self.clusters.registered[k];
         lc.unload_locus_tys();
       }
       lc.load_locus_tys(&cl.primary);
       let mut attrs = cl.consequent.1.clone();
-      attrs.round_up_with(self, lc, &cl.ty);
+      attrs.round_up_with(self, lc, &cl.ty, false);
       self.clusters.registered[k].consequent.1 = attrs;
       lc.unload_locus_tys();
     }
@@ -76,11 +76,11 @@ impl Global {
       lc.load_locus_tys(&cl.primary);
       let mut attrs = cl.consequent.1.clone();
       let ty = match &cl.ty {
-        None => cl.term.round_up_type(self, lc),
+        None => cl.term.round_up_type(self, lc, false),
         Some(ty) => CowBox::Borrowed(&**ty),
       };
       attrs.enlarge_by(&self.constrs, &ty.attrs.1, |a| a.clone());
-      attrs.round_up_with(self, lc, &ty);
+      attrs.round_up_with(self, lc, &ty, false);
       self.clusters.functor[k].consequent.1 = attrs;
       lc.unload_locus_tys();
     }
@@ -122,7 +122,7 @@ impl VisitMut for RoundUpTypes<'_> {
       let new = self.g.constrs.mode[n].ty.attrs.1.visit_cloned(&mut Inst::new(&ty.args));
       ty.attrs.1.enlarge_by(&self.g.constrs, &new, |a| a.clone());
     }
-    ty.round_up_with_self(self.g, self.lc)
+    ty.round_up_with_self(self.g, self.lc, false)
   }
 
   fn visit_push_locus_tys(&mut self, tys: &mut [Type]) {
@@ -495,10 +495,11 @@ impl Type {
     }
   }
 
-  fn round_up_with_self(&mut self, g: &Global, lc: &LocalContext) {
+  /// TypObj.RoundUp
+  fn round_up_with_self(&mut self, g: &Global, lc: &LocalContext, recursive: bool) {
     // vprintln!("[{:?}] round_up_with_self {:?}", lc.infer_const.borrow().len(), self);
     let mut attrs = self.attrs.1.clone();
-    attrs.round_up_with(g, lc, self);
+    attrs.round_up_with(g, lc, self, recursive);
     self.attrs.1 = attrs;
     // vprintln!("[{:?}] round_up_with_self -> {:?}", lc.infer_const.borrow().len(), self);
   }
@@ -1039,15 +1040,17 @@ impl Term {
   }
 
   /// RoundUpTrmType(fTrm = self)
-  fn round_up_type<'a>(&self, g: &Global, lc: &'a LocalContext) -> CowBox<'a, Type> {
+  fn round_up_type<'a>(
+    &self, g: &Global, lc: &'a LocalContext, recursive: bool,
+  ) -> CowBox<'a, Type> {
     let tm = self.skip_priv_func(Some(lc));
     let ty = Box::new(tm.get_type_uncached(g, lc));
-    tm.round_up_type_from(g, lc, CowBox::Owned(ty))
+    tm.round_up_type_from(g, lc, CowBox::Owned(ty), recursive)
   }
 
   /// RoundUpTrmTypeWithType(lTyp = ty, fTrm = self)
   fn round_up_type_from<'a>(
-    &self, g: &Global, lc: &'a LocalContext, mut ty: CowBox<'a, Type>,
+    &self, g: &Global, lc: &'a LocalContext, mut ty: CowBox<'a, Type>, recursive: bool,
   ) -> CowBox<'a, Type> {
     // vprintln!("RoundUpTrmTypeWithType {self:?}, {ty:?}");
     if let Term::Functor { .. } | Term::Selector { .. } | Term::Aggregate { .. } = self {
@@ -1078,8 +1081,8 @@ impl Term {
               continue
             }
             let fc = &g.clusters.functor.vec[i];
-            if fc.round_up_with(g, lc, self, &ty, &mut attrs) {
-              attrs.round_up_with(g, lc, &ty);
+            if fc.round_up_with(g, lc, self, &ty, &mut attrs, recursive) {
+              attrs.round_up_with(g, lc, &ty, recursive);
               let mut ty2 = ty.to_owned();
               ty2.attrs.1 = attrs.clone();
               ty = CowBox::Owned(ty2);
@@ -1102,7 +1105,7 @@ impl Term {
   }
 
   /// GetTrmType(self = fTrm)
-  fn get_type(&self, g: &Global, lc: &LocalContext) -> Type {
+  fn get_type(&self, g: &Global, lc: &LocalContext, round_up: bool) -> Type {
     // vprintln!("GetTrmType {self:?}");
     match self {
       Term::Functor { .. } | Term::Selector { .. } | Term::Aggregate { .. } => {
@@ -1111,10 +1114,10 @@ impl Term {
           return cache.terms[i].1.clone()
         }
         drop(cache);
-        let i = TermCollection::insert(g, lc, self);
+        let i = TermCollection::insert(g, lc, self, round_up);
         lc.term_cache.borrow().terms[i].1.clone()
       }
-      &Term::EqMark(m) => lc.marks[m].0.get_type(g, lc),
+      &Term::EqMark(m) => lc.marks[m].0.get_type(g, lc, round_up),
       _ => self.get_type_uncached(g, lc),
     }
   }
@@ -1180,7 +1183,7 @@ impl TermCollection {
   }
 
   /// InsertTermInTTColl(fTrm = tm)
-  fn insert(g: &Global, lc: &LocalContext, tm: &Term) -> usize {
+  fn insert(g: &Global, lc: &LocalContext, tm: &Term, round_up: bool) -> usize {
     // eprintln!("[{}] InsertTermInTTColl {tm:?}", lc.term_cache.borrow().scope);
     if let Term::Functor { args, .. } | Term::Selector { args, .. } | Term::Aggregate { args, .. } =
       tm
@@ -1188,7 +1191,7 @@ impl TermCollection {
       for tm in &**args {
         let tm = tm.skip_priv_func(Some(lc));
         if let Term::Functor { .. } | Term::Selector { .. } | Term::Aggregate { .. } = tm {
-          Self::insert(g, lc, tm);
+          Self::insert(g, lc, tm, round_up);
         }
       }
     }
@@ -1196,14 +1199,13 @@ impl TermCollection {
       return i
     }
 
-    // There are some horrible race conditions here.
-    // get_type_uncached(), round_up_type_from() and round_up_with_self()
-    // are all mutually recursive with this function, so we can end up trying to insert a term
+    // There are some horrible race conditions here. round_up_type_from() and round_up_with_self()
+    // are mutually recursive with this function, so we can end up trying to insert a term
     // while things are changing under us. We have to clone the type several times,
     // and we also have to search anew for the term every time
     // because it might have been shuffled about.
 
-    // Get the type of the term. Since we haven't inserted yet, re-entrancy here is bad news
+    // Get the type of the term.
     let ty = tm.get_type_uncached(g, lc);
 
     // 1. Insert the term with its type provisionally into the cache
@@ -1212,14 +1214,14 @@ impl TermCollection {
     // clone the type so that we don't hold on to the cache for the next bit
     let ty = Box::new(lc.term_cache.borrow().terms[i].1.clone());
     // Round up the type using the term we inserted
-    let mut ty = tm.round_up_type_from(g, lc, CowBox::Owned(ty)).to_owned();
+    let mut ty = tm.round_up_type_from(g, lc, CowBox::Owned(ty), round_up).to_owned();
     // 2. Put the new type into the cache.
     // (Yes, stuff between (1) and (2) can see the term with the unrounded type...)
     // also clone the type *again*
     lc.term_cache.borrow_mut().get_mut(&g.constrs, tm).1 = (*ty).clone();
 
     // Round up the type using its own attributes
-    ty.round_up_with_self(g, lc);
+    ty.round_up_with_self(g, lc, round_up);
     // eprintln!("[{}] caching {tm:?} : {ty:?}", lc.term_cache.borrow().scope);
     let cache = &mut *lc.term_cache.borrow_mut();
     // search for the term one last time and return the index.
@@ -1279,8 +1281,9 @@ impl Subst {
 
   /// NEW = false: CheckLociTypes
   /// NEW = true: CheckLociTypesN
+  /// round_up: ItIsChecker
   fn check_loci_types<const NEW: bool>(
-    &mut self, g: &Global, lc: &LocalContext, tys: &[Type],
+    &mut self, g: &Global, lc: &LocalContext, tys: &[Type], round_up: bool,
   ) -> bool {
     let mut i = tys.len();
     assert!(self.subst_term.len() == i);
@@ -1313,10 +1316,10 @@ impl Subst {
       // vprintln!("main {i:?}, subst = {:?} : {subst_ty:?}, tm = {tm:?}", self.subst_term);
       let mut orig_subst = self.subst_term.iter().map(Option::is_some).collect::<Vec<_>>();
       // let wty be the type of subst_term[i]
-      let wty = if lc.recursive_round_up {
-        tm.round_up_type(g, lc)
+      let wty = if round_up {
+        tm.round_up_type(g, lc, round_up)
       } else {
-        CowBox::Owned(Box::new(tm.get_type(g, lc)))
+        CowBox::Owned(Box::new(tm.get_type(g, lc, round_up)))
       };
       // vprintln!("main {i:?}, subst = {:?} : {subst_ty:?}, wty = {wty:?}", self.subst_term);
       // Are the attributes of tys[i] all contained in wty's?
@@ -1622,7 +1625,7 @@ impl Attrs {
 
   /// MCondClList.RoundUpCluster(aCluster = self, aTyp = ty)
   /// MAttrCollection.RoundUpWith(self = self, aTyp = ty)
-  pub fn round_up_with(&mut self, g: &Global, lc: &LocalContext, ty: &Type) {
+  pub fn round_up_with(&mut self, g: &Global, lc: &LocalContext, ty: &Type, round_up: bool) {
     struct State<'a> {
       cl_fire: Vec<u32>,
       jobs: Vec<u32>,
@@ -1686,7 +1689,7 @@ impl Attrs {
       let last = if let Some(last) = state.jobs.pop() { last } else { break };
       // vprintln!("job {last}");
       let cl = &g.clusters.conditional.vec[last as usize];
-      if let Some(subst) = cl.try_apply(g, lc, self, ty) {
+      if let Some(subst) = cl.try_apply(g, lc, self, ty, round_up) {
         // eprintln!("enlarge {:?} by {:?}", self, cl.consequent.1);
         self.enlarge_by(&g.constrs, &cl.consequent.1, |a| a.visit_cloned(&mut Inst::new(&subst)));
         state.handle_usage_and_fire(g, self)
@@ -1697,7 +1700,7 @@ impl Attrs {
 
 impl ConditionalCluster {
   fn try_apply(
-    &self, g: &Global, lc: &LocalContext, attrs: &Attrs, ty: &Type,
+    &self, g: &Global, lc: &LocalContext, attrs: &Attrs, ty: &Type, round_up: bool,
   ) -> Option<Box<[Term]>> {
     if !g.type_reachable(&self.ty, ty) {
       return None
@@ -1714,7 +1717,7 @@ impl ConditionalCluster {
     let ty = self.ty.widening_of(g, ty)?;
     if subst.cmp_type(g, lc, &self.ty, &ty, false)
       && self.ty.attrs.0.is_subset_of(&ty.attrs.1, |a1, a2| subst.eq_attr(g, lc, a1, a2))
-      && subst.check_loci_types::<false>(g, lc, &self.primary)
+      && subst.check_loci_types::<false>(g, lc, &self.primary, round_up)
     {
       Some(subst.subst_term.into_vec().into_iter().map(|x| *x.unwrap()).collect::<Box<[Term]>>())
     } else {
@@ -1731,7 +1734,7 @@ impl<I> TyConstructor<I> {
       attrs.enlarge_by(&g.constrs, &cl, |a| a.clone())
     }
     lc.load_locus_tys(&self.primary);
-    attrs.round_up_with(g, lc, &self.ty);
+    attrs.round_up_with(g, lc, &self.ty, false);
     lc.unload_locus_tys();
     attrs
   }
@@ -1741,11 +1744,12 @@ impl FunctorCluster {
   /// RoundUpWith(fCluster = self, fTrm = term, fTyp = ty, fClusterPtr = attrs)
   fn round_up_with(
     &self, g: &Global, lc: &LocalContext, term: &Term, ty: &Type, attrs: &mut Attrs,
+    recursive: bool,
   ) -> bool {
     // vprintln!("RoundUpWith {term:?}, {ty:?} <- {attrs:?} in {self:#?}");
     let mut subst = Subst::new(self.primary.len());
     let mut eq = subst.eq_term(g, lc, &self.term, term)
-      && subst.check_loci_types::<false>(g, lc, &self.primary);
+      && subst.check_loci_types::<false>(g, lc, &self.primary, recursive);
     if !eq {
       if let Term::Functor { nr, ref args } = *term {
         let c = &g.constrs.functor[nr];
@@ -1755,7 +1759,7 @@ impl FunctorCluster {
           let term = Term::Functor { nr, args };
           subst.clear();
           eq = subst.eq_term(g, lc, &self.term, &term)
-            && subst.check_loci_types::<false>(g, lc, &self.primary);
+            && subst.check_loci_types::<false>(g, lc, &self.primary, recursive);
         }
       }
     }
@@ -1766,7 +1770,7 @@ impl FunctorCluster {
             if subst.cmp_type(g, lc, cluster_ty, &ty, false)
               && (cluster_ty.attrs.0)
                 .is_subset_of(&ty.attrs.1, |a1, a2| subst.eq_attr(g, lc, a1, a2))
-              && subst.check_loci_types::<false>(g, lc, &self.primary) => {}
+              && subst.check_loci_types::<false>(g, lc, &self.primary, recursive) => {}
           _ => return false,
         }
       }
@@ -1799,7 +1803,7 @@ impl Definiens {
       return None
     }
     let mut subst = Subst::from_essential(self.primary.len(), &self.essential, args);
-    if !subst.check_loci_types::<true>(g, lc, &self.primary) {
+    if !subst.check_loci_types::<true>(g, lc, &self.primary, false) {
       return None
     }
     Some(subst)
@@ -1812,7 +1816,7 @@ impl EqualsDef {
     &self, g: &Global, lc: &LocalContext, args: &[Term], depth: u32,
   ) -> Option<Term> {
     let mut subst = Subst::from_essential(self.primary.len(), &self.essential, args);
-    let true = subst.check_loci_types::<true>(g, lc, &self.primary) else { return None };
+    let true = subst.check_loci_types::<true>(g, lc, &self.primary, false) else { return None };
     Some(subst.inst_term(&self.expansion, depth))
   }
 }
@@ -1821,7 +1825,7 @@ impl Identify {
   fn try_apply_lhs(&self, g: &Global, lc: &LocalContext, lhs: &Term, tm: &Term) -> Option<Subst> {
     let mut subst = Subst::new(self.primary.len());
     subst.eq_term(g, lc, lhs, tm).then_some(())?;
-    subst.check_loci_types::<false>(g, lc, &self.primary).then_some(())?;
+    subst.check_loci_types::<false>(g, lc, &self.primary, false).then_some(())?;
     for &(x, y) in &*self.eq_args {
       let (ux, uy) = (Idx::into_usize(x), Idx::into_usize(y));
       assert!(subst.subst_term[uy].is_none());
@@ -1958,8 +1962,8 @@ impl<'a> InternConst<'a> {
         Ok(nr) => nr,
         Err(i) => {
           drop(ic);
-          let mut ty = *tm.round_up_type(self.g, self.lc).to_owned();
-          ty.round_up_with_self(self.g, self.lc);
+          let mut ty = *tm.round_up_type(self.g, self.lc, false).to_owned();
+          ty.round_up_with_self(self.g, self.lc, false);
           let def = std::mem::take(tm);
           let number = def.try_to_number(self.g, self.lc);
           ic = self.lc.infer_const.borrow_mut();
@@ -2213,8 +2217,6 @@ pub struct Global {
 pub struct LocalContext {
   // here for easy printing
   formatter: Formatter,
-  /// ItIsChecker in mizar
-  recursive_round_up: bool,
   /// LocArgTyp
   // FIXME: this is non-owning in mizar
   locus_ty: IdxVec<LocusId, Type>,
@@ -2459,7 +2461,7 @@ impl MizPath {
         attrs.push(Attr::new0(positive, true))
       }
     }
-    attrs.round_up_with(&v.g, &v.lc, &v.g.numeral_type);
+    attrs.round_up_with(&v.g, &v.lc, &v.g.numeral_type, false);
     v.g.numeral_type.attrs.1 = attrs;
     v.lc.clear_term_cache();
     v.g.round_up_clusters(&mut v.lc);
@@ -2499,7 +2501,7 @@ impl MizPath {
     for id in &mut v.identify {
       for i in 0..id.primary.len() {
         v.lc.load_locus_tys(&id.primary);
-        id.primary[i].round_up_with_self(&v.g, &v.lc);
+        id.primary[i].round_up_with_self(&v.g, &v.lc, false);
         v.lc.unload_locus_tys();
       }
     }
