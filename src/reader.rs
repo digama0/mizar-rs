@@ -2,6 +2,18 @@ use crate::checker::Checker;
 use crate::types::*;
 use crate::*;
 
+#[derive(Default)]
+pub struct Notations {
+  pub mode: Vec<Pattern>,
+  pub struct_mode: Vec<Pattern>,
+  pub attribute: Vec<Pattern>,
+  pub predicate: Vec<Pattern>,
+  pub functor: Vec<Pattern>,
+  pub selector: Vec<Pattern>,
+  pub aggregate: Vec<Pattern>,
+  pub sub_aggr: Vec<Pattern>,
+}
+
 enum PendingDef {
   Constr(ConstrKind),
   // Cluster,
@@ -13,6 +25,12 @@ pub struct Reader {
   pub libs: Libraries,
   article: Article,
   treat_thm_as_axiom: bool,
+  /// gFormatsColl
+  pub formats: BTreeMap<Format, FormatId>,
+  /// Notat
+  pub notations: Notations,
+  /// Definientia
+  pub definitions: Vec<Definiens>,
   /// EqDefinientia
   pub equalities: Vec<Definiens>,
   /// ExDefinientia
@@ -55,7 +73,17 @@ impl MizPath {
     let mut v = Reader::new(reqs, numeral_type, self.0);
     self.read_atr(&mut v.g.constrs).unwrap();
     let old = v.lc.start_stash();
-    v.lc.formatter.init(&v.g.constrs, self);
+    let mut formats = None;
+    if ENABLE_ANALYZER {
+      let mut f = Default::default();
+      self.read_formats("frx", &mut f).unwrap();
+      v.formats.extend(f.formats.enum_iter().map(|(id, f)| (*f, id)));
+      formats = Some(f.formats)
+    }
+    v.lc.formatter.init(self, formats);
+    let mut notations = Default::default();
+    self.read_eno(&mut notations).unwrap();
+    v.lc.formatter.extend(&v.g.constrs, &notations);
     if DUMP_CONSTRUCTORS {
       v.g.constrs.dump()
     }
@@ -77,23 +105,53 @@ impl MizPath {
     v.lc.clear_term_cache();
     v.g.round_up_clusters(&mut v.lc);
 
+    if ENABLE_ANALYZER {
+      // LoadSGN
+      for pat in notations {
+        match pat.kind {
+          PatternKind::Mode(_) | PatternKind::ExpandableMode => v.notations.mode.push(pat),
+          PatternKind::Struct(_) => v.notations.struct_mode.push(pat),
+          PatternKind::Attr(_) => v.notations.attribute.push(pat),
+          PatternKind::Pred(_) => v.notations.predicate.push(pat),
+          PatternKind::Func(_) => v.notations.functor.push(pat),
+          PatternKind::Sel(_) => v.notations.selector.push(pat),
+          PatternKind::Aggr(_) => v.notations.aggregate.push(pat),
+          PatternKind::SubAggr(_) => v.notations.sub_aggr.push(pat),
+        }
+      }
+    }
+
+    // LoadDefinitions
+    if crate::ENABLE_ANALYZER {
+      self.read_definitions(&v.g.constrs, "dfs", &mut v.definitions).unwrap();
+    }
+
     // LoadEqualities
-    self.read_definitions(&v.g.constrs, "dfe", &mut v.equalities).unwrap();
+    if crate::ENABLE_CHECKER {
+      self.read_definitions(&v.g.constrs, "dfe", &mut v.equalities).unwrap();
+    }
 
     // LoadExpansions
-    self.read_definitions(&v.g.constrs, "dfx", &mut v.expansions).unwrap();
+    if crate::ENABLE_CHECKER {
+      self.read_definitions(&v.g.constrs, "dfx", &mut v.expansions).unwrap();
+    }
 
     // LoadPropertiesReg
     self.read_epr(&v.g.constrs, &mut v.properties).unwrap();
 
     // LoadIdentify
-    self.read_eid(&v.g.constrs, &mut v.identify).unwrap();
+    if crate::ENABLE_CHECKER {
+      self.read_eid(&v.g.constrs, &mut v.identify).unwrap();
+    }
 
     // LoadReductions
-    self.read_erd(&v.g.constrs, &mut v.reductions).unwrap();
+    if crate::ENABLE_CHECKER {
+      self.read_erd(&v.g.constrs, &mut v.reductions).unwrap();
+    }
 
     // in mizar this was done inside the parser
     let rr = &mut RoundUpTypes { g: &v.g, lc: &mut v.lc };
+    v.definitions.visit(rr);
     v.equalities.visit(rr);
     v.expansions.visit(rr);
     v.properties.visit(rr);
@@ -145,19 +203,21 @@ impl MizPath {
     v.g.clusters = clusters;
 
     // InLibraries
-    self.read_eth(&v.g.constrs, &refs, &mut v.libs).unwrap();
-    let cc = &mut InternConst::new(&v.g, &v.lc, &v.equals, &v.identify, &v.func_ids);
-    v.libs.thm.values_mut().for_each(|f| f.visit(cc));
-    v.libs.def.values_mut().for_each(|f| f.visit(cc));
-    self.read_esh(&v.g.constrs, &refs, &mut v.libs).unwrap();
-    v.libs.visit(&mut RoundUpTypes { g: &v.g, lc: &mut v.lc });
+    if crate::ENABLE_CHECKER {
+      self.read_eth(&v.g.constrs, &refs, &mut v.libs).unwrap();
+      let cc = &mut InternConst::new(&v.g, &v.lc, &v.equals, &v.identify, &v.func_ids);
+      v.libs.thm.values_mut().for_each(|f| f.visit(cc));
+      v.libs.def.values_mut().for_each(|f| f.visit(cc));
+      self.read_esh(&v.g.constrs, &refs, &mut v.libs).unwrap();
+      v.libs.visit(&mut RoundUpTypes { g: &v.g, lc: &mut v.lc });
 
-    if DUMP_LIBRARIES {
-      for (&(ar, nr), th) in &v.libs.thm {
-        eprintln!("art {ar:?}:{nr:?} = {th:?}");
-      }
-      for (&(ar, nr), th) in &v.libs.def {
-        eprintln!("art {ar:?}:def {nr:?} = {th:?}");
+      if DUMP_LIBRARIES {
+        for (&(ar, nr), th) in &v.libs.thm {
+          eprintln!("art {ar:?}:{nr:?} = {th:?}");
+        }
+        for (&(ar, nr), th) in &v.libs.def {
+          eprintln!("art {ar:?}:def {nr:?} = {th:?}");
+        }
       }
     }
 
@@ -181,6 +241,9 @@ impl Reader {
       libs: Libraries::default(),
       article,
       treat_thm_as_axiom: matches!(article.as_str(), "tarski_0" | "tarski_a"),
+      formats: Default::default(),
+      notations: Default::default(),
+      definitions: Default::default(),
       equalities: Default::default(),
       expansions: Default::default(),
       properties: Default::default(),
@@ -403,9 +466,9 @@ impl Reader {
       }
       Item::AuxiliaryItem(AuxiliaryItem::DefFunc { args, ty, value }) => {
         self.lc.priv_func.push(FuncDef {
-          _primary: self.intern(args),
+          primary: self.intern(args),
           ty: Box::new(self.intern(ty)),
-          _value: Box::new(self.intern(value)),
+          value: Box::new(self.intern(value)),
         });
       }
       Item::AuxiliaryItem(AuxiliaryItem::DefPred { .. }) => {}
@@ -696,6 +759,9 @@ impl Reader {
   }
 
   fn read_inference(&mut self, thesis: &Formula, it: &Inference) {
+    if !crate::ENABLE_CHECKER {
+      return
+    }
     let refs = it.refs.iter().map(|r| match r.kind {
       ReferenceKind::Priv(lab) => &self.props[self.labels[lab].unwrap()],
       ReferenceKind::Thm(thm) => &self.libs.thm[&thm],

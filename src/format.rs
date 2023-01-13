@@ -68,15 +68,18 @@ impl Formatter {
     pats.iter().for_each(|pat| self.push(ctx, pat))
   }
 
-  pub fn init(&mut self, ctx: &Constructors, path: &MizPath) {
+  pub fn init(&mut self, path: &MizPath, formats: Option<IdxVec<FormatId, Format>>) {
     if !ENABLE_FORMATTER {
       return
     }
-    let (mut symbols, mut formats, mut notations) = Default::default();
+    let mut symbols = Default::default();
     path.read_dcx(&mut symbols).unwrap();
     self.symbols = symbols.0.into_iter().collect();
-    path.read_formats("frx", &mut formats).unwrap();
-    self.formats = formats.formats;
+    self.formats = formats.unwrap_or_else(|| {
+      let mut formats = Default::default();
+      path.read_formats("frx", &mut formats).unwrap();
+      formats.formats
+    });
     for f in &self.formats.0 {
       match f {
         Format::Aggr(f) => assert!(self.symbols.contains_key(&f.sym.into())),
@@ -93,8 +96,6 @@ impl Formatter {
         Format::Pred(f) => assert!(self.symbols.contains_key(&f.sym.into())),
       }
     }
-    path.read_eno(&mut notations).unwrap();
-    self.extend(ctx, &notations);
   }
 }
 
@@ -334,6 +335,16 @@ impl<'a> Pretty<'a> {
           .group();
         doc.append(inner).group().braces()
       }
+      Term::Qua { value, ty } => {
+        let doc = self
+          .term(true, value, depth, lift)
+          .append(self.line())
+          .append("qua ")
+          .append(self.ty(ty, depth, lift))
+          .group();
+        self.parens_if(prec, doc)
+      }
+      Term::It => self.text("it"),
     }
   }
 

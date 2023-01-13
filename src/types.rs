@@ -542,6 +542,9 @@ impl<V, A: Visitable<V>, B: Visitable<V>> Visitable<V> for (A, B) {
   }
 }
 
+/// This type alias is used to indicate that the term might have a Qua at the top level.
+pub type TermQua = Term;
+
 #[derive(Clone)]
 pub enum Term {
   /// Invariant: nr != 0. Zero is not a numeral (!),
@@ -589,6 +592,16 @@ pub enum Term {
     scope: Box<Term>,
     compr: Box<Formula>,
   },
+  /// Only used/valid in the analyzer, at the top level of a term expression.
+  /// Indicates that the term should be treated as having type `ty` instead
+  /// of looking at `term`'s type.
+  Qua {
+    value: Box<Term>,
+    ty: Box<Type>,
+  },
+  /// Only used/valid in the analyzer. Used in definiens that are predicates,
+  /// to refer to the object being defined.
+  It,
 }
 
 impl Default for Term {
@@ -604,6 +617,19 @@ impl Term {
       | Term::Functor { args, .. }
       | Term::Selector { args, .. } => Some(args),
       _ => None,
+    }
+  }
+
+  pub fn strip_qua_mut(&mut self) {
+    if let Term::Qua { value, .. } = self {
+      *self = std::mem::take(&mut **value)
+    }
+  }
+
+  pub fn strip_qua(self: TermQua) -> Term {
+    match self {
+      Term::Qua { value, .. } => *value,
+      _ => self,
     }
   }
 }
@@ -630,6 +656,8 @@ impl Term {
       Term::FreeVar(_) => b'X',
       Term::The { .. } => 216,
       Term::Fraenkel { .. } => 232,
+      Term::Qua { .. } => 213,
+      Term::It { .. } => 234,
     }
   }
 }
@@ -817,6 +845,19 @@ impl Formula {
       vec.into_iter().for_each(|f| f.maybe_neg(pos).append_conjuncts_to(&mut conjs));
       *self = Formula::mk_and(conjs).maybe_neg(pos);
     }
+  }
+
+  pub fn mk_iff(self, other: Formula) -> Formula {
+    let mut conjs1 = vec![];
+    self.clone().append_conjuncts_to(&mut conjs1);
+    other.clone().mk_neg().append_conjuncts_to(&mut conjs1);
+    let mut conjs2 = vec![];
+    other.append_conjuncts_to(&mut conjs2);
+    self.mk_neg().append_conjuncts_to(&mut conjs2);
+    let mut conjs = vec![];
+    Formula::mk_and(conjs1).mk_neg().append_conjuncts_to(&mut conjs);
+    Formula::mk_and(conjs2).mk_neg().append_conjuncts_to(&mut conjs);
+    Formula::mk_and(conjs)
   }
 }
 

@@ -951,7 +951,7 @@ impl Unify<'_> {
       Term::Numeral(_) | Term::Constant(_) | Term::Infer(_) =>
         Dnf::mk_bool(Some(self.get_eq_class(t1).unwrap()) == self.get_eq_class(t2)),
       Term::EqMark(m) => self.unify_term(&self.lc.marks[m].0, t2)?,
-      Term::Locus(_) => unreachable!(),
+      Term::Locus(_) | Term::Qua { .. } | Term::It => unreachable!(),
     };
     // vprintln!("unify_term {t1:?} <> {t2:?} -> {res:?}");
     Ok(res)
@@ -1267,7 +1267,7 @@ impl EquateClass<'_> {
         .find(|p| p.1.terms[CTK::Choice].iter().any(|&m| self.eq_term(g, lc, tm, &lc.marks[m].0)))
         .map(|p| p.0),
       Term::EqMark(m) => self.get(g, lc, &lc.marks[m].0),
-      Term::Constant(_) | Term::FreeVar(_) => unreachable!(),
+      Term::Constant(_) | Term::FreeVar(_) | Term::Qua { .. } | Term::It => unreachable!(),
     }
     // vprintln!("get_eq_class {tm:?} -> {res:?}");
   }

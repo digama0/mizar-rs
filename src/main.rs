@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Mutex;
 
+mod analyze;
 mod ast;
 mod bignum;
 mod checker;
@@ -295,6 +296,9 @@ impl Term {
         c1.cmp(ctx, lc, c2, style)
           .then_with(|| cmp_list(args1, args2, |ty1, ty2| ty1.cmp(ctx, lc, ty2, style)))
       }),
+      (It, It) => Ordering::Equal,
+      (Qua { value: val1, ty: ty1 }, Qua { value: val2, ty: ty2 }) =>
+        val1.cmp(ctx, lc, val2, style).then_with(|| ty1.cmp(ctx, lc, ty2, style)),
       _ => unreachable!(),
     })
   }
@@ -502,6 +506,30 @@ impl Type {
     self.attrs.1 = attrs;
     // vprintln!("[{:?}] round_up_with_self -> {:?}", lc.infer_const.borrow().len(), self);
   }
+
+  /// FrOpVarTypeOK
+  fn is_set(&self, g: &Global, lc: &LocalContext, props: &[Property]) -> bool {
+    if let TypeKind::Mode(n) = self.kind {
+      if g.constrs.mode[n].properties.get(PropertyKind::Sethood) {
+        return true
+      }
+    }
+    // is_SethoodType
+    for prop in props {
+      if !matches!(prop.kind, PropertyKind::Sethood) || !g.type_reachable(&prop.ty, self) {
+        continue
+      }
+      let mut subst = Subst::new(prop.primary.len());
+      let Some(ty) = prop.ty.widening_of(g, self) else { continue };
+      if subst.eq_radices(g, lc, &prop.ty, self)
+        && prop.ty.attrs.0.is_subset_of(&ty.attrs.1, |a1, a2| subst.eq_attr(g, lc, a1, a2))
+        && subst.check_loci_types::<false>(g, lc, &prop.primary, false)
+      {
+        return true
+      }
+    }
+    false
+  }
 }
 
 impl Formula {
@@ -641,6 +669,8 @@ trait Equate {
           && args1.iter().zip(&**args2).all(|(ty1, ty2)| self.eq_type(g, lc, ty1, ty2))
           && self.eq_term(g, lc, sc1, sc2)
           && self.eq_formula(g, lc, c1, c2),
+      (It, It) => true,
+      (Qua { .. }, Qua { .. }) => panic!("invalid qua"),
       (_, &Infer(nr)) => self.eq_term(g, lc, t1, &lc.infer_const.borrow()[nr].def),
       (&Infer(nr), _) => self.eq_term(g, lc, &lc.infer_const.borrow()[nr].def, t2),
       (_, &EqMark(nr)) => self.eq_term(g, lc, t1, &lc.marks[nr].0),
@@ -808,7 +838,8 @@ macro_rules! mk_visit {
           | Term::EqClass(_)
           | Term::EqMark(_)
           | Term::Infer(_)
-          | Term::FreeVar(_) => {}
+          | Term::FreeVar(_)
+          | Term::It => {}
           Term::SchFunc { args, .. }
           | Term::Aggregate { args, .. }
           | Term::Functor { args, .. }
@@ -827,7 +858,10 @@ macro_rules! mk_visit {
             self.visit_term(scope);
             self.visit_formula(compr);
             self.pop_bound(args.len() as u32);
-
+          }
+          Term::Qua { value, ty } => {
+            self.visit_term(value);
+            self.visit_type(ty);
           }
         }
       }
@@ -1146,7 +1180,8 @@ impl Term {
       Term::Aggregate { nr, ref args } =>
         g.constrs.aggregate[nr].ty.visit_cloned(&mut Inst::new(args)),
       Term::Fraenkel { .. } => Type::SET,
-      Term::The { ref ty } => (**ty).clone(),
+      Term::It => (**lc.it_type.as_ref().unwrap()).clone(),
+      Term::The { ref ty } | Term::Qua { ref ty, .. } => (**ty).clone(),
       Term::EqMark(m) => lc.marks[m].0.get_type_uncached(g, lc),
       Term::EqClass(_) | Term::FreeVar(_) => unreachable!("get_type_uncached(EqClass | FreeVar)"),
     };
@@ -1266,6 +1301,11 @@ impl<'a> Subst<'a> {
   /// InitInst
   fn finish(self) -> Box<[Term]> {
     self.subst_term.into_vec().into_iter().map(|t| *t.unwrap().to_owned()).collect()
+  }
+
+  fn trim_to(self, len: usize) -> Box<[Term]> {
+    let n = self.subst_term.len().checked_sub(len).unwrap();
+    self.subst_term.into_vec().into_iter().skip(n).map(|t| *t.unwrap().to_owned()).collect()
   }
 
   fn inst_term_mut(self, tm: &mut Term, depth: u32) {
@@ -1414,6 +1454,36 @@ impl<'a> Subst<'a> {
         ok = subst_ty[i].take().unwrap().widening(g).map(CowBox::Owned)
       }
     }
+  }
+
+  /// CheckArgType
+  /// this seems to be essentially the same as CheckLociTypes,
+  /// but written as a recursive backtracking algorithm which seems a lot more sensible.
+  fn check_types(&mut self, g: &Global, lc: &LocalContext, tys: &[Type]) -> bool {
+    let [tys @ .., ty] = tys else { return true };
+    let i = tys.len();
+    let mut wty = self.subst_term[i].as_ref().unwrap().get_type(g, lc, false);
+    wty.round_up_with_self(g, lc, false);
+    if !wty.decreasing_attrs(ty, |a1, a2| self.eq_attr(g, lc, a1, a2)) {
+      return false
+    }
+    let Some(mut wty) = ty.widening_of(g, &wty) else { return false };
+    let snap = self.snapshot();
+    if self.eq_radices(g, lc, ty, &wty) && self.check_types(g, lc, tys) {
+      return true
+    }
+    self.rollback(&snap, i);
+    if !matches!(ty.kind, TypeKind::Mode(n) if g.constrs.mode[n].redefines.is_none()) {
+      while let Some(sty) = wty.widening(g) {
+        let Some(wty2) = ty.widening_of(g, &sty) else { break };
+        if self.eq_radices(g, lc, ty, &wty) && self.check_types(g, lc, tys) {
+          return true
+        }
+        self.rollback(&snap, i);
+        wty = CowBox::Owned(wty2.to_owned());
+      }
+    }
+    false
   }
 }
 
@@ -2102,8 +2172,8 @@ impl VisitMut for InternConst<'_> {
           self.collect_infer_const(tm)
         }
       }
-      Term::EqClass(_) | Term::EqMark(_) =>
-        unreachable!("CollectConst::visit_term(EqConst | EqMark)"),
+      Term::EqClass(_) | Term::EqMark(_) | Term::It | Term::Qua { .. } =>
+        unreachable!("CollectConst::visit_term(EqConst | EqMark | It | Qua)"),
     }
     // vprintln!("InternConst {foo} @ {} -> {tm:?}", self.depth);
     self.only_constants &= only_constants;
@@ -2191,9 +2261,9 @@ impl<V: VisitMut> Visitable<V> for Assignment {
 
 #[derive(Debug)]
 struct FuncDef {
-  _primary: Box<[Type]>,
+  primary: Box<[Type]>,
   ty: Box<Type>,
-  _value: Box<Term>,
+  value: Box<Term>,
 }
 
 #[derive(Debug)]
@@ -2228,6 +2298,8 @@ pub struct LocalContext {
   priv_func: IdxVec<PrivFuncId, FuncDef>,
   /// gTermCollection
   term_cache: RefCell<TermCollection>,
+  /// ItTyp
+  it_type: Option<Box<Type>>,
   /// Not in mizar, used in equalizer for TrmInfo marks
   marks: IdxVec<EqMarkId, (Term, EqTermId)>,
 }
@@ -2475,6 +2547,9 @@ const DUMP_REQUIREMENTS: bool = false;
 const DUMP_LIBRARIES: bool = false;
 const DUMP_FORMATTER: bool = false;
 
+const ENABLE_ANALYZER: bool = false;
+const ENABLE_CHECKER: bool = true;
+
 const FIRST_FILE: usize = 0;
 const ONE_FILE: bool = false;
 const PANIC_ON_FAIL: bool = DEBUG;
@@ -2501,6 +2576,7 @@ fn main() {
           println!("{i}: {s}");
           let path = MizPath::new(s);
           path.with_reader(|v| v.run_checker(&path));
+          // path.with_reader(|v| v.run_analyzer(&path));
           // let items = path.open_wsx().unwrap().parse_items();
           // println!("parsed {s}, {} wsx items", items.len());
           // path.open_msx().unwrap().parse_items();

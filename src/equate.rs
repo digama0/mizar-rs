@@ -458,7 +458,12 @@ impl VisitMut for Y<'_, '_> {
         Term::Bound(_) | Term::EqClass(_) => return,
         _ => unreachable!("already marked"),
       },
-      Term::Locus(_) | Term::Constant(_) | Term::FreeVar(_) | Term::Numeral(_) => unreachable!(),
+      Term::Locus(_)
+      | Term::Constant(_)
+      | Term::FreeVar(_)
+      | Term::Numeral(_)
+      | Term::Qua { .. }
+      | Term::It => unreachable!(),
     };
     let ty = tm.get_type_uncached(self.g, self.lc);
     y_try!(self, self.insert_type(ty, et));
@@ -592,8 +597,13 @@ impl Equalizer<'_> {
         Ok(self.yy_binder(term, fi, |c| &mut c.choice))
       }
       Term::Infer(_) | Term::Constant(_) => Ok(fi),
-      Term::Locus(_) | Term::Bound(_) | Term::EqClass(_) | Term::EqMark(_) | Term::FreeVar(_) =>
-        unreachable!(),
+      Term::Locus(_)
+      | Term::Bound(_)
+      | Term::EqClass(_)
+      | Term::EqMark(_)
+      | Term::FreeVar(_)
+      | Term::Qua { .. }
+      | Term::It => unreachable!(),
     }
   }
 }
