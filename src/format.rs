@@ -19,13 +19,13 @@ const NEGATION_SUGAR: bool = true;
 pub struct Formatter {
   symbols: HashMap<SymbolKind, String>,
   formats: IdxVec<FormatId, Format>,
-  mode: HashMap<ModeId, (u8, Box<[u8]>, FormatMode)>,
-  struct_mode: HashMap<StructId, (u8, Box<[u8]>, FormatStructMode)>,
-  attr: HashMap<AttrId, (u8, Box<[u8]>, FormatAttr)>,
-  pred: HashMap<PredId, (u8, Box<[u8]>, FormatPred)>,
-  func: HashMap<FuncId, (u8, Box<[u8]>, FormatFunc)>,
-  sel: HashMap<SelId, (u8, Box<[u8]>, FormatSel)>,
-  aggr: HashMap<AggrId, (u8, Box<[u8]>, FormatAggr)>,
+  mode: HashMap<ModeId, (u8, Box<[LocusId]>, FormatMode)>,
+  struct_mode: HashMap<StructId, (u8, Box<[LocusId]>, FormatStructMode)>,
+  attr: HashMap<AttrId, (u8, Box<[LocusId]>, FormatAttr)>,
+  pred: HashMap<PredId, (u8, Box<[LocusId]>, FormatPred)>,
+  func: HashMap<FuncId, (u8, Box<[LocusId]>, FormatFunc)>,
+  sel: HashMap<SelId, (u8, Box<[LocusId]>, SelSymId)>,
+  aggr: HashMap<AggrId, (u8, Box<[LocusId]>, FormatAggr)>,
 }
 
 impl Formatter {
@@ -37,19 +37,16 @@ impl Formatter {
       eprintln!("{pat:#?}")
     }
     fn ins<I: Idx, F: std::fmt::Debug>(
-      c: &Constructor<I>, map: &mut HashMap<I, (u8, Box<[u8]>, F)>, pat: &Pattern, i: I, f: F,
+      c: &Constructor<I>, map: &mut HashMap<I, (u8, Box<[LocusId]>, F)>, pat: &Pattern, i: I, f: F,
     ) {
-      // HACK: we definitely can't use patterns with the wrong number of arguments,
-      // but sometimes the only pattern we have for a constructor is a redefinition
-      if pat.redefines.is_some() && pat.primary.len() != c.primary.len() {
-        return
-      }
-      assert_eq!(pat.primary.len(), c.primary.len());
       if pat.pos {
-        assert!(pat.visible.iter().all(|i| (*i as usize) < pat.primary.len()));
-        map.entry(i).or_insert((pat.primary.len() as u8, pat.visible.clone(), f));
-        // FIXME: this isn't true? Redefinitions are not always marked
-        // assert!(map.insert(i, (pat.primary.len() as u8, pat.visible.clone(), f)).is_none())
+        assert!(pat.visible.iter().all(|i| (i.0 as usize) < pat.primary.len()));
+        let mut visible = pat.visible.clone();
+        let extra = pat.primary.len() - c.primary.len();
+        if extra > 0 {
+          visible.iter_mut().for_each(|n| n.0 -= extra as u8);
+        }
+        map.entry(i).or_insert((c.primary.len() as u8, visible, f));
       }
     }
     match (pat.kind, self.formats[pat.fmt]) {
@@ -61,7 +58,7 @@ impl Formatter {
       (PatternKind::Func(n), Format::Func(f)) => ins(&ctx.functor[n], &mut self.func, pat, n, f),
       (PatternKind::Sel(n), Format::Sel(f)) => ins(&ctx.selector[n], &mut self.sel, pat, n, f),
       (PatternKind::Aggr(n), Format::Aggr(f)) => ins(&ctx.aggregate[n], &mut self.aggr, pat, n, f),
-      (PatternKind::ForgetFunc(_), _) => {}  // unused
+      (PatternKind::SubAggr(_), _) => {}     // unused
       (PatternKind::ExpandableMode, _) => {} // not handled here
       _ => panic!("incompatible format for pattern"),
     }
@@ -83,10 +80,10 @@ impl Formatter {
     for f in &self.formats.0 {
       match f {
         Format::Aggr(f) => assert!(self.symbols.contains_key(&f.sym.into())),
-        Format::ForgetFunc(f) => assert!(self.symbols.contains_key(&f.sym.into())),
+        &Format::SubAggr(sym) => assert!(self.symbols.contains_key(&sym.into())),
         Format::Struct(f) => assert!(self.symbols.contains_key(&f.sym.into())),
         Format::Mode(f) => assert!(self.symbols.contains_key(&f.sym.into())),
-        Format::Sel(f) => assert!(self.symbols.contains_key(&f.sym.into())),
+        &Format::Sel(sym) => assert!(self.symbols.contains_key(&sym.into())),
         Format::Attr(f) => assert!(self.symbols.contains_key(&f.sym.into())),
         &Format::Func(FormatFunc::Func { sym, .. }) =>
           assert!(self.symbols.contains_key(&sym.into())),
@@ -97,7 +94,7 @@ impl Formatter {
       }
     }
     path.read_eno(&mut notations).unwrap();
-    self.extend(ctx, &notations.0);
+    self.extend(ctx, &notations);
   }
 }
 
@@ -163,10 +160,10 @@ impl<'a> Pretty<'a> {
   fn commas(&self, docs: impl IntoIterator<Item = Doc<'a>>) -> Doc<'a> {
     self.intersperse(docs, self.comma.clone()).nest(2).group()
   }
-  fn terms(&self, vis: Option<&[u8]>, tms: &[Term], depth: u32, lift: u32) -> Doc<'a> {
+  fn terms(&self, vis: Option<&[LocusId]>, tms: &[Term], depth: u32, lift: u32) -> Doc<'a> {
     match vis {
       Some(vis) =>
-        self.commas(vis.iter().map(|&i| self.term(false, &tms[i as usize], depth, lift))),
+        self.commas(vis.iter().map(|&i| self.term(false, &tms[i.0 as usize], depth, lift))),
       None => self.commas(tms.iter().map(|tm| self.term(false, tm, depth, lift))),
     }
   }
@@ -181,7 +178,7 @@ impl<'a> Pretty<'a> {
 
   #[allow(clippy::too_many_arguments)]
   fn infix_term(
-    &self, prec: bool, len: u8, vis: &[u8], orig: u32, sym: SymbolKind, left: u8, right: u8,
+    &self, prec: bool, len: u8, vis: &[LocusId], orig: u32, sym: SymbolKind, left: u8, right: u8,
     args: &[Term], depth: u32, lift: u32,
   ) -> Doc<'a> {
     let lc = self.lc.unwrap();
@@ -195,7 +192,7 @@ impl<'a> Pretty<'a> {
     };
     let doc = match (left, vis) {
       (_, None) | (0, _) => self.nil(),
-      (1, Some(vis)) => self.term(true, &args[vis[0] as usize], depth, lift).append(self.space()),
+      (1, Some(vis)) => self.term(true, &args[vis[0].0 as usize], depth, lift).append(self.space()),
       (_, Some(vis)) =>
         self.terms(Some(&vis[..left as usize]), args, depth, lift).parens().append(self.space()),
     };
@@ -207,7 +204,7 @@ impl<'a> Pretty<'a> {
     let doc = match right {
       0 => doc,
       1 => {
-        let i = vis.map_or(0, |v| v[left as usize] as usize);
+        let i = vis.map_or(0, |v| v[left as usize].0 as usize);
         doc.append(self.line()).append(self.term(true, &args[i], depth, lift))
       }
       _ => doc
@@ -305,9 +302,9 @@ impl<'a> Pretty<'a> {
       Term::Selector { nr, args } => {
         let (mut s, mut ovis) = (None, None);
         if let Some(lc) = self.lc {
-          if let Some(&(len, ref vis, FormatSel { sym, args: n })) = lc.formatter.sel.get(nr) {
+          if let Some(&(len, ref vis, sym)) = lc.formatter.sel.get(nr) {
             assert_eq!(len as usize, args.len());
-            assert_eq!(vis.len(), n as usize);
+            assert_eq!(vis.len(), 1);
             ovis = Some(&**vis);
             s = Some(&lc.formatter.symbols[&sym.into()]);
           }
@@ -346,7 +343,7 @@ impl<'a> Pretty<'a> {
         assert_eq!(len as usize, args.len() + 1);
         assert_eq!(vis.len(), n as usize);
         let (v0, vis) = vis.split_last().unwrap();
-        assert_eq!(*v0 as usize, args.len());
+        assert_eq!(v0.0 as usize, args.len());
         let vis = (!SHOW_INVISIBLE || vis.len() == args.len()).then_some(vis);
         let sym = if SHOW_ORIG {
           self.text(format!("{}[{}]", lc.formatter.symbols[&sym.into()], nr.0))
@@ -355,7 +352,7 @@ impl<'a> Pretty<'a> {
         };
         return match (vis, args) {
           (None, []) | (Some([]), _) => sym,
-          (Some(&[v]), _) => self.term(true, &args[v as usize], depth, lift).append(sym),
+          (Some(&[v]), _) => self.term(true, &args[v.0 as usize], depth, lift).append(sym),
           (Some(vis), _) => self.terms(Some(vis), args, depth, lift).parens().append(sym),
           (None, _) => sym.append(self.terms(None, args, depth, lift).parens()),
         }

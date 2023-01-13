@@ -273,10 +273,10 @@ impl MizPath {
           let args = args.unwrap();
           formats.formats.push(match kind {
             b'G' => Format::Aggr(FormatAggr { sym: StructSymId(sym), args }),
-            b'J' => Format::ForgetFunc(FormatForgetFunc { sym: StructSymId(sym), args }),
+            b'J' => Format::SubAggr(StructSymId(sym)),
             b'L' => Format::Struct(FormatStructMode { sym: StructSymId(sym), args }),
             b'M' => Format::Mode(FormatMode { sym: ModeSymId(sym), args }),
-            b'U' => Format::Sel(FormatSel { sym: SelSymId(sym), args }),
+            b'U' => Format::Sel(SelSymId(sym)),
             b'V' => Format::Attr(FormatAttr { sym: AttrSymId(sym), args }),
             b'O' => {
               let left = left.unwrap();
@@ -320,13 +320,13 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_eno(&self, notas: &mut Notations) -> io::Result<()> {
+  pub fn read_eno(&self, notas: &mut Vec<Pattern>) -> io::Result<()> {
     let (mut r, mut buf) = self.open_xml(MaybeMut::None, "eno", false)?;
     let buf = &mut buf;
     r.read_start(buf, Some(b"Notations"));
     while let Ok(e) = r.try_read_start(buf, Some(b"Pattern")) {
       let attrs = r.parse_pattern_attrs(&e);
-      notas.0.push(r.parse_pattern_body(buf, attrs))
+      notas.push(r.parse_pattern_body(buf, attrs))
     }
     assert!(matches!(r.read_event(buf), Event::Eof));
     Ok(())
@@ -673,7 +673,7 @@ impl MizReader<'_> {
   ) -> Pattern {
     let primary = self.parse_arg_types(buf);
     self.read_start(buf, Some(b"Visible"));
-    let visible = self.parse_int_list(buf, |n| n as u8 - 1);
+    let visible = self.parse_int_list(buf, |n| LocusId(n as u8 - 1));
     let expansion = if self.try_read_start(buf, Some(b"Expansion")).is_ok() {
       let ty = Box::new(self.parse_type(buf).unwrap());
       self.end_tag(buf);
@@ -683,15 +683,15 @@ impl MizReader<'_> {
       None
     };
     let kind = match (kind, constr.checked_sub(1)) {
-      (b'M', Some(nr)) => PatternKind::Mode(ModeId(nr)),
+      (b'M', Some(nr)) if expansion.is_none() => PatternKind::Mode(ModeId(nr)),
+      (b'M', None) if expansion.is_some() => PatternKind::ExpandableMode,
       (b'L', Some(nr)) => PatternKind::Struct(StructId(nr)),
       (b'V', Some(nr)) => PatternKind::Attr(AttrId(nr)),
       (b'R', Some(nr)) => PatternKind::Pred(PredId(nr)),
       (b'K', Some(nr)) => PatternKind::Func(FuncId(nr)),
       (b'U', Some(nr)) => PatternKind::Sel(SelId(nr)),
       (b'G', Some(nr)) => PatternKind::Aggr(AggrId(nr)),
-      (b'J', Some(nr)) => PatternKind::ForgetFunc(nr),
-      (b'M', None) => PatternKind::ExpandableMode,
+      (b'J', Some(nr)) => PatternKind::SubAggr(StructId(nr)),
       _ => panic!("unknown pattern kind"),
     };
     Pattern { kind, pid, article, abs_nr, fmt, redefines, primary, visible, pos, expansion }
@@ -877,7 +877,9 @@ impl MizReader<'_> {
       }
     };
     let mut eq_args = vec![];
-    self.parse_pairs(buf, b"EqArgs", |x, y| eq_args.push((LocusId(x - 1), LocusId(y - 1))));
+    self.parse_pairs(buf, b"EqArgs", |x, y| {
+      eq_args.push((LocusId(x as u8 - 1), LocusId(y as u8 - 1)))
+    });
     self.end_tag(buf);
     Identify { article, abs_nr, primary: primary.into(), kind, eq_args: eq_args.into() }
   }
@@ -999,7 +1001,7 @@ impl MizReader<'_> {
           }
           Elem::Fields(fields.into())
         }
-        b"LocusVar" => Elem::Term(Term::Locus(LocusId(parse_var!() - 1))),
+        b"LocusVar" => Elem::Term(Term::Locus(LocusId(parse_var!() as u8 - 1))),
         b"Var" => Elem::Term(Term::Bound(BoundId(parse_var!() - 1))),
         b"Const" => Elem::Term(Term::Constant(ConstId(parse_var!() - 1))),
         // b"InfConst" => Elem::Term(Term::Infer { nr: InferId(parse_var!() - 1) }),
@@ -1113,7 +1115,7 @@ impl MizReader<'_> {
           self.end_tag(buf);
           Elem::Formula(Formula::True)
         }
-        b"Essentials" => Elem::Essentials(self.parse_int_list(buf, |n| LocusId(n - 1))),
+        b"Essentials" => Elem::Essentials(self.parse_int_list(buf, |n| LocusId(n as u8 - 1))),
         b"DefMeaning" => match self.get_basic_attrs(&e).0 {
           b'm' => {
             let f = |e| if let Elem::Formula(f) = e { Some(f) } else { None };

@@ -263,8 +263,8 @@ impl Term {
       }
     };
     this.discr().cmp(&other.discr()).then_with(|| match (this, other) {
-      (Locus(LocusId(n1)), Locus(LocusId(n2)))
-      | (Bound(BoundId(n1)), Bound(BoundId(n2)))
+      (Locus(LocusId(n1)), Locus(LocusId(n2))) => n1.cmp(n2),
+      (Bound(BoundId(n1)), Bound(BoundId(n2)))
       | (Constant(ConstId(n1)), Constant(ConstId(n2)))
       | (Infer(InferId(n1)), Infer(InferId(n2)))
       | (FreeVar(FVarId(n1)), FreeVar(FVarId(n2)))
@@ -589,7 +589,7 @@ trait Equate {
   fn locus_var_left(&mut self, _g: &Global, _lc: &LocalContext, _nr: LocusId, _t2: &Term) -> bool {
     false
   }
-  fn eq_locus_var(&mut self, n1: u32, n2: u32) -> bool { n1 == n2 }
+  fn eq_locus_var(&mut self, n1: LocusId, n2: LocusId) -> bool { n1 == n2 }
 
   fn eq_terms(&mut self, g: &Global, lc: &LocalContext, t1: &[Term], t2: &[Term]) -> bool {
     t1.len() == t2.len() && t1.iter().zip(t2).all(|(t1, t2)| self.eq_term(g, lc, t1, t2))
@@ -610,7 +610,7 @@ trait Equate {
       (&EqMark(nr), _) if !Self::IGNORE_MARKS =>
         matches!(*t2, Term::EqMark(nr2) if lc.marks[nr].1 == lc.marks[nr2].1),
       (&Locus(nr), _) if self.locus_var_left(g, lc, nr, t2) => true,
-      (&Locus(LocusId(n1)), &Locus(LocusId(n2))) if self.eq_locus_var(n1, n2) => true,
+      (&Locus(n1), &Locus(n2)) if self.eq_locus_var(n1, n2) => true,
       (Bound(BoundId(n1)), Bound(BoundId(n2)))
       | (Constant(ConstId(n1)), Constant(ConstId(n2)))
       | (FreeVar(FVarId(n1)), FreeVar(FVarId(n2)))
@@ -654,8 +654,11 @@ trait Equate {
   }
 
   /// for (): TypObj.EqRadices
+  /// for Subst: CompEsTyp (with fExactly = false)
   fn eq_radices(&mut self, g: &Global, lc: &LocalContext, ty1: &Type, ty2: &Type) -> bool {
     match (ty1.kind, ty2.kind) {
+      (TypeKind::Mode(n1), TypeKind::Mode(n2)) if !Self::ADJUST_LEFT && n1 == n2 =>
+        self.eq_terms(g, lc, &ty1.args, &ty2.args),
       (TypeKind::Mode(n1), TypeKind::Mode(n2)) => {
         let (n1, args1) = if Self::ADJUST_LEFT {
           Type::adjust(n1, &ty1.args, &g.constrs)
@@ -1020,12 +1023,14 @@ impl VisitMut for Inst<'_> {
     match *tm {
       Term::Locus(nr) => {
         *tm = self.subst[nr.0 as usize].clone();
-        OnVarMut(|nr| {
-          if *nr >= self.base {
-            *nr += self.depth
-          }
-        })
-        .visit_term(tm);
+        if self.depth != 0 {
+          OnVarMut(|nr| {
+            if *nr >= self.base {
+              *nr += self.depth
+            }
+          })
+          .visit_term(tm);
+        }
       }
       _ => self.super_visit_term(tm),
     }
@@ -1134,7 +1139,8 @@ impl Term {
       Term::Numeral(_) => g.numeral_type.clone(),
       Term::Locus(nr) => lc.locus_ty[nr].clone(),
       Term::SchFunc { nr, .. } => lc.sch_func_ty[nr].clone(),
-      Term::PrivFunc { nr, ref args, .. } => lc.priv_func[nr].ty.visit_cloned(&mut Inst::new(args)),
+      Term::PrivFunc { nr, ref args, .. } =>
+        (*lc.priv_func[nr].ty).visit_cloned(&mut Inst::new(args)),
       Term::Functor { nr, ref args } => g.constrs.functor[nr].ty.visit_cloned(&mut Inst::new(args)),
       Term::Selector { nr, ref args } =>
         g.constrs.selector[nr].ty.visit_cloned(&mut Inst::new(args)),
@@ -1279,6 +1285,17 @@ impl Subst {
     Inst { subst: &self.finish(), base: depth, depth }.visit_formula(f)
   }
 
+  fn snapshot(&self) -> Box<[bool]> { self.subst_term.iter().map(Option::is_some).collect() }
+
+  fn rollback(&mut self, snapshot: &[bool], upto: usize) {
+    for j in 0..=upto {
+      match &mut self.subst_term[j] {
+        x @ Some(_) if !snapshot[j] => *x = None,
+        _ => {}
+      }
+    }
+  }
+
   /// NEW = false: CheckLociTypes
   /// NEW = true: CheckLociTypesN
   /// round_up: ItIsChecker
@@ -1314,7 +1331,7 @@ impl Subst {
         assert!(!NEW)
       };
       // vprintln!("main {i:?}, subst = {:?} : {subst_ty:?}, tm = {tm:?}", self.subst_term);
-      let mut orig_subst = self.subst_term.iter().map(Option::is_some).collect::<Vec<_>>();
+      let mut snap = self.snapshot();
       // let wty be the type of subst_term[i]
       let wty = if round_up {
         tm.round_up_type(g, lc, round_up)
@@ -1326,7 +1343,7 @@ impl Subst {
       // This is a necessary condition for wty <: tys[i].
       let mut ok = if wty.decreasing_attrs(&tys[i], |a1, a2| self.eq_attr(g, lc, a1, a2)) {
         if NEW {
-          orig_subst = self.subst_term.iter().map(Option::is_some).collect::<Vec<_>>();
+          snap = self.snapshot();
         }
         Some(wty)
       } else {
@@ -1346,7 +1363,7 @@ impl Subst {
           };
 
           // Unify subst(tys[i]) and wty, which can assign some entries in subst_term.
-          let comp = self.cmp_type(g, lc, &tys[i], &wty, false);
+          let comp = self.eq_radices(g, lc, &tys[i], &wty);
           // Record that subst_ty[i] := wty
           subst_ty[i] = Some(wty.to_owned());
           if comp {
@@ -1354,13 +1371,7 @@ impl Subst {
             continue 'main
           }
           // Unset anything that was set as a result of the unification
-          #[allow(clippy::needless_range_loop)]
-          for j in 0..=i {
-            match &mut self.subst_term[j] {
-              x @ Some(_) if !orig_subst[j] => *x = None,
-              _ => {}
-            }
-          }
+          self.rollback(&snap, i)
         } else {
           // we get here when we want to backtrack because we can't satisfy
           // the current substitution
@@ -1405,29 +1416,12 @@ impl Subst {
       }
     }
   }
-
-  fn cmp_type(
-    &mut self, g: &Global, lc: &LocalContext, ty1: &Type, ty2: &Type, exact: bool,
-  ) -> bool {
-    // eprintln!("{ty1:?} <?> {ty2:?}");
-    match (ty1.kind, ty2.kind) {
-      (TypeKind::Mode(n1), TypeKind::Mode(n2)) if n1 == n2 =>
-        self.eq_terms(g, lc, &ty1.args, &ty2.args),
-      (TypeKind::Mode(n1), TypeKind::Mode(n2)) if !exact => {
-        let (n2, args2) = Type::adjust(n2, &ty2.args, &g.constrs);
-        n1 == n2 && self.eq_terms(g, lc, &ty1.args, args2)
-      }
-      (TypeKind::Struct(n1), TypeKind::Struct(n2)) =>
-        n1 == n2 && self.eq_terms(g, lc, &ty1.args, &ty2.args),
-      _ => false,
-    }
-  }
 }
 
 impl Equate for Subst {
   const ADJUST_LEFT: bool = false;
 
-  fn eq_locus_var(&mut self, _n1: u32, _n2: u32) -> bool { false }
+  fn eq_locus_var(&mut self, _n1: LocusId, _n2: LocusId) -> bool { false }
   fn locus_var_left(&mut self, g: &Global, lc: &LocalContext, nr: LocusId, t2: &Term) -> bool {
     // vprintln!("{self:?} @ v{nr:?} =? {t2:?}");
     match &mut self.subst_term[Idx::into_usize(nr)] {
@@ -1715,11 +1709,11 @@ impl ConditionalCluster {
       return None
     }
     let ty = self.ty.widening_of(g, ty)?;
-    if subst.cmp_type(g, lc, &self.ty, &ty, false)
+    if subst.eq_radices(g, lc, &self.ty, &ty)
       && self.ty.attrs.0.is_subset_of(&ty.attrs.1, |a1, a2| subst.eq_attr(g, lc, a1, a2))
       && subst.check_loci_types::<false>(g, lc, &self.primary, round_up)
     {
-      Some(subst.subst_term.into_vec().into_iter().map(|x| *x.unwrap()).collect::<Box<[Term]>>())
+      Some(subst.finish())
     } else {
       None
     }
@@ -1767,7 +1761,7 @@ impl FunctorCluster {
       if let Some(cluster_ty) = &self.ty {
         match cluster_ty.widening_of(g, ty) {
           Some(ty)
-            if subst.cmp_type(g, lc, cluster_ty, &ty, false)
+            if subst.eq_radices(g, lc, cluster_ty, &ty)
               && (cluster_ty.attrs.0)
                 .is_subset_of(&ty.attrs.1, |a1, a2| subst.eq_attr(g, lc, a1, a2))
               && subst.check_loci_types::<false>(g, lc, &self.primary, recursive) => {}
@@ -2196,8 +2190,9 @@ impl<V: VisitMut> Visitable<V> for Assignment {
 
 #[derive(Debug)]
 struct FuncDef {
-  ty: Type,
-  _value: Term,
+  _primary: Box<[Type]>,
+  ty: Box<Type>,
+  _value: Box<Term>,
 }
 
 #[derive(Debug)]

@@ -1,8 +1,11 @@
 use crate::mk_id;
-use crate::types::{BlockKind, CorrCondKind, Position, PropertyKind, SchId, SchRef};
+use crate::types::{
+  AttrSymId, BlockKind, CorrCondKind, FuncSymId, LeftBrkSymId, LocusId, ModeSymId, Position,
+  PredSymId, PropertyKind, RightBrkSymId, SchId, SchRef, SelSymId, StructSymId,
+};
 
 mk_id! {
-  IdentId,
+  IdentId(u32),
 }
 
 #[derive(Debug)]
@@ -11,22 +14,98 @@ pub struct Variable {
   pub id: (IdentId, String),
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum VarKind {
+  Unknown,
+  Free,
+  Reserved,
+  Bound,
+  Const,
+  DefConst,
+  SchFunc,
+  PrivFunc,
+  SchPred,
+  PrivPred,
+}
+impl Default for VarKind {
+  fn default() -> Self { Self::Unknown }
+}
+
 #[derive(Debug)]
 pub enum Term {
-  Placeholder { pos: Position, nr: u32 },
-  Numeral { pos: Position, value: u32 },
-  Simple { pos: Position, sym: (u32, String) },
-  PrivFunc { pos: Position, sym: (u32, String), args: Vec<Term> },
-  Infix { pos: Position, sym: (u32, String), left: Vec<Term>, right: Vec<Term> },
-  Bracket { pos: Position, lsym: (u32, String), rsym: (u32, String), args: Vec<Term> },
-  Aggregate { pos: Position, sym: (u32, String), args: Vec<Term> },
-  ForgetFunc { pos: Position, sym: (u32, String), arg: Box<Term> },
-  Selector { pos: Position, sym: (u32, String), arg: Box<Term> },
-  InternalSelector { pos: Position, sym: (u32, String) },
-  Qua { pos: Position, term: Box<Term>, ty: Box<Type> },
-  The { pos: Position, ty: Box<Type> },
-  Fraenkel { pos: Position, vars: Vec<BinderGroup>, scope: Box<Term>, compr: Option<Box<Formula>> },
-  It { pos: Position },
+  Placeholder {
+    pos: Position,
+    nr: LocusId,
+  },
+  Numeral {
+    pos: Position,
+    value: u32,
+  },
+  Simple {
+    pos: Position,
+    sym: (u32, String),
+    origin: VarKind,
+    kind: VarKind,
+    serial: u32,
+    var: u32,
+  },
+  PrivFunc {
+    pos: Position,
+    sym: (u32, String),
+    kind: VarKind,
+    serial: u32,
+    var: u32,
+    args: Vec<Term>,
+  },
+  Infix {
+    pos: Position,
+    sym: (FuncSymId, String),
+    left: u8,
+    args: Vec<Term>,
+  },
+  Bracket {
+    pos: Position,
+    lsym: (LeftBrkSymId, String),
+    rsym: (RightBrkSymId, String),
+    args: Vec<Term>,
+  },
+  Aggregate {
+    pos: Position,
+    sym: (StructSymId, String),
+    args: Vec<Term>,
+  },
+  SubAggr {
+    pos: Position,
+    sym: (StructSymId, String),
+    arg: Box<Term>,
+  },
+  Selector {
+    pos: Position,
+    sym: (SelSymId, String),
+    arg: Box<Term>,
+  },
+  InternalSelector {
+    pos: Position,
+    sym: (u32, String),
+  },
+  Qua {
+    pos: Position,
+    term: Box<Term>,
+    ty: Box<Type>,
+  },
+  The {
+    pos: Position,
+    ty: Box<Type>,
+  },
+  Fraenkel {
+    pos: Position,
+    vars: Vec<BinderGroup>,
+    scope: Box<Term>,
+    compr: Option<Box<Formula>>,
+  },
+  It {
+    pos: Position,
+  },
 }
 impl Term {
   pub fn pos(&self) -> Position {
@@ -38,7 +117,7 @@ impl Term {
       | Term::Infix { pos, .. }
       | Term::Bracket { pos, .. }
       | Term::Aggregate { pos, .. }
-      | Term::ForgetFunc { pos, .. }
+      | Term::SubAggr { pos, .. }
       | Term::Selector { pos, .. }
       | Term::InternalSelector { pos, .. }
       | Term::Qua { pos, .. }
@@ -51,15 +130,15 @@ impl Term {
 
 #[derive(Debug)]
 pub enum Type {
-  Standard { pos: Position, sym: (u32, String), args: Vec<Term> },
-  Struct { pos: Position, sym: (u32, String), args: Vec<Term> },
-  Cluster { pos: Position, attrs: Vec<Adjective>, ty: Box<Type> },
-  Reservation { pos: Position, sym: (u32, String), nr: u32, subst: Vec<[u32; 3]> },
+  Mode { pos: Position, sym: (ModeSymId, String), args: Vec<Term> },
+  Struct { pos: Position, sym: (StructSymId, String), args: Vec<Term> },
+  Cluster { pos: Position, attrs: Vec<Attr>, ty: Box<Type> },
+  Reservation { pos: Position, nr: Option<u32>, subst: Vec<[u32; 3]> },
 }
 impl Type {
   pub fn pos(&self) -> Position {
     match self {
-      Type::Standard { pos, .. }
+      Type::Mode { pos, .. }
       | Type::Struct { pos, .. }
       | Type::Cluster { pos, .. }
       | Type::Reservation { pos, .. } => *pos,
@@ -67,7 +146,7 @@ impl Type {
   }
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum FormulaBinop {
   And,
   Or,
@@ -77,7 +156,7 @@ pub enum FormulaBinop {
   FlexOr,
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum FormulaBinder {
   ForAll,
   Exists,
@@ -85,27 +164,27 @@ pub enum FormulaBinder {
 
 #[derive(Debug)]
 pub struct Pred {
-  pub sym: (u32, String),
-  pub left: Vec<Term>,
-  pub right: Vec<Term>,
+  pub sym: (PredSymId, String),
+  pub left: u8,
+  pub args: Vec<Term>,
 }
 
 #[derive(Debug)]
 pub struct PredRhs {
-  pub sym: (u32, String),
+  pub sym: (PredSymId, String),
   pub right: Vec<Term>,
 }
 
 #[derive(Debug)]
 pub enum Formula {
   Not { pos: Position, f: Box<Formula> },
-  Binop { kind: FormulaBinop, pos: Position, f: [Box<Formula>; 2] },
-  Pred { pos: Position, f: Pred },
+  Binop { kind: FormulaBinop, pos: Position, f1: Box<Formula>, f2: Box<Formula> },
+  Pred { pos: Position, pred: Pred },
   ChainPred { pos: Position, first: Pred, rest: Vec<PredRhs> },
-  PrivPred { pos: Position, sym: (u32, String), args: Vec<Term> },
-  Attr { pos: Position, term: Box<Term>, attrs: Vec<Adjective> },
+  PrivPred { pos: Position, sym: (u32, String), kind: VarKind, args: Vec<Term> },
+  Attr { pos: Position, term: Box<Term>, attrs: Vec<Attr> },
   Is { pos: Position, term: Box<Term>, ty: Box<Type> },
-  Binder { kind: FormulaBinder, pos: Position, var: Box<BinderGroup>, f: Box<Formula> },
+  Binder { kind: FormulaBinder, pos: Position, var: Box<BinderGroup>, scope: Box<Formula> },
   False { pos: Position },
   Thesis { pos: Position },
 }
@@ -154,7 +233,6 @@ pub enum SchemeBinderGroup {
 pub struct BinderGroup {
   pub vars: Vec<Variable>,
   pub ty: Option<Box<Type>>,
-  pub subst: Vec<[u32; 3]>,
 }
 
 #[derive(Debug)]
@@ -197,8 +275,18 @@ pub struct PatternStruct {
 
 #[derive(Debug)]
 pub enum PatternFunc {
-  Func { pos: Position, sym: (u32, String), left: Vec<Variable>, right: Vec<Variable> },
-  Bracket { pos: Position, lsym: (u32, String), rsym: (u32, String), args: Vec<Variable> },
+  Func {
+    pos: Position,
+    sym: (FuncSymId, String),
+    left: Vec<Variable>,
+    right: Vec<Variable>,
+  },
+  Bracket {
+    pos: Position,
+    lsym: (LeftBrkSymId, String),
+    rsym: (RightBrkSymId, String),
+    args: Vec<Variable>,
+  },
 }
 
 #[derive(Debug)]
@@ -278,16 +366,16 @@ pub enum PatternRedefKind {
 }
 
 #[derive(Debug)]
-pub enum Adjective {
-  Attr { pos: Position, sym: (u32, String), args: Vec<Term> },
-  Non { pos: Position, attr: Box<Adjective> },
+pub enum Attr {
+  Attr { pos: Position, sym: (AttrSymId, String), args: Vec<Term> },
+  Non { pos: Position, attr: Box<Attr> },
 }
 
 #[derive(Debug)]
 pub enum ClusterDeclKind {
-  Exist { concl: Vec<Adjective>, ty: Box<Type> },
-  Func { term: Box<Term>, concl: Vec<Adjective>, ty: Option<Box<Type>> },
-  Cond { antecedent: Vec<Adjective>, concl: Vec<Adjective>, ty: Box<Type> },
+  Exist { concl: Vec<Attr>, ty: Box<Type> },
+  Func { term: Box<Term>, concl: Vec<Attr>, ty: Option<Box<Type>> },
+  Cond { antecedent: Vec<Attr>, concl: Vec<Attr>, ty: Box<Type> },
 }
 
 #[derive(Debug)]

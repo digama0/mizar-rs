@@ -146,13 +146,13 @@ impl<I, T> IdxVec<I, T> {
   }
 
   /// An iterator including the indexes, like `iter().enumerate()`, as `BlockId`s.
-  pub fn enum_iter(&self) -> impl Iterator<Item = (I, &T)> + Clone
+  pub fn enum_iter(&self) -> impl DoubleEndedIterator<Item = (I, &T)> + Clone
   where I: Idx {
     self.0.iter().enumerate().map(|(n, val)| (I::from_usize(n), val))
   }
 
   /// An iterator including the indexes, like `iter_mut().enumerate()`, as `BlockId`s.
-  pub fn enum_iter_mut(&mut self) -> impl Iterator<Item = (I, &mut T)>
+  pub fn enum_iter_mut(&mut self) -> impl DoubleEndedIterator<Item = (I, &mut T)>
   where I: Idx {
     self.0.iter_mut().enumerate().map(|(n, val)| (I::from_usize(n), val))
   }
@@ -192,12 +192,12 @@ impl<I: Idx, T> Index<Range<I>> for IdxVec<I, T> {
 
 #[macro_export]
 macro_rules! mk_id {
-  ($($id:ident,)*) => {
+  ($($id:ident($ty:ty),)*) => {
     $(
       #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-      pub struct $id(pub u32);
+      pub struct $id(pub $ty);
       impl $crate::Idx for $id {
-        fn from_usize(n: usize) -> Self { Self(n as u32) }
+        fn from_usize(n: usize) -> Self { Self(n as $ty) }
         fn into_usize(self) -> usize { self.0 as usize }
       }
       impl std::fmt::Debug for $id {
@@ -205,7 +205,7 @@ macro_rules! mk_id {
       }
       impl std::str::FromStr for $id {
         type Err = std::num::ParseIntError;
-        fn from_str(s: &str) -> Result<Self, Self::Err> { u32::from_str(s).map($id) }
+        fn from_str(s: &str) -> Result<Self, Self::Err> { <$ty>::from_str(s).map($id) }
       }
     )*
   };
@@ -281,31 +281,31 @@ impl<I: Idx, T> SortedIdxVec<I, T> {
 }
 
 mk_id! {
-  ModeId,
-  StructId,
-  AttrId,
-  PredId,
-  SchPredId,
-  PrivPredId,
-  FuncId,
-  SelId,
-  AggrId,
-  BoundId,
-  ConstId,
-  FVarId,
-  InferId,
-  EqClassId,
-  EqTermId,
-  EqMarkId,
-  SchFuncId,
-  PrivFuncId,
-  LocusId,
-  LabelId,
-  ArticleId,
-  DefId,
-  ThmId,
-  SchId,
-  AtomId,
+  ModeId(u32),
+  StructId(u32),
+  AttrId(u32),
+  PredId(u32),
+  SchPredId(u32),
+  PrivPredId(u32),
+  FuncId(u32),
+  SelId(u32),
+  AggrId(u32),
+  BoundId(u32),
+  ConstId(u32),
+  FVarId(u32),
+  InferId(u32),
+  EqClassId(u32),
+  EqTermId(u32),
+  EqMarkId(u32),
+  SchFuncId(u32),
+  PrivFuncId(u32),
+  LocusId(u8),
+  LabelId(u32),
+  ArticleId(u32),
+  DefId(u32),
+  ThmId(u32),
+  SchId(u32),
+  AtomId(u32),
 }
 impl ArticleId {
   pub const SELF: ArticleId = ArticleId(0);
@@ -1849,14 +1849,14 @@ pub enum Item {
 }
 
 mk_id! {
-  FuncSymId,
-  LeftBrkSymId,
-  RightBrkSymId,
-  PredSymId,
-  ModeSymId,
-  AttrSymId,
-  StructSymId,
-  SelSymId,
+  FuncSymId(u32),
+  LeftBrkSymId(u32),
+  RightBrkSymId(u32),
+  PredSymId(u32),
+  ModeSymId(u32),
+  AttrSymId(u32),
+  StructSymId(u32),
+  SelSymId(u32),
 }
 
 #[derive(Hash, PartialEq, Eq, Debug)]
@@ -1913,59 +1913,48 @@ impl SymbolKind {
 #[derive(Debug, Default)]
 pub struct Symbols(pub Vec<(SymbolKind, String)>);
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
 pub struct FormatAggr {
   pub sym: StructSymId,
   pub args: u8,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct FormatForgetFunc {
-  pub sym: StructSymId,
-  pub args: u8,
-}
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
 pub struct FormatStructMode {
   pub sym: StructSymId,
   pub args: u8,
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
 pub struct FormatMode {
   pub sym: ModeSymId,
   pub args: u8,
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
 pub struct FormatAttr {
   pub sym: AttrSymId,
   pub args: u8,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct FormatSel {
-  pub sym: SelSymId,
-  pub args: u8,
-}
-
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
 pub enum FormatFunc {
   Func { sym: FuncSymId, left: u8, right: u8 },
   Bracket { lsym: LeftBrkSymId, rsym: RightBrkSymId, args: u8 },
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
 pub struct FormatPred {
   pub sym: PredSymId,
   pub left: u8,
   pub right: u8,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
 pub enum Format {
   Aggr(FormatAggr),
-  ForgetFunc(FormatForgetFunc), // unused
+  SubAggr(StructSymId),
   Struct(FormatStructMode),
   Mode(FormatMode),
-  Sel(FormatSel),
+  Sel(SelSymId),
   Attr(FormatAttr),
   Func(FormatFunc),
   Pred(FormatPred),
@@ -1975,7 +1964,7 @@ impl Format {
   pub fn discr(&self) -> u8 {
     match self {
       Format::Aggr(_) => b'G',
-      Format::ForgetFunc(_) => b'J',
+      Format::SubAggr(_) => b'J',
       Format::Struct(_) => b'L',
       Format::Mode(_) => b'M',
       Format::Sel(_) => b'U',
@@ -1995,7 +1984,7 @@ pub enum PriorityKind {
 }
 
 mk_id! {
-  FormatId,
+  FormatId(u32),
 }
 #[derive(Debug, Default)]
 pub struct Formats {
@@ -2013,7 +2002,7 @@ pub enum PatternKind {
   Func(FuncId),
   Sel(SelId),
   Aggr(AggrId),
-  ForgetFunc(u32), // unused
+  SubAggr(StructId),
 }
 
 impl PatternKind {
@@ -2026,7 +2015,7 @@ impl PatternKind {
       PatternKind::Func(_) => b'K',
       PatternKind::Sel(_) => b'U',
       PatternKind::Aggr(_) => b'G',
-      PatternKind::ForgetFunc(_) => b'J',
+      PatternKind::SubAggr(_) => b'J',
     }
   }
 }
@@ -2040,7 +2029,7 @@ pub struct Pattern {
   pub fmt: FormatId,
   pub redefines: Option<u32>,
   pub primary: Box<[Type]>,
-  pub visible: Box<[u8]>,
+  pub visible: Box<[LocusId]>,
   pub pos: bool,
   pub expansion: Option<Box<Type>>,
 }

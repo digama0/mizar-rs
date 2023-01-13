@@ -239,8 +239,12 @@ impl Reader {
         }
         self.read_just_prop(prop, just);
       }
-      Item::AuxiliaryItem(AuxiliaryItem::DefFunc { args: _, ty, value }) => {
-        self.lc.priv_func.push(FuncDef { ty: self.intern(ty), _value: self.intern(value) });
+      Item::AuxiliaryItem(AuxiliaryItem::DefFunc { args, ty, value }) => {
+        self.lc.priv_func.push(FuncDef {
+          _primary: self.intern(args),
+          ty: Box::new(self.intern(ty)),
+          _value: Box::new(self.intern(value)),
+        });
       }
       Item::AuxiliaryItem(AuxiliaryItem::DefPred { .. }) => {}
       Item::Registration(reg) => match reg {

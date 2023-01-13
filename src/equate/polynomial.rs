@@ -479,7 +479,7 @@ impl<I: Idx> LinPoly<I> {
   }
 }
 
-mk_id! { MonomialId, }
+mk_id! { MonomialId(u32), }
 
 pub(super) fn gaussian_elimination<I: Idx>(
   vars: &mut SortedIdxVec<MonomialId, BTreeMap<I, u32>>, polys: BTreeSet<Polynomial<I>>,
