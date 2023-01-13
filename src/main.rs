@@ -785,11 +785,11 @@ impl Equate for () {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct Subst {
+pub struct Subst<'a> {
   // subst_ty: Vec<Option<Box<Term>>>,
   /// gSubstTrm
   /// `IdxVec<LocusId, Option<Box<Term>>>` but fixed length
-  subst_term: Box<[Option<Box<Term>>]>,
+  subst_term: Box<[Option<CowBox<'a, Term>>]>,
 }
 
 macro_rules! mk_visit {
@@ -1243,7 +1243,7 @@ impl TermCollection {
   fn clear(&mut self) { self.terms.clear() }
 }
 
-impl Subst {
+impl<'a> Subst<'a> {
   fn new(size: usize) -> Self { Self { subst_term: vec![None; size].into() } }
 
   fn clear(&mut self) {
@@ -1253,34 +1253,34 @@ impl Subst {
   }
 
   /// InitEssentialsArgs
-  fn from_essential(len: usize, essential: &[LocusId], args: &[Term]) -> Self {
+  fn from_essential(len: usize, essential: &[LocusId], args: &'a [Term]) -> Self {
     // eprintln!("from_essential {essential:?}");
     assert_eq!(args.len(), essential.len());
     let mut subst = Self::new(len);
     for (&n, t) in essential.iter().zip(args) {
-      subst.subst_term[Idx::into_usize(n)] = Some(Box::new(t.clone()))
+      subst.subst_term[Idx::into_usize(n)] = Some(CowBox::Borrowed(t))
     }
     subst
   }
 
   /// InitInst
-  fn finish(&self) -> Box<[Term]> {
-    self.subst_term.iter().map(|t| t.as_deref().unwrap().clone()).collect()
+  fn finish(self) -> Box<[Term]> {
+    self.subst_term.into_vec().into_iter().map(|t| *t.unwrap().to_owned()).collect()
   }
 
-  fn inst_term_mut(&self, tm: &mut Term, depth: u32) {
+  fn inst_term_mut(self, tm: &mut Term, depth: u32) {
     Inst { subst: &self.finish(), base: depth, depth }.visit_term(tm)
   }
 
   /// InstSubstTrm
-  fn inst_term(&self, tm: &Term, depth: u32) -> Term {
+  fn inst_term(self, tm: &Term, depth: u32) -> Term {
     let mut tm = tm.clone();
     self.inst_term_mut(&mut tm, depth);
     tm
   }
 
   /// InstSubstFrm
-  fn inst_formula_mut(&self, f: &mut Formula, depth: u32) {
+  fn inst_formula_mut(self, f: &mut Formula, depth: u32) {
     Inst { subst: &self.finish(), base: depth, depth }.visit_formula(f)
   }
 
@@ -1417,7 +1417,7 @@ impl Subst {
   }
 }
 
-impl Equate for Subst {
+impl Equate for Subst<'_> {
   const ADJUST_LEFT: bool = false;
 
   fn eq_locus_var(&mut self, _n1: LocusId, _n2: LocusId) -> bool { false }
@@ -1425,7 +1425,7 @@ impl Equate for Subst {
     // vprintln!("{self:?} @ v{nr:?} =? {t2:?}");
     match &mut self.subst_term[Idx::into_usize(nr)] {
       x @ None => {
-        *x = Some(Box::new(t2.clone()));
+        *x = Some(CowBox::Owned(Box::new(t2.clone())));
         true
       }
       Some(tm) => ().eq_term(g, lc, t2, tm),
@@ -1789,9 +1789,9 @@ impl Definiens {
   }
 
   /// Matches (in identify)
-  pub fn matches(
-    &self, g: &Global, lc: &LocalContext, kind: ConstrKind, args: &[Term],
-  ) -> Option<Subst> {
+  pub fn matches<'a>(
+    &self, g: &Global, lc: &LocalContext, kind: ConstrKind, args: &'a [Term],
+  ) -> Option<Subst<'a>> {
     if self.constr != kind {
       return None
     }
@@ -1815,7 +1815,9 @@ impl EqualsDef {
 }
 
 impl Identify {
-  fn try_apply_lhs(&self, g: &Global, lc: &LocalContext, lhs: &Term, tm: &Term) -> Option<Subst> {
+  fn try_apply_lhs(
+    &self, g: &Global, lc: &LocalContext, lhs: &Term, tm: &Term,
+  ) -> Option<Subst<'static>> {
     let mut subst = Subst::new(self.primary.len());
     subst.eq_term(g, lc, lhs, tm).then_some(())?;
     subst.check_loci_types::<false>(g, lc, &self.primary, false).then_some(())?;
