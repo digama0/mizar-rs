@@ -2,8 +2,8 @@
 use super::XmlReader;
 use crate::ast::*;
 use crate::types::{
-  FuncSymId, LeftBrkSymId, LocusId, ModeSymId, Position, PredSymId, PropertyKind, RightBrkSymId,
-  SchRef, SelSymId, StructSymId,
+  FuncSymId, LabelId, LeftBrkSymId, LocusId, ModeSymId, Position, PredSymId, PropertyKind,
+  RightBrkSymId, SchRef, SelSymId, StructSymId,
 };
 use crate::{types, MizPath};
 use quick_xml::events::{BytesStart, Event};
@@ -61,7 +61,7 @@ pub enum BlockKind {
   Now,
   Hereby,
   Proof,
-  CS(CaseOrSupposeKind),
+  Case(CaseKind),
   Scheme,
 }
 
@@ -525,7 +525,7 @@ impl MsmParser {
         end_tag = true;
         ItemKind::Take { var, term }
       }
-      b"Per-Cases" => ItemKind::PerCases { just: self.parse_justification() },
+      b"Per-Cases" => ItemKind::PerCasesHead(self.parse_justification()),
       b"Regular-Statement" => {
         let shape = (*shape).try_into().unwrap();
         end_tag = true;
@@ -538,17 +538,27 @@ impl MsmParser {
       }
       b"Case-Block" => {
         let mut bl = self.parse_block().unwrap();
-        let BlockKind::CS(kind) = bl.kind else { panic!("expected case or suppose block") };
-        let hyp = Box::new(match (&kind, bl.items.remove(0).kind) {
-          (CaseOrSupposeKind::Case, ItemKind::CaseHead(hyp))
-          | (CaseOrSupposeKind::Suppose, ItemKind::SupposeHead(hyp)) => hyp,
+        let BlockKind::Case(kind) = bl.kind else { panic!("expected case or suppose block") };
+        let hyp = Box::new(match bl.items.remove(0).kind {
+          ItemKind::CaseHead(k2, hyp) if k2 == kind => hyp,
           _ => panic!("missing case/suppose head"),
         });
-        ItemKind::CaseOrSuppose { end: bl.pos.1, kind, hyp, items: bl.items }
+        let bl = CaseBlock { end: bl.pos.1, hyp, items: bl.items };
+        let it = &mut items.last_mut().unwrap().kind;
+        match it {
+          ItemKind::PerCases { kind: k2, blocks, .. } if *k2 == kind => blocks.push(bl),
+          _ => {
+            let ItemKind::PerCasesHead(just) = std::mem::take(it)
+            else { panic!("unexpected case block") };
+            *it = ItemKind::PerCases { just, kind, blocks: vec![bl] };
+          }
+        }
+        self.r.end_tag(&mut self.buf);
+        return true
       }
-      b"Case-Head" => ItemKind::CaseHead(self.parse_assumption()),
-      b"Suppose-Head" => ItemKind::SupposeHead(self.parse_assumption()),
-      b"Assumption" => ItemKind::Assumption(self.parse_assumption()),
+      b"Case-Head" => ItemKind::CaseHead(CaseKind::Case, self.parse_assumption()),
+      b"Suppose-Head" => ItemKind::CaseHead(CaseKind::Suppose, self.parse_assumption()),
+      b"Assumption" => ItemKind::Assume(self.parse_assumption()),
       b"Correctness-Condition" => {
         let kind = (*condition).try_into().unwrap();
         let corr = items.last_mut().and_then(|it| it.kind.corr_mut()).unwrap().0;
@@ -780,8 +790,8 @@ impl MsmParser {
                 b"Definitional-Block" => BlockKind::Def(types::BlockKind::Definition),
                 b"Notation-Block" => BlockKind::Def(types::BlockKind::Notation),
                 b"Registration-Block" => BlockKind::Def(types::BlockKind::Registration),
-                b"Case" => BlockKind::CS(CaseOrSupposeKind::Case),
-                b"Suppose" => BlockKind::CS(CaseOrSupposeKind::Suppose),
+                b"Case" => BlockKind::Case(CaseKind::Case),
+                b"Suppose" => BlockKind::Case(CaseKind::Suppose),
                 b"Scheme-Block" => BlockKind::Scheme,
                 kind => panic!("unrecognized block kind: {}", std::str::from_utf8(kind).unwrap()),
               },
@@ -922,7 +932,7 @@ impl MsmParser {
               match attr.key {
                 b"line" => pos.line = self.r.get_attr(&attr.value),
                 b"col" => pos.col = self.r.get_attr(&attr.value),
-                b"idnr" => id = self.r.get_attr(&attr.value),
+                b"idnr" => id = LabelId(self.r.get_attr::<u32>(&attr.value) - 1),
                 b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
                 _ => {}
               }

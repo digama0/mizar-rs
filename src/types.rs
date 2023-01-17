@@ -818,6 +818,14 @@ impl Formula {
     }
   }
 
+  pub fn conjuncts(&self) -> &[Formula] {
+    match self {
+      Formula::True => &[],
+      Formula::And { args } => args,
+      f => std::slice::from_ref(f),
+    }
+  }
+
   // postcondition: the things pushed to vec are not And expressions
   pub fn append_conjuncts_to(self, vec: &mut Vec<Formula>) {
     match self {
@@ -1811,17 +1819,16 @@ pub enum CancelKind {
 }
 
 #[derive(Debug)]
-pub enum CaseOrSuppose {
+pub enum CaseKind {
   Case(Vec<Proposition>),
   Suppose(Vec<Proposition>),
 }
 
 #[derive(Debug)]
-pub struct CaseOrSupposeBlock {
+pub struct CaseBlock {
   pub pos: (Position, Position),
-  pub label: Option<LabelId>,
   pub block_thesis: Formula,
-  pub cs: CaseOrSuppose,
+  pub cs: CaseKind,
   pub items: Vec<(Item, Option<Thesis>)>,
   pub thesis: Option<Thesis>,
 }
@@ -1831,7 +1838,7 @@ pub struct PerCases {
   pub pos: (Position, Position),
   pub label: Option<LabelId>,
   pub block_thesis: Formula,
-  pub cases: Vec<CaseOrSupposeBlock>,
+  pub cases: Vec<CaseBlock>,
   pub prop: Proposition,
   pub just: Justification,
   pub thesis: Option<Thesis>,

@@ -227,6 +227,15 @@ impl MizPath {
   }
 }
 
+pub struct Scope {
+  pub fixed_var: usize,
+  pub props: usize,
+  pub labels: usize,
+  pub priv_funcs: usize,
+  pub infer_const: usize,
+  pub pending_defs: usize,
+}
+
 impl Reader {
   pub fn new(reqs: RequirementIndexes, numeral_type: Type, article: Article) -> Self {
     Reader {
@@ -259,7 +268,7 @@ impl Reader {
     }
   }
 
-  fn intern<'a, T: Clone + Visitable<InternConst<'a>>>(&'a self, t: &T) -> T {
+  pub fn intern<'a, T: Clone + Visitable<InternConst<'a>>>(&'a self, t: &T) -> T {
     let mut t = t.clone();
     t.visit(&mut self.intern_const());
     t
@@ -269,7 +278,7 @@ impl Reader {
     InternConst::new(&self.g, &self.lc, &self.equals, &self.identify, &self.func_ids)
   }
 
-  fn push_prop(&mut self, label: Option<LabelId>, prop: Formula) {
+  pub fn push_prop(&mut self, label: Option<LabelId>, prop: Formula) {
     // eprintln!("push_prop {:?}", label);
     if let Some(label) = label {
       assert_eq!(label, self.labels.push(Some(self.props.len())));
@@ -289,12 +298,10 @@ impl Reader {
     vars.iter().for_each(|ty| self.push_fixed_var(ty))
   }
 
-  fn scope<R>(
-    &mut self, label: Option<LabelId>, check_for_local_const: bool, f: impl FnOnce(&mut Self) -> R,
-  ) -> R {
+  pub fn open_scope(&mut self, push_label: bool) -> Scope {
     let labels = self.labels.len();
     // eprintln!("new block {:?}, labels = {labels}", label);
-    if label.is_some() {
+    if push_label {
       self.labels.push(None);
     }
     let fixed_var = self.lc.fixed_var.len();
@@ -305,9 +312,10 @@ impl Reader {
     // let sc = self.lc.term_cache.get_mut().scope;
     // vprintln!("open scope {:?}", (labels, fixed_var, props, priv_funcs, infer_const, sc));
     self.lc.term_cache.get_mut().open_scope();
+    Scope { fixed_var, props, labels, priv_funcs, infer_const, pending_defs }
+  }
 
-    let r = f(self);
-
+  pub fn close_scope(&mut self, sc: Scope, check_for_local_const: bool) {
     self.lc.term_cache.get_mut().close_scope();
     // let labels2 = self.labels.len();
     // let fixed_var2 = self.lc.fixed_var.len();
@@ -319,20 +327,20 @@ impl Reader {
     //   (labels, fixed_var, props, priv_funcs, infer_const, sc),
     //   (labels2, fixed_var2, props2, priv_funcs2, infer_const2, sc + 1)
     // );
-    self.lc.fixed_var.0.truncate(fixed_var);
-    self.props.truncate(props);
-    self.labels.0.truncate(labels);
-    self.lc.priv_func.0.truncate(priv_funcs);
+    self.lc.fixed_var.0.truncate(sc.fixed_var);
+    self.props.truncate(sc.props);
+    self.labels.0.truncate(sc.labels);
+    self.lc.priv_func.0.truncate(sc.priv_funcs);
     let mut renumber =
-      self.lc.truncate_infer_const(&self.g.constrs, check_for_local_const, infer_const);
+      self.lc.truncate_infer_const(&self.g.constrs, check_for_local_const, sc.infer_const);
     // let infer_const3 = self.lc.infer_const.get_mut().len();
     // if infer_const3 > infer_const {
     //   vprintln!("reinserted {:?} -> {:?}", infer_const, infer_const3);
     // }
     if renumber.is_empty() {
-      self.pending_defs.truncate(pending_defs)
+      self.pending_defs.truncate(sc.pending_defs)
     } else {
-      for x in self.pending_defs.drain(pending_defs..) {
+      for x in self.pending_defs.drain(sc.pending_defs..) {
         match x {
           PendingDef::Constr(k) => self.g.constrs.visit_at(&mut renumber, k),
           // PendingDef::Cluster => {}
@@ -341,6 +349,14 @@ impl Reader {
     }
 
     // self.dbg_scope_check();
+  }
+
+  fn scope<R>(
+    &mut self, label: Option<LabelId>, check_for_local_const: bool, f: impl FnOnce(&mut Self) -> R,
+  ) -> R {
+    let sc = self.open_scope(label.is_some());
+    let r = f(self);
+    self.close_scope(sc, check_for_local_const);
     r
   }
 
@@ -433,9 +449,9 @@ impl Reader {
       }
       Item::PerCases(PerCases { label, block_thesis, cases, prop, just, .. }) => {
         self.scope(*label, false, |this| {
-          for CaseOrSupposeBlock { label, cs, items, .. } in cases {
-            this.scope(*label, false, |this| {
-              let (CaseOrSuppose::Case(props) | CaseOrSuppose::Suppose(props)) = cs;
+          for CaseBlock { cs, items, .. } in cases {
+            this.scope(None, false, |this| {
+              let (CaseKind::Case(props) | CaseKind::Suppose(props)) = cs;
               props.iter().for_each(|p| this.read_proposition(p));
               for it in items {
                 this.read_item(&it.0);
@@ -782,6 +798,7 @@ impl Reader {
     match it.kind {
       InferenceKind::By { linked } => {
         if !self.treat_thm_as_axiom || linked || !it.refs.is_empty() {
+          // eprintln!("thesis: {thesis:?}");
           let neg_thesis = thesis.clone().mk_neg();
           let mut premises = vec![&neg_thesis];
           if linked {

@@ -2111,8 +2111,7 @@ impl VisitMut for InternConst<'_> {
       &mut Term::Constant(nr) => {
         let mut eq = BTreeSet::new();
         if let Some(fv) = &self.lc.fixed_var[nr].def {
-          let mut fv = (**fv).clone();
-          ExpandPrivFunc(&self.g.constrs).visit_term(&mut fv);
+          let mut fv = (**fv).visit_cloned(&mut ExpandPrivFunc(&self.g.constrs));
           self.visit_term(&mut fv);
           if self.only_constants {
             let Term::Infer(nr) = fv else { unreachable!() };
@@ -2537,32 +2536,34 @@ const ALWAYS_VERBOSE_ITEM: bool = false;
 const ITEM_HEADER: bool = false;
 const CHECKER_INPUTS: bool = DEBUG;
 const CHECKER_HEADER: bool = DEBUG;
-const CHECKER_CONJUNCTS: bool = DEBUG;
-const CHECKER_RESULT: bool = DEBUG;
-const UNIFY_HEADER: bool = DEBUG;
-const UNIFY_INSTS: bool = DEBUG;
+const CHECKER_CONJUNCTS: bool = false;
+const CHECKER_RESULT: bool = false;
+const UNIFY_HEADER: bool = false;
+const UNIFY_INSTS: bool = false;
 
 const DUMP_CONSTRUCTORS: bool = false;
 const DUMP_REQUIREMENTS: bool = false;
 const DUMP_LIBRARIES: bool = false;
 const DUMP_FORMATTER: bool = false;
 
-const ENABLE_ANALYZER: bool = false;
+const ENABLE_ANALYZER: bool = true;
 const ENABLE_CHECKER: bool = true;
 
 const FIRST_FILE: usize = 0;
 const ONE_FILE: bool = false;
 const PANIC_ON_FAIL: bool = DEBUG;
-const FIRST_VERBOSE_TOP_ITEM: Option<usize> = None;
+const FIRST_VERBOSE_TOP_ITEM: Option<usize> = if DEBUG { Some(0) } else { None };
 const FIRST_VERBOSE_ITEM: Option<usize> = None;
-const FIRST_VERBOSE_CHECKER: Option<usize> = if DEBUG { Some(0) } else { None };
+const FIRST_VERBOSE_CHECKER: Option<usize> = None;
 const SKIP_TO_VERBOSE: bool = DEBUG;
 const PARALLELISM: usize = if DEBUG || ONE_FILE { 1 } else { 7 };
 
 fn main() {
   ctrlc::set_handler(print_stats_and_exit).expect("Error setting Ctrl-C handler");
   // set_verbose(true);
-
+  // let path = MizPath(Article::from_bytes(b"TEST"), format!("../test/text/test").into());
+  // path.with_reader(|v| v.run_checker(&path));
+  // print_stats_and_exit();
   let first_file = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(FIRST_FILE);
   let file = std::fs::read_to_string("../mizshare/mml.lar").unwrap();
   let jobs = &Mutex::new(file.lines().enumerate().skip(first_file).collect_vec().into_iter());
@@ -2575,15 +2576,15 @@ fn main() {
         } {
           println!("{i}: {s}");
           let path = MizPath::new(s);
-          path.with_reader(|v| v.run_checker(&path));
-          // path.with_reader(|v| v.run_analyzer(&path));
+          // path.with_reader(|v| v.run_checker(&path));
+          path.with_reader(|v| v.run_analyzer(&path));
           // let items = path.open_wsx().unwrap().parse_items();
           // println!("parsed {s}, {} wsx items", items.len());
           // path.open_msx().unwrap().parse_items();
           // println!("parsed {s}, {} msx items", items.len());
 
-          // let output = std::process::Command::new("verifier")
-          //   .arg("-c")
+          // let output = std::process::Command::new("../src/kernel/verifier")
+          //   .arg("-a")
           //   .arg(format!("{}.miz", path.1.display()))
           //   .output()
           //   .unwrap();

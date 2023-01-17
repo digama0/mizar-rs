@@ -29,8 +29,8 @@ enum ArticleElem {
   Pattern(Pattern),
   BlockThesis(Formula),
   Proposition(Proposition),
-  CaseOrSupposeBlock(CaseOrSupposeBlock),
-  CaseOrSuppose(CaseOrSuppose),
+  CaseBlock(CaseBlock),
+  Case(CaseKind),
   EndPosition(Position),
   Other,
   End,
@@ -61,8 +61,8 @@ impl From<ArticleElem> for Item {
       | ArticleElem::BlockThesis(_)
       | ArticleElem::Proposition(_)
       | ArticleElem::PerCasesJustification(..)
-      | ArticleElem::CaseOrSupposeBlock(_)
-      | ArticleElem::CaseOrSuppose(_)
+      | ArticleElem::CaseBlock(_)
+      | ArticleElem::Case(_)
       | ArticleElem::EndPosition(_)
       | ArticleElem::Other
       | ArticleElem::End => panic!(),
@@ -244,14 +244,13 @@ impl ArticleParser<'_> {
     }
   }
 
-  fn parse_case_or_suppose_block(
-    &mut self, (start, label): (Position, Option<LabelId>),
-  ) -> CaseOrSupposeBlock {
+  fn parse_case_block(&mut self, (start, label): (Position, Option<LabelId>)) -> CaseBlock {
+    assert!(label.is_none());
     let mut block_thesis = None;
     let cs = loop {
       match self.parse_elem() {
         ArticleElem::BlockThesis(f) => assert!(block_thesis.replace(f).is_none()),
-        ArticleElem::CaseOrSuppose(cs) => break cs,
+        ArticleElem::Case(cs) => break cs,
         _ => panic!("expected <Case> / <Suppose>"),
       }
     };
@@ -259,7 +258,7 @@ impl ArticleParser<'_> {
     let (items, end) = self.parse_reasoning(block_thesis.is_none());
     let block_thesis = block_thesis.unwrap_or_else(|| self.parse_block_thesis().unwrap());
     self.r.end_tag(&mut self.buf);
-    CaseOrSupposeBlock { pos: (start, end), label, block_thesis, cs, items, thesis }
+    CaseBlock { pos: (start, end), block_thesis, cs, items, thesis }
   }
 
   fn parse_elem(&mut self) -> ArticleElem {
@@ -382,29 +381,29 @@ impl ArticleParser<'_> {
         }
         b"CaseBlock" => {
           let attrs = self.r.get_pos_and_label(&e);
-          let bl = self.parse_case_or_suppose_block(attrs);
-          assert!(matches!(bl.cs, CaseOrSuppose::Case(_)));
-          ArticleElem::CaseOrSupposeBlock(bl)
+          let bl = self.parse_case_block(attrs);
+          assert!(matches!(bl.cs, CaseKind::Case(_)));
+          ArticleElem::CaseBlock(bl)
         }
         b"SupposeBlock" => {
           let attrs = self.r.get_pos_and_label(&e);
-          let bl = self.parse_case_or_suppose_block(attrs);
-          assert!(matches!(bl.cs, CaseOrSuppose::Suppose(_)));
-          ArticleElem::CaseOrSupposeBlock(bl)
+          let bl = self.parse_case_block(attrs);
+          assert!(matches!(bl.cs, CaseKind::Suppose(_)));
+          ArticleElem::CaseBlock(bl)
         }
         b"Case" => {
           let mut props = vec![];
           while let Some(prop) = self.r.parse_proposition(&mut self.buf, true) {
             props.push(prop)
           }
-          ArticleElem::CaseOrSuppose(CaseOrSuppose::Case(props))
+          ArticleElem::Case(CaseKind::Case(props))
         }
         b"Suppose" => {
           let mut props = vec![];
           while let Some(prop) = self.r.parse_proposition(&mut self.buf, true) {
             props.push(prop)
           }
-          ArticleElem::CaseOrSuppose(CaseOrSuppose::Suppose(props))
+          ArticleElem::Case(CaseKind::Suppose(props))
         }
         b"JustifiedTheorem" => {
           let prop = self.r.parse_proposition(&mut self.buf, true).unwrap();
@@ -649,7 +648,7 @@ impl ArticleParser<'_> {
           let (prop, just) = loop {
             match self.parse_elem() {
               ArticleElem::BlockThesis(f) => assert!(block_thesis.replace(f).is_none()),
-              ArticleElem::CaseOrSupposeBlock(cs) => cases.push(cs),
+              ArticleElem::CaseBlock(cs) => cases.push(cs),
               ArticleElem::PerCasesJustification(prop, just) => break (prop, just),
               _ => panic!("expected <PerCases>"),
             }

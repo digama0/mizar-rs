@@ -1,7 +1,7 @@
 use crate::mk_id;
 use crate::types::{
-  AttrSymId, BlockKind, CorrCondKind, FuncSymId, LeftBrkSymId, LocusId, ModeSymId, Position,
-  PredSymId, PropertyKind, RightBrkSymId, SchId, SchRef, SelSymId, StructSymId,
+  AttrSymId, BlockKind, CorrCondKind, FuncSymId, LabelId, LeftBrkSymId, LocusId, ModeSymId,
+  Position, PredSymId, PropertyKind, RightBrkSymId, SchId, SchRef, SelSymId, StructSymId,
 };
 
 mk_id! {
@@ -247,8 +247,8 @@ pub struct Item {
   pub kind: ItemKind,
 }
 
-#[derive(Debug)]
-pub enum CaseOrSupposeKind {
+#[derive(Debug, PartialEq, Eq)]
+pub enum CaseKind {
   Case,
   Suppose,
 }
@@ -381,13 +381,21 @@ pub enum ClusterDeclKind {
 #[derive(Debug)]
 pub struct Label {
   pub pos: Position,
-  pub id: (u32, String),
+  pub id: (LabelId, String),
 }
 
 #[derive(Debug)]
 pub enum Assumption {
   Single { pos: Position, prop: Box<Proposition> },
   Collective { pos: Position, conds: Vec<Proposition> },
+}
+impl Assumption {
+  pub fn conds(&self) -> &[Proposition] {
+    match self {
+      Assumption::Single { prop, .. } => std::slice::from_ref(prop),
+      Assumption::Collective { conds, .. } => conds,
+    }
+  }
 }
 
 #[derive(Debug)]
@@ -511,7 +519,15 @@ pub struct Reduction {
 }
 
 #[derive(Debug)]
+pub struct CaseBlock {
+  pub end: Position,
+  pub hyp: Box<Assumption>,
+  pub items: Vec<Item>,
+}
+
+#[derive(Debug)]
 pub enum ItemKind {
+  Section,
   Block {
     end: Position,
     kind: BlockKind,
@@ -523,7 +539,6 @@ pub enum ItemKind {
     just: Box<Justification>,
   },
   Reservation(Box<Reservation>),
-  Section,
   /// itConclusion
   Thus(Statement),
   Statement(Statement),
@@ -575,14 +590,10 @@ pub enum ItemKind {
   },
   PerCases {
     just: Box<Justification>,
+    kind: CaseKind,
+    blocks: Vec<CaseBlock>,
   },
-  CaseOrSuppose {
-    end: Position,
-    kind: CaseOrSupposeKind,
-    hyp: Box<Assumption>,
-    items: Vec<Item>,
-  },
-  Assumption(Assumption),
+  Assume(Assumption),
   Property {
     prop: PropertyKind,
     just: Box<Justification>,
@@ -607,7 +618,11 @@ pub enum ItemKind {
   /// parser internal use only
   SchemeHead(Box<SchemeHead>),
   /// parser internal use only
-  CaseHead(Assumption),
+  CaseHead(CaseKind, Assumption),
   /// parser internal use only
-  SupposeHead(Assumption),
+  PerCasesHead(Box<Justification>),
+}
+
+impl Default for ItemKind {
+  fn default() -> Self { Self::Section }
 }
