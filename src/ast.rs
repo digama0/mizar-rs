@@ -1,7 +1,8 @@
 use crate::mk_id;
 use crate::types::{
   AttrSymId, BlockKind, CorrCondKind, FuncSymId, LabelId, LeftBrkSymId, LocusId, ModeSymId,
-  Position, PredSymId, PropertyKind, RightBrkSymId, SchId, SchRef, SelSymId, StructSymId,
+  Position, PredSymId, PropertyKind, Reference, RightBrkSymId, SchId, SchRef, SelSymId,
+  StructSymId,
 };
 
 mk_id! {
@@ -407,13 +408,6 @@ pub struct IterStep {
   pub pos: Position,
   pub rhs: Term,
   pub just: Justification,
-}
-
-#[derive(Debug)]
-pub enum Reference {
-  Local { pos: Position, lab: u32 },
-  Thm { pos: Position, article_nr: u32, thm_nr: u32 },
-  Def { pos: Position, article_nr: u32, def_nr: u32 },
 }
 
 #[derive(Debug)]

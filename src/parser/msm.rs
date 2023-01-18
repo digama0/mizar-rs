@@ -3,7 +3,7 @@ use super::XmlReader;
 use crate::ast::*;
 use crate::types::{
   FuncSymId, LabelId, LeftBrkSymId, LocusId, ModeSymId, Position, PredSymId, PropertyKind,
-  RightBrkSymId, SchRef, SelSymId, StructSymId,
+  Reference, ReferenceKind, RightBrkSymId, SchRef, SelSymId, StructSymId,
 };
 use crate::{types, MizPath};
 use quick_xml::events::{BytesStart, Event};
@@ -943,7 +943,7 @@ impl MsmParser {
           b"Local-Reference" => {
             let pos = self.r.get_pos(&e);
             let lab = self.r.get_attr(&e.try_get_attribute(b"idnr").unwrap().unwrap().value);
-            Elem::Reference(Reference::Local { pos, lab })
+            Elem::Reference(Reference { pos, kind: ReferenceKind::Priv(lab) })
           }
           b"Theorem-Reference" => {
             let (mut pos, (mut article_nr, mut thm_nr)) = <(Position, _)>::default();
@@ -957,7 +957,7 @@ impl MsmParser {
                 _ => {}
               }
             }
-            Elem::Reference(Reference::Thm { pos, article_nr, thm_nr })
+            Elem::Reference(Reference { pos, kind: ReferenceKind::Thm((article_nr, thm_nr)) })
           }
           b"Definition-Reference" => {
             let (mut pos, (mut article_nr, mut def_nr)) = <(Position, _)>::default();
@@ -971,7 +971,7 @@ impl MsmParser {
                 _ => {}
               }
             }
-            Elem::Reference(Reference::Def { pos, article_nr, def_nr })
+            Elem::Reference(Reference { pos, kind: ReferenceKind::Def((article_nr, def_nr)) })
           }
           b"Partial-Definiens" => match self.parse_elem() {
             Elem::Term(case) => Elem::DefCaseTerm(DefCase { case, guard: self.parse_formula() }),

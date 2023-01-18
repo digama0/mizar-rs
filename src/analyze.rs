@@ -111,12 +111,12 @@ impl Analyzer<'_> {
     match &it.kind {
       ast::ItemKind::Section | ast::ItemKind::Pragma { .. } => {}
       ast::ItemKind::Block { kind, items, .. } => match kind {
-        BlockKind::Definition => {}
-        BlockKind::Registration => panic!("Registration"),
-        BlockKind::Notation => panic!("Notation"),
+        BlockKind::Definition => todo!("Definition Block"),
+        BlockKind::Registration => todo!("Registration"),
+        BlockKind::Notation => todo!("Notation"),
       },
       ast::ItemKind::SchemeBlock(it) => self.scope(None, false, false, |this| this.elab_scheme(it)),
-      ast::ItemKind::Theorem { prop, just } => panic!("Theorem"),
+      ast::ItemKind::Theorem { prop, just } => todo!("Theorem"),
       ast::ItemKind::Reservation(it) => {
         self.lc.term_cache.get_mut().open_scope();
         assert!(self.lc.bound_var.is_empty());
@@ -130,30 +130,7 @@ impl Analyzer<'_> {
         self.lc.bound_var.0.clear();
         self.lc.term_cache.get_mut().close_scope();
       }
-      ast::ItemKind::Thus(_) => panic!("Thus"),
-      ast::ItemKind::Statement(_) => panic!("Statement"),
-      ast::ItemKind::Consider { vars, conds, just } => panic!("Consider"),
-      ast::ItemKind::Reconsider { vars, ty, just } => panic!("Reconsider"),
-      ast::ItemKind::DefFunc { var, tys, value } => panic!("DefFunc"),
-      ast::ItemKind::DefPred { var, tys, value } => panic!("DefPred"),
-      ast::ItemKind::Set { var, value } => panic!("Set"),
-      ast::ItemKind::Let { var } => panic!("Let"),
-      ast::ItemKind::LetLocus { var } => panic!("LetLocus"),
-      ast::ItemKind::Given { vars, conds } => panic!("Given"),
-      ast::ItemKind::Take { var, term } => panic!("Take"),
-      ast::ItemKind::PerCases { just, kind, blocks } => panic!("PerCases"),
-      ast::ItemKind::Assume(_) => panic!("Assumption"),
-      ast::ItemKind::Property { prop, just } => panic!("Property"),
-      ast::ItemKind::Definition(_) => panic!("Definition"),
-      ast::ItemKind::DefStruct(_) => panic!("DefStruct"),
-      ast::ItemKind::PatternRedef { kind, orig, new } => panic!("PatternRedef"),
-      ast::ItemKind::Cluster(_) => panic!("Cluster"),
-      ast::ItemKind::Identify(_) => panic!("Identify"),
-      ast::ItemKind::Reduction(_) => panic!("Reduction"),
-      ast::ItemKind::SethoodRegistration { ty, just } => panic!("SethoodRegistration"),
-      ast::ItemKind::SchemeHead(_)
-      | ast::ItemKind::CaseHead(..)
-      | ast::ItemKind::PerCasesHead(_) => panic!("invalid top level item"),
+      _ => self.elab_stmt_item(it),
     }
   }
 
@@ -308,7 +285,22 @@ impl Analyzer<'_> {
     f
   }
 
-  fn elab_justification(&mut self, thesis: &Formula, just: &ast::Justification) { todo!() }
+  fn elab_justification(&mut self, thesis: &Formula, just: &ast::Justification) {
+    match just {
+      &ast::Justification::Inference { pos, ref kind, ref refs } => {
+        let it = Inference {
+          kind: match kind {
+            ast::InferenceKind::By { link } => InferenceKind::By { linked: link.is_some() },
+            &ast::InferenceKind::From { sch } => InferenceKind::From { sch },
+          },
+          pos,
+          refs: refs.clone(),
+        };
+        self.r.read_inference(thesis, &it)
+      }
+      ast::Justification::Block { items, .. } => self.elab_proof(None, thesis, items),
+    }
+  }
 
   fn elab_functor_term(&mut self, fmt: FormatFunc, args: &[ast::Term]) -> Term {
     let args = self.elab_terms_qua(args);

@@ -774,7 +774,7 @@ impl Reader {
     }
   }
 
-  fn read_inference(&mut self, thesis: &Formula, it: &Inference) {
+  pub fn read_inference(&mut self, thesis: &Formula, it: &Inference) {
     if !crate::ENABLE_CHECKER {
       return
     }

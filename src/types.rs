@@ -1575,14 +1575,14 @@ pub enum InferenceKind {
   From { sch: SchRef },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ReferenceKind {
   Priv(LabelId),
   Thm(ThmRef),
   Def(DefRef),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Reference {
   pub pos: Position,
   pub kind: ReferenceKind,
