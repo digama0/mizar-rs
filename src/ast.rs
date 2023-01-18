@@ -237,8 +237,12 @@ pub struct BinderGroup {
 
 #[derive(Debug)]
 pub enum ReconsiderVar {
+  /// Only occurs in wsm
   Var(Variable),
-  Equality { var: Variable, tm: Term },
+  Equality {
+    var: Variable,
+    tm: Term,
+  },
 }
 
 #[derive(Debug)]

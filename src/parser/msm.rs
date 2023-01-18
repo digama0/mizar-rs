@@ -108,7 +108,7 @@ enum Elem {
   TypeSpecification(Box<Type>),
   Definiens(Box<Definiens>),
   LociEquality(Box<Variable>, Box<Variable>),
-  Label(Box<Label>),
+  Label(Option<Box<Label>>),
   Link(Position),
   Reference(Reference),
   DefCaseTerm(DefCase<Term>),
@@ -208,7 +208,7 @@ impl MsmParser {
   fn parse_proposition(&mut self) -> Option<Box<Proposition>> {
     self.r.try_read_start(&mut self.buf, Some(b"Proposition")).ok()?;
     let (label, f) = match self.parse_elem() {
-      Elem::Label(lab) => (Some(lab), self.parse_formula()),
+      Elem::Label(lab) => (lab, self.parse_formula()),
       Elem::Formula(f) => (None, f),
       _ => panic!("expected formula"),
     };
@@ -220,7 +220,7 @@ impl MsmParser {
     match shape {
       Shape::DiffuseStatement => {
         let (label, bl) = match self.parse_elem() {
-          Elem::Label(lab) => (Some(lab), self.parse_block().unwrap()),
+          Elem::Label(lab) => (lab, self.parse_block().unwrap()),
           Elem::Block(bl) => (None, bl),
           _ => panic!("expected block"),
         };
@@ -877,7 +877,7 @@ impl MsmParser {
             let (label, end_tag, kind) = match &*kind {
               b"Simple-Definiens" if is_term => {
                 let (lab, t) = match self.parse_elem() {
-                  Elem::Label(lab) => (Some(lab), self.parse_term().unwrap()),
+                  Elem::Label(lab) => (lab, self.parse_term().unwrap()),
                   Elem::Term(t) => (None, t),
                   _ => panic!("expected term"),
                 };
@@ -885,7 +885,7 @@ impl MsmParser {
               }
               b"Simple-Definiens" => {
                 let (lab, f) = match self.parse_elem() {
-                  Elem::Label(lab) => (Some(lab), self.parse_formula()),
+                  Elem::Label(lab) => (lab, self.parse_formula()),
                   Elem::Formula(f) => (None, f),
                   _ => panic!("expected formula"),
                 };
@@ -895,7 +895,7 @@ impl MsmParser {
                 let (mut lab, mut cases) = (None, vec![]);
                 let otherwise = loop {
                   match self.parse_elem() {
-                    Elem::Label(l) => lab = Some(l),
+                    Elem::Label(l) => lab = l,
                     Elem::DefCaseTerm(case) => cases.push(case),
                     Elem::End => break None,
                     Elem::Term(t) => break Some(t),
@@ -908,7 +908,7 @@ impl MsmParser {
                 let (mut lab, mut cases) = (None, vec![]);
                 let otherwise = loop {
                   match self.parse_elem() {
-                    Elem::Label(l) => lab = Some(l),
+                    Elem::Label(l) => lab = l,
                     Elem::DefCaseFormula(case) => cases.push(case),
                     Elem::End => break None,
                     Elem::Formula(t) => break Some(t),
@@ -932,12 +932,12 @@ impl MsmParser {
               match attr.key {
                 b"line" => pos.line = self.r.get_attr(&attr.value),
                 b"col" => pos.col = self.r.get_attr(&attr.value),
-                b"idnr" => id = LabelId(self.r.get_attr::<u32>(&attr.value) - 1),
+                b"idnr" => id = self.r.get_attr::<u32>(&attr.value).checked_sub(1),
                 b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
                 _ => {}
               }
             }
-            Elem::Label(Box::new(Label { pos, id: (id, spelling) }))
+            Elem::Label(id.map(|id| Box::new(Label { pos, id: (LabelId(id), spelling) })))
           }
           b"Link" => Elem::Link(self.r.get_pos(&e)),
           b"Local-Reference" => {

@@ -8,6 +8,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::File;
 use std::io;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Mutex;
@@ -2424,8 +2425,11 @@ impl LocalContext {
     renumber
   }
 
-  fn mk_forall(&mut self, start: usize, pop: bool, f: &mut Formula) {
-    let mut abst = Abstract { base: start as u32, depth: (self.fixed_var.0.len() - start) as u32 };
+  fn mk_forall(&mut self, range: Range<usize>, pop: bool, f: &mut Formula) {
+    if pop {
+      self.fixed_var.0.truncate(range.end);
+    }
+    let mut abst = Abstract { base: range.start as u32, depth: (range.end - range.start) as u32 };
     abst.visit_formula(f);
     let mut process = |mut ty| {
       abst.depth -= 1;
@@ -2435,9 +2439,9 @@ impl LocalContext {
       *f = Formula::ForAll { dom: Box::new(ty), scope: Box::new(std::mem::take(f)) };
     };
     if pop {
-      self.fixed_var.0.drain(start..).rev().for_each(|var| process(var.ty))
+      self.fixed_var.0.drain(range).rev().for_each(|var| process(var.ty))
     } else {
-      self.fixed_var.0[start..].iter().rev().for_each(|var| process(var.ty.clone()))
+      self.fixed_var.0[range].iter().rev().for_each(|var| process(var.ty.clone()))
     }
   }
 }

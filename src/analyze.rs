@@ -4,6 +4,7 @@ use crate::checker::Checker;
 use crate::reader::Reader;
 use crate::types::*;
 use crate::*;
+use std::ops::Range;
 
 const MAX_EXPANSIONS: usize = 20;
 
@@ -163,7 +164,7 @@ impl Analyzer<'_> {
     for group in groups {
       match group {
         ast::SchemeBinderGroup::Func { vars, tys, ret, .. } => {
-          self.elab_push_locus_tys(tys);
+          self.elab_intern_push_locus_tys(tys);
           let ret = self.elab_intern_type(ret);
           assert!(!vars.is_empty());
           for _ in 1..vars.len() {
@@ -174,7 +175,7 @@ impl Analyzer<'_> {
           self.r.lc.sch_func_ty.push(ret);
         }
         ast::SchemeBinderGroup::Pred { vars, tys, .. } => {
-          self.elab_push_locus_tys(tys);
+          self.elab_intern_push_locus_tys(tys);
           assert!(!vars.is_empty());
           for _ in 1..vars.len() {
             self.sch_pred_args.push((&*self.r.lc.locus_ty.0).to_vec().into());
@@ -198,36 +199,57 @@ impl Analyzer<'_> {
 
   fn elab_stmt_item(&mut self, item: &ast::Item) {
     match &item.kind {
-      ast::ItemKind::Block { end, kind, items } => todo!(),
-      ast::ItemKind::SchemeBlock(_) => todo!(),
-      ast::ItemKind::Theorem { prop, just } => todo!(),
-      ast::ItemKind::Reservation(_) => todo!(),
-      ast::ItemKind::Section => todo!(),
-      ast::ItemKind::Thus(_) => todo!(),
-      ast::ItemKind::Statement(_) => todo!(),
-      ast::ItemKind::Consider { vars, conds, just } => todo!(),
-      ast::ItemKind::Reconsider { vars, ty, just } => todo!(),
-      ast::ItemKind::DefFunc { var, tys, value } => todo!(),
-      ast::ItemKind::DefPred { var, tys, value } => todo!(),
-      ast::ItemKind::Set { var, value } => todo!(),
-      ast::ItemKind::Let { var } => todo!(),
-      ast::ItemKind::LetLocus { var } => todo!(),
-      ast::ItemKind::Given { vars, conds } => todo!(),
-      ast::ItemKind::Take { var, term } => todo!(),
-      ast::ItemKind::Assume(_) => todo!(),
-      ast::ItemKind::Property { prop, just } => todo!(),
-      ast::ItemKind::Definition(_) => todo!(),
-      ast::ItemKind::DefStruct(_) => todo!(),
-      ast::ItemKind::PatternRedef { kind, orig, new } => todo!(),
-      ast::ItemKind::Cluster(_) => todo!(),
-      ast::ItemKind::Identify(_) => todo!(),
-      ast::ItemKind::Reduction(_) => todo!(),
-      ast::ItemKind::SethoodRegistration { ty, just } => todo!(),
-      ast::ItemKind::Pragma { spelling } => todo!(),
-      ast::ItemKind::SchemeHead(_) => todo!(),
-      ast::ItemKind::PerCases { just, kind, blocks } => todo!(),
-      ast::ItemKind::CaseHead(_, _) => todo!(),
-      ast::ItemKind::PerCasesHead(_) => todo!(),
+      ast::ItemKind::Set { value, .. } => {
+        let term = self.elab_intern_term(value);
+        let ty = term.get_type_uncached(&self.g, &self.lc);
+        self.lc.fixed_var.push(FixedVar { ty, def: Some(Box::new(term)) });
+      }
+      ast::ItemKind::DefFunc { var, tys, value } => {
+        self.lc.term_cache.get_mut().open_scope();
+        self.elab_intern_push_locus_tys(tys);
+        let value = self.elab_intern_term(value);
+        let ty = value.get_type(&self.g, &self.lc, false);
+        let primary = self.r.lc.locus_ty.0.drain(..).collect();
+        self.lc.term_cache.get_mut().close_scope();
+        self.r.lc.priv_func.push(FuncDef { primary, ty: Box::new(ty), value: Box::new(value) });
+      }
+      ast::ItemKind::DefPred { var, tys, value } => {
+        self.lc.term_cache.get_mut().open_scope();
+        self.elab_intern_push_locus_tys(tys);
+        let value = self.elab_intern_formula(value, true);
+        let primary = self.r.lc.locus_ty.0.drain(..).collect();
+        self.lc.term_cache.get_mut().close_scope();
+        self.priv_pred.push((primary, Box::new(value)));
+      }
+      ast::ItemKind::Reconsider { vars, ty, just } => {
+        let ty = self.elab_intern_type(ty);
+        let mut conjs = vec![];
+        for var in vars {
+          let ast::ReconsiderVar::Equality { tm, .. } = var else { unreachable!() };
+          let tm = Box::new(self.elab_intern_term(tm));
+          conjs.push(Formula::Is { term: tm.clone(), ty: Box::new(ty.clone()) });
+          self.lc.fixed_var.push(FixedVar { ty: ty.clone(), def: Some(tm) });
+        }
+        self.elab_justification(&Formula::mk_and(conjs), just)
+      }
+      ast::ItemKind::Consider { vars, conds, just } => {
+        let start = self.lc.fixed_var.len();
+        for var in vars {
+          self.elab_fixed_vars(var);
+        }
+        let mut conjs = vec![];
+        for prop in conds {
+          self.elab_proposition(prop).append_conjuncts_to(&mut conjs);
+        }
+        let mut f = Formula::mk_and(conjs).mk_neg();
+        let end = self.lc.fixed_var.len();
+        self.lc.mk_forall(start..end, false, &mut f);
+        self.elab_justification(&f.mk_neg(), just);
+      }
+      ast::ItemKind::Statement(stmt) => {
+        self.elab_stmt(stmt);
+      }
+      _ => unreachable!("unexpected item"),
     }
   }
 
@@ -731,10 +753,11 @@ impl Analyzer<'_> {
   }
 
   /// AnalizeArgTypeList
-  fn elab_push_locus_tys(&mut self, tys: &[ast::Type]) {
+  fn elab_intern_push_locus_tys(&mut self, tys: &[ast::Type]) {
     assert!(self.lc.locus_ty.is_empty());
     for ty in tys {
-      let ty = self.elab_type(ty);
+      let mut ty = self.elab_type(ty);
+      ty.visit(&mut self.r.intern_const());
       self.lc.locus_ty.push(ty);
     }
   }
@@ -1118,7 +1141,8 @@ impl ReadProof for WithThesis {
 
   fn given(&mut self, elab: &mut Analyzer, start: usize, conjs: Vec<Formula>) {
     let mut f = Formula::mk_and(conjs).mk_neg();
-    elab.lc.mk_forall(start, false, &mut f);
+    let end = elab.lc.fixed_var.len();
+    elab.lc.mk_forall(start..end, false, &mut f);
     self.assume(elab, vec![f.mk_neg()]);
   }
 
@@ -1161,10 +1185,10 @@ impl ReadProof for WithThesis {
 }
 
 enum ProofStep {
-  Let { start: usize },
+  Let { range: Range<usize> },
   Assume { conjs: Vec<Formula> },
-  Given { start: usize, not_f: Formula },
-  TakeAsVar { start: usize },
+  Given { range: Range<usize>, not_f: Formula },
+  TakeAsVar { range: Range<usize> },
   Thus { conjs: Vec<Formula> },
   Case,
 }
@@ -1191,9 +1215,9 @@ impl ReconstructThesis {
     let mut rec = Reconstruction { pos, conjs: vec![] };
     while let Some(step) = self.stack.pop() {
       match step {
-        ProofStep::Let { start } => {
+        ProofStep::Let { range } => {
           let mut f = Formula::mk_and(std::mem::take(rec.as_pos(true)));
-          elab.lc.mk_forall(start, true, &mut f);
+          elab.lc.mk_forall(range, true, &mut f);
           rec.conjs = vec![f];
         }
         ProofStep::Assume { mut conjs } => {
@@ -1201,14 +1225,14 @@ impl ReconstructThesis {
           std::mem::swap(&mut conjs, rest);
           rest.append(&mut conjs)
         }
-        ProofStep::Given { start, mut not_f } => {
+        ProofStep::Given { range, mut not_f } => {
           let rest = rec.as_pos(false);
-          elab.lc.mk_forall(start, true, &mut not_f);
+          elab.lc.mk_forall(range, true, &mut not_f);
           rest.insert(0, not_f.mk_neg())
         }
-        ProofStep::TakeAsVar { start } => {
+        ProofStep::TakeAsVar { range } => {
           let mut f = Formula::mk_and(std::mem::take(rec.as_pos(false)));
-          elab.lc.mk_forall(start, true, &mut f);
+          elab.lc.mk_forall(range, true, &mut f);
           rec.conjs = vec![f];
         }
         ProofStep::Thus { mut conjs } => {
@@ -1229,8 +1253,9 @@ impl ReadProof for ReconstructThesis {
   type SupposeRecv = Option<Box<Formula>>;
 
   fn intro(&mut self, elab: &mut Analyzer, start: usize) {
-    if !matches!(self.stack.last(), Some(ProofStep::Let { .. })) {
-      self.stack.push(ProofStep::Let { start })
+    match self.stack.last_mut() {
+      Some(ProofStep::Let { range }) if range.end == start => range.end = elab.lc.fixed_var.len(),
+      _ => self.stack.push(ProofStep::Let { range: start..elab.lc.fixed_var.len() }),
     }
   }
 
@@ -1243,14 +1268,17 @@ impl ReadProof for ReconstructThesis {
   }
 
   fn given(&mut self, elab: &mut Analyzer, start: usize, conjs: Vec<Formula>) {
-    self.stack.push(ProofStep::Given { start, not_f: Formula::mk_and(conjs).mk_neg() })
+    self.stack.push(ProofStep::Given {
+      range: start..elab.lc.fixed_var.len(),
+      not_f: Formula::mk_and(conjs).mk_neg(),
+    })
   }
 
   fn take(&mut self, _: &mut Analyzer, _: Term) { panic!("take steps are not reconstructible") }
 
   fn take_as_var(&mut self, elab: &mut Analyzer, v: ConstId) {
     if !matches!(self.stack.last(), Some(ProofStep::TakeAsVar { .. })) {
-      self.stack.push(ProofStep::TakeAsVar { start: v.0 as usize })
+      self.stack.push(ProofStep::TakeAsVar { range: v.0 as usize..elab.lc.fixed_var.len() })
     }
   }
 
