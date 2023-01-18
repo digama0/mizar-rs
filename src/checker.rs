@@ -3,8 +3,8 @@ use crate::types::*;
 use crate::unify::Unifier;
 use crate::util::RetainMutFrom;
 use crate::{
-  set_verbose, stat, CheckBound, Equate, ExpandPrivFunc, FixedVar, Global, Inst, InternConst,
-  LocalContext, OnVarMut, Visit, VisitMut,
+  set_verbose, stat, CheckBound, Equate, ExpandPrivFunc, FixedVar, Global, Inst, Inst0,
+  InternConst, LocalContext, OnVarMut, Visit, VisitMut,
 };
 use itertools::Itertools;
 use std::borrow::Cow;
@@ -330,20 +330,9 @@ impl Expand<'_> {
       // but mizar already segfaults on (0 = 0 & 0 = 0) & ... & (1 = 1 & 1 = 1);
       let scope = &args[2];
       for i in left..=right {
-        struct Inst0(Term);
-        impl VisitMut for Inst0 {
-          /// ReplacePlaceHolderByConjunctNumber
-          fn visit_term(&mut self, tm: &mut Term) {
-            match tm {
-              Term::Bound(BoundId(0)) => *tm = self.0.clone(),
-              Term::Bound(nr) => nr.0 -= 1,
-              _ => self.super_visit_term(tm),
-            }
-          }
-        }
-        let mut inst = Inst0(if i == 0 { zero.clone().unwrap() } else { Term::Numeral(i) });
+        let i = if i == 0 { zero.clone().unwrap() } else { Term::Numeral(i) };
         let mut tm = scope.clone();
-        inst.visit_formula(&mut tm);
+        Inst0(&i).visit_formula(&mut tm);
         tm.maybe_neg(pos).append_conjuncts_to(conjs);
       }
     }

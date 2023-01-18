@@ -810,6 +810,8 @@ impl Formula {
     }
   }
 
+  /// This calculates `self == pos`.
+  /// That is, it negates `self` if `pos == false` and leaves it unchanged otherwise.
   pub fn maybe_neg(self, pos: bool) -> Self {
     if pos {
       self
@@ -823,6 +825,14 @@ impl Formula {
       Formula::True => &[],
       Formula::And { args } => args,
       f => std::slice::from_ref(f),
+    }
+  }
+
+  pub fn into_conjuncts(self) -> Vec<Formula> {
+    match self {
+      Formula::True => vec![],
+      Formula::And { args } => args,
+      f => vec![f],
     }
   }
 

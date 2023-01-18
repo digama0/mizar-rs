@@ -5,6 +5,8 @@ use crate::reader::Reader;
 use crate::types::*;
 use crate::*;
 
+const MAX_EXPANSIONS: usize = 20;
+
 struct Analyzer<'a> {
   r: &'a mut Reader,
   sch_func_args: IdxVec<SchFuncId, Box<[Type]>>,
@@ -754,6 +756,203 @@ impl Analyzer<'_> {
     f.visit(&mut self.r.intern_const());
     f
   }
+
+  /// replaces `f` with the normalized version,
+  /// satisfying `f -> new_f` (up = true) or `new_f -> f` (up = false)
+  fn whnf(&self, up: bool, mut atomic: usize, f: &mut (bool, Box<Formula>)) -> usize {
+    'start: loop {
+      let mut args_buf;
+      let (kind, args) = match &mut *f.1 {
+        Formula::Neg { f: f2 } => {
+          *f = (!f.0, std::mem::take(f2));
+          continue 'start
+        }
+        Formula::PrivPred { value, .. } | Formula::FlexAnd { expansion: value, .. } => {
+          f.1 = std::mem::take(value);
+          continue 'start
+        }
+        Formula::Pred { nr, args } if atomic > 0 => {
+          let (n, args) = Formula::adjust_pred(*nr, args, &self.g.constrs);
+          (ConstrKind::Pred(n), args)
+        }
+        Formula::Attr { nr, args } if atomic > 0 => {
+          let (n, args) = Formula::adjust_attr(*nr, args, &self.g.constrs);
+          (ConstrKind::Attr(n), args)
+        }
+        Formula::Is { term, ty } if atomic > 0 => {
+          let TypeKind::Mode(n) = ty.kind else { break };
+          if !matches!(&ty.attrs.0, Attrs::Consistent(attrs) if attrs.is_empty()) {
+            break
+          }
+          args_buf = ty.args.clone();
+          args_buf.push((**term).clone());
+          (ConstrKind::Mode(n), &*args_buf)
+        }
+        _ => break,
+      };
+      for def in &self.definitions {
+        let Some(subst) = def.matches(&self.g, &self.lc, kind, args) else { continue };
+        let subst = subst.finish();
+        let mut inst = Inst::new(&subst);
+        let DefValue::Formula(value) = &def.value else { unreachable!() };
+        let (pos2, f2) = if value.cases.is_empty() {
+          (f.0, value.otherwise.as_ref().unwrap().visit_cloned(&mut inst))
+        } else {
+          let mut disjs = vec![];
+          let mut otherwise = vec![];
+          for case in &*value.cases {
+            let mut conj = vec![];
+            let guard = case.guard.visit_cloned(&mut inst);
+            if value.otherwise.is_some() {
+              guard.clone().mk_neg().append_conjuncts_to(&mut otherwise)
+            }
+            guard.append_conjuncts_to(&mut conj);
+            case.case.visit_cloned(&mut inst).maybe_neg(f.0).append_conjuncts_to(&mut conj);
+            Formula::mk_and(conj).mk_neg().append_conjuncts_to(&mut disjs)
+          }
+          if let Some(ow) = &value.otherwise {
+            ow.visit_cloned(&mut inst).maybe_neg(f.0).append_conjuncts_to(&mut otherwise);
+            Formula::mk_and(otherwise).mk_neg().append_conjuncts_to(&mut disjs)
+          }
+          (false, Formula::mk_and(disjs))
+        };
+        if matches!(def.assumptions, Formula::True) {
+          f.0 = pos2;
+          *f.1 = f2;
+        } else {
+          let mut conjs = vec![];
+          def.assumptions.visit_cloned(&mut inst).append_conjuncts_to(&mut conjs);
+          f2.maybe_neg(pos2 != up).append_conjuncts_to(&mut conjs);
+          f.0 = !up;
+          *f.1 = Formula::mk_and(conjs);
+        }
+        atomic -= 1;
+        continue 'start
+      }
+      break
+    }
+    atomic
+  }
+
+  /// ChopVars(Conclusion = !up)
+  /// Attempts to instantiate `for x holds P[x]` to `P[term]`.
+  /// * If `up = true` then `f -> (for x holds P[x])` (used for unfolding in hyps)
+  /// * If `up = false` then `(for x holds P[x]) -> f` (unfolding thesis)
+  fn inst_forall(&self, term: &Term, widenable: bool, up: bool, f: &mut (bool, Box<Formula>)) {
+    self.whnf(up, MAX_EXPANSIONS, f);
+    assert!(f.0, "not a forall");
+    let Formula::ForAll { dom, scope } = &mut *f.1 else { panic!("not a forall") };
+    let ty = term.get_type(&self.g, &self.lc, false);
+    Inst0(term).visit_formula(scope);
+    let ok = if !widenable {
+      ().eq_type(&self.g, &self.lc, dom, &ty)
+    } else if up {
+      dom.is_wider_than(&self.g, &self.lc, &ty)
+    } else {
+      ty.is_wider_than(&self.g, &self.lc, dom)
+    };
+    *f.1 = if ok {
+      std::mem::take(scope)
+    } else {
+      assert!(ty.is_wider_than(&self.g, &self.lc, dom));
+      assert!(().eq_attrs(&self.g, &self.lc, &ty, dom));
+      let mut conds = vec![];
+      loop {
+        conds.push(Formula::Is { term: Box::new(term.clone()), ty: dom.clone() });
+        *dom = dom.widening(&self.g).unwrap();
+        if ().eq_radices(&self.g, &self.lc, &ty, dom) {
+          break
+        }
+      }
+      conds.reverse();
+      std::mem::take(scope).mk_neg().append_conjuncts_to(&mut conds);
+      Formula::mk_and(conds).mk_neg()
+    }
+  }
+
+  /// ChopVars(Conclusion = !up)
+  /// Attempts to unfold `for x1..xn holds P[x1..xn]` to `P[c1..cn]`
+  /// where `c1..cn` are the fixed_vars starting at `start`.
+  /// * If `up = true` then `f -> (for x1..xn holds P[x1..xn])` (used for unfolding in hyps)
+  /// * If `up = false` then `(for x1..xn holds P[x1..xn]) -> f` (unfolding thesis)
+  fn forall_telescope(
+    &self, start: usize, widenable: bool, up: bool, f: &mut (bool, Box<Formula>),
+  ) {
+    for v in (start..self.lc.fixed_var.len()).map(ConstId::from_usize) {
+      self.inst_forall(&Term::Constant(v), widenable, up, f)
+    }
+  }
+
+  /// Chopped(Conclusion = !up)
+  /// Attempts to rewrite `conjs := tgt /\ conjs2` to `conjs2`.
+  /// * If `up = true` then `conjs -> tgt /\ conjs2` (used for unfolding in hyps)
+  /// * If `up = false` then `tgt /\ conjs2 -> conjs` (unfolding thesis)
+  fn and_telescope(
+    &mut self, mut tgt: Vec<Formula>, up: bool, mut conjs: Vec<Formula>,
+  ) -> Vec<Formula> {
+    let mut stack1 = vec![];
+    let mut stack2 = vec![];
+    let mut iter1 = tgt.into_iter();
+    let mut iter2 = conjs.into_iter();
+    'ok: loop {
+      let mut f1 = loop {
+        if let Some(f1) = iter1.next() {
+          if !matches!(f1, Formula::True) {
+            break (true, f1)
+          }
+        }
+        let Some(iter) = stack1.pop() else { break 'ok };
+        iter1 = iter;
+      };
+      let f2 = loop {
+        if let Some(f2) = iter2.next() {
+          break f2
+        }
+        let Some(iter) = stack2.pop() else { break Formula::True };
+        iter2 = iter;
+      };
+      let mut f2 = (true, Box::new(f2));
+      loop {
+        if f1.0 == f2.0 && ().eq_formula(&self.g, &self.lc, &f1.1, &f2.1) {
+          continue 'ok
+        }
+        match (&mut f1.1, &mut *f2.1) {
+          (Formula::And { args }, _) if f1.0 => {
+            let mut iter = std::mem::take(args).into_iter();
+            f1.1 = iter.next().unwrap();
+            stack1.push(std::mem::replace(&mut iter1, iter));
+          }
+          (_, Formula::And { args }) if f2.0 => {
+            let mut iter = std::mem::take(args).into_iter();
+            *f2.1 = iter.next().unwrap();
+            stack2.push(std::mem::replace(&mut iter2, iter));
+          }
+          (Formula::Neg { f }, _) => {
+            f1.1 = std::mem::take(f);
+            f1.0 = !f1.0;
+          }
+          (_, Formula::Neg { f }) => {
+            f2.1 = std::mem::take(f);
+            f2.0 = !f2.0;
+          }
+          (
+            Formula::PrivPred { nr: n1, args: args1, value: v1 },
+            Formula::PrivPred { nr: n2, args: args2, value: v2 },
+          ) => match (*n1).cmp(n2) {
+            Ordering::Less => f2.1 = std::mem::take(v2),
+            Ordering::Equal => panic!("formula mismatch"),
+            Ordering::Greater => f1.1 = std::mem::take(v1),
+          },
+          (Formula::PrivPred { value, .. }, _) => f1.1 = std::mem::take(value),
+          (_, Formula::PrivPred { value, .. }) => f2.1 = std::mem::take(value),
+          _ => {
+            assert!(self.whnf(up, 1, &mut f2) < 1, "formula mismatch");
+          }
+        }
+      }
+    }
+    iter2.chain(stack2.into_iter().rev().flatten()).collect()
+  }
 }
 
 struct Exportable;
@@ -782,7 +981,7 @@ trait ReadProof {
 
   /// Changes the thesis from `for x1..xn holds P` to `P`
   /// where `x1..xn` are the fixed_vars introduced since `start`
-  fn intro_from(&mut self, elab: &mut Analyzer, start: usize);
+  fn intro(&mut self, elab: &mut Analyzer, start: usize);
 
   /// Changes the thesis from `!(conj1 & ... & conjn & rest)` to `!rest`
   fn assume(&mut self, elab: &mut Analyzer, conjs: Vec<Formula>);
@@ -797,7 +996,7 @@ trait ReadProof {
 
   /// Changes the thesis from `ex x st P(x)` to `P(v)`,
   /// where `v` is the last `fixed_var` to be introduced
-  fn take_as_var(&mut self, elab: &mut Analyzer, v: ConstId);
+  fn take_as_var(&mut self, elab: &mut Analyzer, v: ConstId) { self.take(elab, Term::Constant(v)); }
 
   /// Changes the thesis from `f & rest` to `rest`
   fn thus(&mut self, elab: &mut Analyzer, f: Formula);
@@ -812,7 +1011,7 @@ trait ReadProof {
 
   fn finish_thesis_case(&mut self, elab: &mut Analyzer, case: Self::CaseIter<'_>);
 
-  fn next_suppose(&mut self, elab: &mut Analyzer, recv: &mut Self::SupposeRecv);
+  fn next_suppose(&mut self, elab: &mut Analyzer, recv: &mut Self::SupposeRecv) {}
 
   fn finish_proof(&mut self, elab: &mut Analyzer);
 
@@ -822,7 +1021,7 @@ trait ReadProof {
         ast::ItemKind::Let { var } => {
           let n = elab.lc.fixed_var.len();
           elab.elab_fixed_vars(var);
-          self.intro_from(elab, n)
+          self.intro(elab, n)
         }
         ast::ItemKind::Assume(asm) => {
           let mut conjs = vec![];
@@ -906,24 +1105,41 @@ impl ReadProof for WithThesis {
   type CaseIter<'a> = std::slice::Iter<'a, Formula>;
   type SupposeRecv = ();
 
-  fn intro_from(&mut self, elab: &mut Analyzer, start: usize) { todo!() }
+  fn intro(&mut self, elab: &mut Analyzer, start: usize) {
+    let mut thesis = (true, elab.thesis.take().unwrap());
+    elab.forall_telescope(start, false, false, &mut thesis);
+    elab.thesis = Some(Box::new(thesis.1.maybe_neg(thesis.0)));
+  }
 
-  fn assume(&mut self, elab: &mut Analyzer, conjs: Vec<Formula>) { todo!() }
+  fn assume(&mut self, elab: &mut Analyzer, conjs: Vec<Formula>) {
+    let thesis = elab.thesis.take().unwrap().mk_neg().into_conjuncts();
+    elab.thesis = Some(Box::new(Formula::mk_and(elab.and_telescope(conjs, true, thesis)).mk_neg()))
+  }
 
-  fn given(&mut self, elab: &mut Analyzer, start: usize, conjs: Vec<Formula>) { todo!() }
+  fn given(&mut self, elab: &mut Analyzer, start: usize, conjs: Vec<Formula>) {
+    let mut f = Formula::mk_and(conjs).mk_neg();
+    elab.lc.mk_forall(start, false, &mut f);
+    self.assume(elab, vec![f.mk_neg()]);
+  }
 
-  fn take(&mut self, elab: &mut Analyzer, term: Term) { todo!() }
+  fn take(&mut self, elab: &mut Analyzer, term: Term) {
+    let mut thesis = (false, elab.thesis.take().unwrap());
+    elab.inst_forall(&term, true, true, &mut thesis);
+    elab.thesis = Some(Box::new(thesis.1.maybe_neg(!thesis.0)));
+  }
 
-  fn take_as_var(&mut self, elab: &mut Analyzer, v: ConstId) { todo!() }
+  fn thus(&mut self, elab: &mut Analyzer, f: Formula) {
+    let thesis = elab.thesis.take().unwrap().into_conjuncts();
+    elab.thesis =
+      Some(Box::new(Formula::mk_and(elab.and_telescope(f.into_conjuncts(), false, thesis))))
+  }
 
-  fn thus(&mut self, elab: &mut Analyzer, f: Formula) { todo!() }
-
-  fn new_thesis_case(&mut self, elab: &mut Analyzer) -> Self::CaseIterable {
+  fn new_thesis_case(&mut self, elab: &mut Analyzer) -> Formula {
     elab.thesis.as_ref().unwrap().clone().mk_neg()
   }
 
   fn new_thesis_case_iter<'a>(
-    &mut self, elab: &mut Analyzer, case: &'a mut Self::CaseIterable,
+    &mut self, elab: &mut Analyzer, case: &'a mut Formula,
   ) -> Self::CaseIter<'a> {
     case.conjuncts().iter()
   }
@@ -931,16 +1147,17 @@ impl ReadProof for WithThesis {
   fn next_thesis_case(
     &mut self, elab: &mut Analyzer, case: &mut Self::CaseIter<'_>, f: &[Formula],
   ) {
-    todo!()
+    elab.thesis = Some(Box::new(case.next().cloned().unwrap_or(Formula::True).mk_neg()));
+    self.assume(elab, f.to_vec())
   }
 
   fn finish_thesis_case(&mut self, elab: &mut Analyzer, mut case: Self::CaseIter<'_>) {
     assert!(case.next().is_none())
   }
 
-  fn next_suppose(&mut self, _: &mut Analyzer, _: &mut ()) {}
-
-  fn finish_proof(&mut self, elab: &mut Analyzer) { todo!() }
+  fn finish_proof(&mut self, elab: &mut Analyzer) {
+    assert!(matches!(elab.thesis.as_deref(), Some(Formula::True)))
+  }
 }
 
 enum ProofStep {
@@ -976,7 +1193,7 @@ impl ReconstructThesis {
       match step {
         ProofStep::Let { start } => {
           let mut f = Formula::mk_and(std::mem::take(rec.as_pos(true)));
-          elab.lc.mk_forall(start, &mut f);
+          elab.lc.mk_forall(start, true, &mut f);
           rec.conjs = vec![f];
         }
         ProofStep::Assume { mut conjs } => {
@@ -986,12 +1203,12 @@ impl ReconstructThesis {
         }
         ProofStep::Given { start, mut not_f } => {
           let rest = rec.as_pos(false);
-          elab.lc.mk_forall(start, &mut not_f);
+          elab.lc.mk_forall(start, true, &mut not_f);
           rest.insert(0, not_f.mk_neg())
         }
         ProofStep::TakeAsVar { start } => {
           let mut f = Formula::mk_and(std::mem::take(rec.as_pos(false)));
-          elab.lc.mk_forall(start, &mut f);
+          elab.lc.mk_forall(start, true, &mut f);
           rec.conjs = vec![f];
         }
         ProofStep::Thus { mut conjs } => {
@@ -1011,7 +1228,7 @@ impl ReadProof for ReconstructThesis {
   type CaseIter<'a> = ();
   type SupposeRecv = Option<Box<Formula>>;
 
-  fn intro_from(&mut self, elab: &mut Analyzer, start: usize) {
+  fn intro(&mut self, elab: &mut Analyzer, start: usize) {
     if !matches!(self.stack.last(), Some(ProofStep::Let { .. })) {
       self.stack.push(ProofStep::Let { start })
     }

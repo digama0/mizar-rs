@@ -703,10 +703,13 @@ trait Equate {
     }
   }
 
-  fn eq_type(&mut self, g: &Global, lc: &LocalContext, ty1: &Type, ty2: &Type) -> bool {
+  fn eq_attrs(&mut self, g: &Global, lc: &LocalContext, ty1: &Type, ty2: &Type) -> bool {
     ty1.attrs.0.is_subset_of(&ty2.attrs.1, |a1, a2| self.eq_attr(g, lc, a1, a2))
       && ty2.attrs.0.is_subset_of(&ty1.attrs.1, |a2, a1| self.eq_attr(g, lc, a1, a2))
-      && self.eq_radices(g, lc, ty1, ty2)
+  }
+
+  fn eq_type(&mut self, g: &Global, lc: &LocalContext, ty1: &Type, ty2: &Type) -> bool {
+    self.eq_attrs(g, lc, ty1, ty2) && self.eq_radices(g, lc, ty1, ty2)
   }
 
   /// on (): EqAttr
@@ -1065,6 +1068,18 @@ impl VisitMut for Inst<'_> {
           .visit_term(tm);
         }
       }
+      _ => self.super_visit_term(tm),
+    }
+  }
+}
+
+struct Inst0<'a>(&'a Term);
+impl VisitMut for Inst0<'_> {
+  /// ReplacePlaceHolderByConjunctNumber
+  fn visit_term(&mut self, tm: &mut Term) {
+    match tm {
+      Term::Bound(BoundId(0)) => *tm = self.0.clone(),
+      Term::Bound(nr) => nr.0 -= 1,
       _ => self.super_visit_term(tm),
     }
   }
@@ -2409,18 +2424,21 @@ impl LocalContext {
     renumber
   }
 
-  fn mk_forall(&mut self, start: usize, f: &mut Formula) {
+  fn mk_forall(&mut self, start: usize, pop: bool, f: &mut Formula) {
     let mut abst = Abstract { base: start as u32, depth: (self.fixed_var.0.len() - start) as u32 };
-    let mut scope = std::mem::take(f);
-    abst.visit_formula(&mut scope);
-    for mut var in self.fixed_var.0.drain(start..).rev() {
+    abst.visit_formula(f);
+    let mut process = |mut ty| {
       abst.depth -= 1;
       if abst.depth != 0 {
-        abst.visit_type(&mut var.ty);
+        abst.visit_type(&mut ty);
       }
-      scope = Formula::ForAll { dom: Box::new(var.ty), scope: Box::new(scope) };
+      *f = Formula::ForAll { dom: Box::new(ty), scope: Box::new(std::mem::take(f)) };
+    };
+    if pop {
+      self.fixed_var.0.drain(start..).rev().for_each(|var| process(var.ty))
+    } else {
+      self.fixed_var.0[start..].iter().rev().for_each(|var| process(var.ty.clone()))
     }
-    *f = scope
   }
 }
 
