@@ -2408,6 +2408,35 @@ impl LocalContext {
     }
     renumber
   }
+
+  fn mk_forall(&mut self, start: usize, f: &mut Formula) {
+    let mut abst = Abstract { base: start as u32, depth: (self.fixed_var.0.len() - start) as u32 };
+    let mut scope = std::mem::take(f);
+    abst.visit_formula(&mut scope);
+    for mut var in self.fixed_var.0.drain(start..).rev() {
+      abst.depth -= 1;
+      if abst.depth != 0 {
+        abst.visit_type(&mut var.ty);
+      }
+      scope = Formula::ForAll { dom: Box::new(var.ty), scope: Box::new(scope) };
+    }
+    *f = scope
+  }
+}
+
+struct Abstract {
+  base: u32,
+  depth: u32,
+}
+
+impl VisitMut for Abstract {
+  fn visit_term(&mut self, tm: &mut Term) {
+    match tm {
+      Term::Bound(nr) => nr.0 += self.depth,
+      Term::Constant(nr) if nr.0 >= self.base => *tm = Term::Bound(BoundId(nr.0 - self.base)),
+      _ => self.super_visit_term(tm),
+    }
+  }
 }
 
 impl Constructors {

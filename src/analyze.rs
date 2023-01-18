@@ -229,7 +229,38 @@ impl Analyzer<'_> {
     }
   }
 
-  fn elab_stmt(&mut self, stmt: &ast::Statement) -> Formula { todo!() }
+  fn elab_stmt(&mut self, stmt: &ast::Statement) -> Formula {
+    match stmt {
+      ast::Statement::Proposition { prop, just } => {
+        let f = self.elab_proposition(prop);
+        self.elab_justification(&f, just);
+        f
+      }
+      ast::Statement::IterEquality { prop, just, steps } => {
+        if let Formula::Pred { nr, args } = self.elab_intern_formula(&prop.f, true) {
+          if let (nr, [lhs, rhs]) = Formula::adjust_pred(nr, &args, &self.g.constrs) {
+            if self.g.reqs.equals_to() == Some(nr) {
+              self.elab_justification(&self.g.reqs.mk_eq(lhs.clone(), rhs.clone()), just);
+              let mut mid = rhs.clone();
+              for ast::IterStep { rhs, just, .. } in steps {
+                let rhs = self.elab_intern_term(rhs);
+                self.elab_justification(&self.g.reqs.mk_eq(mid, rhs.clone()), just);
+                mid = rhs;
+              }
+              let f = self.g.reqs.mk_eq(lhs.clone(), mid);
+              self.push_prop(prop.label.as_ref().map(|l| l.id.0), f.clone());
+              return f
+            }
+          }
+        }
+        panic!("not an equality")
+      }
+      ast::Statement::Now { label, items, .. } => {
+        ReconstructThesis { stack: vec![] }.elab_proof(self, items);
+        *self.thesis.take().unwrap()
+      }
+    }
+  }
 
   fn elab_proof(&mut self, label: Option<LabelId>, thesis: &Formula, items: &[ast::Item]) {
     self.scope(label, false, false, |this| {
@@ -912,10 +943,67 @@ impl ReadProof for WithThesis {
   fn finish_proof(&mut self, elab: &mut Analyzer) { todo!() }
 }
 
-enum ProofStep {}
+enum ProofStep {
+  Let { start: usize },
+  Assume { conjs: Vec<Formula> },
+  Given { start: usize, not_f: Formula },
+  TakeAsVar { start: usize },
+  Thus { conjs: Vec<Formula> },
+  Case,
+}
 
 struct ReconstructThesis {
   stack: Vec<ProofStep>,
+}
+
+impl ReconstructThesis {
+  fn reconstruct(&mut self, elab: &mut Analyzer, pos: bool) -> Formula {
+    struct Reconstruction {
+      pos: bool,
+      conjs: Vec<Formula>,
+    }
+    impl Reconstruction {
+      fn as_pos(&mut self, pos: bool) -> &mut Vec<Formula> {
+        if self.pos != pos {
+          self.pos = pos;
+          self.conjs = vec![Formula::mk_and(std::mem::take(&mut self.conjs)).mk_neg()];
+        }
+        &mut self.conjs
+      }
+    }
+    let mut rec = Reconstruction { pos, conjs: vec![] };
+    while let Some(step) = self.stack.pop() {
+      match step {
+        ProofStep::Let { start } => {
+          let mut f = Formula::mk_and(std::mem::take(rec.as_pos(true)));
+          elab.lc.mk_forall(start, &mut f);
+          rec.conjs = vec![f];
+        }
+        ProofStep::Assume { mut conjs } => {
+          let rest = rec.as_pos(false);
+          std::mem::swap(&mut conjs, rest);
+          rest.append(&mut conjs)
+        }
+        ProofStep::Given { start, mut not_f } => {
+          let rest = rec.as_pos(false);
+          elab.lc.mk_forall(start, &mut not_f);
+          rest.insert(0, not_f.mk_neg())
+        }
+        ProofStep::TakeAsVar { start } => {
+          let mut f = Formula::mk_and(std::mem::take(rec.as_pos(false)));
+          elab.lc.mk_forall(start, &mut f);
+          rec.conjs = vec![f];
+        }
+        ProofStep::Thus { mut conjs } => {
+          let rest = rec.as_pos(true);
+          std::mem::swap(&mut conjs, rest);
+          rest.append(&mut conjs)
+        }
+        ProofStep::Case => return Formula::mk_and(std::mem::take(rec.as_pos(false))),
+      }
+    }
+    return Formula::mk_and(std::mem::take(rec.as_pos(true)))
+  }
 }
 
 impl ReadProof for ReconstructThesis {
@@ -923,22 +1011,50 @@ impl ReadProof for ReconstructThesis {
   type CaseIter<'a> = ();
   type SupposeRecv = Option<Box<Formula>>;
 
-  fn intro_from(&mut self, elab: &mut Analyzer, start: usize) { todo!() }
+  fn intro_from(&mut self, elab: &mut Analyzer, start: usize) {
+    if !matches!(self.stack.last(), Some(ProofStep::Let { .. })) {
+      self.stack.push(ProofStep::Let { start })
+    }
+  }
 
-  fn assume(&mut self, elab: &mut Analyzer, conjs: Vec<Formula>) { todo!() }
+  fn assume(&mut self, elab: &mut Analyzer, mut conjs: Vec<Formula>) {
+    if let Some(ProofStep::Assume { conjs: rest }) = self.stack.last_mut() {
+      rest.append(&mut conjs)
+    } else {
+      self.stack.push(ProofStep::Assume { conjs })
+    }
+  }
 
-  fn given(&mut self, elab: &mut Analyzer, start: usize, conjs: Vec<Formula>) { todo!() }
+  fn given(&mut self, elab: &mut Analyzer, start: usize, conjs: Vec<Formula>) {
+    self.stack.push(ProofStep::Given { start, not_f: Formula::mk_and(conjs).mk_neg() })
+  }
 
   fn take(&mut self, _: &mut Analyzer, _: Term) { panic!("take steps are not reconstructible") }
 
-  fn take_as_var(&mut self, elab: &mut Analyzer, v: ConstId) { todo!() }
+  fn take_as_var(&mut self, elab: &mut Analyzer, v: ConstId) {
+    if !matches!(self.stack.last(), Some(ProofStep::TakeAsVar { .. })) {
+      self.stack.push(ProofStep::TakeAsVar { start: v.0 as usize })
+    }
+  }
 
-  fn thus(&mut self, elab: &mut Analyzer, f: Formula) { todo!() }
+  fn thus(&mut self, elab: &mut Analyzer, f: Formula) {
+    if let Some(ProofStep::Thus { conjs }) = self.stack.last_mut() {
+      conjs.push(f)
+    } else {
+      self.stack.push(ProofStep::Thus { conjs: vec![f] })
+    }
+  }
 
   fn new_thesis_case(&mut self, elab: &mut Analyzer) {}
   fn new_thesis_case_iter<'a>(&mut self, _: &mut Analyzer, _: &'a mut ()) {}
-  fn next_thesis_case(&mut self, _: &mut Analyzer, _: &mut (), _: &[Formula]) {}
-  fn finish_thesis_case(&mut self, _: &mut Analyzer, _: ()) {}
+  fn next_thesis_case(&mut self, _: &mut Analyzer, _: &mut (), conjs: &[Formula]) {
+    self.stack.push(ProofStep::Case);
+    self.stack.push(ProofStep::Thus { conjs: conjs.to_vec() });
+  }
+  fn finish_thesis_case(&mut self, elab: &mut Analyzer, _: ()) {
+    let f = self.reconstruct(elab, false);
+    self.assume(elab, vec![f]);
+  }
 
   fn next_suppose(&mut self, elab: &mut Analyzer, recv: &mut Self::SupposeRecv) {
     if let Some(thesis) = recv {
@@ -948,5 +1064,7 @@ impl ReadProof for ReconstructThesis {
     }
   }
 
-  fn finish_proof(&mut self, elab: &mut Analyzer) { todo!() }
+  fn finish_proof(&mut self, elab: &mut Analyzer) {
+    elab.thesis = Some(Box::new(self.reconstruct(elab, true)))
+  }
 }
