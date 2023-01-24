@@ -1,5 +1,5 @@
 #![allow(unused)]
-use crate::ast::{CaseKind, FormulaBinder, FormulaBinop, VarKind};
+use crate::ast::{CaseKind, FormulaBinder, FormulaBinop, ReservedId, VarKind};
 use crate::checker::Checker;
 use crate::reader::Reader;
 use crate::types::*;
@@ -15,7 +15,7 @@ struct Analyzer<'a> {
   priv_pred: IdxVec<PrivPredId, (Box<[Type]>, Box<Formula>)>,
   sch_pred_args: IdxVec<SchPredId, Box<[Type]>>,
   thesis: Option<Box<Formula>>,
-  reserved: Vec<Type>,
+  reserved: IdxVec<ReservedId, Type>,
 }
 impl<'a> std::ops::Deref for Analyzer<'a> {
   type Target = &'a mut Reader;
@@ -110,13 +110,14 @@ impl Analyzer<'_> {
   fn elab_top_item(&mut self, it: &ast::Item) {
     match &it.kind {
       ast::ItemKind::Section | ast::ItemKind::Pragma { .. } => {}
-      ast::ItemKind::Block { kind, items, .. } => match kind {
-        BlockKind::Definition => todo!("Definition Block"),
-        BlockKind::Registration => todo!("Registration"),
-        BlockKind::Notation => todo!("Notation"),
-      },
+      ast::ItemKind::Block { kind, items, .. } =>
+        BlockReader::new(*kind, &self.lc).elab_proof(self, items),
       ast::ItemKind::SchemeBlock(it) => self.scope(None, false, false, |this| this.elab_scheme(it)),
-      ast::ItemKind::Theorem { prop, just } => todo!("Theorem"),
+      ast::ItemKind::Theorem { prop, just } => {
+        let f = self.elab_proposition(prop);
+        Exportable.visit_formula(&f);
+        self.elab_justification(&f, just)
+      }
       ast::ItemKind::Reservation(it) => {
         self.lc.term_cache.get_mut().open_scope();
         assert!(self.lc.bound_var.is_empty());
@@ -145,7 +146,7 @@ impl Analyzer<'_> {
           let ret = self.elab_intern_type(ret);
           assert!(!vars.is_empty());
           for _ in 1..vars.len() {
-            self.sch_func_args.push((&*self.r.lc.locus_ty.0).to_vec().into());
+            self.sch_func_args.push(self.r.lc.locus_ty.0.to_vec().into());
             self.r.lc.sch_func_ty.push(ret.clone());
           }
           self.sch_func_args.push(self.r.lc.locus_ty.0.drain(..).collect());
@@ -155,7 +156,7 @@ impl Analyzer<'_> {
           self.elab_intern_push_locus_tys(tys);
           assert!(!vars.is_empty());
           for _ in 1..vars.len() {
-            self.sch_pred_args.push((&*self.r.lc.locus_ty.0).to_vec().into());
+            self.sch_pred_args.push(self.r.lc.locus_ty.0.to_vec().into());
           }
           self.sch_pred_args.push(self.r.lc.locus_ty.0.drain(..).collect());
         }
@@ -596,7 +597,20 @@ impl Analyzer<'_> {
         panic!("non registered cluster")
       }
       ast::Type::Reservation { nr, subst, .. } => {
-        todo!()
+        let mut ty = self.reserved[nr.unwrap()].clone();
+        if !subst.is_empty() {
+          let subst = subst
+            .iter()
+            .map(|&(kind, nr)| match kind {
+              VarKind::Free | VarKind::Reserved => Term::FreeVar(FVarId(nr)),
+              VarKind::Bound => Term::Bound(BoundId(nr)),
+              VarKind::Const | VarKind::DefConst => Term::Constant(ConstId(nr)),
+              _ => unreachable!(),
+            })
+            .collect_vec();
+          Inst::new(&subst).visit_type(&mut ty)
+        }
+        ty
       }
     }
   }
@@ -975,7 +989,7 @@ struct Exportable;
 impl Visit for Exportable {
   fn visit_term(&mut self, tm: &Term) {
     match tm {
-      Term::Constant(_) => todo!("skel const something"),
+      Term::Constant(_) => panic!("local constant in exportable item"),
       Term::PrivFunc { .. } => panic!("private function in exportable item"),
       _ => self.super_visit_term(tm),
     }
@@ -992,7 +1006,7 @@ impl Visit for Exportable {
 trait ReadProof {
   type CaseIterable;
   type CaseIter<'a>;
-  type SupposeRecv: Default;
+  type SupposeRecv;
 
   /// Changes the thesis from `for x1..xn holds P` to `P`
   /// where `x1..xn` are the fixed_vars introduced since `start`
@@ -1026,87 +1040,100 @@ trait ReadProof {
 
   fn finish_thesis_case(&mut self, elab: &mut Analyzer, case: Self::CaseIter<'_>);
 
+  fn new_suppose(&mut self, elab: &mut Analyzer) -> Self::SupposeRecv;
+
   fn next_suppose(&mut self, elab: &mut Analyzer, recv: &mut Self::SupposeRecv) {}
 
   fn finish_proof(&mut self, elab: &mut Analyzer);
 
+  fn super_elab_item(&mut self, elab: &mut Analyzer, item: &ast::Item) -> bool {
+    match &item.kind {
+      ast::ItemKind::Let { var } | ast::ItemKind::LetLocus { var } => {
+        let n = elab.lc.fixed_var.len();
+        elab.elab_fixed_vars(var);
+        self.intro(elab, n)
+      }
+      ast::ItemKind::Assume(asm) => {
+        let mut conjs = vec![];
+        for prop in asm.conds() {
+          elab.elab_proposition(prop).append_conjuncts_to(&mut conjs);
+        }
+        self.assume(elab, conjs);
+      }
+      ast::ItemKind::Given { vars, conds } => {
+        let n = elab.lc.fixed_var.len();
+        for var in vars {
+          elab.elab_fixed_vars(var);
+        }
+        let mut conjs = vec![];
+        for prop in conds {
+          elab.elab_proposition(prop).append_conjuncts_to(&mut conjs);
+        }
+        self.given(elab, n, conjs);
+      }
+      ast::ItemKind::Take { var: None, term } => {
+        let term = elab.elab_intern_term(term.as_deref().unwrap());
+        self.take(elab, term);
+      }
+      ast::ItemKind::Take { var: Some(_), term } => {
+        let term = elab.elab_intern_term(term.as_deref().unwrap());
+        let ty = term.get_type(&elab.g, &elab.lc, false);
+        let v = elab.lc.fixed_var.push(FixedVar { ty, def: Some(Box::new(term)) });
+        self.take_as_var(elab, v);
+      }
+      ast::ItemKind::Thus(stmt) => {
+        let f = elab.elab_stmt(stmt);
+        self.thus(elab, f)
+      }
+      ast::ItemKind::PerCases { just, kind: CaseKind::Case, blocks } => {
+        let mut iter = self.new_thesis_case(elab);
+        let mut iter = self.new_thesis_case_iter(elab, &mut iter);
+        let mut disjs = vec![];
+        for bl in blocks {
+          elab.scope(None, true, false, |elab| {
+            let mut conjs = vec![];
+            for prop in bl.hyp.conds() {
+              elab.elab_proposition(prop).append_conjuncts_to(&mut conjs);
+            }
+            self.next_thesis_case(elab, &mut iter, &conjs);
+            Formula::mk_and(conjs).mk_neg().append_conjuncts_to(&mut disjs);
+            self.elab_proof(elab, &bl.items);
+          });
+        }
+        self.finish_thesis_case(elab, iter);
+        elab.elab_justification(&Formula::mk_and(disjs).mk_neg(), just);
+        return false
+      }
+      ast::ItemKind::PerCases { just, kind: CaseKind::Suppose, blocks } => {
+        let mut disjs = vec![];
+        let mut recv = self.new_suppose(elab);
+        for bl in blocks {
+          elab.scope(None, true, false, |elab| {
+            let mut conjs = vec![];
+            for prop in bl.hyp.conds() {
+              elab.elab_proposition(prop).append_conjuncts_to(&mut conjs);
+            }
+            Formula::mk_and(conjs).mk_neg().append_conjuncts_to(&mut disjs);
+            self.elab_proof(elab, &bl.items);
+            self.next_suppose(elab, &mut recv);
+          });
+        }
+        elab.elab_justification(&Formula::mk_and(disjs).mk_neg(), just);
+        return false
+      }
+      _ => elab.elab_stmt_item(item),
+    }
+    true
+  }
+
+  fn elab_item(&mut self, elab: &mut Analyzer, item: &ast::Item) -> bool {
+    self.super_elab_item(elab, item)
+  }
+
   fn elab_proof(&mut self, elab: &mut Analyzer, items: &[ast::Item]) {
     for item in items {
-      match &item.kind {
-        ast::ItemKind::Let { var } => {
-          let n = elab.lc.fixed_var.len();
-          elab.elab_fixed_vars(var);
-          self.intro(elab, n)
-        }
-        ast::ItemKind::Assume(asm) => {
-          let mut conjs = vec![];
-          for prop in asm.conds() {
-            elab.elab_proposition(prop).append_conjuncts_to(&mut conjs);
-          }
-          self.assume(elab, conjs);
-        }
-        ast::ItemKind::Given { vars, conds } => {
-          let n = elab.lc.fixed_var.len();
-          for var in vars {
-            elab.elab_fixed_vars(var);
-          }
-          let mut conjs = vec![];
-          for prop in conds {
-            elab.elab_proposition(prop).append_conjuncts_to(&mut conjs);
-          }
-          self.given(elab, n, conjs);
-        }
-        ast::ItemKind::Take { var: None, term } => {
-          let term = elab.elab_intern_term(term.as_deref().unwrap());
-          self.take(elab, term);
-        }
-        ast::ItemKind::Take { var: Some(_), term } => {
-          let term = elab.elab_intern_term(term.as_deref().unwrap());
-          let ty = term.get_type(&elab.g, &elab.lc, false);
-          let v = elab.lc.fixed_var.push(FixedVar { ty, def: Some(Box::new(term)) });
-          self.take_as_var(elab, v);
-        }
-        ast::ItemKind::Thus(stmt) => {
-          let f = elab.elab_stmt(stmt);
-          self.thus(elab, f)
-        }
-        ast::ItemKind::PerCases { just, kind: CaseKind::Case, blocks } => {
-          let mut iter = self.new_thesis_case(elab);
-          let mut iter = self.new_thesis_case_iter(elab, &mut iter);
-          let mut disjs = vec![];
-          for bl in blocks {
-            elab.scope(None, true, false, |elab| {
-              let mut conjs = vec![];
-              for prop in bl.hyp.conds() {
-                elab.elab_proposition(prop).append_conjuncts_to(&mut conjs);
-              }
-              self.next_thesis_case(elab, &mut iter, &conjs);
-              Formula::mk_and(conjs).mk_neg().append_conjuncts_to(&mut disjs);
-              self.elab_proof(elab, items);
-            });
-          }
-          self.finish_thesis_case(elab, iter);
-          elab.elab_justification(&Formula::mk_and(disjs).mk_neg(), just);
-          break
-        }
-        ast::ItemKind::PerCases { just, kind: CaseKind::Suppose, blocks } => {
-          let mut disjs = vec![];
-          let mut recv = Default::default();
-          for bl in blocks {
-            elab.scope(None, true, false, |elab| {
-              let mut conjs = vec![];
-              for prop in bl.hyp.conds() {
-                elab.elab_proposition(prop).append_conjuncts_to(&mut conjs);
-              }
-              Formula::mk_and(conjs).mk_neg().append_conjuncts_to(&mut disjs);
-              self.elab_proof(elab, items);
-              self.next_suppose(elab, &mut recv);
-            });
-          }
-          elab.elab_justification(&Formula::mk_and(disjs).mk_neg(), just);
-          break
-        }
-        _ => elab.elab_stmt_item(item),
+      if !self.elab_item(elab, item) {
+        break
       }
     }
     self.finish_proof(elab)
@@ -1171,6 +1198,8 @@ impl ReadProof for WithThesis {
     assert!(case.next().is_none())
   }
 
+  fn new_suppose(&mut self, _: &mut Analyzer) {}
+
   fn finish_proof(&mut self, elab: &mut Analyzer) {
     assert!(matches!(elab.thesis.as_deref(), Some(Formula::True)))
   }
@@ -1185,6 +1214,7 @@ enum ProofStep {
   Case,
 }
 
+#[derive(Default)]
 struct ReconstructThesis {
   stack: Vec<ProofStep>,
 }
@@ -1283,7 +1313,7 @@ impl ReadProof for ReconstructThesis {
   }
 
   fn new_thesis_case(&mut self, elab: &mut Analyzer) {}
-  fn new_thesis_case_iter<'a>(&mut self, _: &mut Analyzer, _: &'a mut ()) {}
+  fn new_thesis_case_iter(&mut self, _: &mut Analyzer, _: &mut ()) {}
   fn next_thesis_case(&mut self, _: &mut Analyzer, _: &mut (), conjs: &[Formula]) {
     self.stack.push(ProofStep::Case);
     self.stack.push(ProofStep::Thus { conjs: conjs.to_vec() });
@@ -1292,6 +1322,8 @@ impl ReadProof for ReconstructThesis {
     let f = self.reconstruct(elab, false);
     self.assume(elab, vec![f]);
   }
+
+  fn new_suppose(&mut self, _: &mut Analyzer) -> Self::SupposeRecv { Default::default() }
 
   fn next_suppose(&mut self, elab: &mut Analyzer, recv: &mut Self::SupposeRecv) {
     if let Some(thesis) = recv {
@@ -1303,5 +1335,130 @@ impl ReadProof for ReconstructThesis {
 
   fn finish_proof(&mut self, elab: &mut Analyzer) {
     elab.thesis = Some(Box::new(self.reconstruct(elab, true)))
+  }
+}
+
+#[derive(Default)]
+struct ToLocus(IdxVec<ConstId, Option<LocusId>>);
+
+impl VisitMut for ToLocus {
+  fn visit_term(&mut self, tm: &mut Term) {
+    match *tm {
+      Term::Constant(c) =>
+        *tm = Term::Locus(self.0.get(c).and_then(|l| *l).expect("local constant in exported item")),
+      _ => self.super_visit_term(tm),
+    }
+  }
+}
+
+struct BlockReader {
+  kind: BlockKind,
+  to_locus: ToLocus,
+  primary: IdxVec<LocusId, Type>,
+  assums: Vec<Formula>,
+}
+
+impl BlockReader {
+  fn new(kind: BlockKind, lc: &LocalContext) -> Self {
+    Self {
+      kind,
+      to_locus: ToLocus(IdxVec::from_default(lc.fixed_var.len())),
+      primary: Default::default(),
+      assums: vec![],
+    }
+  }
+}
+
+impl ReadProof for BlockReader {
+  type CaseIterable = std::convert::Infallible;
+  type CaseIter<'a> = std::convert::Infallible;
+  type SupposeRecv = std::convert::Infallible;
+
+  fn intro(&mut self, elab: &mut Analyzer, start: usize) {
+    self.to_locus.0 .0.resize(start, None);
+    for fv in &elab.lc.fixed_var.0[start..] {
+      let ty = fv.ty.visit_cloned(&mut self.to_locus);
+      Exportable.visit_type(&ty);
+      let i = self.primary.push(ty);
+      self.to_locus.0.push(Some(i));
+    }
+  }
+
+  fn assume(&mut self, elab: &mut Analyzer, mut conjs: Vec<Formula>) {
+    conjs.visit(&mut self.to_locus);
+    conjs.iter().for_each(|f| Exportable.visit_formula(f));
+    self.assums.append(&mut conjs);
+  }
+
+  fn given(&mut self, elab: &mut Analyzer, start: usize, conjs: Vec<Formula>) {
+    let mut f = Formula::mk_and(conjs).mk_neg();
+    let end = elab.lc.fixed_var.len();
+    elab.lc.mk_forall(start..end, false, &mut f);
+    self.assume(elab, vec![f.mk_neg()]);
+  }
+
+  fn take(&mut self, elab: &mut Analyzer, term: Term) { panic!("invalid item") }
+  fn thus(&mut self, elab: &mut Analyzer, f: Formula) { panic!("invalid item") }
+  fn new_thesis_case(&mut self, elab: &mut Analyzer) -> Self::CaseIterable {
+    panic!("invalid item")
+  }
+
+  fn new_thesis_case_iter(
+    &mut self, _: &mut Analyzer, case: &mut Self::CaseIterable,
+  ) -> Self::CaseIter<'_> {
+    *case
+  }
+
+  fn next_thesis_case(
+    &mut self, elab: &mut Analyzer, case: &mut Self::CaseIter<'_>, f: &[Formula],
+  ) {
+  }
+
+  fn finish_thesis_case(&mut self, elab: &mut Analyzer, case: Self::CaseIter<'_>) { match case {} }
+  fn new_suppose(&mut self, elab: &mut Analyzer) -> Self::SupposeRecv { panic!("invalid item") }
+  fn next_suppose(&mut self, elab: &mut Analyzer, recv: &mut Self::SupposeRecv) {}
+  fn finish_proof(&mut self, elab: &mut Analyzer) {}
+
+  fn elab_item(&mut self, elab: &mut Analyzer, item: &ast::Item) -> bool {
+    match (self.kind, &item.kind) {
+      (BlockKind::Definition, ast::ItemKind::Definition(it)) => match &it.kind {
+        ast::DefinitionKind::Func { pat, spec, kind } => match it.redef {
+          true => todo!("ikItmRedefFunc"),
+          false => todo!("ikItmDefFunc"),
+        },
+        ast::DefinitionKind::Pred { pat, def } => match it.redef {
+          true => todo!("ikItmRedefPred"),
+          false => todo!("ikItmDefPred"),
+        },
+        ast::DefinitionKind::Mode { pat, kind } => match kind {
+          ast::DefModeKind::Expandable { expansion } => todo!("ikItmDefExpandMode"),
+          ast::DefModeKind::Standard { spec, def } => match it.redef {
+            true => todo!("ikItmRedefMode"),
+            false => todo!("ikItmDefMode"),
+          },
+        },
+        ast::DefinitionKind::Attr { pat, def } => match it.redef {
+          true => todo!("ikItmRedefPrAttr"),
+          false => todo!("ikItmDefPrAttr"),
+        },
+      },
+      (BlockKind::Definition, ast::ItemKind::DefStruct(_)) => todo!("ikItmDefStruct"),
+      (BlockKind::Notation, ast::ItemKind::PatternRedef { kind, orig, new }) => match kind {
+        ast::PatternRedefKind::PredSynonym { pos } => todo!("ikItmDefPred"),
+        ast::PatternRedefKind::FuncNotation => todo!("ikItmDefFunc"),
+        ast::PatternRedefKind::ModeNotation => todo!("ikItmDefMode"),
+        ast::PatternRedefKind::AttrSynonym { pos } => todo!("ikItmDefPrAttr"),
+      },
+      (BlockKind::Registration, ast::ItemKind::Cluster(it)) => match &it.kind {
+        ast::ClusterDeclKind::Exist { concl, ty } => todo!("ikItmCluRegistered"),
+        ast::ClusterDeclKind::Func { term, concl, ty } => todo!("ikItmCluFunctor"),
+        ast::ClusterDeclKind::Cond { antecedent, concl, ty } => todo!("ikItmCluConditional"),
+      },
+      (BlockKind::Registration, ast::ItemKind::Identify(_)) => todo!("ikIdFunctors"),
+      (BlockKind::Registration, ast::ItemKind::Reduction(it)) => todo!("ikReduceFunctors"),
+      (BlockKind::Registration, ast::ItemKind::SethoodRegistration { ty, just }) =>
+        todo!("ikProperty"),
+      _ => self.super_elab_item(elab, item),
+    }
   }
 }

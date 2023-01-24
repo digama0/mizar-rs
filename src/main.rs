@@ -1343,6 +1343,7 @@ impl<'a> Subst<'a> {
   fn snapshot(&self) -> Box<[bool]> { self.subst_term.iter().map(Option::is_some).collect() }
 
   fn rollback(&mut self, snapshot: &[bool], upto: usize) {
+    #[allow(clippy::needless_range_loop)]
     for j in 0..=upto {
       match &mut self.subst_term[j] {
         x @ Some(_) if !snapshot[j] => *x = None,

@@ -4,6 +4,7 @@ use crate::types::{
   Position, PredSymId, PropertyKind, Reference, RightBrkSymId, SchId, SchRef, SelSymId,
   StructSymId,
 };
+use enum_map::Enum;
 
 mk_id! {
   IdentId(u32),
@@ -15,7 +16,7 @@ pub struct Variable {
   pub id: (IdentId, String),
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Enum)]
 pub enum VarKind {
   Unknown,
   Free,
@@ -129,12 +130,16 @@ impl Term {
   }
 }
 
+mk_id! {
+  ReservedId(u32),
+}
+
 #[derive(Debug)]
 pub enum Type {
   Mode { pos: Position, sym: (ModeSymId, String), args: Vec<Term> },
   Struct { pos: Position, sym: (StructSymId, String), args: Vec<Term> },
   Cluster { pos: Position, attrs: Vec<Attr>, ty: Box<Type> },
-  Reservation { pos: Position, nr: Option<u32>, subst: Vec<[u32; 3]> },
+  Reservation { pos: Position, nr: Option<ReservedId>, subst: Vec<(VarKind, u32)> },
 }
 impl Type {
   pub fn pos(&self) -> Position {
@@ -453,6 +458,12 @@ pub struct Correctness {
 }
 
 #[derive(Debug)]
+pub struct Property {
+  pub prop: PropertyKind,
+  pub just: Box<Justification>,
+}
+
+#[derive(Debug)]
 pub struct SchemeHead {
   pub sym: (u32, String),
   pub nr: SchId,
@@ -482,6 +493,7 @@ pub struct Definition {
   pub kind: DefinitionKind,
   pub conds: Vec<CorrCond>,
   pub corr: Option<Correctness>,
+  pub props: Vec<Property>,
 }
 
 #[derive(Debug)]
@@ -592,10 +604,6 @@ pub enum ItemKind {
     blocks: Vec<CaseBlock>,
   },
   Assume(Assumption),
-  Property {
-    prop: PropertyKind,
-    just: Box<Justification>,
-  },
   Definition(Box<Definition>),
   DefStruct(Box<DefStruct>),
   PatternRedef {

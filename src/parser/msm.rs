@@ -6,6 +6,7 @@ use crate::types::{
   Reference, ReferenceKind, RightBrkSymId, SchRef, SelSymId, StructSymId,
 };
 use crate::{types, MizPath};
+use enum_map::Enum;
 use quick_xml::events::{BytesStart, Event};
 use std::borrow::Cow;
 use std::fs::File;
@@ -83,6 +84,13 @@ impl ItemKind {
       _ => None,
     }
   }
+
+  fn property_mut(&mut self) -> Option<&mut Vec<Property>> {
+    match self {
+      ItemKind::Definition(it) => Some(&mut it.props),
+      _ => None,
+    }
+  }
 }
 
 pub enum Shape {
@@ -155,20 +163,19 @@ impl MsmParser {
     std::iter::from_fn(|| self.parse_variable().map(|v| *v)).collect()
   }
 
-  fn parse_substitution(&mut self) -> Vec<[u32; 3]> {
+  fn parse_substitution(&mut self) -> Vec<(VarKind, u32)> {
     std::iter::from_fn(|| {
       let e = self.r.try_read_start(&mut self.buf, Some(b"Substitution")).ok()?;
-      let (mut x, mut y1, mut y2) = <_>::default();
+      let (mut y1, mut y2) = <_>::default();
       for attr in e.attributes().map(Result::unwrap) {
         match attr.key {
-          b"x" => x = self.r.get_attr(&attr.value),
-          b"y1" => y1 = self.r.get_attr(&attr.value),
-          b"y2" => y2 = self.r.get_attr(&attr.value),
+          b"y1" => y1 = VarKind::from_usize(self.r.get_attr(&attr.value)),
+          b"y2" => y2 = self.r.get_attr::<u32>(&attr.value) - 1,
           _ => {}
         }
       }
       self.r.end_tag(&mut self.buf);
-      Some([x, y1, y2])
+      Some((y1, y2))
     })
     .collect()
   }
@@ -580,8 +587,12 @@ impl MsmParser {
         self.r.end_tag(&mut self.buf);
         return true
       }
-      b"Property" =>
-        ItemKind::Property { prop: property.unwrap(), just: self.parse_justification() },
+      b"Property" => {
+        let props = items.last_mut().and_then(|it| it.kind.property_mut()).unwrap();
+        props.push(Property { prop: property.unwrap(), just: self.parse_justification() });
+        self.r.end_tag(&mut self.buf);
+        return true
+      }
       b"Mode-Definition" => {
         let (redef, pat) = match self.parse_elem() {
           Elem::Redefine => (true, self.parse_pattern()),
@@ -606,7 +617,8 @@ impl MsmParser {
         };
         self.r.end_tag(&mut self.buf);
         let kind = DefinitionKind::Mode { pat, kind };
-        ItemKind::Definition(Box::new(Definition { redef, kind, conds: vec![], corr: None }))
+        let def = Definition { redef, kind, conds: vec![], corr: None, props: vec![] };
+        ItemKind::Definition(Box::new(def))
       }
       b"Attribute-Definition" => {
         let (redef, pat) = match self.parse_elem() {
@@ -618,7 +630,8 @@ impl MsmParser {
         let def = self.parse_definiens();
         end_tag = def.is_none();
         let kind = DefinitionKind::Attr { pat, def };
-        ItemKind::Definition(Box::new(Definition { redef, kind, conds: vec![], corr: None }))
+        let def = Definition { redef, kind, conds: vec![], corr: None, props: vec![] };
+        ItemKind::Definition(Box::new(def))
       }
       b"Predicate-Definition" => {
         let (redef, pat) = match self.parse_elem() {
@@ -630,7 +643,8 @@ impl MsmParser {
         let def = self.parse_definiens();
         end_tag = def.is_none();
         let kind = DefinitionKind::Pred { pat, def };
-        ItemKind::Definition(Box::new(Definition { redef, kind, conds: vec![], corr: None }))
+        let def = Definition { redef, kind, conds: vec![], corr: None, props: vec![] };
+        ItemKind::Definition(Box::new(def))
       }
       b"Functor-Definition" => {
         let shape = match &*shape {
@@ -659,7 +673,8 @@ impl MsmParser {
           _ => panic!("unexpected or missing <Definiens>"),
         };
         let kind = DefinitionKind::Func { pat, spec, kind };
-        ItemKind::Definition(Box::new(Definition { redef, kind, conds: vec![], corr: None }))
+        let def = Definition { redef, kind, conds: vec![], corr: None, props: vec![] };
+        ItemKind::Definition(Box::new(def))
       }
       b"Structure-Definition" => {
         self.r.read_start(&mut self.buf, Some(b"Ancestors"));
@@ -835,7 +850,7 @@ impl MsmParser {
           }
           b"Implicitly-Qualified-Segment" => {
             let nr = (e.try_get_attribute(b"nr").unwrap())
-              .map(|attr| self.r.get_attr::<u32>(&attr.value) - 1);
+              .map(|attr| ReservedId(self.r.get_attr::<u32>(&attr.value) - 1));
             let var = self.parse_variable().unwrap();
             let pos = var.pos;
             let ty = if self.msm {
@@ -1207,7 +1222,7 @@ impl MsmParser {
               match attr.key {
                 b"line" => pos.line = self.r.get_attr(&attr.value),
                 b"col" => pos.col = self.r.get_attr(&attr.value),
-                b"nr" => nr = Some(self.r.get_attr::<u32>(&attr.value) - 1),
+                b"nr" => nr = Some(ReservedId(self.r.get_attr::<u32>(&attr.value) - 1)),
                 _ => {}
               }
             }
