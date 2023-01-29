@@ -1050,6 +1050,16 @@ impl Analyzer<'_> {
     }
     iter2.chain(stack2.into_iter().rev().flatten()).collect()
   }
+
+  fn elab_spec(&mut self, spec: Option<&ast::Type>, tgt: &Type) -> Type {
+    if let Some(ty) = spec {
+      let ty = self.elab_type(ty);
+      assert!(tgt.is_wider_than(&self.g, &self.lc, &ty));
+      ty
+    } else {
+      tgt.clone()
+    }
+  }
 }
 
 struct Exportable;
@@ -1295,15 +1305,49 @@ impl<T: BodyKind> DefBody<T> {
       }
     }))
   }
+
+  fn defthm_for(&self, g: &Global, defines: &Formula) -> Box<Formula> {
+    self.by_cases(|case| defines.clone().mk_iff(case.it_eq(g)).mk_neg())
+  }
+
+  fn mk_compatibility(&self, g: &Global, it_type: &Type, defines: &Formula) -> Box<Formula> {
+    Box::new(AbstractIt::forall(it_type, *self.defthm_for(g, defines), true))
+  }
 }
 
 impl DefBody<Formula> {
   fn mk_existence(&self, it_type: &Type) -> Box<Formula> {
     self.by_cases(|case| AbstractIt::forall(it_type, case.clone(), false))
   }
+}
 
-  fn defthm_for(&self, val: &Formula) -> Box<Formula> {
-    self.by_cases(|case| val.clone().mk_iff(case.clone()).mk_neg())
+fn mk_coherence(nr: ModeId, attrs: &Attrs, args: &[Term], it_type: &Type) -> Box<Formula> {
+  Box::new(Formula::ForAll {
+    dom: Box::new(Type {
+      kind: TypeKind::Mode(nr),
+      attrs: (Attrs::EMPTY, attrs.visit_cloned(&mut Inst::new(args))),
+      args: args.into(),
+    }),
+    scope: Box::new(Formula::Is {
+      term: Box::new(Term::Bound(BoundId(0))),
+      ty: Box::new(it_type.clone()),
+    }),
+  })
+}
+
+impl DefValue {
+  fn mk_consistency(&self, g: &Global, it_type: &Type) -> Option<Box<Formula>> {
+    match self {
+      DefValue::Term(value) => value.mk_consistency(g, it_type),
+      DefValue::Formula(value) => value.mk_consistency(g, it_type),
+    }
+  }
+
+  fn mk_compatibility(&self, g: &Global, it_type: &Type, defines: &Formula) -> Box<Formula> {
+    match self {
+      DefValue::Term(value) => value.mk_compatibility(g, it_type, defines),
+      DefValue::Formula(value) => value.mk_compatibility(g, it_type, defines),
+    }
   }
 }
 
@@ -1582,6 +1626,20 @@ impl BlockReader {
     }
     f
   }
+
+  fn check_compatible_args(&self, subst: &Subst<'_>) {
+    let n = self.primary.len().checked_sub(subst.subst_term.len()).expect("too many args");
+    for ((i, ty), tm) in self.primary.enum_iter().skip(n).zip(&*subst.subst_term) {
+      if let Some(tm) = tm {
+        if let Term::Constant(c) = **tm {
+          if self.to_locus.get(c) == i {
+            continue
+          }
+        }
+      }
+      panic!("incorrect args to redefinition")
+    }
+  }
 }
 
 impl ReadProof for BlockReader {
@@ -1647,31 +1705,65 @@ impl ReadProof for BlockReader {
         },
         ast::DefinitionKind::Mode { pat, kind } => match kind {
           ast::DefModeKind::Expandable { expansion } => todo!("ikItmDefExpandMode"),
-          ast::DefModeKind::Standard { spec, def } =>
+          ast::DefModeKind::Standard { spec, def } => {
+            let fmt = elab.formats[&Format::Mode(pat.to_format())];
+            let mut cc = CorrConds::new();
+            let mut args: Box<[_]> = Box::new([]);
+            let (redefines, superfluous, it_type);
             if it.redef {
-              todo!("ikItmRedefMode")
+              args = pat.args.iter().map(|v| Term::Constant(ConstId(v.id.0 .0))).collect();
+              let pat = elab.notations.mode.iter().rev().find(|pat| {
+                pat.fmt == fmt
+                  && !matches!(pat.kind, PatternKind::Mode(nr)
+                      if elab.g.constrs.mode[nr].redefines.is_some())
+                  && matches!(pat.check_types(&elab.g, &elab.lc, &args),
+                    Some(subst) if { self.check_compatible_args(&subst); true })
+              });
+              let pat = pat.expect("type error");
+              let PatternKind::Mode(nr) = pat.kind else { panic!("redefining expandable mode") };
+              (redefines, superfluous) = (Some(nr), (self.primary.len() - pat.primary.len()) as u8);
+              let tgt = elab.g.constrs.mode[nr].ty.clone();
+              it_type = elab.elab_spec(spec.as_deref(), &tgt);
+              if spec.is_some() {
+                cc.0[CorrCondKind::Coherence] =
+                  Some(mk_coherence(nr, &tgt.attrs.1, &args[superfluous as usize..], &it_type));
+              }
             } else {
-              elab.lc.it_type =
-                Some(Box::new(spec.as_deref().map_or(Type::ANY, |ty| elab.elab_type(ty))));
-              let def = def.as_deref().unwrap();
-              let DefValue::Formula(mut value) = elab.elab_def_value(&def.kind, true)
-              else { unreachable!() };
-              let mut it_type = elab.lc.it_type.take().unwrap();
-              let mut cc = CorrConds::new();
-              cc.0[CorrCondKind::Existence] = Some(value.mk_existence(&it_type));
+              (redefines, superfluous) = (None, 0);
+              it_type = spec.as_deref().map_or(Type::ANY, |ty| elab.elab_type(ty));
+            }
+            elab.lc.it_type = Some(Box::new(it_type));
+            let value = def.as_ref().map(|def| elab.elab_def_value(&def.kind, true));
+            let mut it_type = elab.lc.it_type.take().unwrap();
+            if let Some(value) = &value {
               cc.0[CorrCondKind::Consistency] = value.mk_consistency(&elab.g, &it_type);
-              elab.elab_corr_conds(cc, &it.conds, &it.corr);
-              let properties = elab.elab_properties(&it.props);
-              it_type.visit(&mut self.to_locus);
-              value.visit(&mut self.to_locus);
-              let primary1 = self.primary.0.iter().cloned().collect::<Box<[_]>>();
-              let primary = self.primary.0.iter().chain([&*it_type]).cloned().collect::<Box<[_]>>();
-              let formals =
-                (0..primary1.len()).map(LocusId::from_usize).map(Term::Locus).collect_vec();
+              if let Some(nr) = redefines {
+                let ty = Box::new(Type {
+                  kind: TypeKind::Mode(nr),
+                  attrs: (Attrs::EMPTY, it_type.attrs.1.clone()),
+                  args: (*args).to_owned(),
+                });
+                let defined = Formula::Is { term: Box::new(Term::It), ty };
+                cc.0[CorrCondKind::Compatibility] =
+                  Some(value.mk_compatibility(&elab.g, &it_type, &defined));
+              }
+            }
+            if !it.redef {
+              let Some(DefValue::Formula(value)) = &value else { panic!() };
+              cc.0[CorrCondKind::Existence] = Some(value.mk_existence(&it_type));
+            }
+            elab.elab_corr_conds(cc, &it.conds, &it.corr);
+            let properties = elab.elab_properties(&it.props);
+            it_type.visit(&mut self.to_locus);
+            let visible =
+              pat.args.iter().map(|v| self.to_locus.get(ConstId(v.id.0 .0))).collect::<Box<[_]>>();
+            let primary = self.primary.0.iter().chain([&*it_type]).cloned().collect::<Box<[_]>>();
+            CheckAccess::check(&primary, &visible);
+            if value.is_some() || superfluous != 0 {
               let c = Constructor {
-                primary: primary1,
-                redefines: None,
-                superfluous: 0,
+                primary: self.primary.0.iter().cloned().collect::<Box<[_]>>(),
+                redefines,
+                superfluous,
                 properties,
                 arg1: 0,
                 arg2: 0,
@@ -1681,33 +1773,39 @@ impl ReadProof for BlockReader {
               let pat = Pattern {
                 kind: PatternKind::Mode(n),
                 pid: elab.notations.functor.len() as u32,
-                fmt: elab.formats[&Format::Mode(pat.to_format())],
-                redefines: None,
+                fmt,
+                redefines: redefines.map(|x| x.0),
                 primary: primary.clone(),
-                visible: pat.args.iter().map(|v| self.to_locus.get(ConstId(v.id.0 .0))).collect(),
+                visible,
                 pos: true,
               };
-              CheckAccess::check(&pat.primary, &pat.visible);
               elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
-              let mut it_type_2 = it_type.visit_cloned(&mut Inst::new(&formals));
-              let ty = Box::new(Type {
-                kind: TypeKind::Mode(n),
-                attrs: (Attrs::EMPTY, it_type_2.attrs.1.clone()),
-                args: formals,
-              });
-              let mut f = value.defthm_for(&Formula::Is { term: Box::new(Term::It), ty });
-              let depth = self.primary.len() as u32;
-              AbstractLocus(depth + 1).visit_formula(&mut f);
-              AbstractLocus(depth).visit_type(&mut it_type_2);
-              let thm = self.forall_locus(Box::new(Formula::ForAll { dom: it_type_2, scope: f }));
-              self.defthms.push((def.label.as_ref().map(|l| l.id.0), thm));
-              elab.r.read_definiens(&Definiens {
-                essential: (0..primary.len()).map(LocusId::from_usize).collect(),
-                c: ConstrDef { constr: ConstrKind::Mode(n), primary },
-                assumptions: Formula::mk_and(self.assums.clone()),
-                value: DefValue::Formula(value),
-              });
-            },
+              if let Some(mut value) = value {
+                let DefValue::Formula(mut value) = value else { panic!() };
+                value.visit(&mut self.to_locus);
+                let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect_vec();
+                it_type.visit(&mut Inst::new(&formals));
+                let ty = Box::new(Type {
+                  kind: TypeKind::Mode(n),
+                  attrs: (Attrs::EMPTY, it_type.attrs.1.clone()),
+                  args: formals,
+                });
+                let defined = Formula::Is { term: Box::new(Term::It), ty };
+                let mut f = value.defthm_for(&elab.g, &defined);
+                let depth = self.primary.len() as u32;
+                AbstractLocus(depth + 1).visit_formula(&mut f);
+                AbstractLocus(depth).visit_type(&mut it_type);
+                let thm = self.forall_locus(Box::new(Formula::ForAll { dom: it_type, scope: f }));
+                self.defthms.push((def.as_ref().unwrap().label.as_ref().map(|l| l.id.0), thm));
+                elab.r.read_definiens(&Definiens {
+                  essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
+                  c: ConstrDef { constr: ConstrKind::Mode(n), primary },
+                  assumptions: Formula::mk_and(self.assums.clone()),
+                  value: DefValue::Formula(value),
+                });
+              }
+            }
+          }
         },
         ast::DefinitionKind::Attr { pat, def } => match it.redef {
           true => todo!("ikItmRedefPrAttr"),

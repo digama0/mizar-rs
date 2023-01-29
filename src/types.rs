@@ -145,13 +145,13 @@ impl<I, T> IdxVec<I, T> {
     &mut self[idx]
   }
 
-  /// An iterator including the indexes, like `iter().enumerate()`, as `BlockId`s.
+  /// An iterator including the indexes, like `iter().enumerate()`, as `I`.
   pub fn enum_iter(&self) -> impl DoubleEndedIterator<Item = (I, &T)> + Clone
   where I: Idx {
     self.0.iter().enumerate().map(|(n, val)| (I::from_usize(n), val))
   }
 
-  /// An iterator including the indexes, like `iter_mut().enumerate()`, as `BlockId`s.
+  /// An iterator including the indexes, like `iter_mut().enumerate()`, as `I`.
   pub fn enum_iter_mut(&mut self) -> impl DoubleEndedIterator<Item = (I, &mut T)>
   where I: Idx {
     self.0.iter_mut().enumerate().map(|(n, val)| (I::from_usize(n), val))
