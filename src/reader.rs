@@ -109,7 +109,7 @@ impl MizPath {
       // LoadSGN
       for pat in notations {
         match pat.kind {
-          PatternKind::Mode(_) | PatternKind::ExpandableMode => v.notations.mode.push(pat),
+          PatternKind::Mode(_) | PatternKind::ExpandableMode { .. } => v.notations.mode.push(pat),
           PatternKind::Struct(_) => v.notations.struct_mode.push(pat),
           PatternKind::Attr(_) => v.notations.attribute.push(pat),
           PatternKind::Pred(_) => v.notations.predicate.push(pat),
@@ -504,20 +504,21 @@ impl Reader {
       Item::Theorem { prop, just } => self.read_just_prop(prop, just),
       Item::DefTheorem { prop, .. } => self.read_proposition(prop),
       Item::Canceled(_) => {}
-      Item::Definition(d) => {
-        let Definition { conds, corr, props, constr, patts, .. } = d;
+      Item::Definition(Definition { conds, corr, props, constr, patts, .. }) => {
         self.read_corr_conds(conds, corr);
         for JustifiedProperty { prop, just, .. } in props {
           self.read_just_prop(prop, just)
         }
         if let Some(constr) = constr {
-          self.pending_defs.push(PendingDef::Constr(self.g.constrs.push(self.intern(constr))));
+          let id = self.g.constrs.push(self.intern(constr));
+          self.push_constr(id);
         }
         self.lc.formatter.extend(&self.g.constrs, patts)
       }
       Item::DefStruct(DefStruct { constrs, cl, conds, corr, patts, .. }) => {
         for c in constrs {
-          self.pending_defs.push(PendingDef::Constr(self.g.constrs.push(self.intern(c))));
+          let id = self.g.constrs.push(self.intern(c));
+          self.push_constr(id);
         }
         self.read_cluster_decl(cl);
         self.read_corr_conds(conds, corr);
@@ -562,7 +563,7 @@ impl Reader {
     });
   }
 
-  fn read_definiens(&mut self, df: &Definiens) {
+  pub fn read_definiens(&mut self, df: &Definiens) {
     self.equalities.push(df.clone());
     self.expansions.push(df.clone());
     if let Some(func) = df.equals_expansion() {
@@ -651,6 +652,8 @@ impl Reader {
       self.read_just_prop(&c.prop, &c.just)
     }
   }
+
+  pub fn push_constr(&mut self, id: ConstrKind) { self.pending_defs.push(PendingDef::Constr(id)) }
 
   fn push_identify(&mut self, id: &Identify) {
     if let IdentifyKind::Func { lhs, rhs } = &id.kind {

@@ -49,17 +49,17 @@ impl Formatter {
         map.entry(i).or_insert((c.primary.len() as u8, visible, f));
       }
     }
-    match (pat.kind, self.formats[pat.fmt]) {
-      (PatternKind::Mode(n), Format::Mode(f)) => ins(&ctx.mode[n], &mut self.mode, pat, n, f),
-      (PatternKind::Struct(n), Format::Struct(f)) =>
+    match (&pat.kind, self.formats[pat.fmt]) {
+      (&PatternKind::Mode(n), Format::Mode(f)) => ins(&ctx.mode[n], &mut self.mode, pat, n, f),
+      (&PatternKind::Struct(n), Format::Struct(f)) =>
         ins(&ctx.struct_mode[n], &mut self.struct_mode, pat, n, f),
-      (PatternKind::Attr(n), Format::Attr(f)) => ins(&ctx.attribute[n], &mut self.attr, pat, n, f),
-      (PatternKind::Pred(n), Format::Pred(f)) => ins(&ctx.predicate[n], &mut self.pred, pat, n, f),
-      (PatternKind::Func(n), Format::Func(f)) => ins(&ctx.functor[n], &mut self.func, pat, n, f),
-      (PatternKind::Sel(n), Format::Sel(f)) => ins(&ctx.selector[n], &mut self.sel, pat, n, f),
-      (PatternKind::Aggr(n), Format::Aggr(f)) => ins(&ctx.aggregate[n], &mut self.aggr, pat, n, f),
-      (PatternKind::SubAggr(_), _) => {}     // unused
-      (PatternKind::ExpandableMode, _) => {} // not handled here
+      (&PatternKind::Attr(n), Format::Attr(f)) => ins(&ctx.attribute[n], &mut self.attr, pat, n, f),
+      (&PatternKind::Pred(n), Format::Pred(f)) => ins(&ctx.predicate[n], &mut self.pred, pat, n, f),
+      (&PatternKind::Func(n), Format::Func(f)) => ins(&ctx.functor[n], &mut self.func, pat, n, f),
+      (&PatternKind::Sel(n), Format::Sel(f)) => ins(&ctx.selector[n], &mut self.sel, pat, n, f),
+      (&PatternKind::Aggr(n), Format::Aggr(f)) => ins(&ctx.aggregate[n], &mut self.aggr, pat, n, f),
+      (PatternKind::SubAggr(_), _) => {}            // unused
+      (PatternKind::ExpandableMode { .. }, _) => {} // not handled here
       _ => panic!("incompatible format for pattern"),
     }
   }

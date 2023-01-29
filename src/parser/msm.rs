@@ -2,8 +2,8 @@
 use super::XmlReader;
 use crate::ast::*;
 use crate::types::{
-  FuncSymId, LabelId, LeftBrkSymId, LocusId, ModeSymId, Position, PredSymId, PropertyKind,
-  Reference, ReferenceKind, RightBrkSymId, SchRef, SelSymId, StructSymId,
+  AttrSymId, FuncSymId, LabelId, LeftBrkSymId, LocusId, ModeSymId, Position, PredSymId,
+  PropertyKind, Reference, ReferenceKind, RightBrkSymId, SchRef, SelSymId, StructSymId,
 };
 use crate::{types, MizPath};
 use enum_map::Enum;
@@ -340,9 +340,9 @@ impl MsmParser {
     Some(v)
   }
 
-  fn parse_loci(&mut self) -> Vec<Variable> {
+  fn parse_loci(&mut self, out: &mut Vec<Variable>) {
     self.r.read_start(&mut self.buf, Some(b"Loci"));
-    std::iter::from_fn(|| self.parse_locus().map(|v| *v)).collect()
+    out.extend(std::iter::from_fn(|| self.parse_locus().map(|v| *v)))
   }
 
   fn parse_right_pattern(&mut self) -> (RightBrkSymId, String) {
@@ -589,7 +589,7 @@ impl MsmParser {
       }
       b"Property" => {
         let props = items.last_mut().and_then(|it| it.kind.property_mut()).unwrap();
-        props.push(Property { prop: property.unwrap(), just: self.parse_justification() });
+        props.push(Property { kind: property.unwrap(), just: self.parse_justification() });
         self.r.end_tag(&mut self.buf);
         return true
       }
@@ -688,7 +688,8 @@ impl MsmParser {
             _ => {}
           }
         }
-        let args = self.parse_loci();
+        let mut args = vec![];
+        self.parse_loci(&mut args);
         let mut groups = vec![];
         while let Ok(e) = self.r.try_read_start(&mut self.buf, Some(b"Field-Segment")) {
           let pos = self.r.get_pos(&e);
@@ -947,7 +948,7 @@ impl MsmParser {
               match attr.key {
                 b"line" => pos.line = self.r.get_attr(&attr.value),
                 b"col" => pos.col = self.r.get_attr(&attr.value),
-                b"idnr" => id = self.r.get_attr::<u32>(&attr.value).checked_sub(1),
+                b"labelnr" => id = self.r.get_attr::<u32>(&attr.value).checked_sub(1),
                 b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
                 _ => {}
               }
@@ -1351,13 +1352,16 @@ impl MsmParser {
               match attr.key {
                 b"line" => pos.line = self.r.get_attr(&attr.value),
                 b"col" => pos.col = self.r.get_attr(&attr.value),
-                b"nr" => sym = self.r.get_attr::<u32>(&attr.value) - 1,
+                b"nr" => sym = PredSymId(self.r.get_attr::<u32>(&attr.value) - 1),
                 b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
                 _ => {}
               }
             }
-            let (left, right) = (self.parse_loci(), self.parse_loci());
-            let pat = PatternPred { pos, sym: (sym, spelling), left, right };
+            let mut args = vec![];
+            self.parse_loci(&mut args);
+            let left = args.len() as u8;
+            self.parse_loci(&mut args);
+            let pat = PatternPred { pos, sym: (sym, spelling), left, args };
             Elem::Pattern(Pattern::Pred(Box::new(pat)))
           }
           b"Operation-Functor-Pattern" => {
@@ -1371,8 +1375,11 @@ impl MsmParser {
                 _ => {}
               }
             }
-            let (left, right) = (self.parse_loci(), self.parse_loci());
-            let pat = PatternFunc::Func { pos, sym: (sym, spelling), left, right };
+            let mut args = vec![];
+            self.parse_loci(&mut args);
+            let left = args.len() as u8;
+            self.parse_loci(&mut args);
+            let pat = PatternFunc::Func { pos, sym: (sym, spelling), left, args };
             Elem::Pattern(Pattern::Func(Box::new(pat)))
           }
           b"Bracket-Functor-Pattern" => {
@@ -1386,7 +1393,8 @@ impl MsmParser {
                 _ => {}
               }
             }
-            let (rsym, args) = (self.parse_right_pattern(), self.parse_loci());
+            let (rsym, mut args) = (self.parse_right_pattern(), vec![]);
+            self.parse_loci(&mut args);
             let pat = PatternFunc::Bracket { pos, lsym: (lsym, lsp), rsym, args };
             Elem::Pattern(Pattern::Func(Box::new(pat)))
           }
@@ -1396,12 +1404,14 @@ impl MsmParser {
               match attr.key {
                 b"line" => pos.line = self.r.get_attr(&attr.value),
                 b"col" => pos.col = self.r.get_attr(&attr.value),
-                b"nr" => sym = self.r.get_attr::<u32>(&attr.value) - 1,
+                b"nr" => sym = ModeSymId(self.r.get_attr::<u32>(&attr.value) - 1),
                 b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
                 _ => {}
               }
             }
-            let pat = PatternMode { pos, sym: (sym, spelling), args: self.parse_loci() };
+            let mut args = vec![];
+            self.parse_loci(&mut args);
+            let pat = PatternMode { pos, sym: (sym, spelling), args };
             Elem::Pattern(Pattern::Mode(Box::new(pat)))
           }
           b"Attribute-Pattern" => {
@@ -1410,13 +1420,16 @@ impl MsmParser {
               match attr.key {
                 b"line" => pos.line = self.r.get_attr(&attr.value),
                 b"col" => pos.col = self.r.get_attr(&attr.value),
-                b"nr" => sym = self.r.get_attr::<u32>(&attr.value) - 1,
+                b"nr" => sym = AttrSymId(self.r.get_attr::<u32>(&attr.value) - 1),
                 b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
                 _ => {}
               }
             }
-            let (arg, args) = (self.parse_locus().unwrap(), self.parse_loci());
-            let pat = PatternAttr { pos, sym: (sym, spelling), arg, args };
+            let arg = self.parse_locus().unwrap();
+            let mut args = vec![];
+            self.parse_loci(&mut args);
+            args.push(*arg);
+            let pat = PatternAttr { pos, sym: (sym, spelling), args };
             Elem::Pattern(Pattern::Attr(Box::new(pat)))
           }
           b"Selector" => {
@@ -1425,7 +1438,7 @@ impl MsmParser {
               match attr.key {
                 b"line" => pos.line = self.r.get_attr(&attr.value),
                 b"col" => pos.col = self.r.get_attr(&attr.value),
-                b"nr" => sym = self.r.get_attr::<u32>(&attr.value) - 1,
+                b"nr" => sym = SelSymId(self.r.get_attr::<u32>(&attr.value) - 1),
                 b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
                 _ => {}
               }

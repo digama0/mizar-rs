@@ -43,19 +43,19 @@ impl<'a> Checker<'a> {
     if crate::CHECKER_INPUTS {
       eprintln!();
     }
-    let mut conjs = vec![];
-    for f in premises {
-      if crate::CHECKER_INPUTS {
-        eprintln!("input: {f:?}");
+    let mut check_f = Formula::mk_and_with(|conjs| {
+      for f in premises {
+        if crate::CHECKER_INPUTS {
+          eprintln!("input: {f:?}");
+        }
+        let mut f = f.clone();
+        Expand { g: self.g, lc: self.lc, expansions: self.expansions }.expand(&mut f, true);
+        // vprintln!("expand: {f:?}");
+        f.distribute_quantifiers(&self.g.constrs, 0);
+        // vprintln!("distributed: {f:?}");
+        f.append_conjuncts_to(conjs);
       }
-      let mut f = f.clone();
-      Expand { g: self.g, lc: self.lc, expansions: self.expansions }.expand(&mut f, true);
-      // vprintln!("expand: {f:?}");
-      f.distribute_quantifiers(&self.g.constrs, 0);
-      // vprintln!("distributed: {f:?}");
-      f.append_conjuncts_to(&mut conjs);
-    }
-    let mut check_f = Formula::mk_and(conjs);
+    });
     if crate::CHECKER_HEADER {
       eprintln!("checking {} @ {:?}:{:?}:\n  {check_f:?}", self.idx, self.article, self.pos);
     }
@@ -250,14 +250,13 @@ impl Expand<'_> {
           *f = std::mem::take(&mut **f2)
         }
       }
-      Formula::And { args } => {
-        let mut new_args = vec![];
-        for mut f in std::mem::take(args) {
-          self.expand(&mut f, pos);
-          f.append_conjuncts_to(&mut new_args);
-        }
-        *f = Formula::mk_and(new_args)
-      }
+      Formula::And { args } =>
+        *f = Formula::mk_and_with(|new_args| {
+          for mut f in std::mem::take(args) {
+            self.expand(&mut f, pos);
+            f.append_conjuncts_to(new_args);
+          }
+        }),
       Formula::ForAll { dom, scope } if !pos => {
         self.lc.bound_var.push((**dom).clone());
         self.expand(scope, pos);
@@ -286,16 +285,18 @@ impl Expand<'_> {
             let Formula::FlexAnd { expansion, .. } = &f1 else { unreachable!() };
             (**expansion).clone()
           };
-          let mut conjs = vec![f1.maybe_neg(pos)];
-          f2.maybe_neg(pos).append_conjuncts_to(&mut conjs);
-          if pos {
-            self.expand_flex(terms, expansion, &mut conjs, pos);
-          } else {
-            let mut conjs2 = vec![];
-            self.expand_flex(terms, expansion, &mut conjs2, pos);
-            Formula::mk_and(conjs2).mk_neg().append_conjuncts_to(&mut conjs);
-          }
-          *f = Formula::mk_and(conjs).maybe_neg(pos)
+          *f = Formula::mk_and_with(|conjs| {
+            conjs.push(f1.maybe_neg(pos));
+            f2.maybe_neg(pos).append_conjuncts_to(conjs);
+            if pos {
+              self.expand_flex(terms, expansion, conjs, pos);
+            } else {
+              let f =
+                Formula::mk_and_with(|conjs2| self.expand_flex(terms, expansion, conjs2, pos));
+              f.mk_neg().append_conjuncts_to(conjs);
+            }
+          })
+          .maybe_neg(pos)
         },
       Formula::SchPred { .. }
       | Formula::PrivPred { .. }
@@ -365,14 +366,13 @@ impl Formula {
             *self = std::mem::take(&mut **f2)
           }
         }
-        Formula::And { args } => {
-          let mut conjs = vec![];
-          for mut f in std::mem::take(args) {
-            f.distribute_quantifiers(ctx, depth);
-            f.append_conjuncts_to(&mut conjs)
-          }
-          *self = Formula::mk_and(conjs)
-        }
+        Formula::And { args } =>
+          *self = Formula::mk_and_with(|conjs| {
+            for mut f in std::mem::take(args) {
+              f.distribute_quantifiers(ctx, depth);
+              f.append_conjuncts_to(conjs)
+            }
+          }),
         Formula::ForAll { dom, scope, .. } => {
           ExpandPrivFunc(ctx).visit_type(dom);
           scope.distribute_quantifiers(ctx, depth + 1);
@@ -425,14 +425,13 @@ pub trait Open {
             *fmla = std::mem::take(f);
           }
         }
-        Formula::And { args } => {
-          let mut conjs = vec![];
-          for mut f in std::mem::take(args) {
-            self.open_quantifiers(&mut f, pos);
-            f.append_conjuncts_to(&mut conjs)
-          }
-          *fmla = Formula::mk_and(conjs)
-        }
+        Formula::And { args } =>
+          *fmla = Formula::mk_and_with(|conjs| {
+            for mut f in std::mem::take(args) {
+              self.open_quantifiers(&mut f, pos);
+              f.append_conjuncts_to(conjs)
+            }
+          }),
         Formula::ForAll { dom, scope } =>
           if !pos {
             let mut set_var = SetVar::new(self, 1);

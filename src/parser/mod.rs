@@ -506,6 +506,48 @@ impl MizPath {
   }
 }
 
+#[derive(Default)]
+struct ConstructorAttrs {
+  _article: Article,
+  _abs_nr: u32,
+  redefines: u32,
+  superfluous: u8,
+  kind: u8,
+  aggr: u32,
+  base: u32,
+}
+
+#[derive(Default)]
+struct PatternAttrs {
+  _article: Article,
+  _abs_nr: u32,
+  kind: u8,
+  fmt: FormatId,
+  constr: u32,
+  redefines: Option<u32>,
+  pid: u32,
+  pos: bool,
+}
+
+#[derive(Default)]
+struct IdentifyAttrs {
+  _article: Article,
+  _abs_nr: u32,
+  kind: u8,
+}
+
+#[derive(Default)]
+struct ReductionAttrs {
+  _article: Article,
+  _abs_nr: u32,
+}
+
+struct PropertyAttrs {
+  _article: Article,
+  _abs_nr: u32,
+  kind: PropertyKind,
+}
+
 impl MizReader<'_> {
   fn parse_type(&mut self, buf: &mut Vec<u8>) -> Option<Type> {
     match self.parse_elem(buf) {
@@ -636,55 +678,40 @@ impl MizReader<'_> {
     self.get_attr(&attr.value)
   }
 
-  fn parse_pattern_attrs(
-    &mut self, e: &BytesStart<'_>,
-  ) -> (u32, Article, u8, FormatId, u32, Option<u32>, u32, bool) {
-    let (mut abs_nr, mut article, mut kind, mut fmt, mut constr, mut redefines, mut pid) =
-      Default::default();
-    let mut pos = true;
+  fn parse_pattern_attrs(&mut self, e: &BytesStart<'_>) -> PatternAttrs {
+    let mut attrs = PatternAttrs { pos: true, ..PatternAttrs::default() };
     for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
-        b"nr" => abs_nr = self.get_attr(&attr.value),
-        b"aid" => article = Article::from_bytes(&attr.value),
-        b"kind" => kind = attr.value[0],
-        b"formatnr" => fmt = FormatId(self.get_attr::<u32>(&attr.value) - 1),
-        b"constrnr" => constr = self.get_attr(&attr.value),
-        b"antonymic" => pos = &*attr.value != b"true",
-        b"relnr" => pid = Some(self.get_attr::<u32>(&attr.value) - 1),
-        b"redefnr" => redefines = self.get_attr::<u32>(&attr.value).checked_sub(1),
+        b"nr" => attrs._abs_nr = self.get_attr(&attr.value),
+        b"aid" => attrs._article = Article::from_bytes(&attr.value),
+        b"kind" => attrs.kind = attr.value[0],
+        b"formatnr" => attrs.fmt = FormatId(self.get_attr::<u32>(&attr.value) - 1),
+        b"constrnr" => attrs.constr = self.get_attr(&attr.value),
+        b"antonymic" => attrs.pos = &*attr.value != b"true",
+        b"relnr" => attrs.pid = self.get_attr::<u32>(&attr.value),
+        b"redefnr" => attrs.redefines = self.get_attr::<u32>(&attr.value).checked_sub(1),
         _ => {}
       }
     }
-    (abs_nr, article, kind, fmt, constr, redefines, pid.unwrap(), pos)
+    attrs.pid = attrs.pid.checked_sub(1).unwrap();
+    attrs
   }
 
   fn parse_pattern_body(
     &mut self, buf: &mut Vec<u8>,
-    (abs_nr, article, kind, fmt, constr, redefines, pid, pos): (
-      u32,
-      Article,
-      u8,
-      FormatId,
-      u32,
-      Option<u32>,
-      u32,
-      bool,
-    ),
+    PatternAttrs { kind, fmt, constr, redefines, pid, pos, .. }: PatternAttrs,
   ) -> Pattern {
     let primary = self.parse_arg_types(buf);
     self.read_start(buf, Some(b"Visible"));
     let visible = self.parse_int_list(buf, |n| LocusId(n as u8 - 1));
-    let expansion = if self.try_read_start(buf, Some(b"Expansion")).is_ok() {
-      let ty = Box::new(self.parse_type(buf).unwrap());
-      self.end_tag(buf);
-      self.end_tag(buf);
-      Some(ty)
-    } else {
-      None
-    };
     let kind = match (kind, constr.checked_sub(1)) {
-      (b'M', Some(nr)) if expansion.is_none() => PatternKind::Mode(ModeId(nr)),
-      (b'M', None) if expansion.is_some() => PatternKind::ExpandableMode,
+      (b'M', Some(nr)) => PatternKind::Mode(ModeId(nr)),
+      (b'M', None) => {
+        self.read_start(buf, Some(b"Expansion"));
+        let expansion = Box::new(self.parse_type(buf).unwrap());
+        self.end_tag(buf);
+        PatternKind::ExpandableMode { expansion }
+      }
       (b'L', Some(nr)) => PatternKind::Struct(StructId(nr)),
       (b'V', Some(nr)) => PatternKind::Attr(AttrId(nr)),
       (b'R', Some(nr)) => PatternKind::Pred(PredId(nr)),
@@ -694,40 +721,30 @@ impl MizReader<'_> {
       (b'J', Some(nr)) => PatternKind::SubAggr(StructId(nr)),
       _ => panic!("unknown pattern kind"),
     };
-    Pattern { kind, pid, article, abs_nr, fmt, redefines, primary, visible, pos, expansion }
+    self.end_tag(buf);
+    Pattern { kind, pid, fmt, redefines, primary, visible, pos }
   }
 
-  fn parse_constructor_attrs(
-    &mut self, e: &BytesStart<'_>,
-  ) -> (Article, u32, u32, u8, u8, u32, u32) {
-    let (mut article, mut abs_nr, mut redefines, mut superfluous, mut kind, mut aggr, mut base) =
-      Default::default();
+  fn parse_constructor_attrs(&mut self, e: &BytesStart<'_>) -> ConstructorAttrs {
+    let mut attrs = ConstructorAttrs::default();
     for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
-        b"kind" => kind = attr.value[0],
-        b"nr" => abs_nr = self.get_attr(&attr.value),
-        b"aid" => article = Article::from_bytes(&attr.value),
-        b"redefnr" => redefines = self.get_attr(&attr.value),
-        b"superfluous" => superfluous = self.get_attr(&attr.value),
-        b"structmodeaggrnr" => aggr = self.get_attr(&attr.value),
-        b"aggregbase" => base = self.get_attr(&attr.value),
+        b"kind" => attrs.kind = attr.value[0],
+        b"nr" => attrs._abs_nr = self.get_attr(&attr.value),
+        b"aid" => attrs._article = Article::from_bytes(&attr.value),
+        b"redefnr" => attrs.redefines = self.get_attr(&attr.value),
+        b"superfluous" => attrs.superfluous = self.get_attr(&attr.value),
+        b"structmodeaggrnr" => attrs.aggr = self.get_attr(&attr.value),
+        b"aggregbase" => attrs.base = self.get_attr(&attr.value),
         _ => {}
       }
     }
-    (article, abs_nr, redefines, superfluous, kind, aggr, base)
+    attrs
   }
 
   fn parse_constructor_body(
     &mut self, buf: &mut Vec<u8>,
-    (article, abs_nr, redefines, superfluous, kind, aggr, base): (
-      Article,
-      u32,
-      u32,
-      u8,
-      u8,
-      u32,
-      u32,
-    ),
+    ConstructorAttrs { redefines, superfluous, kind, aggr, base, .. }: ConstructorAttrs,
   ) -> ConstructorDef {
     let ((arg1, arg2, properties), primary) = match self.parse_elem(buf) {
       Elem::Properties(props) => (props, self.parse_arg_types(buf)),
@@ -737,7 +754,7 @@ impl MizReader<'_> {
     macro_rules! constructor {
       ($id:ident) => {{
         let redefines = redefines.checked_sub(1).map($id);
-        Constructor { article, abs_nr, primary, redefines, superfluous, properties, arg1, arg2 }
+        Constructor { primary, redefines, superfluous, properties, arg1, arg2 }
       }};
     }
     let kind = match kind {
@@ -823,7 +840,7 @@ impl MizReader<'_> {
   }
 
   fn parse_definiens_body(
-    &mut self, buf: &mut Vec<u8>, (def_nr, article, constr): (u32, Article, ConstrKind),
+    &mut self, buf: &mut Vec<u8>, (_def_nr, _article, constr): (u32, Article, ConstrKind),
   ) -> Definiens {
     let mut primary = vec![];
     let essential = loop {
@@ -842,26 +859,25 @@ impl MizReader<'_> {
       _ => panic!("expected <DefMeaning>"),
     };
     self.end_tag(buf);
-    let descr = ConstrDescr { def_nr, article, constr, primary: primary.into() };
-    let c = ConstrDef { descr, pattern: None };
-    Definiens { c, lab_id: None, essential, assumptions, value }
+    let c = ConstrDef { constr, primary: primary.into() };
+    Definiens { c, essential, assumptions, value }
   }
 
-  fn parse_identify_attrs(&mut self, e: &BytesStart<'_>) -> (Article, u32, u8) {
-    let (mut article, mut abs_nr, mut kind) = Default::default();
+  fn parse_identify_attrs(&mut self, e: &BytesStart<'_>) -> IdentifyAttrs {
+    let mut attrs = IdentifyAttrs::default();
     for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
-        b"aid" => article = Article::from_bytes(&attr.value),
-        b"nr" => abs_nr = self.get_attr(&attr.value),
-        b"constrkind" => kind = attr.value[0],
+        b"aid" => attrs._article = Article::from_bytes(&attr.value),
+        b"nr" => attrs._abs_nr = self.get_attr(&attr.value),
+        b"constrkind" => attrs.kind = attr.value[0],
         _ => {}
       }
     }
-    (article, abs_nr, kind)
+    attrs
   }
 
   fn parse_identify_body(
-    &mut self, buf: &mut Vec<u8>, (article, abs_nr, kind): (Article, u32, u8),
+    &mut self, buf: &mut Vec<u8>, IdentifyAttrs { kind, .. }: IdentifyAttrs,
   ) -> Identify {
     let mut primary = vec![];
     let kind = loop {
@@ -881,23 +897,23 @@ impl MizReader<'_> {
       eq_args.push((LocusId(x as u8 - 1), LocusId(y as u8 - 1)))
     });
     self.end_tag(buf);
-    Identify { article, abs_nr, primary: primary.into(), kind, eq_args: eq_args.into() }
+    Identify { primary: primary.into(), kind, eq_args: eq_args.into() }
   }
 
-  fn parse_reduction_attrs(&mut self, e: &BytesStart<'_>) -> (Article, u32) {
-    let (mut abs_nr, mut article) = Default::default();
+  fn parse_reduction_attrs(&mut self, e: &BytesStart<'_>) -> ReductionAttrs {
+    let mut attrs = ReductionAttrs::default();
     for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
-        b"aid" => article = Article::from_bytes(&attr.value),
-        b"nr" => abs_nr = self.get_attr(&attr.value),
+        b"aid" => attrs._article = Article::from_bytes(&attr.value),
+        b"nr" => attrs._abs_nr = self.get_attr(&attr.value),
         _ => {}
       }
     }
-    (article, abs_nr)
+    attrs
   }
 
   fn parse_reduction_body(
-    &mut self, buf: &mut Vec<u8>, (article, abs_nr): (Article, u32),
+    &mut self, buf: &mut Vec<u8>, ReductionAttrs { .. }: ReductionAttrs,
   ) -> Reduction {
     let mut primary = vec![];
     let terms = loop {
@@ -908,29 +924,29 @@ impl MizReader<'_> {
       }
     };
     self.end_tag(buf);
-    Reduction { article, abs_nr, primary: primary.into(), terms }
+    Reduction { primary: primary.into(), terms }
   }
 
-  fn parse_property_attrs(&mut self, e: &BytesStart<'_>) -> (Article, u32, PropertyKind) {
-    let (mut abs_nr, mut article, mut kind) = Default::default();
+  fn parse_property_attrs(&mut self, e: &BytesStart<'_>) -> PropertyAttrs {
+    let (mut _abs_nr, mut _article, mut kind) = Default::default();
     for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
-        b"aid" => article = Article::from_bytes(&attr.value),
-        b"nr" => abs_nr = self.get_attr(&attr.value),
+        b"aid" => _article = Article::from_bytes(&attr.value),
+        b"nr" => _abs_nr = self.get_attr(&attr.value),
         b"x" => kind = self.get_attr::<usize>(&attr.value),
         _ => {}
       }
     }
-    (article, abs_nr, PropertyKind::from_usize(kind - 1))
+    PropertyAttrs { _article, _abs_nr, kind: PropertyKind::from_usize(kind - 1) }
   }
 
   fn parse_property_body(
-    &mut self, buf: &mut Vec<u8>, (article, abs_nr, kind): (Article, u32, PropertyKind),
+    &mut self, buf: &mut Vec<u8>, PropertyAttrs { kind, .. }: PropertyAttrs,
   ) -> Property {
     let primary = self.parse_arg_types(buf);
     let ty = self.parse_type(buf).unwrap();
     self.end_tag(buf);
-    Property { article, abs_nr, primary, ty, kind }
+    Property { primary, ty, kind }
   }
 
   fn lower(&self) -> impl VisitMut + '_ {

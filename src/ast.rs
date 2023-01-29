@@ -1,8 +1,8 @@
 use crate::mk_id;
 use crate::types::{
-  AttrSymId, BlockKind, CorrCondKind, FuncSymId, LabelId, LeftBrkSymId, LocusId, ModeSymId,
-  Position, PredSymId, PropertyKind, Reference, RightBrkSymId, SchId, SchRef, SelSymId,
-  StructSymId,
+  AttrSymId, BlockKind, CorrCondKind, FormatAttr, FormatFunc, FormatMode, FormatPred, FuncSymId,
+  LabelId, LeftBrkSymId, LocusId, ModeSymId, Position, PredSymId, PropertyKind, Reference,
+  RightBrkSymId, SchId, SchRef, SelSymId, StructSymId,
 };
 use enum_map::Enum;
 
@@ -266,7 +266,7 @@ pub enum CaseKind {
 #[derive(Debug)]
 pub struct Field {
   pub pos: Position,
-  pub sym: (u32, String),
+  pub sym: (SelSymId, String),
 }
 
 #[derive(Debug)]
@@ -288,8 +288,8 @@ pub enum PatternFunc {
   Func {
     pos: Position,
     sym: (FuncSymId, String),
-    left: Vec<Variable>,
-    right: Vec<Variable>,
+    left: u8,
+    args: Vec<Variable>,
   },
   Bracket {
     pos: Position,
@@ -299,25 +299,56 @@ pub enum PatternFunc {
   },
 }
 
+impl PatternFunc {
+  pub fn args(&self) -> &[Variable] {
+    let (PatternFunc::Func { args, .. } | PatternFunc::Bracket { args, .. }) = self;
+    args
+  }
+  pub fn to_format(&self) -> FormatFunc {
+    match *self {
+      PatternFunc::Func { ref sym, left, ref args, .. } =>
+        FormatFunc::Func { sym: sym.0, left, right: args.len() as u8 - left },
+      PatternFunc::Bracket { ref lsym, ref rsym, ref args, .. } =>
+        FormatFunc::Bracket { lsym: lsym.0, rsym: rsym.0, args: args.len() as u8 },
+    }
+  }
+}
+
 #[derive(Debug)]
 pub struct PatternPred {
   pub pos: Position,
-  pub sym: (u32, String),
-  pub left: Vec<Variable>,
-  pub right: Vec<Variable>,
+  pub sym: (PredSymId, String),
+  pub left: u8,
+  pub args: Vec<Variable>,
 }
+impl PatternPred {
+  pub fn to_format(&self) -> FormatPred {
+    FormatPred { sym: self.sym.0, left: self.left, right: self.args.len() as u8 - self.left }
+  }
+}
+
 #[derive(Debug)]
 pub struct PatternMode {
   pub pos: Position,
-  pub sym: (u32, String),
+  pub sym: (ModeSymId, String),
   pub args: Vec<Variable>,
 }
+impl PatternMode {
+  pub fn to_format(&self) -> FormatMode {
+    FormatMode { sym: self.sym.0, args: self.args.len() as u8 }
+  }
+}
+
 #[derive(Debug)]
 pub struct PatternAttr {
   pub pos: Position,
-  pub sym: (u32, String),
-  pub arg: Box<Variable>,
+  pub sym: (AttrSymId, String),
   pub args: Vec<Variable>,
+}
+impl PatternAttr {
+  pub fn to_format(&self) -> FormatAttr {
+    FormatAttr { sym: self.sym.0, args: self.args.len() as u8 }
+  }
 }
 
 #[derive(Debug)]
@@ -459,7 +490,7 @@ pub struct Correctness {
 
 #[derive(Debug)]
 pub struct Property {
-  pub prop: PropertyKind,
+  pub kind: PropertyKind,
   pub just: Box<Justification>,
 }
 

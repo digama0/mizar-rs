@@ -854,28 +854,38 @@ impl Formula {
     }
   }
 
+  #[inline]
+  pub fn mk_and_with(f: impl FnOnce(&mut Vec<Formula>)) -> Formula {
+    let mut args = vec![];
+    f(&mut args);
+    Self::mk_and(args)
+  }
+
   /// * pos = true: constructs self && vec[0] && ... && vec[n-1]
   /// * pos = false: constructs self || vec[0] || ... || vec[n-1]
   pub fn conjdisj_many(&mut self, pos: bool, vec: Vec<Formula>) {
     if !vec.is_empty() {
-      let mut conjs = vec![];
-      std::mem::take(self).maybe_neg(pos).append_conjuncts_to(&mut conjs);
-      vec.into_iter().for_each(|f| f.maybe_neg(pos).append_conjuncts_to(&mut conjs));
-      *self = Formula::mk_and(conjs).maybe_neg(pos);
+      *self = Formula::mk_and_with(|conjs| {
+        std::mem::take(self).maybe_neg(pos).append_conjuncts_to(conjs);
+        vec.into_iter().for_each(|f| f.maybe_neg(pos).append_conjuncts_to(conjs));
+      })
+      .maybe_neg(pos);
     }
   }
 
   pub fn mk_iff(self, other: Formula) -> Formula {
-    let mut conjs1 = vec![];
-    self.clone().append_conjuncts_to(&mut conjs1);
-    other.clone().mk_neg().append_conjuncts_to(&mut conjs1);
-    let mut conjs2 = vec![];
-    other.append_conjuncts_to(&mut conjs2);
-    self.mk_neg().append_conjuncts_to(&mut conjs2);
-    let mut conjs = vec![];
-    Formula::mk_and(conjs1).mk_neg().append_conjuncts_to(&mut conjs);
-    Formula::mk_and(conjs2).mk_neg().append_conjuncts_to(&mut conjs);
-    Formula::mk_and(conjs)
+    Formula::mk_and_with(|conjs| {
+      let f1 = Formula::mk_and_with(|conjs1| {
+        self.clone().append_conjuncts_to(conjs1);
+        other.clone().mk_neg().append_conjuncts_to(conjs1);
+      });
+      f1.mk_neg().append_conjuncts_to(conjs);
+      let f2 = Formula::mk_and_with(|conjs2| {
+        other.append_conjuncts_to(conjs2);
+        self.mk_neg().append_conjuncts_to(conjs2);
+      });
+      f2.mk_neg().append_conjuncts_to(conjs);
+    })
   }
 }
 
@@ -1013,9 +1023,9 @@ impl PropertySet {
 
 #[derive(Clone, Default, Debug)]
 pub struct Constructor<I> {
-  pub article: Article,
-  /// number of constructor in article
-  pub abs_nr: u32,
+  // pub article: Article,
+  // /// number of constructor in article
+  // pub abs_nr: u32,
   pub primary: Box<[Type]>,
   pub redefines: Option<I>,
   pub superfluous: u8,
@@ -1303,27 +1313,14 @@ impl ConstrKind {
 }
 
 #[derive(Clone, Debug)]
-pub struct ConstrDescr {
-  pub def_nr: u32,
-  pub article: Article,
+pub struct ConstrDef {
+  // pub def_nr: u32,
+  // pub article: Article,
   pub constr: ConstrKind,
   pub primary: Box<[Type]>,
 }
-impl<V: VisitMut> Visitable<V> for ConstrDescr {
-  fn visit(&mut self, v: &mut V) { v.with_locus_tys(&mut self.primary, |_| {}) }
-}
-
-#[derive(Clone, Debug)]
-pub struct ConstrDef {
-  pub descr: ConstrDescr,
-  pub pattern: Option<()>,
-}
-impl std::ops::Deref for ConstrDef {
-  type Target = ConstrDescr;
-  fn deref(&self) -> &Self::Target { &self.descr }
-}
 impl<V: VisitMut> Visitable<V> for ConstrDef {
-  fn visit(&mut self, v: &mut V) { self.descr.visit(v) }
+  fn visit(&mut self, v: &mut V) { v.with_locus_tys(&mut self.primary, |_| {}) }
 }
 
 #[derive(Clone, Debug)]
@@ -1401,7 +1398,7 @@ impl<V: VisitMut> Visitable<V> for ConstructorDef {
 #[derive(Clone, Debug)]
 pub struct Definiens {
   pub c: ConstrDef,
-  pub lab_id: Option<LabelId>,
+  // pub lab_id: Option<LabelId>,
   pub essential: Box<[LocusId]>,
   pub assumptions: Formula,
   pub value: DefValue,
@@ -1414,7 +1411,7 @@ impl std::ops::Deref for Definiens {
 
 impl<V: VisitMut> Visitable<V> for Definiens {
   fn visit(&mut self, v: &mut V) {
-    v.with_locus_tys(&mut self.c.descr.primary, |v| {
+    v.with_locus_tys(&mut self.c.primary, |v| {
       self.assumptions.visit(v);
       self.value.visit(v)
     })
@@ -1423,8 +1420,8 @@ impl<V: VisitMut> Visitable<V> for Definiens {
 
 #[derive(Clone, Debug)]
 pub struct Property {
-  pub article: Article,
-  pub abs_nr: u32,
+  // pub article: Article,
+  // pub abs_nr: u32,
   pub primary: Box<[Type]>,
   pub ty: Type,
   pub kind: PropertyKind,
@@ -1464,8 +1461,8 @@ impl IdentifyKind {
 
 #[derive(Debug, Clone)]
 pub struct Identify {
-  pub article: Article,
-  pub abs_nr: u32,
+  // pub article: Article,
+  // pub abs_nr: u32,
   pub primary: Box<[Type]>,
   pub kind: IdentifyKind,
   pub eq_args: Box<[(LocusId, LocusId)]>,
@@ -1476,8 +1473,8 @@ impl<V: VisitMut> Visitable<V> for Identify {
 
 #[derive(Debug, Clone)]
 pub struct Reduction {
-  pub article: Article,
-  pub abs_nr: u32,
+  // pub article: Article,
+  // pub abs_nr: u32,
   pub primary: Box<[Type]>,
   pub terms: [Term; 2],
 }
@@ -1766,7 +1763,7 @@ pub enum Registration {
   Property { kind: Property, prop: Proposition, just: Justification },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, Enum)]
 pub enum CorrCondKind {
   Coherence,
   Compatibility,
@@ -2050,10 +2047,10 @@ pub struct Formats {
   pub priority: Vec<(PriorityKind, u32)>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum PatternKind {
   Mode(ModeId),
-  ExpandableMode,
+  ExpandableMode { expansion: Box<Type> },
   Struct(StructId),
   Attr(AttrId),
   Pred(PredId),
@@ -2066,7 +2063,7 @@ pub enum PatternKind {
 impl PatternKind {
   fn _discr(&self) -> u8 {
     match self {
-      PatternKind::Mode(_) | PatternKind::ExpandableMode => b'M',
+      PatternKind::Mode(_) | PatternKind::ExpandableMode { .. } => b'M',
       PatternKind::Struct(_) => b'L',
       PatternKind::Attr(_) => b'V',
       PatternKind::Pred(_) => b'R',
@@ -2082,14 +2079,13 @@ impl PatternKind {
 pub struct Pattern {
   pub kind: PatternKind,
   pub pid: u32,
-  pub article: Article,
-  pub abs_nr: u32,
+  // pub article: Article,
+  // pub abs_nr: u32,
   pub fmt: FormatId,
   pub redefines: Option<u32>,
   pub primary: Box<[Type]>,
   pub visible: Box<[LocusId]>,
   pub pos: bool,
-  pub expansion: Option<Box<Type>>,
 }
 
 #[derive(Debug, Default)]
