@@ -666,13 +666,9 @@ impl MsmParser {
           _ => panic!("expected <Definiens>"),
         };
         end_tag = def.is_none();
-        let kind = match (shape, def) {
-          (None, None) => DefFuncKind::None,
-          (Some(false), Some(def)) => DefFuncKind::Means(def),
-          (Some(true), Some(def)) => DefFuncKind::Equals(def),
-          _ => panic!("unexpected or missing <Definiens>"),
-        };
-        let kind = DefinitionKind::Func { pat, spec, kind };
+        let shape2 = def.as_ref().map(|d| matches!(d.kind, DefValue::Term(_)));
+        assert_eq!(shape, shape2, "unexpected shape");
+        let kind = DefinitionKind::Func { pat, spec, def };
         let def = Definition { redef, kind, conds: vec![], corr: None, props: vec![] };
         ItemKind::Definition(Box::new(def))
       }

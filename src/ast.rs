@@ -388,13 +388,6 @@ pub enum DefModeKind {
 }
 
 #[derive(Debug)]
-pub enum DefFuncKind {
-  None,
-  Means(Box<Definiens>),
-  Equals(Box<Definiens>),
-}
-
-#[derive(Debug)]
 pub enum PatternRedefKind {
   PredSynonym { pos: bool },
   FuncNotation,
@@ -464,7 +457,7 @@ pub enum Statement {
 
 #[derive(Debug)]
 pub enum DefinitionKind {
-  Func { pat: Box<PatternFunc>, spec: Option<Box<Type>>, kind: DefFuncKind },
+  Func { pat: Box<PatternFunc>, spec: Option<Box<Type>>, def: Option<Box<Definiens>> },
   Pred { pat: Box<PatternPred>, def: Option<Box<Definiens>> },
   Mode { pat: Box<PatternMode>, kind: DefModeKind },
   Attr { pat: Box<PatternAttr>, def: Option<Box<Definiens>> },
