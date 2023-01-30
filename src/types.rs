@@ -1030,8 +1030,8 @@ pub struct Constructor<I> {
   pub redefines: Option<I>,
   pub superfluous: u8,
   pub properties: PropertySet,
-  pub arg1: u32,
-  pub arg2: u32,
+  pub arg1: u8,
+  pub arg2: u8,
 }
 impl<I, V: VisitMut> Visitable<V> for Constructor<I> {
   fn visit(&mut self, v: &mut V) { v.with_locus_tys(&mut self.primary, |_| {}) }
@@ -2078,7 +2078,7 @@ impl PatternKind {
 #[derive(Debug)]
 pub struct Pattern {
   pub kind: PatternKind,
-  pub pid: u32,
+  // pub pid: u32,
   // pub article: Article,
   // pub abs_nr: u32,
   pub fmt: FormatId,

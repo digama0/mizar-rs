@@ -133,7 +133,7 @@ impl XmlReader {
       match attr.key {
         b"line" => pos.line = self.get_attr(&attr.value),
         b"col" => pos.col = self.get_attr(&attr.value),
-        b"idnr" => id = IdentId(self.get_attr(&attr.value)),
+        b"idnr" => id = self.get_attr(&attr.value),
         b"spelling" => spelling = self.get_attr_unescaped(&attr.value),
         // TODO: origin, kind, serialnr, varnr
         _ => {}

@@ -328,13 +328,11 @@ impl Analyzer<'_> {
     assert!(cc.0.iter().all(|p| p.1.is_none()));
   }
 
-  fn elab_properties(&mut self, props: &[ast::Property]) -> PropertySet {
-    let mut out = PropertySet::default();
+  fn elab_properties(&mut self, props: &[ast::Property], out: &mut PropertySet) {
     for prop in props {
       // todo!();
       out.set(prop.kind);
     }
-    out
   }
 
   fn elab_def_case<T, U>(
@@ -1269,7 +1267,7 @@ impl BodyKind for Formula {
 }
 
 impl<T: BodyKind> DefBody<T> {
-  fn mk_consistency(&self, g: &Global, it_type: &Type) -> Option<Box<Formula>> {
+  fn mk_consistency(&self, g: &Global, it_type: Option<&Type>) -> Option<Box<Formula>> {
     if self.cases.is_empty() {
       return None
     }
@@ -1283,7 +1281,10 @@ impl<T: BodyKind> DefBody<T> {
         f.mk_neg().append_conjuncts_to(conjs);
       }
     });
-    Some(Box::new(AbstractIt::forall(it_type, f, true)))
+    Some(Box::new(match it_type {
+      Some(it_type) => AbstractIt::forall(it_type, f, true),
+      None => f,
+    }))
   }
 
   fn by_cases(&self, neg_f: impl Fn(&T) -> Formula) -> Box<Formula> {
@@ -1310,8 +1311,14 @@ impl<T: BodyKind> DefBody<T> {
     self.by_cases(|case| defines.clone().mk_iff(case.it_eq(g)).mk_neg())
   }
 
-  fn mk_compatibility(&self, g: &Global, it_type: &Type, defines: &Formula) -> Box<Formula> {
-    Box::new(AbstractIt::forall(it_type, *self.defthm_for(g, defines), true))
+  fn mk_compatibility(
+    &self, g: &Global, it_type: Option<&Type>, defines: &Formula,
+  ) -> Box<Formula> {
+    let mut f = self.defthm_for(g, defines);
+    if let Some(it_type) = it_type {
+      *f = AbstractIt::forall(it_type, std::mem::take(&mut *f), true)
+    }
+    f
   }
 }
 
@@ -1336,14 +1343,16 @@ fn mk_coherence(nr: ModeId, attrs: &Attrs, args: &[Term], it_type: &Type) -> Box
 }
 
 impl DefValue {
-  fn mk_consistency(&self, g: &Global, it_type: &Type) -> Option<Box<Formula>> {
+  fn mk_consistency(&self, g: &Global, it_type: Option<&Type>) -> Option<Box<Formula>> {
     match self {
       DefValue::Term(value) => value.mk_consistency(g, it_type),
       DefValue::Formula(value) => value.mk_consistency(g, it_type),
     }
   }
 
-  fn mk_compatibility(&self, g: &Global, it_type: &Type, defines: &Formula) -> Box<Formula> {
+  fn mk_compatibility(
+    &self, g: &Global, it_type: Option<&Type>, defines: &Formula,
+  ) -> Box<Formula> {
     match self {
       DefValue::Term(value) => value.mk_compatibility(g, it_type, defines),
       DefValue::Formula(value) => value.mk_compatibility(g, it_type, defines),
@@ -1699,24 +1708,93 @@ impl ReadProof for BlockReader {
           true => todo!("ikItmRedefFunc"),
           false => todo!("ikItmDefFunc"),
         },
-        ast::DefinitionKind::Pred { pat, def } => match it.redef {
-          true => todo!("ikItmRedefPred"),
-          false => todo!("ikItmDefPred"),
-        },
+        ast::DefinitionKind::Pred { pat, def } => {
+          let fmt = elab.formats[&Format::Pred(pat.to_format())];
+          let mut cc = CorrConds::new();
+          let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
+          let visible: Box<[_]> =
+            pat.args.iter().map(|v| self.to_locus.get(ConstId(v.id.0))).collect();
+          let mut args: Box<[_]> = Box::new([]);
+          let (redefines, superfluous, pos, mut properties, arg1, arg2);
+          if it.redef {
+            args = pat.args.iter().map(|v| Term::Constant(ConstId(v.id.0))).collect();
+            let pat = elab.notations.predicate.iter().rev().find(|pat| {
+              pat.fmt == fmt
+                && !matches!(pat.kind, PatternKind::Pred(nr)
+                      if elab.g.constrs.predicate[nr].redefines.is_some())
+                && matches!(pat.check_types(&elab.g, &elab.lc, &args),
+                    Some(subst) if { self.check_compatible_args(&subst); true })
+            });
+            let pat = pat.expect("type error");
+            let PatternKind::Pred(nr) = pat.kind else { unreachable!() };
+            let c = &elab.g.constrs.predicate[nr];
+            (redefines, superfluous, pos) =
+              (Some(nr), (self.primary.len() - pat.primary.len()) as u8, pat.pos);
+            (properties, arg1, arg2) = (c.properties, c.arg1 + superfluous, c.arg2 + superfluous)
+          } else {
+            (redefines, superfluous, pos) = (None, 0, true);
+            (properties, arg1, arg2) = Default::default();
+          };
+          let value = def.as_ref().map(|def| elab.elab_def_value(&def.kind, pos));
+          if let Some(value) = &value {
+            cc.0[CorrCondKind::Consistency] = value.mk_consistency(&elab.g, None);
+            if let Some(nr) = redefines {
+              let defined = Formula::Pred { nr, args };
+              cc.0[CorrCondKind::Compatibility] =
+                Some(value.mk_compatibility(&elab.g, None, &defined));
+            }
+          }
+          elab.elab_corr_conds(cc, &it.conds, &it.corr);
+          elab.elab_properties(&it.props, &mut properties);
+          CheckAccess::check(&primary, &visible);
+          let n;
+          if superfluous != 0 || !it.props.is_empty() {
+            let p = primary.clone();
+            let c = Constructor { primary: p, redefines, superfluous, properties, arg1, arg2 };
+            n = elab.g.constrs.predicate.push(c);
+            elab.push_constr(ConstrKind::Pred(n));
+            if let Some(mut value) = value {
+              let DefValue::Formula(mut value) = value else { unreachable!() };
+              value.visit(&mut self.to_locus);
+              let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect();
+              let mut f = value.defthm_for(&elab.g, &Formula::Pred { nr: n, args: formals });
+              AbstractLocus(self.primary.len() as u32).visit_formula(&mut f);
+              let thm = self.forall_locus(f);
+              self.defthms.push((def.as_ref().unwrap().label.as_ref().map(|l| l.id.0), thm));
+              elab.r.read_definiens(&Definiens {
+                essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
+                c: ConstrDef { constr: ConstrKind::Pred(n), primary: primary.clone() },
+                assumptions: Formula::mk_and(self.assums.clone()),
+                value: DefValue::Formula(value),
+              });
+            }
+          } else {
+            n = redefines.unwrap()
+          }
+          let pat = Pattern {
+            kind: PatternKind::Pred(n),
+            fmt,
+            redefines: redefines.map(|x| x.0),
+            primary,
+            visible,
+            pos,
+          };
+          elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
+        }
         ast::DefinitionKind::Mode { pat, kind } => {
           let fmt = elab.formats[&Format::Mode(pat.to_format())];
           let mut cc = CorrConds::new();
+          let mut properties = Default::default();
           let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
-          let visible = pat.args.iter().map(|v| self.to_locus.get(ConstId(v.id.0 .0))).collect();
+          let visible = pat.args.iter().map(|v| self.to_locus.get(ConstId(v.id.0))).collect();
           match kind {
             ast::DefModeKind::Expandable { expansion } => {
               let mut expansion = Box::new(elab.elab_type(expansion));
               elab.elab_corr_conds(cc, &it.conds, &it.corr);
-              elab.elab_properties(&it.props);
+              elab.elab_properties(&it.props, &mut properties);
               expansion.visit(&mut self.to_locus);
               let pat = Pattern {
                 kind: PatternKind::ExpandableMode { expansion },
-                pid: elab.notations.functor.len() as u32,
                 fmt,
                 redefines: None,
                 primary,
@@ -1730,7 +1808,7 @@ impl ReadProof for BlockReader {
               let mut args: Box<[_]> = Box::new([]);
               let (redefines, superfluous, it_type);
               if it.redef {
-                args = pat.args.iter().map(|v| Term::Constant(ConstId(v.id.0 .0))).collect();
+                args = pat.args.iter().map(|v| Term::Constant(ConstId(v.id.0))).collect();
                 let pat = elab.notations.mode.iter().rev().find(|pat| {
                   pat.fmt == fmt
                     && !matches!(pat.kind, PatternKind::Mode(nr)
@@ -1756,7 +1834,7 @@ impl ReadProof for BlockReader {
               let value = def.as_ref().map(|def| elab.elab_def_value(&def.kind, true));
               let mut it_type = elab.lc.it_type.take().unwrap();
               if let Some(value) = &value {
-                cc.0[CorrCondKind::Consistency] = value.mk_consistency(&elab.g, &it_type);
+                cc.0[CorrCondKind::Consistency] = value.mk_consistency(&elab.g, Some(&it_type));
                 if let Some(nr) = redefines {
                   let ty = Box::new(Type {
                     kind: TypeKind::Mode(nr),
@@ -1765,7 +1843,7 @@ impl ReadProof for BlockReader {
                   });
                   let defined = Formula::Is { term: Box::new(Term::It), ty };
                   cc.0[CorrCondKind::Compatibility] =
-                    Some(value.mk_compatibility(&elab.g, &it_type, &defined));
+                    Some(value.mk_compatibility(&elab.g, Some(&it_type), &defined));
                 }
               }
               if !it.redef {
@@ -1773,28 +1851,19 @@ impl ReadProof for BlockReader {
                 cc.0[CorrCondKind::Existence] = Some(value.mk_existence(&it_type));
               }
               elab.elab_corr_conds(cc, &it.conds, &it.corr);
-              let properties = elab.elab_properties(&it.props);
+              elab.elab_properties(&it.props, &mut properties);
               it_type.visit(&mut self.to_locus);
               CheckAccess::check(&primary, &visible);
+              let n;
               if value.is_some() || superfluous != 0 {
-                let primary2 = primary.clone();
-                let n = elab.g.constrs.mode.push(TyConstructor {
+                let primary = primary.clone();
+                n = elab.g.constrs.mode.push(TyConstructor {
                   c: Constructor { primary, redefines, superfluous, properties, arg1: 0, arg2: 0 },
                   ty: (*it_type).clone(),
                 });
                 elab.push_constr(ConstrKind::Mode(n));
-                let pat = Pattern {
-                  kind: PatternKind::Mode(n),
-                  pid: elab.notations.functor.len() as u32,
-                  fmt,
-                  redefines: redefines.map(|x| x.0),
-                  primary: primary2,
-                  visible,
-                  pos: true,
-                };
-                elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
                 if let Some(mut value) = value {
-                  let DefValue::Formula(mut value) = value else { panic!() };
+                  let DefValue::Formula(mut value) = value else { unreachable!() };
                   value.visit(&mut self.to_locus);
                   let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect_vec();
                   let primary: Box<[_]> =
@@ -1819,7 +1888,18 @@ impl ReadProof for BlockReader {
                     value: DefValue::Formula(value),
                   });
                 }
+              } else {
+                n = redefines.unwrap()
               }
+              let pat = Pattern {
+                kind: PatternKind::Mode(n),
+                fmt,
+                redefines: redefines.map(|x| x.0),
+                primary,
+                visible,
+                pos: true,
+              };
+              elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
             }
           }
         }

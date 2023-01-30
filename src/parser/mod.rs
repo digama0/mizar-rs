@@ -699,7 +699,7 @@ impl MizReader<'_> {
 
   fn parse_pattern_body(
     &mut self, buf: &mut Vec<u8>,
-    PatternAttrs { kind, fmt, constr, redefines, pid, pos, .. }: PatternAttrs,
+    PatternAttrs { kind, fmt, constr, redefines, pos, .. }: PatternAttrs,
   ) -> Pattern {
     let primary = self.parse_arg_types(buf);
     self.read_start(buf, Some(b"Visible"));
@@ -722,7 +722,7 @@ impl MizReader<'_> {
       _ => panic!("unknown pattern kind"),
     };
     self.end_tag(buf);
-    Pattern { kind, pid, fmt, redefines, primary, visible, pos }
+    Pattern { kind, fmt, redefines, primary, visible, pos }
   }
 
   fn parse_constructor_attrs(&mut self, e: &BytesStart<'_>) -> ConstructorAttrs {
@@ -989,8 +989,8 @@ impl MizReader<'_> {
           let mut args = (0, 0, PropertySet::default());
           for attr in e.attributes().map(Result::unwrap) {
             match attr.key {
-              b"propertyarg1" => args.0 = self.get_attr::<u32>(&attr.value).saturating_sub(1),
-              b"propertyarg2" => args.1 = self.get_attr::<u32>(&attr.value).saturating_sub(1),
+              b"propertyarg1" => args.0 = self.get_attr::<u8>(&attr.value).saturating_sub(1),
+              b"propertyarg2" => args.1 = self.get_attr::<u8>(&attr.value).saturating_sub(1),
               _ => {}
             }
           }
@@ -1237,7 +1237,7 @@ enum Elem {
   Type(Type),
   Term(Term),
   Formula(Formula),
-  Properties((u32, u32, PropertySet)),
+  Properties((u8, u8, PropertySet)),
   ArgTypes(Box<[Type]>),
   Fields(Box<[SelId]>),
   Essentials(Box<[LocusId]>),

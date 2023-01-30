@@ -6,14 +6,10 @@ use crate::types::{
 };
 use enum_map::Enum;
 
-mk_id! {
-  IdentId(u32),
-}
-
 #[derive(Debug)]
 pub struct Variable {
   pub pos: Position,
-  pub id: (IdentId, String),
+  pub id: (u32, String),
 }
 
 #[derive(Copy, Clone, Debug, Enum)]
