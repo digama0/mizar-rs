@@ -1734,14 +1734,13 @@ impl ReadProof for BlockReader {
           } else {
             (redefines, superfluous, pos) = (None, 0, true);
             (properties, arg1, arg2) = Default::default();
-          };
+          }
           let value = def.as_ref().map(|def| elab.elab_def_value(&def.kind, pos));
           if let Some(value) = &value {
             cc.0[CorrCondKind::Consistency] = value.mk_consistency(&elab.g, None);
             if let Some(nr) = redefines {
-              let defined = Formula::Pred { nr, args };
               cc.0[CorrCondKind::Compatibility] =
-                Some(value.mk_compatibility(&elab.g, None, &defined));
+                Some(value.mk_compatibility(&elab.g, None, &Formula::Pred { nr, args }));
             }
           }
           elab.elab_corr_conds(cc, &it.conds, &it.corr);
@@ -1821,6 +1820,9 @@ impl ReadProof for BlockReader {
                 (redefines, superfluous) =
                   (Some(nr), (self.primary.len() - pat.primary.len()) as u8);
                 let tgt = elab.g.constrs.mode[nr].ty.clone();
+                if elab.g.constrs.mode[nr].properties.get(PropertyKind::Sethood) {
+                  properties.set(PropertyKind::Sethood)
+                }
                 it_type = elab.elab_spec(spec.as_deref(), &tgt);
                 if spec.is_some() {
                   cc.0[CorrCondKind::Coherence] =
@@ -1849,6 +1851,11 @@ impl ReadProof for BlockReader {
               if !it.redef {
                 let Some(DefValue::Formula(value)) = &value else { panic!() };
                 cc.0[CorrCondKind::Existence] = Some(value.mk_existence(&it_type));
+              }
+              if let TypeKind::Mode(nr) = it_type.kind {
+                if elab.g.constrs.mode[nr].properties.get(PropertyKind::Sethood) {
+                  properties.set(PropertyKind::Sethood)
+                }
               }
               elab.elab_corr_conds(cc, &it.conds, &it.corr);
               elab.elab_properties(&it.props, &mut properties);
@@ -1903,10 +1910,79 @@ impl ReadProof for BlockReader {
             }
           }
         }
-        ast::DefinitionKind::Attr { pat, def } => match it.redef {
-          true => todo!("ikItmRedefPrAttr"),
-          false => todo!("ikItmDefPrAttr"),
-        },
+        ast::DefinitionKind::Attr { pat, def } => {
+          let fmt = elab.formats[&Format::Attr(pat.to_format())];
+          let mut cc = CorrConds::new();
+          let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
+          let visible: Box<[_]> =
+            pat.args.iter().map(|v| self.to_locus.get(ConstId(v.id.0))).collect();
+          let mut args: Box<[_]> = Box::new([]);
+          let (redefines, superfluous, pos);
+          if it.redef {
+            args = pat.args.iter().map(|v| Term::Constant(ConstId(v.id.0))).collect();
+            let pat = elab.notations.attribute.iter().rev().find(|pat| {
+              pat.fmt == fmt
+                && !matches!(pat.kind, PatternKind::Attr(nr)
+                      if elab.g.constrs.attribute[nr].redefines.is_some())
+                && matches!(pat.check_types(&elab.g, &elab.lc, &args),
+                    Some(subst) if { self.check_compatible_args(&subst); true })
+            });
+            let pat = pat.expect("type error");
+            let PatternKind::Attr(nr) = pat.kind else { unreachable!() };
+            let c = &elab.g.constrs.attribute[nr];
+            (redefines, superfluous, pos) =
+              (Some(nr), (self.primary.len() - pat.primary.len()) as u8, pat.pos);
+          } else {
+            (redefines, superfluous, pos) = (None, 0, true);
+          }
+          let value = def.as_ref().map(|def| elab.elab_def_value(&def.kind, pos));
+          if let Some(value) = &value {
+            cc.0[CorrCondKind::Consistency] = value.mk_consistency(&elab.g, None);
+            if let Some(nr) = redefines {
+              cc.0[CorrCondKind::Compatibility] =
+                Some(value.mk_compatibility(&elab.g, None, &Formula::Attr { nr, args }));
+            }
+          }
+          elab.elab_corr_conds(cc, &it.conds, &it.corr);
+          let mut properties = Default::default();
+          elab.elab_properties(&it.props, &mut properties);
+          CheckAccess::check(&primary, &visible);
+          let n;
+          if superfluous != 0 || !it.props.is_empty() {
+            let p = primary.clone();
+            n = elab.g.constrs.attribute.push(TyConstructor {
+              c: Constructor { primary: p, redefines, superfluous, properties, arg1: 0, arg2: 0 },
+              ty: self.primary.0.last().unwrap().clone(),
+            });
+            elab.push_constr(ConstrKind::Attr(n));
+            if let Some(mut value) = value {
+              let DefValue::Formula(mut value) = value else { unreachable!() };
+              value.visit(&mut self.to_locus);
+              let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect();
+              let mut f = value.defthm_for(&elab.g, &Formula::Attr { nr: n, args: formals });
+              AbstractLocus(self.primary.len() as u32).visit_formula(&mut f);
+              let thm = self.forall_locus(f);
+              self.defthms.push((def.as_ref().unwrap().label.as_ref().map(|l| l.id.0), thm));
+              elab.r.read_definiens(&Definiens {
+                essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
+                c: ConstrDef { constr: ConstrKind::Attr(n), primary: primary.clone() },
+                assumptions: Formula::mk_and(self.assums.clone()),
+                value: DefValue::Formula(value),
+              });
+            }
+          } else {
+            n = redefines.unwrap()
+          }
+          let pat = Pattern {
+            kind: PatternKind::Attr(n),
+            fmt,
+            redefines: redefines.map(|x| x.0),
+            primary,
+            visible,
+            pos,
+          };
+          elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
+        }
       },
       (BlockKind::Definition, ast::ItemKind::DefStruct(_)) => todo!("ikItmDefStruct"),
       (BlockKind::Notation, ast::ItemKind::PatternRedef { kind, orig, new }) => match kind {
