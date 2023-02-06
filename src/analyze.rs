@@ -555,9 +555,9 @@ impl Analyzer<'_> {
   }
 
   /// AnalyzeAttribute
-  fn elab_push_attr(&mut self, attr: &ast::Attr, mut pos: bool, ty: &mut Type) {
+  fn elab_attr(&mut self, attr: &ast::Attr, mut pos: bool, ty: &mut Type) -> Attr {
     match attr {
-      ast::Attr::Non { attr, .. } => self.elab_push_attr(attr, !pos, ty),
+      ast::Attr::Non { attr, .. } => self.elab_attr(attr, !pos, ty),
       ast::Attr::Attr { sym, args, .. } => {
         let v = self.lc.bound_var.push(std::mem::take(ty));
         let args = (args.iter().map(|t| self.elab_term_qua(t)))
@@ -576,11 +576,8 @@ impl Analyzer<'_> {
                 .collect::<Box<[_]>>();
               *ty = self.r.lc.bound_var.0.pop().unwrap();
               pos = pat.pos == pos;
-              ty.attrs.0.insert(&self.g.constrs, Attr { nr, pos, args: args.clone() });
-              ty.attrs.1.insert(&self.g.constrs, Attr { nr, pos, args });
-              ty.round_up_with_self(&self.g, &self.lc, false);
               assert!(matches!(ty.attrs.0, Attrs::Consistent(_)));
-              return
+              return Attr { nr, pos, args }
             }
           }
         }
@@ -647,7 +644,13 @@ impl Analyzer<'_> {
       ast::Type::Cluster { attrs, ty, .. } => {
         let mut ty = self.elab_type(ty);
         let mut ty2 = ty.clone();
-        attrs.iter().rev().for_each(|attr| self.elab_push_attr(attr, true, &mut ty2));
+        attrs.iter().rev().for_each(|attr| {
+          let attr = self.elab_attr(attr, true, &mut ty2);
+          ty2.attrs.0.insert(&self.g.constrs, attr.clone());
+          ty2.attrs.1.insert(&self.g.constrs, attr);
+          ty2.round_up_with_self(&self.g, &self.lc, false);
+          assert!(matches!(ty2.attrs.0, Attrs::Consistent(_)));
+        });
         for cl in self.g.clusters.registered.iter().rev() {
           let mut subst = Subst::new(cl.primary.len());
           if subst.eq_radices(&self.g, &self.lc, &cl.ty, &ty)
@@ -1064,6 +1067,21 @@ impl Analyzer<'_> {
     } else {
       tgt.clone()
     }
+  }
+
+  /// RClusterObj.RegisterCluster
+  fn register_cluster(&mut self, mut attrs: Attrs, primary: Box<[Type]>, mut ty: Type) {
+    let mut attrs1 = attrs.clone();
+    attrs1.enlarge_by(&self.g.constrs, &ty.attrs.0, |a| a.clone());
+    attrs1.visit(&mut self.intern_const());
+    attrs.enlarge_by(&self.g.constrs, &ty.attrs.1, |a| a.clone());
+    attrs.round_up_with(&self.g, &self.lc, &ty, false);
+    let Attrs::Consistent(_) = attrs else { panic!("inconsistent existential cluster") };
+    ty.attrs = (Attrs::EMPTY, Attrs::EMPTY);
+    self.g.clusters.registered.push(RegisteredCluster {
+      cl: Cluster { primary, consequent: (attrs1, attrs) },
+      ty: Box::new(ty),
+    });
   }
 }
 
@@ -1646,13 +1664,18 @@ struct BlockReader {
 
 struct CheckAccess(IdxVec<LocusId, bool>);
 impl CheckAccess {
-  fn check(primary: &[Type], visible: &[LocusId]) {
+  fn with(primary: &[Type], f: impl FnOnce(&mut Self)) {
     let mut occ = Self(IdxVec::from_default(primary.len()));
-    visible.iter().for_each(|&v| occ.0[v] = true);
+    f(&mut occ);
     for (i, ty) in primary.iter().enumerate().rev() {
       assert!(occ.0[LocusId::from_usize(i)]);
       occ.visit_type(ty)
     }
+  }
+}
+impl Pattern {
+  fn check_access(&self) {
+    CheckAccess::with(&self.primary, |occ| self.visible.iter().for_each(|&v| occ.0[v] = true))
   }
 }
 
@@ -1770,7 +1793,6 @@ impl BlockReader {
     elab.elab_corr_conds(cc, &it.conds, &it.corr);
     elab.elab_properties(&it.props, &mut properties);
     it_type.visit(&mut self.to_locus);
-    CheckAccess::check(&primary, &visible);
     let n;
     if value.is_some() || superfluous != 0 || !it.props.is_empty() {
       let primary = primary.clone();
@@ -1819,6 +1841,7 @@ impl BlockReader {
       visible,
       pos: true,
     };
+    pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
     elab.r.notations.functor.push(pat)
   }
@@ -1862,7 +1885,6 @@ impl BlockReader {
     }
     elab.elab_corr_conds(cc, &it.conds, &it.corr);
     elab.elab_properties(&it.props, &mut properties);
-    CheckAccess::check(&primary, &visible);
     let n;
     if superfluous != 0 || !it.props.is_empty() {
       let p = primary.clone();
@@ -1895,6 +1917,7 @@ impl BlockReader {
       visible,
       pos,
     };
+    pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
     elab.r.notations.predicate.push(pat)
   }
@@ -1922,7 +1945,7 @@ impl BlockReader {
           visible,
           pos: true,
         };
-        CheckAccess::check(&pat.primary, &pat.visible);
+        pat.check_access();
         elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
         elab.r.notations.mode.push(pat)
       }
@@ -1983,7 +2006,6 @@ impl BlockReader {
         elab.elab_corr_conds(cc, &it.conds, &it.corr);
         elab.elab_properties(&it.props, &mut properties);
         it_type.visit(&mut self.to_locus);
-        CheckAccess::check(&primary, &visible);
         let n;
         if value.is_some() || superfluous != 0 {
           let primary = primary.clone();
@@ -2028,6 +2050,7 @@ impl BlockReader {
           visible,
           pos: true,
         };
+        pat.check_access();
         elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
         elab.r.notations.mode.push(pat)
       }
@@ -2043,8 +2066,7 @@ impl BlockReader {
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     let visible: Box<[_]> = pat.args.iter().map(|v| self.to_locus.get(ConstId(v.id.0))).collect();
     let mut args: Box<[_]> = Box::new([]);
-    let (redefines, superfluous, pos);
-    if it.redef {
+    let (redefines, superfluous, pos) = if it.redef {
       args = pat.args.iter().map(|v| Term::Constant(ConstId(v.id.0))).collect();
       let pat = elab.notations.attribute.iter().rev().find(|pat| {
         pat.fmt == fmt
@@ -2056,11 +2078,10 @@ impl BlockReader {
       let pat = pat.expect("type error");
       let PatternKind::Attr(nr) = pat.kind else { unreachable!() };
       let c = &elab.g.constrs.attribute[nr];
-      (redefines, superfluous, pos) =
-        (Some(nr), (self.primary.len() - pat.primary.len()) as u8, pat.pos);
+      (Some(nr), (self.primary.len() - pat.primary.len()) as u8, pat.pos)
     } else {
-      (redefines, superfluous, pos) = (None, 0, true);
-    }
+      (None, 0, true)
+    };
     let value = def.as_ref().map(|def| elab.elab_def_value(&def.kind, pos));
     if let Some(value) = &value {
       cc.0[CorrCondKind::Consistency] = value.mk_consistency(&elab.g, None);
@@ -2072,7 +2093,6 @@ impl BlockReader {
     elab.elab_corr_conds(cc, &it.conds, &it.corr);
     let mut properties = Default::default();
     elab.elab_properties(&it.props, &mut properties);
-    CheckAccess::check(&primary, &visible);
     let n;
     if superfluous != 0 || !it.props.is_empty() {
       let p = primary.clone();
@@ -2109,6 +2129,7 @@ impl BlockReader {
       visible,
       pos,
     };
+    pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
     elab.r.notations.attribute.push(pat)
   }
@@ -2127,14 +2148,14 @@ impl BlockReader {
       visible: it.pat.args.iter().map(|v| self.to_locus.get(ConstId(v.id.0))).collect(),
       pos: true,
     };
-    CheckAccess::check(&struct_pat.primary, &struct_pat.visible);
+    struct_pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &struct_pat);
     elab.r.notations.struct_mode.push(struct_pat);
 
     let struct_ty = Type {
       kind: TypeKind::Struct(struct_id),
       attrs: (Attrs::EMPTY, Attrs::EMPTY),
-      args: formals,
+      args: formals.clone(),
     };
     let fixed_vars = elab.lc.fixed_var.len();
     let base = self.primary.len() as u8;
@@ -2160,7 +2181,7 @@ impl BlockReader {
       visible: (base..cur_locus.0).map(LocusId).collect(),
       pos: true,
     };
-    CheckAccess::check(&aggr_pat.primary, &aggr_pat.visible);
+    aggr_pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &aggr_pat);
     elab.r.notations.aggregate.push(aggr_pat);
 
@@ -2224,7 +2245,7 @@ impl BlockReader {
           visible: Box::new([LocusId(base)]),
           pos: true,
         };
-        CheckAccess::check(&sel_pat.primary, &sel_pat.visible);
+        sel_pat.check_access();
         elab.r.lc.formatter.push(&elab.r.g.constrs, &sel_pat);
         elab.r.notations.selector.push(sel_pat);
         new_fields.push(sel_id);
@@ -2236,25 +2257,10 @@ impl BlockReader {
     assert!(prefixes.iter().all(|prefix| prefix.is_empty()), "structure does not extend parent");
     parents.visit(&mut self.to_locus);
 
-    let struct_id2 = elab.g.constrs.struct_mode.push(StructMode {
-      c: Constructor::new(struct_primary),
-      parents,
-      aggr: aggr_id,
-      fields: fields.clone().into(),
-    });
-    assert!(struct_id == struct_id2);
-
-    let aggr_id2 = elab.g.constrs.aggregate.push(Aggregate {
-      c: TyConstructor { c: Constructor::new(aggr_primary), ty: struct_ty.clone() },
-      base,
-      fields: fields.into(),
-    });
-    assert!(aggr_id == aggr_id2);
-
     let mut c = Constructor::new(sel_primary_it.clone().collect());
     c.properties.set(PropertyKind::Abstractness);
     let attr_primary = sel_primary_it.collect();
-    let attr_id = elab.g.constrs.attribute.push(TyConstructor { c, ty: struct_ty });
+    let attr_id = elab.g.constrs.attribute.push(TyConstructor { c, ty: struct_ty.clone() });
     let attr_pat = Pattern {
       kind: PatternKind::Attr(attr_id),
       fmt: FormatId::STRICT,
@@ -2271,7 +2277,63 @@ impl BlockReader {
     elab.push_constr(ConstrKind::Aggr(aggr_id));
     new_fields.into_iter().for_each(|sel_id| elab.push_constr(ConstrKind::Sel(sel_id)));
 
-    // TODO: existential cluster
+    let attrs = Attrs::Consistent(vec![Attr { nr: attr_id, pos: true, args: formals.into() }]);
+    elab.register_cluster(attrs.clone(), struct_primary.clone(), struct_ty.clone());
+
+    let struct_id2 = elab.g.constrs.struct_mode.push(StructMode {
+      c: Constructor::new(struct_primary),
+      parents,
+      aggr: aggr_id,
+      fields: fields.clone().into(),
+    });
+    assert!(struct_id == struct_id2);
+
+    let mut aggr_ty = struct_ty;
+    aggr_ty.attrs = (attrs.clone(), attrs);
+    let aggr_id2 = elab.g.constrs.aggregate.push(Aggregate {
+      c: TyConstructor { c: Constructor::new(aggr_primary), ty: aggr_ty },
+      base,
+      fields: fields.into(),
+    });
+    assert!(aggr_id == aggr_id2);
+  }
+
+  fn elab_exist_reg(
+    &mut self, elab: &mut Analyzer, it: &ast::Cluster, concl: &[ast::Attr], ty: &ast::Type,
+  ) {
+    let mut cc = CorrConds::new();
+    let mut ty = elab.elab_type(ty);
+    let f = Formula::mk_and_with(|conjs| {
+      let x = Term::Bound(elab.lc.bound_var.push(ty.clone()));
+      for attr in concl {
+        elab.elab_is_attr(attr, true, &x).append_conjuncts_to(conjs)
+      }
+    });
+    let mut attrs = ty.attrs.0.clone();
+    for attr in concl {
+      let attr = elab.elab_attr(attr, true, &mut ty);
+      attrs.insert(&elab.g.constrs, attr);
+    }
+    let (kind, args) = match ty.kind {
+      TypeKind::Mode(nr) => {
+        let (n, args) = Type::adjust(nr, &ty.args, &elab.g.constrs);
+        (TypeKind::Mode(n), args)
+      }
+      _ => (ty.kind, &*ty.args),
+    };
+    let mut ty2 = Type { kind, attrs: ty.attrs.clone(), args: args.to_vec() };
+    cc.0[CorrCondKind::Existence] =
+      Some(Box::new(Formula::ForAll { dom: Box::new(ty), scope: Box::new(f.mk_neg()) }.mk_neg()));
+    elab.elab_corr_conds(cc, &it.conds, &it.corr);
+
+    let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
+    attrs.visit(&mut self.to_locus);
+    ty2.visit(&mut self.to_locus);
+    CheckAccess::with(&primary, |occ| {
+      occ.visit_attrs(&attrs);
+      occ.visit_terms(&ty2.args);
+    });
+    elab.register_cluster(attrs, primary, ty2);
   }
 }
 
@@ -2342,7 +2404,7 @@ impl ReadProof for BlockReader {
         ast::PatternRedefKind::AttrSynonym { pos } => todo!("ikItmDefPrAttr"),
       },
       (BlockKind::Registration, ast::ItemKind::Cluster(it)) => match &it.kind {
-        ast::ClusterDeclKind::Exist { concl, ty } => todo!("ikItmCluRegistered"),
+        ast::ClusterDeclKind::Exist { concl, ty } => self.elab_exist_reg(elab, it, concl, ty),
         ast::ClusterDeclKind::Func { term, concl, ty } => todo!("ikItmCluFunctor"),
         ast::ClusterDeclKind::Cond { antecedent, concl, ty } => todo!("ikItmCluConditional"),
       },

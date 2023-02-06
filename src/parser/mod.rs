@@ -621,25 +621,25 @@ impl MizReader<'_> {
   }
 
   fn parse_rcluster(
-    &mut self, buf: &mut Vec<u8>, (article, abs_nr): (Article, u32),
+    &mut self, buf: &mut Vec<u8>, (_article, _abs_nr): (Article, u32),
   ) -> RegisteredCluster {
     let primary = self.parse_arg_types(buf);
     let ty = Box::new(self.parse_type(buf).unwrap());
     let attrs = self.parse_attrs(buf);
     let attrs2 = if self.two_clusters { self.parse_attrs(buf) } else { attrs.clone() };
-    let cl = Cluster { primary, consequent: (attrs, attrs2), article, abs_nr };
+    let cl = Cluster { primary, consequent: (attrs, attrs2) };
     self.end_tag(buf);
     RegisteredCluster { cl, ty }
   }
 
   fn parse_fcluster(
-    &mut self, buf: &mut Vec<u8>, (article, abs_nr): (Article, u32),
+    &mut self, buf: &mut Vec<u8>, (_article, _abs_nr): (Article, u32),
   ) -> FunctorCluster {
     let primary = self.parse_arg_types(buf);
     let term = Box::new(self.parse_term(buf).unwrap());
     let attrs = self.parse_attrs(buf);
     let attrs2 = if self.two_clusters { self.parse_attrs(buf) } else { attrs.clone() };
-    let cl = Cluster { primary, consequent: (attrs, attrs2), article, abs_nr };
+    let cl = Cluster { primary, consequent: (attrs, attrs2) };
     let ty = self.parse_type(buf).map(Box::new);
     if ty.is_some() {
       self.end_tag(buf);
@@ -648,14 +648,14 @@ impl MizReader<'_> {
   }
 
   fn parse_ccluster(
-    &mut self, buf: &mut Vec<u8>, (article, abs_nr): (Article, u32),
+    &mut self, buf: &mut Vec<u8>, (_article, _abs_nr): (Article, u32),
   ) -> ConditionalCluster {
     let primary = self.parse_arg_types(buf);
     let antecedent = self.parse_attrs(buf);
     let ty = Box::new(self.parse_type(buf).unwrap());
     let attrs = self.parse_attrs(buf);
     let attrs2 = if self.two_clusters { self.parse_attrs(buf) } else { attrs.clone() };
-    let cl = Cluster { primary, consequent: (attrs, attrs2), article, abs_nr };
+    let cl = Cluster { primary, consequent: (attrs, attrs2) };
     self.end_tag(buf);
     ConditionalCluster { cl, ty, antecedent }
   }

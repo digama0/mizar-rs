@@ -1168,10 +1168,10 @@ pub struct Cluster {
   pub primary: Box<[Type]>,
   /// nConsequent.(Lower, Upper)
   pub consequent: (Attrs, Attrs),
-  /// nArticle
-  pub article: Article,
-  /// nAbsNr
-  pub abs_nr: u32,
+  // /// nArticle
+  // pub article: Article,
+  // /// nAbsNr
+  // pub abs_nr: u32,
 }
 impl<V: VisitMut> Visitable<V> for Cluster {
   fn visit(&mut self, v: &mut V) {
@@ -1185,8 +1185,8 @@ impl std::fmt::Debug for Cluster {
       .field("primary", &self.primary)
       .field("consequent.lower", &self.consequent.0)
       .field("consequent.upper", &self.consequent.1)
-      .field("article", &self.article)
-      .field("abs_nr", &self.abs_nr)
+      // .field("article", &self.article)
+      // .field("abs_nr", &self.abs_nr)
       .finish()
   }
 }
