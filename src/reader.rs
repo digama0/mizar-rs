@@ -720,61 +720,64 @@ impl Reader {
   fn read_cluster_decl(&mut self, cl: &ClusterDecl) {
     self.read_corr_conds(&cl.conds, &cl.corr);
     match &cl.kind {
-      ClusterDeclKind::R(cl) => {
-        let mut cl = cl.clone();
-        cl.consequent.1.visit(&mut self.intern_const());
-        self.g.clusters.registered.push(cl)
-      }
-      ClusterDeclKind::F(cl) => {
-        let mut cl = cl.clone();
-        cl.consequent.1.visit(&mut self.intern_const());
-        let mut rounded_up = BTreeMap::new();
-        for (i, asgn) in self.lc.infer_const.borrow().enum_iter() {
-          let mut attrs = asgn.ty.attrs.1.clone();
-          let orig = attrs.attrs().len();
-          cl.round_up_with(&self.g, &self.lc, &asgn.def, &asgn.ty, &mut attrs, false);
-          assert!(matches!(attrs, Attrs::Consistent(_)));
-          attrs.round_up_with(&self.g, &self.lc, &asgn.ty, false);
-          if attrs.attrs().len() > orig {
-            rounded_up.insert(i, attrs);
-          }
+      ClusterDeclKind::R(cl) => self.read_registered_cluster(cl.clone()),
+      ClusterDeclKind::F(cl) => self.read_functor_cluster(cl.clone()),
+      ClusterDeclKind::C(cl) => self.read_conditional_cluster(cl.clone()),
+    }
+  }
+
+  pub fn read_registered_cluster(&mut self, mut cl: RegisteredCluster) {
+    cl.consequent.1.visit(&mut self.intern_const());
+    self.g.clusters.registered.push(cl)
+  }
+
+  pub fn read_conditional_cluster(&mut self, mut cl: ConditionalCluster) {
+    cl.consequent.1.visit(&mut self.intern_const());
+    let mut rounded_up = BTreeMap::new();
+    for (i, asgn) in self.lc.infer_const.borrow().enum_iter() {
+      if let Some(subst) = cl.try_apply(&self.g, &self.lc, &asgn.ty.attrs.1, &asgn.ty, false) {
+        let mut attrs = asgn.ty.attrs.1.clone();
+        let orig = attrs.attrs().len();
+        // eprintln!("enlarge {:?} by {:?}", self, cl.consequent.1);
+        attrs.enlarge_by(&self.g.constrs, &cl.consequent.1, |a| {
+          a.visit_cloned(&mut Inst::new(&subst))
+        });
+        assert!(matches!(attrs, Attrs::Consistent(_)));
+        attrs.round_up_with(&self.g, &self.lc, &asgn.ty, false);
+        if attrs.attrs().len() > orig {
+          rounded_up.insert(i, attrs);
         }
-        let (_, i) = (self.g.clusters.functor)
-          .equal_range(|a| FunctorCluster::cmp_term(&a.term, &self.g.constrs, &cl.term));
-        self.g.clusters.functor.insert_at(i, cl);
-        for (&i, attrs) in &mut rounded_up {
-          attrs.visit(&mut self.intern_const());
-          self.lc.infer_const.get_mut()[i].ty.attrs.1 = std::mem::take(attrs);
-        }
-        self.round_up_further(rounded_up);
-      }
-      ClusterDeclKind::C(cl) => {
-        let mut cl = cl.clone();
-        cl.consequent.1.visit(&mut self.intern_const());
-        let mut rounded_up = BTreeMap::new();
-        for (i, asgn) in self.lc.infer_const.borrow().enum_iter() {
-          if let Some(subst) = cl.try_apply(&self.g, &self.lc, &asgn.ty.attrs.1, &asgn.ty, false) {
-            let mut attrs = asgn.ty.attrs.1.clone();
-            let orig = attrs.attrs().len();
-            // eprintln!("enlarge {:?} by {:?}", self, cl.consequent.1);
-            attrs.enlarge_by(&self.g.constrs, &cl.consequent.1, |a| {
-              a.visit_cloned(&mut Inst::new(&subst))
-            });
-            assert!(matches!(attrs, Attrs::Consistent(_)));
-            attrs.round_up_with(&self.g, &self.lc, &asgn.ty, false);
-            if attrs.attrs().len() > orig {
-              rounded_up.insert(i, attrs);
-            }
-          }
-        }
-        self.g.clusters.conditional.push(&self.g.constrs, cl);
-        for (&i, attrs) in &mut rounded_up {
-          attrs.visit(&mut self.intern_const());
-          self.lc.infer_const.get_mut()[i].ty.attrs.1 = std::mem::take(attrs);
-        }
-        self.round_up_further(rounded_up);
       }
     }
+    self.g.clusters.conditional.push(&self.g.constrs, cl);
+    for (&i, attrs) in &mut rounded_up {
+      attrs.visit(&mut self.intern_const());
+      self.lc.infer_const.get_mut()[i].ty.attrs.1 = std::mem::take(attrs);
+    }
+    self.round_up_further(rounded_up);
+  }
+
+  pub fn read_functor_cluster(&mut self, mut cl: FunctorCluster) {
+    cl.consequent.1.visit(&mut self.intern_const());
+    let mut rounded_up = BTreeMap::new();
+    for (i, asgn) in self.lc.infer_const.borrow().enum_iter() {
+      let mut attrs = asgn.ty.attrs.1.clone();
+      let orig = attrs.attrs().len();
+      cl.round_up_with(&self.g, &self.lc, &asgn.def, &asgn.ty, &mut attrs, false);
+      assert!(matches!(attrs, Attrs::Consistent(_)));
+      attrs.round_up_with(&self.g, &self.lc, &asgn.ty, false);
+      if attrs.attrs().len() > orig {
+        rounded_up.insert(i, attrs);
+      }
+    }
+    let (_, i) = (self.g.clusters.functor)
+      .equal_range(|a| FunctorCluster::cmp_term(&a.term, &self.g.constrs, &cl.term));
+    self.g.clusters.functor.insert_at(i, cl);
+    for (&i, attrs) in &mut rounded_up {
+      attrs.visit(&mut self.intern_const());
+      self.lc.infer_const.get_mut()[i].ty.attrs.1 = std::mem::take(attrs);
+    }
+    self.round_up_further(rounded_up);
   }
 
   pub fn read_inference(&mut self, thesis: &Formula, it: &Inference) {

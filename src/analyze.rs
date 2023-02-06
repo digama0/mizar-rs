@@ -1073,12 +1073,11 @@ impl Analyzer<'_> {
   fn register_cluster(&mut self, mut attrs: Attrs, primary: Box<[Type]>, mut ty: Type) {
     let mut attrs1 = attrs.clone();
     attrs1.enlarge_by(&self.g.constrs, &ty.attrs.0, |a| a.clone());
-    attrs1.visit(&mut self.intern_const());
     attrs.enlarge_by(&self.g.constrs, &ty.attrs.1, |a| a.clone());
     attrs.round_up_with(&self.g, &self.lc, &ty, false);
     let Attrs::Consistent(_) = attrs else { panic!("inconsistent existential cluster") };
     ty.attrs = (Attrs::EMPTY, Attrs::EMPTY);
-    self.g.clusters.registered.push(RegisteredCluster {
+    self.read_registered_cluster(RegisteredCluster {
       cl: Cluster { primary, consequent: (attrs1, attrs) },
       ty: Box::new(ty),
     });
@@ -2302,17 +2301,15 @@ impl BlockReader {
     &mut self, elab: &mut Analyzer, it: &ast::Cluster, concl: &[ast::Attr], ty: &ast::Type,
   ) {
     let mut ty = elab.elab_type(ty);
+    let mut attrs = ty.attrs.0.clone();
     let f = Formula::mk_and_with(|conjs| {
-      let x = Term::Bound(elab.lc.bound_var.push(ty.clone()));
       for attr in concl {
-        elab.elab_is_attr(attr, true, &x).append_conjuncts_to(conjs)
+        let attr = elab.elab_attr(attr, true, &mut ty);
+        let args = attr.args.iter().cloned().chain([Term::Bound(BoundId(0))]).collect();
+        conjs.push(Formula::Attr { nr: attr.nr, args }.maybe_neg(attr.pos));
+        attrs.insert(&elab.g.constrs, attr);
       }
     });
-    let mut attrs = ty.attrs.0.clone();
-    for attr in concl {
-      let attr = elab.elab_attr(attr, true, &mut ty);
-      attrs.insert(&elab.g.constrs, attr);
-    }
     let (kind, args) = match ty.kind {
       TypeKind::Mode(nr) => {
         let (n, args) = Type::adjust(nr, &ty.args, &elab.g.constrs);
@@ -2336,6 +2333,60 @@ impl BlockReader {
     elab.register_cluster(attrs, primary, ty2);
   }
 
+  fn elab_cond_reg(
+    &mut self, elab: &mut Analyzer, it: &ast::Cluster, antecedent: &[ast::Attr],
+    concl: &[ast::Attr], ty: &ast::Type,
+  ) {
+    let mut ty = elab.elab_type(ty);
+    let (kind, args) = match ty.kind {
+      TypeKind::Mode(nr) => {
+        let (n, args) = Type::adjust(nr, &ty.args, &elab.g.constrs);
+        (TypeKind::Mode(n), args)
+      }
+      _ => (ty.kind, &*ty.args),
+    };
+    let mut ty2 = Type { kind, attrs: (Attrs::EMPTY, Attrs::EMPTY), args: args.to_vec() };
+
+    let (mut attrs1, mut attrs2) = (ty.attrs.0.clone(), ty.attrs.0.clone());
+    let f = Formula::mk_and_with(|conjs| {
+      for attr in antecedent {
+        let attr = elab.elab_attr(attr, true, &mut ty);
+        let args = attr.args.iter().cloned().chain([Term::Bound(BoundId(0))]).collect();
+        conjs.push(Formula::Attr { nr: attr.nr, args }.maybe_neg(attr.pos));
+        attrs1.insert(&elab.g.constrs, attr);
+      }
+      let f = Formula::mk_and_with(|conjs| {
+        for attr in concl {
+          let attr = elab.elab_attr(attr, true, &mut ty);
+          let args = attr.args.iter().cloned().chain([Term::Bound(BoundId(0))]).collect();
+          conjs.push(Formula::Attr { nr: attr.nr, args }.maybe_neg(attr.pos));
+          attrs2.insert(&elab.g.constrs, attr);
+        }
+      });
+      f.mk_neg().append_conjuncts_to(conjs)
+    });
+    let mut cc = CorrConds::new();
+    cc.0[CorrCondKind::Coherence] =
+      Some(Box::new(Formula::ForAll { dom: Box::new(ty), scope: Box::new(f.mk_neg()) }));
+    elab.elab_corr_conds(cc, &it.conds, &it.corr);
+
+    let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
+    attrs1.visit(&mut self.to_locus);
+    attrs2.visit(&mut self.to_locus);
+    ty2.visit(&mut self.to_locus);
+    CheckAccess::with(&primary, |occ| {
+      occ.visit_attrs(&attrs1);
+      occ.visit_terms(&ty2.args);
+    });
+    let Attrs::Consistent(_) = attrs1 else { panic!("inconsistent cluster antecedent") };
+    let Attrs::Consistent(_) = attrs2 else { panic!("inconsistent cluster consequent") };
+    elab.read_conditional_cluster(ConditionalCluster {
+      cl: Cluster { primary, consequent: (attrs2.clone(), attrs2) },
+      ty: Box::new(ty2),
+      antecedent: attrs1,
+    });
+  }
+
   fn elab_func_reg(
     &mut self, elab: &mut Analyzer, it: &ast::Cluster, term: &ast::Term, concl: &[ast::Attr],
     oty: Option<&ast::Type>,
@@ -2357,11 +2408,10 @@ impl BlockReader {
     let mut cc = CorrConds::new();
     let f = if oty.is_some() {
       let f = Formula::mk_and_with(|conj| {
-        let x = elab.lc.bound_var.push(ty.clone());
-        conj.push(elab.g.reqs.mk_eq(Term::Bound(x), term));
+        conj.push(elab.g.reqs.mk_eq(Term::Bound(BoundId(0)), term));
         let f = Formula::mk_and_with(|conj| {
           for attr in &concl {
-            let args = attr.args.iter().cloned().chain([Term::Bound(x)]).collect();
+            let args = attr.args.iter().cloned().chain([Term::Bound(BoundId(0))]).collect();
             conj.push(Formula::Attr { nr: attr.nr, args }.maybe_neg(attr.pos))
           }
         });
@@ -2394,7 +2444,7 @@ impl BlockReader {
     attrs.enlarge_by(&elab.g.constrs, &ty.attrs.1, |a| a.clone());
     attrs.round_up_with(&elab.g, &elab.lc, &ty, false);
     let Attrs::Consistent(_) = attrs else { panic!("inconsistent functor registration") };
-    elab.g.clusters.functor.push(FunctorCluster {
+    elab.read_functor_cluster(FunctorCluster {
       cl: Cluster { primary, consequent: (attrs1, attrs) },
       ty: oty.map(|_| Box::new(ty)),
       term: Box::new(term2),
@@ -2472,7 +2522,8 @@ impl ReadProof for BlockReader {
         ast::ClusterDeclKind::Exist { concl, ty } => self.elab_exist_reg(elab, it, concl, ty),
         ast::ClusterDeclKind::Func { term, concl, ty } =>
           self.elab_func_reg(elab, it, term, concl, ty.as_deref()),
-        ast::ClusterDeclKind::Cond { antecedent, concl, ty } => todo!("ikItmCluConditional"),
+        ast::ClusterDeclKind::Cond { antecedent, concl, ty } =>
+          self.elab_cond_reg(elab, it, antecedent, concl, ty),
       },
       (BlockKind::Registration, ast::ItemKind::Identify(_)) => todo!("ikIdFunctors"),
       (BlockKind::Registration, ast::ItemKind::Reduction(it)) => todo!("ikReduceFunctors"),
