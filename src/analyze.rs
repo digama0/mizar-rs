@@ -2301,7 +2301,6 @@ impl BlockReader {
   fn elab_exist_reg(
     &mut self, elab: &mut Analyzer, it: &ast::Cluster, concl: &[ast::Attr], ty: &ast::Type,
   ) {
-    let mut cc = CorrConds::new();
     let mut ty = elab.elab_type(ty);
     let f = Formula::mk_and_with(|conjs| {
       let x = Term::Bound(elab.lc.bound_var.push(ty.clone()));
@@ -2322,6 +2321,7 @@ impl BlockReader {
       _ => (ty.kind, &*ty.args),
     };
     let mut ty2 = Type { kind, attrs: ty.attrs.clone(), args: args.to_vec() };
+    let mut cc = CorrConds::new();
     cc.0[CorrCondKind::Existence] =
       Some(Box::new(Formula::ForAll { dom: Box::new(ty), scope: Box::new(f.mk_neg()) }.mk_neg()));
     elab.elab_corr_conds(cc, &it.conds, &it.corr);
@@ -2334,6 +2334,71 @@ impl BlockReader {
       occ.visit_terms(&ty2.args);
     });
     elab.register_cluster(attrs, primary, ty2);
+  }
+
+  fn elab_func_reg(
+    &mut self, elab: &mut Analyzer, it: &ast::Cluster, term: &ast::Term, concl: &[ast::Attr],
+    oty: Option<&ast::Type>,
+  ) {
+    let term = elab.elab_term(term);
+    let mut term2 = match term {
+      Term::Functor { nr, ref args } => {
+        let (nr, args) = Term::adjust(nr, args, &elab.g.constrs);
+        Term::Functor { nr, args: args.to_vec().into() }
+      }
+      Term::Aggregate { .. } | Term::Selector { .. } => term.clone(),
+      _ => panic!("invalid functor registration target"),
+    };
+    let mut ty = match oty {
+      None => term2.get_type(&elab.g, &elab.lc, false),
+      Some(ty) => elab.elab_type(ty),
+    };
+    let concl = concl.iter().map(|attr| elab.elab_attr(attr, true, &mut ty)).collect_vec();
+    let mut cc = CorrConds::new();
+    let f = if oty.is_some() {
+      let f = Formula::mk_and_with(|conj| {
+        let x = elab.lc.bound_var.push(ty.clone());
+        conj.push(elab.g.reqs.mk_eq(Term::Bound(x), term));
+        let f = Formula::mk_and_with(|conj| {
+          for attr in &concl {
+            let args = attr.args.iter().cloned().chain([Term::Bound(x)]).collect();
+            conj.push(Formula::Attr { nr: attr.nr, args }.maybe_neg(attr.pos))
+          }
+        });
+        f.mk_neg().append_conjuncts_to(conj)
+      });
+      Formula::ForAll { dom: Box::new(ty.clone()), scope: Box::new(f.mk_neg()) }
+    } else {
+      Formula::mk_and_with(|conj| {
+        for attr in &concl {
+          let args = attr.args.iter().chain([&term]).cloned().collect();
+          conj.push(Formula::Attr { nr: attr.nr, args }.maybe_neg(attr.pos))
+        }
+      })
+    };
+    cc.0[CorrCondKind::Coherence] = Some(Box::new(f));
+    elab.elab_corr_conds(cc, &it.conds, &it.corr);
+
+    let mut attrs = ty.attrs.0.clone();
+    for attr in concl {
+      attrs.insert(&elab.g.constrs, attr);
+    }
+
+    let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
+    term2.visit(&mut self.to_locus);
+    attrs.visit(&mut self.to_locus);
+    ty.visit(&mut self.to_locus);
+    CheckAccess::with(&primary, |occ| occ.visit_term(&term2));
+    let mut attrs1 = attrs.clone();
+    attrs1.visit(&mut elab.intern_const());
+    attrs.enlarge_by(&elab.g.constrs, &ty.attrs.1, |a| a.clone());
+    attrs.round_up_with(&elab.g, &elab.lc, &ty, false);
+    let Attrs::Consistent(_) = attrs else { panic!("inconsistent functor registration") };
+    elab.g.clusters.functor.push(FunctorCluster {
+      cl: Cluster { primary, consequent: (attrs1, attrs) },
+      ty: oty.map(|_| Box::new(ty)),
+      term: Box::new(term2),
+    });
   }
 }
 
@@ -2405,7 +2470,8 @@ impl ReadProof for BlockReader {
       },
       (BlockKind::Registration, ast::ItemKind::Cluster(it)) => match &it.kind {
         ast::ClusterDeclKind::Exist { concl, ty } => self.elab_exist_reg(elab, it, concl, ty),
-        ast::ClusterDeclKind::Func { term, concl, ty } => todo!("ikItmCluFunctor"),
+        ast::ClusterDeclKind::Func { term, concl, ty } =>
+          self.elab_func_reg(elab, it, term, concl, ty.as_deref()),
         ast::ClusterDeclKind::Cond { antecedent, concl, ty } => todo!("ikItmCluConditional"),
       },
       (BlockKind::Registration, ast::ItemKind::Identify(_)) => todo!("ikIdFunctors"),
