@@ -274,7 +274,7 @@ impl MizPath {
           formats.formats.push(match kind {
             b'G' => Format::Aggr(FormatAggr { sym: StructSymId(sym), args }),
             b'J' => Format::SubAggr(StructSymId(sym)),
-            b'L' => Format::Struct(FormatStructMode { sym: StructSymId(sym), args }),
+            b'L' => Format::Struct(FormatStruct { sym: StructSymId(sym), args }),
             b'M' => Format::Mode(FormatMode { sym: ModeSymId(sym), args }),
             b'U' => Format::Sel(SelSymId(sym)),
             b'V' => Format::Attr(FormatAttr { sym: AttrSymId(sym), args }),
@@ -317,6 +317,10 @@ impl MizPath {
       r.end_tag(buf);
     }
     assert!(matches!(r.read_event(buf), Event::Eof));
+    assert!(matches!(
+      formats.formats.get(FormatId::STRICT),
+      Some(Format::Attr(FormatAttr { args: 1, .. }))
+    ));
     Ok(())
   }
 
@@ -514,7 +518,7 @@ struct ConstructorAttrs {
   superfluous: u8,
   kind: u8,
   aggr: u32,
-  base: u32,
+  base: u8,
 }
 
 #[derive(Default)]
@@ -764,19 +768,19 @@ impl MizReader<'_> {
       }
       b'L' => {
         let c = constructor!(StructId);
-        let mut prefixes = vec![];
+        let mut parents = vec![];
         let aggr = AggrId(aggr - 1);
         let fields = loop {
           match self.parse_elem(buf) {
             Elem::Type(ty) => {
               assert!(matches!(ty.kind, TypeKind::Struct(_)), "not a struct");
-              prefixes.push(ty)
+              parents.push(ty)
             }
             Elem::Fields(args) => break args,
             _ => panic!("expected <Fields>"),
           }
         };
-        ConstructorDef::StructMode(StructMode { c, prefixes: prefixes.into(), aggr, fields })
+        ConstructorDef::StructMode(StructMode { c, parents: parents.into(), aggr, fields })
       }
       b'V' => {
         let c = constructor!(AttrId);
@@ -796,7 +800,7 @@ impl MizReader<'_> {
         ConstructorDef::Aggr(Aggregate {
           c: TyConstructor { c, ty: self.parse_type(buf).unwrap() },
           base,
-          coll: match self.parse_elem(buf) {
+          fields: match self.parse_elem(buf) {
             Elem::Fields(args) => args,
             _ => panic!("expected <Fields>"),
           },
@@ -986,7 +990,7 @@ impl MizReader<'_> {
           Elem::Type(Type { kind, attrs: (lower, upper), args })
         }
         b"Properties" => {
-          let mut args = (0, 0, PropertySet::default());
+          let mut args = (0, 0, PropertySet::EMPTY);
           for attr in e.attributes().map(Result::unwrap) {
             match attr.key {
               b"propertyarg1" => args.0 = self.get_attr::<u8>(&attr.value).saturating_sub(1),

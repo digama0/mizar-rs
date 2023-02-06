@@ -1008,6 +1008,10 @@ impl TryFrom<&[u8]> for PropertyKind {
 #[derive(Copy, Clone, Default)]
 pub struct PropertySet(u16);
 
+impl PropertySet {
+  pub const EMPTY: Self = Self(0);
+}
+
 impl std::fmt::Debug for PropertySet {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     f.debug_set()
@@ -1033,6 +1037,19 @@ pub struct Constructor<I> {
   pub arg1: u8,
   pub arg2: u8,
 }
+
+impl<I> Constructor<I> {
+  pub const fn new(primary: Box<[Type]>) -> Self {
+    Self {
+      primary,
+      redefines: None,
+      superfluous: 0,
+      properties: PropertySet::EMPTY,
+      arg1: 0,
+      arg2: 0,
+    }
+  }
+}
 impl<I, V: VisitMut> Visitable<V> for Constructor<I> {
   fn visit(&mut self, v: &mut V) { v.with_locus_tys(&mut self.primary, |_| {}) }
 }
@@ -1055,7 +1072,7 @@ impl<I, V: VisitMut> Visitable<V> for TyConstructor<I> {
 pub struct StructMode {
   pub c: Constructor<StructId>,
   // These are guaranteed to be struct types
-  pub prefixes: Box<[Type]>,
+  pub parents: Box<[Type]>,
   pub aggr: AggrId,
   pub fields: Box<[SelId]>,
 }
@@ -1066,15 +1083,15 @@ impl std::ops::Deref for StructMode {
 }
 impl<V: VisitMut> Visitable<V> for StructMode {
   fn visit(&mut self, v: &mut V) {
-    v.with_locus_tys(&mut self.c.primary, |v| self.prefixes.visit(v));
+    v.with_locus_tys(&mut self.c.primary, |v| self.parents.visit(v));
   }
 }
 
 #[derive(Clone, Debug)]
 pub struct Aggregate {
   pub c: TyConstructor<AggrId>,
-  pub base: u32,
-  pub coll: Box<[SelId]>,
+  pub base: u8,
+  pub fields: Box<[SelId]>,
 }
 impl<V: VisitMut> Visitable<V> for Aggregate {
   fn visit(&mut self, v: &mut V) { self.c.visit(v) }
@@ -1092,6 +1109,7 @@ impl std::ops::DerefMut for Aggregate {
 pub struct Constructors {
   pub mode: IdxVec<ModeId, TyConstructor<ModeId>>,
   pub struct_mode: IdxVec<StructId, StructMode>,
+  /// Invariant: The `ty` field is always equal to `primary.last()`
   pub attribute: IdxVec<AttrId, TyConstructor<AttrId>>,
   pub predicate: IdxVec<PredId, Constructor<PredId>>,
   pub functor: IdxVec<FuncId, TyConstructor<FuncId>>,
@@ -1975,7 +1993,7 @@ pub struct FormatAggr {
 }
 
 #[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
-pub struct FormatStructMode {
+pub struct FormatStruct {
   pub sym: StructSymId,
   pub args: u8,
 }
@@ -2007,7 +2025,7 @@ pub struct FormatPred {
 pub enum Format {
   Aggr(FormatAggr),
   SubAggr(StructSymId),
-  Struct(FormatStructMode),
+  Struct(FormatStruct),
   Mode(FormatMode),
   Sel(SelSymId),
   Attr(FormatAttr),
@@ -2041,6 +2059,11 @@ pub enum PriorityKind {
 mk_id! {
   FormatId(u32),
 }
+impl FormatId {
+  // The first format is always the "strict" (a.k.a "not abstract") builtin attribute
+  pub const STRICT: Self = Self(0);
+}
+
 #[derive(Debug, Default)]
 pub struct Formats {
   pub formats: IdxVec<FormatId, Format>,

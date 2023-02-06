@@ -20,7 +20,7 @@ pub struct Formatter {
   symbols: HashMap<SymbolKind, String>,
   formats: IdxVec<FormatId, Format>,
   mode: HashMap<ModeId, (u8, Box<[LocusId]>, FormatMode)>,
-  struct_mode: HashMap<StructId, (u8, Box<[LocusId]>, FormatStructMode)>,
+  struct_mode: HashMap<StructId, (u8, Box<[LocusId]>, FormatStruct)>,
   attr: HashMap<AttrId, (u8, Box<[LocusId]>, FormatAttr)>,
   pred: HashMap<PredId, (u8, Box<[LocusId]>, FormatPred)>,
   func: HashMap<FuncId, (u8, Box<[LocusId]>, FormatFunc)>,
@@ -395,7 +395,7 @@ impl<'a> Pretty<'a> {
     if let Some(lc) = self.lc {
       match ty.kind {
         TypeKind::Struct(n) =>
-          if let Some(&(len, ref vis, FormatStructMode { sym, args })) =
+          if let Some(&(len, ref vis, FormatStruct { sym, args })) =
             lc.formatter.struct_mode.get(&n)
           {
             assert_eq!(len as usize, ty.args.len());

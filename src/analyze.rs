@@ -490,7 +490,10 @@ impl Analyzer<'_> {
         }
         panic!("type error")
       }
-      ast::Term::InternalSelector { ref sym, .. } => Term::Constant(ConstId(sym.0)), // WTF?
+      ast::Term::InternalSelector { ref sym, .. } => {
+        // only occurs inside elab_struct_def, ensured by parser
+        Term::Constant(ConstId(sym.0))
+      }
       ast::Term::The { ref ty, .. } => Term::The { ty: Box::new(self.elab_type(ty)) },
       ast::Term::Fraenkel { ref vars, ref scope, ref compr, .. } => {
         self.lc.term_cache.get_mut().open_scope();
@@ -628,7 +631,7 @@ impl Analyzer<'_> {
       ast::Type::Struct { sym, args, .. } => {
         let args = self.elab_terms_qua(args);
         let fmt =
-          self.formats[&Format::Struct(FormatStructMode { sym: sym.0, args: args.len() as u8 })];
+          self.formats[&Format::Struct(FormatStruct { sym: sym.0, args: args.len() as u8 })];
         for pat in self.notations.struct_mode.iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
@@ -1612,6 +1615,27 @@ impl VisitMut for ToLocus {
   }
 }
 
+struct MakeSelector {
+  base: u8,
+  terms: Vec<Result<Box<Term>, SelId>>,
+}
+
+impl VisitMut for MakeSelector {
+  fn visit_term(&mut self, tm: &mut Term) {
+    if let Term::Locus(n) = tm {
+      if let Some(i) = n.0.checked_sub(self.base) {
+        *tm = match self.terms[i as usize] {
+          Ok(ref t) => (**t).clone(),
+          Err(nr) =>
+            Term::Selector { nr, args: (0..=self.base).map(LocusId).map(Term::Locus).collect() },
+        }
+      }
+    } else {
+      self.super_visit_term(tm)
+    }
+  }
+}
+
 struct BlockReader {
   kind: BlockKind,
   to_locus: ToLocus,
@@ -1796,6 +1820,7 @@ impl BlockReader {
       pos: true,
     };
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
+    elab.r.notations.functor.push(pat)
   }
 
   fn elab_pred_def(
@@ -1871,6 +1896,7 @@ impl BlockReader {
       pos,
     };
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
+    elab.r.notations.predicate.push(pat)
   }
 
   fn elab_mode_def(
@@ -1898,6 +1924,7 @@ impl BlockReader {
         };
         CheckAccess::check(&pat.primary, &pat.visible);
         elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
+        elab.r.notations.mode.push(pat)
       }
       ast::DefModeKind::Standard { spec, def } => {
         let mut args: Box<[_]> = Box::new([]);
@@ -2002,6 +2029,7 @@ impl BlockReader {
           pos: true,
         };
         elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
+        elab.r.notations.mode.push(pat)
       }
     }
   }
@@ -2082,10 +2110,168 @@ impl BlockReader {
       pos,
     };
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
+    elab.r.notations.attribute.push(pat)
   }
 
   fn elab_struct_def(&mut self, elab: &mut Analyzer, it: &ast::DefStruct) {
-    todo!("ikItmDefStruct")
+    elab.elab_corr_conds(CorrConds::new(), &it.conds, &it.corr);
+    let mut parents: Box<[_]> = it.parents.iter().map(|ty| elab.elab_type(ty)).collect();
+    let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect_vec();
+    let struct_primary: Box<[_]> = self.primary.0.iter().cloned().collect();
+    let struct_id = StructId::from_usize(elab.g.constrs.struct_mode.len());
+    let struct_pat = Pattern {
+      kind: PatternKind::Struct(struct_id),
+      fmt: elab.formats[&Format::Struct(it.pat.to_mode_format())],
+      redefines: None,
+      primary: struct_primary.clone(),
+      visible: it.pat.args.iter().map(|v| self.to_locus.get(ConstId(v.id.0))).collect(),
+      pos: true,
+    };
+    CheckAccess::check(&struct_pat.primary, &struct_pat.visible);
+    elab.r.lc.formatter.push(&elab.r.g.constrs, &struct_pat);
+    elab.r.notations.struct_mode.push(struct_pat);
+
+    let struct_ty = Type {
+      kind: TypeKind::Struct(struct_id),
+      attrs: (Attrs::EMPTY, Attrs::EMPTY),
+      args: formals,
+    };
+    let fixed_vars = elab.lc.fixed_var.len();
+    let base = self.primary.len() as u8;
+    self.to_locus.0 .0.resize(fixed_vars, None);
+    let mut cur_locus = LocusId(base);
+    for group in &it.fields {
+      let ty = elab.elab_intern_type(&group.ty);
+      for _ in &group.vars {
+        elab.lc.fixed_var.push(FixedVar { ty: ty.clone(), def: None });
+        self.to_locus.0.push(Some(cur_locus.fresh()));
+      }
+    }
+    let mut field_tys = elab.lc.fixed_var.0.drain(fixed_vars..).map(|v| v.ty).collect_vec();
+    field_tys.visit(&mut self.to_locus);
+    let aggr_primary: Box<[_]> = self.primary.0.iter().chain(&field_tys).cloned().collect();
+    let mut fields: Vec<SelId> = vec![];
+    let aggr_id = AggrId::from_usize(elab.g.constrs.aggregate.len());
+    let aggr_pat = Pattern {
+      kind: PatternKind::Aggr(aggr_id),
+      fmt: elab.formats[&Format::Aggr(it.pat.to_aggr_format())],
+      redefines: None,
+      primary: aggr_primary.clone(),
+      visible: (base..cur_locus.0).map(LocusId).collect(),
+      pos: true,
+    };
+    CheckAccess::check(&aggr_pat.primary, &aggr_pat.visible);
+    elab.r.lc.formatter.push(&elab.r.g.constrs, &aggr_pat);
+    elab.r.notations.aggregate.push(aggr_pat);
+
+    let mut prefixes = vec![];
+    for ty in &*parents {
+      assert!(ty.attrs.0.attrs().is_empty());
+      let TypeKind::Struct(s) = ty.kind else { panic!("not a struct type") };
+      prefixes.push(elab.g.constrs.struct_mode[s].fields.clone().into_vec());
+    }
+
+    let sel_primary_it = self.primary.0.iter().chain([&struct_ty]).cloned();
+    let subaggr_pat = Pattern {
+      kind: PatternKind::SubAggr(struct_id),
+      fmt: elab.formats[&Format::SubAggr(it.pat.to_subaggr_format())],
+      redefines: None,
+      primary: sel_primary_it.clone().collect(),
+      visible: Box::new([LocusId(base)]),
+      pos: true,
+    };
+    elab.r.lc.formatter.push(&elab.r.g.constrs, &subaggr_pat);
+    elab.r.notations.sub_aggr.push(subaggr_pat);
+
+    let mut mk_sel = MakeSelector { base, terms: vec![] };
+    let mut field_fmt = vec![];
+    let mut new_fields = vec![];
+    for (v, mut ty) in it.fields.iter().flat_map(|group| &group.vars).zip(field_tys) {
+      let fmt = elab.formats[&Format::Sel(v.sym.0)];
+      assert!(!field_fmt.contains(&fmt), "duplicate field name");
+      field_fmt.push(fmt);
+      ty.visit(&mut mk_sel);
+      let mut iter = parents.iter().zip(&mut prefixes).filter_map(|(ty, fields)| {
+        let arg = Term::Constant(elab.lc.fixed_var.push(FixedVar { ty: ty.clone(), def: None }));
+        for pat in elab.notations.selector.iter().rev() {
+          if pat.fmt == fmt {
+            if let Some(subst) = pat.check_types(&elab.g, &elab.lc, std::slice::from_ref(&arg)) {
+              let PatternKind::Sel(nr) = pat.kind else { unreachable!() };
+              let args = subst.trim_to(elab.g.constrs.selector[nr].primary.len());
+              let ty2 = elab.g.constrs.selector[nr].ty.visit_cloned(&mut Inst::new(&args));
+              assert!(().eq_type(&elab.g, &elab.lc, ty, &ty2), "field type mismatch");
+              elab.lc.fixed_var.0.pop();
+              fields.retain(|&x| x != nr);
+              return Some((nr, args))
+            }
+          }
+        }
+        elab.lc.fixed_var.0.pop();
+        None
+      });
+      if let Some((sel_id, args)) = iter.next() {
+        assert!(iter.all(|(nr, _)| sel_id == nr), "overlapping parent fields");
+        mk_sel.terms.push(Ok(Box::new(Term::Selector { nr: sel_id, args })));
+        fields.push(sel_id);
+      } else {
+        let sel = TyConstructor { c: Constructor::new(sel_primary_it.clone().collect()), ty };
+        let sel_id = elab.g.constrs.selector.push(sel);
+        let sel_pat = Pattern {
+          kind: PatternKind::Sel(sel_id),
+          fmt,
+          redefines: None,
+          primary: sel_primary_it.clone().collect(),
+          visible: Box::new([LocusId(base)]),
+          pos: true,
+        };
+        CheckAccess::check(&sel_pat.primary, &sel_pat.visible);
+        elab.r.lc.formatter.push(&elab.r.g.constrs, &sel_pat);
+        elab.r.notations.selector.push(sel_pat);
+        new_fields.push(sel_id);
+        mk_sel.terms.push(Err(sel_id));
+        fields.push(sel_id);
+      }
+    }
+
+    assert!(prefixes.iter().all(|prefix| prefix.is_empty()), "structure does not extend parent");
+    parents.visit(&mut self.to_locus);
+
+    let struct_id2 = elab.g.constrs.struct_mode.push(StructMode {
+      c: Constructor::new(struct_primary),
+      parents,
+      aggr: aggr_id,
+      fields: fields.clone().into(),
+    });
+    assert!(struct_id == struct_id2);
+
+    let aggr_id2 = elab.g.constrs.aggregate.push(Aggregate {
+      c: TyConstructor { c: Constructor::new(aggr_primary), ty: struct_ty.clone() },
+      base,
+      fields: fields.into(),
+    });
+    assert!(aggr_id == aggr_id2);
+
+    let mut c = Constructor::new(sel_primary_it.clone().collect());
+    c.properties.set(PropertyKind::Abstractness);
+    let attr_primary = sel_primary_it.collect();
+    let attr_id = elab.g.constrs.attribute.push(TyConstructor { c, ty: struct_ty });
+    let attr_pat = Pattern {
+      kind: PatternKind::Attr(attr_id),
+      fmt: FormatId::STRICT,
+      redefines: None,
+      primary: attr_primary,
+      visible: Box::new([LocusId(base)]),
+      pos: true,
+    };
+    elab.r.lc.formatter.push(&elab.r.g.constrs, &attr_pat);
+    elab.r.notations.attribute.push(attr_pat);
+
+    elab.push_constr(ConstrKind::Attr(attr_id));
+    elab.push_constr(ConstrKind::Struct(struct_id));
+    elab.push_constr(ConstrKind::Aggr(aggr_id));
+    new_fields.into_iter().for_each(|sel_id| elab.push_constr(ConstrKind::Sel(sel_id)));
+
+    // TODO: existential cluster
   }
 }
 

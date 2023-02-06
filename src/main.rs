@@ -326,7 +326,7 @@ impl Term {
     let nr = g.constrs.struct_mode[s].aggr;
     let ty = &*Type::new(s.into()).widening_of(g, ty).unwrap();
     let mut args = ty.args.clone();
-    for &sel in &*g.constrs.aggregate[nr].coll {
+    for &sel in &*g.constrs.aggregate[nr].fields {
       args.push(Self::mk_select(g, sel, arg, ty));
     }
     Term::Aggregate { nr, args: args.into() }
@@ -346,7 +346,7 @@ impl<'a> WideningStruct<'a> {
     let c = &self.g.constrs.struct_mode[n];
     let pos = self.stack.len();
     self.stack.push(None);
-    for ty in &*c.prefixes {
+    for ty in &*c.parents {
       let n = ty.struct_id();
       if n == self.tgt {
         self.stack[pos] = Some(ty);

@@ -1,8 +1,8 @@
 use crate::mk_id;
 use crate::types::{
-  AttrSymId, BlockKind, CorrCondKind, FormatAttr, FormatFunc, FormatMode, FormatPred, FuncSymId,
-  LabelId, LeftBrkSymId, LocusId, ModeSymId, Position, PredSymId, PropertyKind, Reference,
-  RightBrkSymId, SchId, SchRef, SelSymId, StructSymId,
+  AttrSymId, BlockKind, CorrCondKind, FormatAggr, FormatAttr, FormatFunc, FormatMode, FormatPred,
+  FormatStruct, FuncSymId, LabelId, LeftBrkSymId, LocusId, ModeSymId, Position, PredSymId,
+  PropertyKind, Reference, RightBrkSymId, SchId, SchRef, SelSymId, StructSymId,
 };
 use enum_map::Enum;
 
@@ -268,15 +268,24 @@ pub struct Field {
 #[derive(Debug)]
 pub struct FieldGroup {
   pub pos: Position,
-  pub fields: Vec<Field>,
+  pub vars: Vec<Field>,
   pub ty: Type,
 }
 
 #[derive(Debug)]
 pub struct PatternStruct {
-  pub sym: (u32, String),
+  pub sym: (StructSymId, String),
   pub args: Vec<Variable>,
-  pub groups: Vec<FieldGroup>,
+}
+
+impl PatternStruct {
+  pub fn to_mode_format(&self) -> FormatStruct {
+    FormatStruct { sym: self.sym.0, args: self.args.len() as u8 }
+  }
+  pub fn to_aggr_format(&self) -> FormatAggr {
+    FormatAggr { sym: self.sym.0, args: self.args.len() as u8 }
+  }
+  pub fn to_subaggr_format(&self) -> StructSymId { self.sym.0 }
 }
 
 #[derive(Debug)]
@@ -519,6 +528,7 @@ pub struct Definition {
 #[derive(Debug)]
 pub struct DefStruct {
   pub parents: Vec<Type>,
+  pub fields: Vec<FieldGroup>,
   pub pat: PatternStruct,
   pub conds: Vec<CorrCond>,
   pub corr: Option<Correctness>,

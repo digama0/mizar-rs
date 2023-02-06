@@ -240,8 +240,8 @@ impl Equalizer<'_> {
     }
     if let TypeKind::Struct(mut m) = eq_term.ty_class[i].kind {
       loop {
-        let prefixes = self.g.constrs.struct_mode[m].prefixes.clone();
-        for mut ty in prefixes.into_vec() {
+        let parents = self.g.constrs.struct_mode[m].parents.clone();
+        for mut ty in parents.into_vec() {
           ty.visit(&mut Inst::new(&eq_term.ty_class[i].args));
           self.y(|y| y.visit_type(&mut ty))?;
           eq_term = &mut self.terms[et];

@@ -686,22 +686,22 @@ impl MsmParser {
         }
         let mut args = vec![];
         self.parse_loci(&mut args);
-        let mut groups = vec![];
+        let mut fields = vec![];
         while let Ok(e) = self.r.try_read_start(&mut self.buf, Some(b"Field-Segment")) {
           let pos = self.r.get_pos(&e);
-          let mut fields = vec![];
+          let mut vars = vec![];
           let ty = loop {
             match self.parse_elem() {
-              Elem::Selector(field) => fields.push(field),
+              Elem::Selector(field) => vars.push(field),
               Elem::Type(ty) => break ty,
               _ => panic!("expected type"),
             }
           };
           self.r.end_tag(&mut self.buf);
-          groups.push(FieldGroup { pos, fields, ty: *ty })
+          fields.push(FieldGroup { pos, vars, ty: *ty })
         }
-        let pat = PatternStruct { sym: (sym, spelling), args, groups };
-        ItemKind::DefStruct(Box::new(DefStruct { parents, pat, conds: vec![], corr: None }))
+        let pat = PatternStruct { sym: (sym, spelling), args };
+        ItemKind::DefStruct(Box::new(DefStruct { parents, fields, pat, conds: vec![], corr: None }))
       }
       b"Pred-Synonym" => self.parse_pattern_redef(PatternRedefKind::PredSynonym { pos: true }),
       b"Pred-Antonym" => self.parse_pattern_redef(PatternRedefKind::PredSynonym { pos: false }),
