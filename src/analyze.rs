@@ -2586,6 +2586,32 @@ impl BlockReader {
     CheckAccess::with(&primary, |occ| occ.visit_term(&orig));
     elab.r.reductions.push(Reduction { primary, terms: [orig, new] });
   }
+
+  fn elab_sethood_registration(
+    &mut self, elab: &mut Analyzer, ty: &ast::Type, just: &ast::Justification,
+  ) {
+    let mut ty = elab.elab_type(ty);
+    let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
+    let mut property = Formula::Neg {
+      f: Box::new(Formula::ForAll {
+        dom: Box::new(Type::SET),
+        scope: Box::new(Formula::Neg {
+          f: Box::new(Formula::ForAll {
+            dom: Box::new(ty.clone()),
+            scope: Box::new(Formula::Pred {
+              nr: elab.g.reqs.belongs_to().unwrap(),
+              args: Box::new([Term::Bound(BoundId(1)), Term::Bound(BoundId(0))]),
+            }),
+          }),
+        }),
+      }),
+    };
+    ty.visit(&mut self.to_locus);
+    CheckAccess::with(&primary, |occ| occ.visit_type(&ty));
+    property.visit(&mut elab.intern_const());
+    elab.elab_justification(&property, just);
+    elab.properties.push(Property { primary, ty, kind: PropertyKind::Sethood })
+  }
 }
 
 impl ReadProof for BlockReader {
@@ -2680,7 +2706,7 @@ impl ReadProof for BlockReader {
         self.elab_identify_func(elab, it),
       (BlockKind::Registration, ast::ItemKind::Reduction(it)) => self.elab_reduction(elab, it),
       (BlockKind::Registration, ast::ItemKind::SethoodRegistration { ty, just }) =>
-        todo!("ikProperty"),
+        self.elab_sethood_registration(elab, ty, just),
       _ => return self.super_elab_item(elab, item),
     }
     true
