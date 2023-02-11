@@ -2548,6 +2548,44 @@ impl BlockReader {
         .collect(),
     });
   }
+
+  fn elab_reduction(&mut self, elab: &mut Analyzer, it: &ast::Reduction) {
+    fn is_ssubterm(g: &Global, lc: &LocalContext, sup: &Term, sub: &Term) -> bool {
+      use Term::*;
+      match sup {
+        Numeral(_) | Locus(_) | Bound(_) | Constant(_) | Infer(_) => ().eq_term(g, lc, sup, sub),
+        PrivFunc { value, .. } => is_ssubterm(g, lc, value, sub),
+        Functor { args, .. }
+        | SchFunc { args, .. }
+        | Aggregate { args, .. }
+        | Selector { args, .. } => subterm_list(g, lc, args, sub),
+        The { .. } | Fraenkel { .. } => false,
+        EqClass(_) | EqMark(_) | Qua { .. } | FreeVar(_) | It => unreachable!(),
+      }
+    }
+    fn subterm_list(g: &Global, lc: &LocalContext, args: &[Term], sub: &Term) -> bool {
+      args.iter().any(|t| ().eq_term(g, lc, t, sub) || is_ssubterm(g, lc, t, sub))
+    }
+
+    let mut orig = elab.elab_term(&it.orig);
+    let mut new = elab.elab_term(&it.new);
+    let reduction_allowed = {
+      let Term::Functor { nr, ref args } = orig else {
+        panic!("reduction must have a functor term on the LHS")
+      };
+      let args = Term::adjust(nr, args, &elab.g.constrs).1;
+      subterm_list(&elab.g, &elab.lc, args, new.skip_priv_func(Some(&elab.lc)))
+    };
+    assert!(reduction_allowed, "Right term must be a subterm of the left term");
+    let mut cc = CorrConds::new();
+    cc.0[CorrCondKind::Reducibility] = Some(Box::new(elab.g.reqs.mk_eq(orig.clone(), new.clone())));
+    elab.elab_corr_conds(cc, &it.conds, &it.corr);
+    orig.visit(&mut self.to_locus);
+    new.visit(&mut self.to_locus);
+    let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
+    CheckAccess::with(&primary, |occ| occ.visit_term(&orig));
+    elab.r.reductions.push(Reduction { primary, terms: [orig, new] });
+  }
 }
 
 impl ReadProof for BlockReader {
@@ -2640,7 +2678,7 @@ impl ReadProof for BlockReader {
       },
       (BlockKind::Registration, ast::ItemKind::IdentifyFunc(it)) =>
         self.elab_identify_func(elab, it),
-      (BlockKind::Registration, ast::ItemKind::Reduction(it)) => todo!("ikReduceFunctors"),
+      (BlockKind::Registration, ast::ItemKind::Reduction(it)) => self.elab_reduction(elab, it),
       (BlockKind::Registration, ast::ItemKind::SethoodRegistration { ty, just }) =>
         todo!("ikProperty"),
       _ => return self.super_elab_item(elab, item),
