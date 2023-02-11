@@ -397,7 +397,7 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_eid(&self, ctx: &Constructors, ids: &mut Vec<Identify>) -> io::Result<()> {
+  pub fn read_eid(&self, ctx: &Constructors, ids: &mut Vec<IdentifyFunc>) -> io::Result<()> {
     let (mut r, mut buf) = match self.open_xml(ctx, "eid", false) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
       r => r?,
@@ -882,26 +882,22 @@ impl MizReader<'_> {
 
   fn parse_identify_body(
     &mut self, buf: &mut Vec<u8>, IdentifyAttrs { kind, .. }: IdentifyAttrs,
-  ) -> Identify {
+  ) -> IdentifyFunc {
     let mut primary = vec![];
-    let kind = loop {
+    let lhs = loop {
       match self.parse_elem(buf) {
         Elem::Type(ty) => primary.push(ty),
-        Elem::Term(lhs) if kind == b'K' =>
-          break IdentifyKind::Func { lhs, rhs: self.parse_term(buf).unwrap() },
-        Elem::Formula(lhs) if kind == b'K' =>
-          break IdentifyKind::Attr { lhs, rhs: self.parse_formula(buf).unwrap() },
-        Elem::Formula(lhs) if kind == b'R' =>
-          break IdentifyKind::Pred { lhs, rhs: self.parse_formula(buf).unwrap() },
+        Elem::Term(lhs) if kind == b'K' => break lhs,
         _ => panic!("unknown identify kind"),
       }
     };
+    let rhs = self.parse_term(buf).unwrap();
     let mut eq_args = vec![];
     self.parse_pairs(buf, b"EqArgs", |x, y| {
       eq_args.push((LocusId(x as u8 - 1), LocusId(y as u8 - 1)))
     });
     self.end_tag(buf);
-    Identify { primary: primary.into(), kind, eq_args: eq_args.into() }
+    IdentifyFunc { primary: primary.into(), lhs, rhs, eq_args: eq_args.into() }
   }
 
   fn parse_reduction_attrs(&mut self, e: &BytesStart<'_>) -> ReductionAttrs {

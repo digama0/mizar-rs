@@ -16,7 +16,7 @@ pub struct Checker<'a> {
   pub lc: &'a mut LocalContext,
   pub expansions: &'a [Definiens],
   pub equals: &'a BTreeMap<ConstrKind, Vec<EqualsDef>>,
-  pub identify: &'a [Identify],
+  pub identify: &'a [IdentifyFunc],
   pub func_ids: &'a BTreeMap<ConstrKind, Vec<usize>>,
   pub reductions: &'a [Reduction],
   pub article: Article,

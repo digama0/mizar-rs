@@ -1901,7 +1901,7 @@ impl EqualsDef {
   }
 }
 
-impl Identify {
+impl IdentifyFunc {
   fn try_apply_lhs(
     &self, g: &Global, lc: &LocalContext, lhs: &Term, tm: &Term,
   ) -> Option<Subst<'static>> {
@@ -2007,7 +2007,7 @@ pub struct InternConst<'a> {
   g: &'a Global,
   lc: &'a LocalContext,
   equals: &'a BTreeMap<ConstrKind, Vec<EqualsDef>>,
-  identify: &'a [Identify],
+  identify: &'a [IdentifyFunc],
   func_ids: &'a BTreeMap<ConstrKind, Vec<usize>>,
   only_constants: bool,
   equals_expansion_level: u32,
@@ -2019,7 +2019,7 @@ pub struct InternConst<'a> {
 impl<'a> InternConst<'a> {
   fn new(
     g: &'a Global, lc: &'a LocalContext, equals: &'a BTreeMap<ConstrKind, Vec<EqualsDef>>,
-    identify: &'a [Identify], func_ids: &'a BTreeMap<ConstrKind, Vec<usize>>,
+    identify: &'a [IdentifyFunc], func_ids: &'a BTreeMap<ConstrKind, Vec<usize>>,
   ) -> Self {
     Self {
       g,
@@ -2100,10 +2100,9 @@ impl<'a> InternConst<'a> {
     if let Some(ids) = self.func_ids.get(&ConstrKind::Func(nr)) {
       for &id in ids {
         let id = &self.identify[id];
-        let IdentifyKind::Func { lhs, rhs } = &id.kind else { unreachable!() };
         // vprintln!("applying {tm:?} <- {id:?}");
-        if let Some(subst) = id.try_apply_lhs(self.g, self.lc, lhs, tm) {
-          let tm = subst.inst_term(rhs, self.depth);
+        if let Some(subst) = id.try_apply_lhs(self.g, self.lc, &id.lhs, tm) {
+          let tm = subst.inst_term(&id.rhs, self.depth);
           insert_one(self, tm);
         }
       }
@@ -2331,7 +2330,7 @@ impl LocalContext {
     self.clear_term_cache()
   }
 
-  fn _with_locus_tys<R>(&mut self, tys: &[Type], f: impl FnOnce(&mut Self) -> R) -> R {
+  fn with_locus_tys<R>(&mut self, tys: &[Type], f: impl FnOnce(&mut Self) -> R) -> R {
     self.load_locus_tys(tys);
     let r = f(self);
     self.unload_locus_tys();

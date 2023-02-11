@@ -1448,45 +1448,23 @@ impl<V: VisitMut> Visitable<V> for Property {
   fn visit(&mut self, v: &mut V) { v.with_locus_tys(&mut self.primary, |v| self.ty.visit(v)) }
 }
 
-#[derive(Clone, Debug)]
-pub enum IdentifyKind {
-  /// lhs must be Term::Functor
-  Func { lhs: Term, rhs: Term },
-  /// lhs must be Formula::Attr
-  Attr { lhs: Formula, rhs: Formula },
-  /// lhs must be Formula::Pred
-  Pred { lhs: Formula, rhs: Formula },
-}
-impl<V: VisitMut> Visitable<V> for IdentifyKind {
-  fn visit(&mut self, v: &mut V) {
-    match self {
-      IdentifyKind::Func { lhs, rhs } => (lhs, rhs).visit(v),
-      IdentifyKind::Attr { lhs, rhs } => (lhs, rhs).visit(v),
-      IdentifyKind::Pred { lhs, rhs } => (lhs, rhs).visit(v),
-    }
-  }
-}
-
-impl IdentifyKind {
-  pub fn discr(&self) -> u8 {
-    match self {
-      IdentifyKind::Func { .. } => b'K',
-      IdentifyKind::Attr { .. } => b'V',
-      IdentifyKind::Pred { .. } => b'R',
-    }
-  }
-}
-
 #[derive(Debug, Clone)]
-pub struct Identify {
+pub struct IdentifyFunc {
   // pub article: Article,
   // pub abs_nr: u32,
   pub primary: Box<[Type]>,
-  pub kind: IdentifyKind,
+  /// lhs must be Term::Functor
+  pub lhs: Term,
+  pub rhs: Term,
   pub eq_args: Box<[(LocusId, LocusId)]>,
 }
-impl<V: VisitMut> Visitable<V> for Identify {
-  fn visit(&mut self, v: &mut V) { v.with_locus_tys(&mut self.primary, |v| self.kind.visit(v)) }
+impl<V: VisitMut> Visitable<V> for IdentifyFunc {
+  fn visit(&mut self, v: &mut V) {
+    v.with_locus_tys(&mut self.primary, |v| {
+      self.lhs.visit(v);
+      self.rhs.visit(v)
+    })
+  }
 }
 
 #[derive(Debug, Clone)]
@@ -1776,7 +1754,7 @@ pub enum AuxiliaryItem {
 #[derive(Debug)]
 pub enum Registration {
   Cluster(ClusterDecl),
-  Identify { kind: Identify, conds: Vec<CorrCond>, corr: Option<Correctness> },
+  Identify { kind: IdentifyFunc, conds: Vec<CorrCond>, corr: Option<Correctness> },
   Reduction { kind: Reduction, conds: Vec<CorrCond>, corr: Option<Correctness> },
   Property { kind: Property, prop: Proposition, just: Justification },
 }

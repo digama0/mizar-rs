@@ -38,7 +38,7 @@ pub struct Reader {
   /// gPropertiesList
   pub properties: Vec<Property>,
   /// gIdentifications
-  pub identify: Vec<Identify>,
+  pub identify: Vec<IdentifyFunc>,
   /// gReductions
   pub reductions: Vec<Reduction>,
   pub equals: BTreeMap<ConstrKind, Vec<EqualsDef>>,
@@ -176,10 +176,9 @@ impl MizPath {
     }
 
     for (i, id) in v.identify.iter().enumerate() {
-      if let IdentifyKind::Func { lhs: Term::Functor { nr, .. }, .. } = &id.kind {
-        let k = ConstrKind::Func(Term::adjusted_nr(*nr, &v.g.constrs));
-        v.func_ids.entry(k).or_default().push(i);
-      }
+      let Term::Functor { nr, .. } = id.lhs else { unreachable!() };
+      let k = ConstrKind::Func(Term::adjusted_nr(nr, &v.g.constrs));
+      v.func_ids.entry(k).or_default().push(i);
     }
 
     // CollectConstInEnvConstructors
@@ -655,28 +654,27 @@ impl Reader {
 
   pub fn push_constr(&mut self, id: ConstrKind) { self.pending_defs.push(PendingDef::Constr(id)) }
 
-  fn push_identify(&mut self, id: &Identify) {
-    if let IdentifyKind::Func { lhs, rhs } = &id.kind {
-      let mut ic = self.lc.infer_const.borrow();
-      // Note that the infer_const array can grow in the loop,
-      // but the loop itself only goes over the elements which are there at the beginning
-      for i in 0..ic.len() {
-        let asgn = &ic.0[i];
-        if matches!(asgn.def, Term::Functor { .. }) {
-          if let Some(subst) = id.try_apply_lhs(&self.g, &self.lc, lhs, &asgn.def) {
-            let mut tm = subst.inst_term(rhs, 0);
-            drop(ic);
-            tm.visit(&mut self.intern_const());
-            let Term::Infer(n) = tm else { unreachable!() };
-            self.lc.infer_const.borrow_mut().0[i].eq_const.insert(n);
-            ic = self.lc.infer_const.borrow();
-          }
+  pub fn push_identify(&mut self, id: &IdentifyFunc) {
+    let mut ic = self.lc.infer_const.borrow();
+    // Note that the infer_const array can grow in the loop,
+    // but the loop itself only goes over the elements which are there at the beginning.
+    // This is probably a bug, but MML depends on it so ¯\_(ツ)_/¯
+    for i in 0..ic.len() {
+      let asgn = &ic.0[i];
+      if matches!(asgn.def, Term::Functor { .. }) {
+        if let Some(subst) = id.try_apply_lhs(&self.g, &self.lc, &id.lhs, &asgn.def) {
+          let mut tm = subst.inst_term(&id.rhs, 0);
+          drop(ic);
+          tm.visit(&mut self.intern_const());
+          let Term::Infer(n) = tm else { unreachable!() };
+          self.lc.infer_const.borrow_mut().0[i].eq_const.insert(n);
+          ic = self.lc.infer_const.borrow();
         }
       }
-      let Term::Functor { nr, .. } = *lhs else { unreachable!() };
-      let k = ConstrKind::Func(Term::adjusted_nr(nr, &self.g.constrs));
-      self.func_ids.entry(k).or_default().push(self.identify.len());
     }
+    let Term::Functor { nr, .. } = id.lhs else { unreachable!() };
+    let k = ConstrKind::Func(Term::adjusted_nr(nr, &self.g.constrs));
+    self.func_ids.entry(k).or_default().push(self.identify.len());
     self.identify.push(id.clone());
   }
 

@@ -542,9 +542,9 @@ pub struct Cluster {
 }
 
 #[derive(Debug)]
-pub struct Identify {
-  pub orig: Pattern,
-  pub new: Pattern,
+pub struct IdentifyFunc {
+  pub orig: PatternFunc,
+  pub new: PatternFunc,
   pub eqs: Vec<(Variable, Variable)>,
   pub conds: Vec<CorrCond>,
   pub corr: Option<Correctness>,
@@ -642,7 +642,7 @@ pub enum ItemKind {
     new: Pattern,
   },
   Cluster(Box<Cluster>),
-  Identify(Box<Identify>),
+  IdentifyFunc(Box<IdentifyFunc>),
   Reduction(Box<Reduction>),
   SethoodRegistration {
     ty: Box<Type>,

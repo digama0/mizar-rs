@@ -1659,32 +1659,48 @@ struct BlockReader {
   primary: IdxVec<LocusId, Type>,
   assums: Vec<Formula>,
   defthms: Vec<(Option<LabelId>, Box<Formula>)>,
+  needs_round_up: bool,
 }
 
-struct CheckAccess(IdxVec<LocusId, bool>);
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct CheckAccess(u64);
 impl CheckAccess {
+  const fn new(n: usize) -> Self {
+    assert!(n < u64::BITS as usize);
+    Self(0)
+  }
+
+  const fn get(&self, n: LocusId) -> bool { self.0 & (1 << n.0 as u64) != 0 }
+  fn set(&mut self, n: LocusId) { self.0 |= 1 << n.0 as u64 }
+
   fn with(primary: &[Type], f: impl FnOnce(&mut Self)) {
-    let mut occ = Self(IdxVec::from_default(primary.len()));
+    let mut occ = Self::new(primary.len());
     f(&mut occ);
     for (i, ty) in primary.iter().enumerate().rev() {
-      assert!(occ.0[LocusId::from_usize(i)]);
+      assert!(occ.get(LocusId::from_usize(i)));
       occ.visit_type(ty)
     }
   }
 }
 impl Pattern {
   fn check_access(&self) {
-    CheckAccess::with(&self.primary, |occ| self.visible.iter().for_each(|&v| occ.0[v] = true))
+    CheckAccess::with(&self.primary, |occ| self.visible.iter().for_each(|&v| occ.set(v)))
   }
 }
 
 impl Visit for CheckAccess {
   fn visit_term(&mut self, tm: &Term) {
     match *tm {
-      Term::Locus(i) => self.0[i] = true,
+      Term::Locus(i) => self.set(i),
       _ => self.super_visit_term(tm),
     }
   }
+}
+
+struct PatternFuncResult {
+  nr: FuncId,
+  args: Box<[Term]>,
+  var_set: CheckAccess,
 }
 
 impl BlockReader {
@@ -1695,6 +1711,7 @@ impl BlockReader {
       primary: Default::default(),
       assums: vec![],
       defthms: vec![],
+      needs_round_up: false,
     }
   }
 
@@ -1743,7 +1760,7 @@ impl BlockReader {
     let mut cc = CorrConds::new();
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     let visible: Box<[_]> = pat.args().iter().map(|v| self.to_locus.get(ConstId(v.id.0))).collect();
-    let mut args: Box<[_]> = Box::new([]);
+    let args: Box<[_]>;
     let (redefines, superfluous, it_type, mut properties, arg1, arg2);
     if it.redef {
       args = pat.args().iter().map(|v| Term::Constant(ConstId(v.id.0))).collect();
@@ -1765,7 +1782,7 @@ impl BlockReader {
           Some(mk_func_coherence(nr, &args[superfluous as usize..], &it_type));
       }
     } else {
-      (redefines, superfluous) = (None, 0);
+      (args, redefines, superfluous) = (Box::new([]), None, 0);
       it_type = spec.as_deref().map_or(Type::ANY, |ty| elab.elab_type(ty));
       (properties, arg1, arg2) = Default::default();
     }
@@ -2385,6 +2402,7 @@ impl BlockReader {
       ty: Box::new(ty2),
       antecedent: attrs1,
     });
+    self.needs_round_up = true;
   }
 
   fn elab_func_reg(
@@ -2406,7 +2424,7 @@ impl BlockReader {
     };
     let concl = concl.iter().map(|attr| elab.elab_attr(attr, true, &mut ty)).collect_vec();
     let mut cc = CorrConds::new();
-    let f = if oty.is_some() {
+    cc.0[CorrCondKind::Coherence] = Some(Box::new(if oty.is_some() {
       let f = Formula::mk_and_with(|conj| {
         conj.push(elab.g.reqs.mk_eq(Term::Bound(BoundId(0)), term));
         let f = Formula::mk_and_with(|conj| {
@@ -2425,8 +2443,7 @@ impl BlockReader {
           conj.push(Formula::Attr { nr: attr.nr, args }.maybe_neg(attr.pos))
         }
       })
-    };
-    cc.0[CorrCondKind::Coherence] = Some(Box::new(f));
+    }));
     elab.elab_corr_conds(cc, &it.conds, &it.corr);
 
     let mut attrs = ty.attrs.0.clone();
@@ -2448,6 +2465,87 @@ impl BlockReader {
       cl: Cluster { primary, consequent: (attrs1, attrs) },
       ty: oty.map(|_| Box::new(ty)),
       term: Box::new(term2),
+    });
+    self.needs_round_up = true;
+  }
+
+  fn elab_identify_pattern_func(
+    &self, elab: &Analyzer, pat: &ast::PatternFunc,
+  ) -> PatternFuncResult {
+    let fmt = elab.formats[&Format::Func(pat.to_format())];
+    let visible: Box<[_]> = pat.args().iter().map(|v| self.to_locus.get(ConstId(v.id.0))).collect();
+    let args: Box<[_]> = pat.args().iter().map(|v| Term::Constant(ConstId(v.id.0))).collect();
+    let pat = elab.notations.functor.iter().rev().find(|pat| {
+      pat.fmt == fmt
+        && matches!(pat.check_types(&elab.g, &elab.lc, &args),
+          Some(subst) if { self.check_compatible_args(&subst); true })
+    });
+    let pat = pat.expect("type error");
+    let PatternKind::Func(nr) = pat.kind else { unreachable!() };
+    let mut var_set = CheckAccess::new(self.primary.len());
+    for &i in &*visible {
+      var_set.set(i);
+      var_set.visit_type(&self.primary[i]);
+    }
+    PatternFuncResult { nr, args, var_set }
+  }
+
+  fn elab_identify_func(&mut self, elab: &mut Analyzer, it: &ast::IdentifyFunc) {
+    let orig = self.elab_identify_pattern_func(elab, &it.orig);
+    let new = self.elab_identify_pattern_func(elab, &it.new);
+    assert!(
+      (orig.var_set.0 | new.var_set.0) == (1 << self.primary.len() as u64) - 1,
+      "Unused locus"
+    );
+    let mut eq_args = vec![];
+    let mut occ = CheckAccess::new(self.primary.len() as _);
+    for (v1, v2) in &it.eqs {
+      let (c1, c2) = (ConstId(v1.id.0), ConstId(v2.id.0));
+      let (v1, v2) = (self.to_locus.get(c1), self.to_locus.get(c2));
+      let (c1, c2, v1, v2) = match (
+        orig.var_set.get(v1) as i8 - new.var_set.get(v1) as i8,
+        orig.var_set.get(v2) as i8 - new.var_set.get(v2) as i8,
+      ) {
+        (1, -1) => (c1, c2, v1, v2),
+        (-1, 1) => (c2, c1, v2, v1),
+        (1, 1) | (-1, -1) => panic!("Cannot mix left and right pattern arguments"),
+        _ => panic!("The argument(s) must belong to the left or right pattern"),
+      };
+      eq_args.push((c1, c2));
+      occ.set(v1);
+      assert!(elab.lc.fixed_var[c2].ty.is_wider_than(&elab.g, &elab.lc, &elab.lc.fixed_var[c1].ty));
+    }
+    eq_args.sort_unstable();
+
+    for (i, ty) in self.primary.enum_iter() {
+      if occ.get(i) {
+        occ.visit_type(ty)
+      }
+    }
+    assert!(occ == orig.var_set, "Left and right pattern must have the same number of arguments");
+    let mut cc = CorrConds::new();
+    let lhs = Term::Functor { nr: orig.nr, args: orig.args.visit_cloned(&mut self.to_locus) };
+    let rhs = Term::Functor { nr: new.nr, args: new.args.visit_cloned(&mut self.to_locus) };
+    let f = Formula::mk_and_with(|conjs| {
+      conjs.extend(
+        eq_args.iter().map(|&(c1, c2)| elab.g.reqs.mk_eq(Term::Constant(c1), Term::Constant(c2))),
+      );
+      let f = elab.g.reqs.mk_eq(
+        Term::Functor { nr: orig.nr, args: orig.args },
+        Term::Functor { nr: new.nr, args: new.args },
+      );
+      conjs.push(f.mk_neg());
+    });
+    cc.0[CorrCondKind::Compatibility] = Some(Box::new(f.mk_neg()));
+    elab.elab_corr_conds(cc, &it.conds, &it.corr);
+    elab.r.push_identify(&IdentifyFunc {
+      primary: self.primary.0.iter().cloned().collect(),
+      lhs,
+      rhs,
+      eq_args: eq_args
+        .into_iter()
+        .map(|(c1, c2)| (self.to_locus.get(c1), self.to_locus.get(c2)))
+        .collect(),
     });
   }
 }
@@ -2500,7 +2598,22 @@ impl ReadProof for BlockReader {
   fn finish_thesis_case(&mut self, elab: &mut Analyzer, case: Self::CaseIter<'_>) { match case {} }
   fn new_suppose(&mut self, elab: &mut Analyzer) -> Self::SupposeRecv { panic!("invalid item") }
   fn next_suppose(&mut self, elab: &mut Analyzer, recv: &mut Self::SupposeRecv) {}
-  fn finish_proof(&mut self, elab: &mut Analyzer) {}
+
+  fn finish_proof(&mut self, elab: &mut Analyzer) {
+    if self.needs_round_up {
+      let mut attrs = elab.g.numeral_type.attrs.1.clone();
+      attrs.round_up_with(&elab.g, &elab.lc, &elab.g.numeral_type, false);
+      elab.g.numeral_type.attrs.1 = attrs;
+      for i in 0..elab.g.clusters.registered.len() {
+        let cl = &elab.r.g.clusters.registered[i];
+        let mut attrs = cl.consequent.1.clone();
+        elab.r.lc.with_locus_tys(&cl.primary, |lc| {
+          attrs.round_up_with(&elab.r.g, lc, &cl.ty, false);
+        });
+        elab.r.g.clusters.registered[i].consequent.1 = attrs;
+      }
+    }
+  }
 
   fn elab_item(&mut self, elab: &mut Analyzer, item: &ast::Item) -> bool {
     match (self.kind, &item.kind) {
@@ -2525,7 +2638,8 @@ impl ReadProof for BlockReader {
         ast::ClusterDeclKind::Cond { antecedent, concl, ty } =>
           self.elab_cond_reg(elab, it, antecedent, concl, ty),
       },
-      (BlockKind::Registration, ast::ItemKind::Identify(_)) => todo!("ikIdFunctors"),
+      (BlockKind::Registration, ast::ItemKind::IdentifyFunc(it)) =>
+        self.elab_identify_func(elab, it),
       (BlockKind::Registration, ast::ItemKind::Reduction(it)) => todo!("ikReduceFunctors"),
       (BlockKind::Registration, ast::ItemKind::SethoodRegistration { ty, just }) =>
         todo!("ikProperty"),

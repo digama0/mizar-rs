@@ -79,7 +79,7 @@ impl ItemKind {
       ItemKind::Definition(it) => Some((&mut it.conds, &mut it.corr)),
       ItemKind::DefStruct(it) => Some((&mut it.conds, &mut it.corr)),
       ItemKind::Cluster(it) => Some((&mut it.conds, &mut it.corr)),
-      ItemKind::Identify(it) => Some((&mut it.conds, &mut it.corr)),
+      ItemKind::IdentifyFunc(it) => Some((&mut it.conds, &mut it.corr)),
       ItemKind::Reduction(it) => Some((&mut it.conds, &mut it.corr)),
       _ => None,
     }
@@ -732,8 +732,8 @@ impl MsmParser {
         ItemKind::Cluster(Box::new(Cluster { kind, conds: vec![], corr: None }))
       }
       b"Identify" => {
-        let orig = self.parse_pattern();
-        let new = self.parse_pattern();
+        let Pattern::Func(p1) = self.parse_pattern() else { panic!("expected a functor pattern") };
+        let Pattern::Func(p2) = self.parse_pattern() else { panic!("expected a functor pattern") };
         let mut eqs = vec![];
         loop {
           match self.parse_elem() {
@@ -743,7 +743,8 @@ impl MsmParser {
           }
         }
         end_tag = true;
-        ItemKind::Identify(Box::new(Identify { orig, new, eqs, conds: vec![], corr: None }))
+        let id = IdentifyFunc { orig: *p1, new: *p2, eqs, conds: vec![], corr: None };
+        ItemKind::IdentifyFunc(Box::new(id))
       }
       b"Property-Registration" => {
         assert!(matches!(property.unwrap(), PropertyKind::Sethood));
