@@ -1754,7 +1754,7 @@ impl BlockReader {
 
   fn elab_func_def(
     &mut self, elab: &mut Analyzer, pat: &ast::PatternFunc, it: &ast::Definition,
-    spec: &Option<Box<ast::Type>>, def: Option<&ast::Definiens>,
+    spec: Option<&ast::Type>, def: Option<&ast::Definiens>,
   ) {
     let fmt = elab.formats[&Format::Func(pat.to_format())];
     let mut cc = CorrConds::new();
@@ -1776,14 +1776,14 @@ impl BlockReader {
       (redefines, superfluous) = (Some(nr), (self.primary.len() - pat.primary.len()) as u8);
       let c = &elab.g.constrs.functor[nr];
       (properties, arg1, arg2) = (c.properties, c.arg1 + superfluous, c.arg2 + superfluous);
-      it_type = elab.elab_spec(spec.as_deref(), &c.ty.clone());
+      it_type = elab.elab_spec(spec, &c.ty.clone());
       if spec.is_some() {
         cc.0[CorrCondKind::Coherence] =
           Some(mk_func_coherence(nr, &args[superfluous as usize..], &it_type));
       }
     } else {
       (args, redefines, superfluous) = (Box::new([]), None, 0);
-      it_type = spec.as_deref().map_or(Type::ANY, |ty| elab.elab_type(ty));
+      it_type = spec.map_or(Type::ANY, |ty| elab.elab_type(ty));
       (properties, arg1, arg2) = Default::default();
     }
     elab.lc.it_type = Some(Box::new(it_type));
@@ -1849,14 +1849,7 @@ impl BlockReader {
     } else {
       n = redefines.unwrap()
     }
-    let pat = Pattern {
-      kind: PatternKind::Func(n),
-      fmt,
-      redefines: redefines.map(|x| x.0),
-      primary,
-      visible,
-      pos: true,
-    };
+    let pat = Pattern { kind: PatternKind::Func(n), fmt, primary, visible, pos: true };
     pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
     elab.r.notations.functor.push(pat)
@@ -1870,10 +1863,9 @@ impl BlockReader {
     let mut cc = CorrConds::new();
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     let visible: Box<[_]> = pat.args.iter().map(|v| self.to_locus.get(ConstId(v.id.0))).collect();
-    let mut args: Box<[_]> = Box::new([]);
-    let (redefines, superfluous, pos, mut properties, arg1, arg2);
+    let (args, redefines, superfluous, pos, mut properties, arg1, arg2);
     if it.redef {
-      args = pat.args.iter().map(|v| Term::Constant(ConstId(v.id.0))).collect();
+      args = pat.args.iter().map(|v| Term::Constant(ConstId(v.id.0))).collect::<Box<[_]>>();
       let pat = elab.notations.predicate.iter().rev().find(|pat| {
         pat.fmt == fmt
           && !matches!(pat.kind, PatternKind::Pred(nr)
@@ -1889,7 +1881,7 @@ impl BlockReader {
       (properties, arg1, arg2) = (c.properties, c.arg1 + superfluous, c.arg2 + superfluous)
     } else {
       (redefines, superfluous, pos) = (None, 0, true);
-      (properties, arg1, arg2) = Default::default();
+      (args, properties, arg1, arg2) = Default::default();
     }
     let value = def.as_ref().map(|def| elab.elab_def_value(&def.kind, pos));
     if let Some(value) = &value {
@@ -1925,14 +1917,7 @@ impl BlockReader {
     } else {
       n = redefines.unwrap()
     }
-    let pat = Pattern {
-      kind: PatternKind::Pred(n),
-      fmt,
-      redefines: redefines.map(|x| x.0),
-      primary,
-      visible,
-      pos,
-    };
+    let pat = Pattern { kind: PatternKind::Pred(n), fmt, primary, visible, pos };
     pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
     elab.r.notations.predicate.push(pat)
@@ -1953,23 +1938,16 @@ impl BlockReader {
         elab.elab_corr_conds(cc, &it.conds, &it.corr);
         elab.elab_properties(&it.props, &mut properties);
         expansion.visit(&mut self.to_locus);
-        let pat = Pattern {
-          kind: PatternKind::ExpandableMode { expansion },
-          fmt,
-          redefines: None,
-          primary,
-          visible,
-          pos: true,
-        };
+        let kind = PatternKind::ExpandableMode { expansion };
+        let pat = Pattern { kind, fmt, primary, visible, pos: true };
         pat.check_access();
         elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
         elab.r.notations.mode.push(pat)
       }
       ast::DefModeKind::Standard { spec, def } => {
-        let mut args: Box<[_]> = Box::new([]);
-        let (redefines, superfluous, it_type);
+        let (args, redefines, superfluous, it_type);
         if it.redef {
-          args = pat.args.iter().map(|v| Term::Constant(ConstId(v.id.0))).collect();
+          args = pat.args.iter().map(|v| Term::Constant(ConstId(v.id.0))).collect::<Box<[_]>>();
           let pat = elab.notations.mode.iter().rev().find(|pat| {
             pat.fmt == fmt
               && !matches!(pat.kind, PatternKind::Mode(nr)
@@ -1991,7 +1969,7 @@ impl BlockReader {
               Some(mk_mode_coherence(nr, &tgt.attrs.1, args2, &it_type));
           }
         } else {
-          (redefines, superfluous) = (None, 0);
+          (args, redefines, superfluous) = Default::default();
           it_type = spec.as_deref().map_or(Type::ANY, |ty| elab.elab_type(ty));
         }
         elab.lc.it_type = Some(Box::new(it_type));
@@ -2058,14 +2036,7 @@ impl BlockReader {
         } else {
           n = redefines.unwrap()
         }
-        let pat = Pattern {
-          kind: PatternKind::Mode(n),
-          fmt,
-          redefines: redefines.map(|x| x.0),
-          primary,
-          visible,
-          pos: true,
-        };
+        let pat = Pattern { kind: PatternKind::Mode(n), fmt, primary, visible, pos: true };
         pat.check_access();
         elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
         elab.r.notations.mode.push(pat)
@@ -2081,7 +2052,7 @@ impl BlockReader {
     let mut cc = CorrConds::new();
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     let visible: Box<[_]> = pat.args.iter().map(|v| self.to_locus.get(ConstId(v.id.0))).collect();
-    let mut args: Box<[_]> = Box::new([]);
+    let args: Box<[_]>;
     let (redefines, superfluous, pos) = if it.redef {
       args = pat.args.iter().map(|v| Term::Constant(ConstId(v.id.0))).collect();
       let pat = elab.notations.attribute.iter().rev().find(|pat| {
@@ -2096,6 +2067,7 @@ impl BlockReader {
       let c = &elab.g.constrs.attribute[nr];
       (Some(nr), (self.primary.len() - pat.primary.len()) as u8, pat.pos)
     } else {
+      args = Box::new([]);
       (None, 0, true)
     };
     let value = def.as_ref().map(|def| elab.elab_def_value(&def.kind, pos));
@@ -2137,14 +2109,7 @@ impl BlockReader {
     } else {
       n = redefines.unwrap()
     }
-    let pat = Pattern {
-      kind: PatternKind::Attr(n),
-      fmt,
-      redefines: redefines.map(|x| x.0),
-      primary,
-      visible,
-      pos,
-    };
+    let pat = Pattern { kind: PatternKind::Attr(n), fmt, primary, visible, pos };
     pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
     elab.r.notations.attribute.push(pat)
@@ -2159,7 +2124,6 @@ impl BlockReader {
     let struct_pat = Pattern {
       kind: PatternKind::Struct(struct_id),
       fmt: elab.formats[&Format::Struct(it.pat.to_mode_format())],
-      redefines: None,
       primary: struct_primary.clone(),
       visible: it.pat.args.iter().map(|v| self.to_locus.get(ConstId(v.id.0))).collect(),
       pos: true,
@@ -2192,7 +2156,6 @@ impl BlockReader {
     let aggr_pat = Pattern {
       kind: PatternKind::Aggr(aggr_id),
       fmt: elab.formats[&Format::Aggr(it.pat.to_aggr_format())],
-      redefines: None,
       primary: aggr_primary.clone(),
       visible: (base..cur_locus.0).map(LocusId).collect(),
       pos: true,
@@ -2212,7 +2175,6 @@ impl BlockReader {
     let subaggr_pat = Pattern {
       kind: PatternKind::SubAggr(struct_id),
       fmt: elab.formats[&Format::SubAggr(it.pat.to_subaggr_format())],
-      redefines: None,
       primary: sel_primary_it.clone().collect(),
       visible: Box::new([LocusId(base)]),
       pos: true,
@@ -2256,7 +2218,6 @@ impl BlockReader {
         let sel_pat = Pattern {
           kind: PatternKind::Sel(sel_id),
           fmt,
-          redefines: None,
           primary: sel_primary_it.clone().collect(),
           visible: Box::new([LocusId(base)]),
           pos: true,
@@ -2280,7 +2241,6 @@ impl BlockReader {
     let attr_pat = Pattern {
       kind: PatternKind::Attr(attr_id),
       fmt: FormatId::STRICT,
-      redefines: None,
       primary: attr_primary,
       visible: Box::new([LocusId(base)]),
       pos: true,
@@ -2612,6 +2572,130 @@ impl BlockReader {
     elab.elab_justification(&property, just);
     elab.properties.push(Property { primary, ty, kind: PropertyKind::Sethood })
   }
+
+  fn elab_pred_notation(
+    &mut self, elab: &mut Analyzer, new: &ast::PatternPred, orig: &ast::PatternPred, pos: bool,
+  ) {
+    let fmt_orig = elab.formats[&Format::Pred(orig.to_format())];
+    let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
+    CheckAccess::with(&primary, |occ| {
+      orig.args.iter().for_each(|v| occ.set(self.to_locus.get(ConstId(v.id.0))))
+    });
+    let args: Box<[_]> = orig.args.iter().map(|v| Term::Constant(ConstId(v.id.0))).collect();
+    let pat = elab.notations.predicate.iter().rev().find(|pat| {
+      pat.fmt == fmt_orig
+        && !matches!(pat.kind, PatternKind::Pred(nr)
+            if elab.g.constrs.predicate[nr].redefines.is_some())
+        && matches!(pat.check_types(&elab.g, &elab.lc, &args),
+            Some(subst) if { self.check_compatible_args(&subst); true })
+    });
+    let pat = pat.expect("type error");
+    let PatternKind::Pred(nr) = pat.kind else { unreachable!() };
+    let c = &elab.g.constrs.predicate[nr];
+    let pat = Pattern {
+      kind: PatternKind::Pred(c.redefines.unwrap_or(nr)),
+      fmt: elab.formats[&Format::Pred(new.to_format())],
+      primary,
+      visible: new.args.iter().map(|v| self.to_locus.get(ConstId(v.id.0))).collect(),
+      pos: pos == pat.pos,
+    };
+    pat.check_access();
+    elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
+    elab.r.notations.predicate.push(pat)
+  }
+
+  fn elab_func_notation(
+    &mut self, elab: &mut Analyzer, new: &ast::PatternFunc, orig: &ast::PatternFunc,
+  ) {
+    let fmt_orig = elab.formats[&Format::Func(orig.to_format())];
+    let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
+    CheckAccess::with(&primary, |occ| {
+      orig.args().iter().for_each(|v| occ.set(self.to_locus.get(ConstId(v.id.0))))
+    });
+    let args: Box<[_]> = orig.args().iter().map(|v| Term::Constant(ConstId(v.id.0))).collect();
+    let pat = elab.notations.functor.iter().rev().find(|pat| {
+      pat.fmt == fmt_orig
+        && !matches!(pat.kind, PatternKind::Func(nr)
+            if elab.g.constrs.functor[nr].redefines.is_some())
+        && matches!(pat.check_types(&elab.g, &elab.lc, &args),
+            Some(subst) if { self.check_compatible_args(&subst); true })
+    });
+    let pat = pat.expect("type error");
+    let PatternKind::Func(nr) = pat.kind else { unreachable!() };
+    let c = &elab.g.constrs.functor[nr];
+    let pat = Pattern {
+      kind: PatternKind::Func(c.redefines.unwrap_or(nr)),
+      fmt: elab.formats[&Format::Func(new.to_format())],
+      primary,
+      visible: new.args().iter().map(|v| self.to_locus.get(ConstId(v.id.0))).collect(),
+      pos: true,
+    };
+    pat.check_access();
+    elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
+    elab.r.notations.functor.push(pat)
+  }
+
+  fn elab_mode_notation(
+    &mut self, elab: &mut Analyzer, new: &ast::PatternMode, orig: &ast::PatternMode,
+  ) {
+    let fmt_orig = elab.formats[&Format::Mode(orig.to_format())];
+    let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
+    CheckAccess::with(&primary, |occ| {
+      orig.args.iter().for_each(|v| occ.set(self.to_locus.get(ConstId(v.id.0))))
+    });
+    let args: Box<[_]> = orig.args.iter().map(|v| Term::Constant(ConstId(v.id.0))).collect();
+    let pat = elab.notations.mode.iter().rev().find(|pat| {
+      pat.fmt == fmt_orig
+        && !matches!(pat.kind, PatternKind::Mode(nr)
+            if elab.g.constrs.mode[nr].redefines.is_some())
+        && matches!(pat.check_types(&elab.g, &elab.lc, &args),
+            Some(subst) if { self.check_compatible_args(&subst); true })
+    });
+    let pat = pat.expect("type error");
+    let PatternKind::Mode(nr) = pat.kind else { panic!("redefining expandable mode") };
+    let c = &elab.g.constrs.mode[nr];
+    let pat = Pattern {
+      kind: PatternKind::Mode(c.redefines.unwrap_or(nr)),
+      fmt: elab.formats[&Format::Mode(new.to_format())],
+      primary,
+      visible: new.args.iter().map(|v| self.to_locus.get(ConstId(v.id.0))).collect(),
+      pos: true,
+    };
+    pat.check_access();
+    elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
+    elab.r.notations.mode.push(pat)
+  }
+
+  fn elab_attr_notation(
+    &mut self, elab: &mut Analyzer, new: &ast::PatternAttr, orig: &ast::PatternAttr, pos: bool,
+  ) {
+    let fmt_orig = elab.formats[&Format::Attr(orig.to_format())];
+    let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
+    CheckAccess::with(&primary, |occ| {
+      orig.args.iter().for_each(|v| occ.set(self.to_locus.get(ConstId(v.id.0))))
+    });
+    let args: Box<[_]> = orig.args.iter().map(|v| Term::Constant(ConstId(v.id.0))).collect();
+    let pat = elab.notations.attribute.iter().rev().find(|pat| {
+      pat.fmt == fmt_orig
+        && !matches!(pat.kind, PatternKind::Attr(nr)
+            if elab.g.constrs.attribute[nr].redefines.is_some())
+        && matches!(pat.check_types(&elab.g, &elab.lc, &args),
+            Some(subst) if { self.check_compatible_args(&subst); true })
+    });
+    let pat = pat.expect("type error");
+    let PatternKind::Attr(nr) = pat.kind else { unreachable!() };
+    let c = &elab.g.constrs.attribute[nr];
+    let pat = Pattern {
+      kind: PatternKind::Attr(c.redefines.unwrap_or(nr)),
+      fmt: elab.formats[&Format::Attr(new.to_format())],
+      primary,
+      visible: new.args.iter().map(|v| self.to_locus.get(ConstId(v.id.0))).collect(),
+      pos: pos == pat.pos,
+    };
+    pat.check_access();
+    elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
+    elab.r.notations.attribute.push(pat)
+  }
 }
 
 impl ReadProof for BlockReader {
@@ -2683,17 +2767,19 @@ impl ReadProof for BlockReader {
     match (self.kind, &item.kind) {
       (BlockKind::Definition, ast::ItemKind::Definition(it)) => match &it.kind {
         ast::DefinitionKind::Func { pat, spec, def } =>
-          self.elab_func_def(elab, pat, it, spec, def.as_deref()),
+          self.elab_func_def(elab, pat, it, spec.as_deref(), def.as_deref()),
         ast::DefinitionKind::Pred { pat, def } => self.elab_pred_def(elab, pat, it, def.as_deref()),
         ast::DefinitionKind::Mode { pat, kind } => self.elab_mode_def(elab, pat, kind, it),
         ast::DefinitionKind::Attr { pat, def } => self.elab_attr_def(elab, pat, it, def.as_deref()),
       },
       (BlockKind::Definition, ast::ItemKind::DefStruct(it)) => self.elab_struct_def(elab, it),
-      (BlockKind::Notation, ast::ItemKind::PatternRedef { kind, orig, new }) => match kind {
-        ast::PatternRedefKind::PredSynonym { pos } => todo!("ikItmDefPred"),
-        ast::PatternRedefKind::FuncNotation => todo!("ikItmDefFunc"),
-        ast::PatternRedefKind::ModeNotation => todo!("ikItmDefMode"),
-        ast::PatternRedefKind::AttrSynonym { pos } => todo!("ikItmDefPrAttr"),
+      (BlockKind::Notation, ast::ItemKind::PatternRedef(it)) => match it {
+        ast::PatternRedef::Pred { new, orig, pos } =>
+          self.elab_pred_notation(elab, new, orig, *pos),
+        ast::PatternRedef::Func { new, orig } => self.elab_func_notation(elab, new, orig),
+        ast::PatternRedef::Mode { new, orig } => self.elab_mode_notation(elab, new, orig),
+        ast::PatternRedef::Attr { new, orig, pos } =>
+          self.elab_attr_notation(elab, new, orig, *pos),
       },
       (BlockKind::Registration, ast::ItemKind::Cluster(it)) => match &it.kind {
         ast::ClusterDeclKind::Exist { concl, ty } => self.elab_exist_reg(elab, it, concl, ty),

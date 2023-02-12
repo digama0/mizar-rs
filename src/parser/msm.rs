@@ -289,10 +289,6 @@ impl MsmParser {
     }
   }
 
-  fn parse_pattern_redef(&mut self, kind: PatternRedefKind) -> ItemKind {
-    ItemKind::PatternRedef { kind, orig: self.parse_pattern(), new: self.parse_pattern() }
-  }
-
   fn parse_attr(&mut self) -> Option<Attr> {
     let e = self.r.try_read_start(&mut self.buf, None).ok()?;
     Some(match e.local_name() {
@@ -703,12 +699,36 @@ impl MsmParser {
         let pat = PatternStruct { sym: (sym, spelling), args };
         ItemKind::DefStruct(Box::new(DefStruct { parents, fields, pat, conds: vec![], corr: None }))
       }
-      b"Pred-Synonym" => self.parse_pattern_redef(PatternRedefKind::PredSynonym { pos: true }),
-      b"Pred-Antonym" => self.parse_pattern_redef(PatternRedefKind::PredSynonym { pos: false }),
-      b"Func-Synonym" => self.parse_pattern_redef(PatternRedefKind::FuncNotation),
-      b"Mode-Synonym" => self.parse_pattern_redef(PatternRedefKind::ModeNotation),
-      b"Attr-Synonym" => self.parse_pattern_redef(PatternRedefKind::AttrSynonym { pos: true }),
-      b"Attr-Antonym" => self.parse_pattern_redef(PatternRedefKind::AttrSynonym { pos: false }),
+      b"Pred-Synonym" => {
+        let Pattern::Pred(new) = self.parse_pattern() else { panic!("expected pred pattern") };
+        let Pattern::Pred(orig) = self.parse_pattern() else { panic!("expected pred pattern") };
+        ItemKind::PatternRedef(PatternRedef::Pred { new, orig, pos: true })
+      }
+      b"Pred-Antonym" => {
+        let Pattern::Pred(new) = self.parse_pattern() else { panic!("expected pred pattern") };
+        let Pattern::Pred(orig) = self.parse_pattern() else { panic!("expected pred pattern") };
+        ItemKind::PatternRedef(PatternRedef::Pred { new, orig, pos: false })
+      }
+      b"Func-Synonym" => {
+        let Pattern::Func(new) = self.parse_pattern() else { panic!("expected func pattern") };
+        let Pattern::Func(orig) = self.parse_pattern() else { panic!("expected func pattern") };
+        ItemKind::PatternRedef(PatternRedef::Func { new, orig })
+      }
+      b"Mode-Synonym" => {
+        let Pattern::Mode(new) = self.parse_pattern() else { panic!("expected mode pattern") };
+        let Pattern::Mode(orig) = self.parse_pattern() else { panic!("expected mode pattern") };
+        ItemKind::PatternRedef(PatternRedef::Mode { new, orig })
+      }
+      b"Attr-Synonym" => {
+        let Pattern::Attr(new) = self.parse_pattern() else { panic!("expected attr pattern") };
+        let Pattern::Attr(orig) = self.parse_pattern() else { panic!("expected attr pattern") };
+        ItemKind::PatternRedef(PatternRedef::Attr { new, orig, pos: true })
+      }
+      b"Attr-Antonym" => {
+        let Pattern::Attr(new) = self.parse_pattern() else { panic!("expected attr pattern") };
+        let Pattern::Attr(orig) = self.parse_pattern() else { panic!("expected attr pattern") };
+        ItemKind::PatternRedef(PatternRedef::Attr { new, orig, pos: false })
+      }
       b"Cluster" => {
         let e = self.r.read_start(&mut self.buf, None);
         let kind = match e.local_name() {

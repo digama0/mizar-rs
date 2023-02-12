@@ -397,11 +397,11 @@ pub enum DefModeKind {
 }
 
 #[derive(Debug)]
-pub enum PatternRedefKind {
-  PredSynonym { pos: bool },
-  FuncNotation,
-  ModeNotation,
-  AttrSynonym { pos: bool },
+pub enum PatternRedef {
+  Pred { new: Box<PatternPred>, orig: Box<PatternPred>, pos: bool },
+  Func { new: Box<PatternFunc>, orig: Box<PatternFunc> },
+  Mode { new: Box<PatternMode>, orig: Box<PatternMode> },
+  Attr { new: Box<PatternAttr>, orig: Box<PatternAttr>, pos: bool },
 }
 
 #[derive(Debug)]
@@ -636,11 +636,7 @@ pub enum ItemKind {
   Assume(Assumption),
   Definition(Box<Definition>),
   DefStruct(Box<DefStruct>),
-  PatternRedef {
-    kind: PatternRedefKind,
-    orig: Pattern,
-    new: Pattern,
-  },
+  PatternRedef(PatternRedef),
   Cluster(Box<Cluster>),
   IdentifyFunc(Box<IdentifyFunc>),
   Reduction(Box<Reduction>),

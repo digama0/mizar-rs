@@ -702,8 +702,7 @@ impl MizReader<'_> {
   }
 
   fn parse_pattern_body(
-    &mut self, buf: &mut Vec<u8>,
-    PatternAttrs { kind, fmt, constr, redefines, pos, .. }: PatternAttrs,
+    &mut self, buf: &mut Vec<u8>, PatternAttrs { kind, fmt, constr, pos, .. }: PatternAttrs,
   ) -> Pattern {
     let primary = self.parse_arg_types(buf);
     self.read_start(buf, Some(b"Visible"));
@@ -726,7 +725,7 @@ impl MizReader<'_> {
       _ => panic!("unknown pattern kind"),
     };
     self.end_tag(buf);
-    Pattern { kind, fmt, redefines, primary, visible, pos }
+    Pattern { kind, fmt, primary, visible, pos }
   }
 
   fn parse_constructor_attrs(&mut self, e: &BytesStart<'_>) -> ConstructorAttrs {

@@ -2083,7 +2083,7 @@ pub struct Pattern {
   // pub article: Article,
   // pub abs_nr: u32,
   pub fmt: FormatId,
-  pub redefines: Option<u32>,
+  // pub redefines: Option<u32>,
   pub primary: Box<[Type]>,
   pub visible: Box<[LocusId]>,
   pub pos: bool,
