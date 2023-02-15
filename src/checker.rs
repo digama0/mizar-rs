@@ -362,7 +362,7 @@ impl Formula {
               f.append_conjuncts_to(conjs)
             }
           }),
-        Formula::ForAll { dom, scope, .. } => {
+        Formula::ForAll { dom, scope } => {
           ExpandPrivFunc(ctx).visit_type(dom);
           scope.distribute_quantifiers(ctx, depth + 1);
           if let Formula::And { args } = &mut **scope {
@@ -839,7 +839,7 @@ impl<'a> SchemeCtx<'a> {
         let (n2, args2) = Formula::adjust_pred(*n2, args2, &self.g.constrs);
         n1 == n2 && self.eq_terms(args1, args2)
       }
-      (ForAll { dom: dom1, scope: sc1, .. }, ForAll { dom: dom2, scope: sc2, .. }) if pos =>
+      (ForAll { dom: dom1, scope: sc1 }, ForAll { dom: dom2, scope: sc2 }) if pos =>
         self.eq_type(dom1, dom2) && {
           self.lc.term_cache.get_mut().open_scope();
           self.lc.bound_var.0.push((**dom2).clone());

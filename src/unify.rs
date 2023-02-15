@@ -376,7 +376,7 @@ impl Standardize<'_> {
           }
         }
         Formula::And { args } => args.iter_mut().for_each(|f| self.standardize_formula(f, pos)),
-        Formula::ForAll { dom, scope, .. } =>
+        Formula::ForAll { dom, scope } =>
           if pos {
             self.visit_type(dom);
             self.lc.bound_var.push(std::mem::take(dom));

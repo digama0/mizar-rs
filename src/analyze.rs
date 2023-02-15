@@ -682,11 +682,336 @@ impl Analyzer<'_> {
   }
 
   fn elab_flex_and(&mut self, f1: &ast::Formula, f2: &ast::Formula, pos: bool) -> Formula {
+    #[derive(Clone, Copy, Default)]
+    enum OneDiff<'a> {
+      #[default]
+      Same,
+      One(&'a Term, &'a Term),
+      Fail,
+    }
+
+    impl<'a> OneDiff<'a> {
+      fn bool(b: bool) -> Self { Self::then(b, || Self::Same) }
+      fn then(b: bool, f: impl FnOnce() -> Self) -> Self {
+        if b {
+          f()
+        } else {
+          Self::Fail
+        }
+      }
+
+      fn merge(&mut self, ctx: &Constructors, other: Self) {
+        match (*self, other) {
+          (OneDiff::Fail, _) | (_, OneDiff::Same) => {}
+          (_, OneDiff::Fail) | (OneDiff::Same, _) => *self = other,
+          (OneDiff::One(a1, a2), OneDiff::One(b1, b2)) => {
+            if a1.cmp(ctx, None, b1, CmpStyle::Strict).is_ne()
+              || a2.cmp(ctx, None, b2, CmpStyle::Strict).is_ne()
+            {
+              *self = OneDiff::Fail
+            }
+          }
+        }
+      }
+
+      fn merge_many(ctx: &Constructors, it: impl IntoIterator<Item = Self>) -> Self {
+        let mut out = OneDiff::Same;
+        for other in it {
+          out.merge(ctx, other);
+          if let OneDiff::Fail = out {
+            break
+          }
+        }
+        out
+      }
+
+      fn and_then(mut self, ctx: &Constructors, other: impl FnOnce() -> Self) -> Self {
+        match self {
+          OneDiff::Same => other(),
+          OneDiff::One(..) => {
+            self.merge(ctx, other());
+            self
+          }
+          OneDiff::Fail => self,
+        }
+      }
+
+      fn eq_term(
+        g: &Global, lc: &LocalContext, ic: &'a IdxVec<InferId, Assignment>, t1: &'a Term,
+        t2: &'a Term,
+      ) -> Self {
+        use Term::*;
+        let res = match (t1, t2) {
+          (Bound(BoundId(n1)), Bound(BoundId(n2)))
+          | (Constant(ConstId(n1)), Constant(ConstId(n2)))
+          | (Numeral(n1), Numeral(n2)) => Self::bool(n1 == n2),
+          (Infer(InferId(n1)), Infer(InferId(n2))) if n1 == n2 => Self::bool(true),
+          (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) => {
+            let (n1, args1) = Term::adjust(*n1, args1, &g.constrs);
+            let (n2, args2) = Term::adjust(*n2, args2, &g.constrs);
+            Self::then(n1 == n2, || Self::eq_terms(g, lc, ic, args1, args2))
+          }
+          (
+            SchFunc { nr: SchFuncId(n1), args: args1 },
+            SchFunc { nr: SchFuncId(n2), args: args2 },
+          )
+          | (
+            Aggregate { nr: AggrId(n1), args: args1 },
+            Aggregate { nr: AggrId(n2), args: args2 },
+          )
+          | (Selector { nr: SelId(n1), args: args1 }, Selector { nr: SelId(n2), args: args2 })
+            if n1 == n2 =>
+            Self::eq_terms(g, lc, ic, args1, args2),
+          (The { ty: ty1 }, The { ty: ty2 }) => Self::eq_type(g, lc, ic, ty1, ty2),
+          (
+            Fraenkel { args: args1, scope: sc1, compr: c1 },
+            Fraenkel { args: args2, scope: sc2, compr: c2 },
+          ) => Self::then(args1.len() == args2.len(), || {
+            Self::merge_many(
+              &g.constrs,
+              args1.iter().zip(&**args2).map(|(ty1, ty2)| Self::eq_type(g, lc, ic, ty1, ty2)),
+            )
+            .and_then(&g.constrs, || Self::eq_term(g, lc, ic, sc1, sc2))
+            .and_then(&g.constrs, || Self::eq_formula(g, lc, ic, c1, c2))
+          }),
+          (It, It) => Self::bool(true),
+          (_, &Infer(nr)) => Self::eq_term(g, lc, ic, t1, &ic[nr].def),
+          (&Infer(nr), _) => Self::eq_term(g, lc, ic, &ic[nr].def, t2),
+          (Locus(_), _) | (_, Locus(_)) => unreachable!(),
+          (Qua { .. }, _) | (_, Qua { .. }) => unreachable!(),
+          (EqMark(_), _) | (_, EqMark(_)) => unreachable!(),
+          (EqClass(_), _) | (_, EqClass(_)) => unreachable!(),
+          (FreeVar(_), _) | (_, FreeVar(_)) => unreachable!(),
+          (PrivFunc { .. }, _) | (_, PrivFunc { .. }) =>
+            Self::eq_term(g, lc, ic, t1.skip_priv_func(None), t2.skip_priv_func(None)),
+          _ => Self::bool(false),
+        };
+        if let Self::Fail = res {
+          Self::One(t1, t2)
+        } else {
+          res
+        }
+      }
+
+      fn eq_terms(
+        g: &Global, lc: &LocalContext, ic: &'a IdxVec<InferId, Assignment>, t1: &'a [Term],
+        t2: &'a [Term],
+      ) -> Self {
+        Self::then(t1.len() == t2.len(), || {
+          Self::merge_many(
+            &g.constrs,
+            t1.iter().zip(t2).map(|(t1, t2)| Self::eq_term(g, lc, ic, t1, t2)),
+          )
+        })
+      }
+
+      fn eq_type(
+        g: &Global, lc: &LocalContext, ic: &'a IdxVec<InferId, Assignment>, ty1: &'a Type,
+        ty2: &'a Type,
+      ) -> Self {
+        Self::then(().eq_attrs(g, lc, ty1, ty2) && ty1.kind == ty2.kind, || {
+          Self::eq_terms(g, lc, ic, &ty1.args, &ty2.args)
+        })
+      }
+
+      fn eq_formula(
+        g: &Global, lc: &LocalContext, ic: &'a IdxVec<InferId, Assignment>, f1: &'a Formula,
+        f2: &'a Formula,
+      ) -> Self {
+        use Formula::*;
+        match (f1.skip_priv_pred(), f2.skip_priv_pred()) {
+          (True, True) => Self::bool(true),
+          (Neg { f: f1 }, Neg { f: f2 }) => Self::eq_formula(g, lc, ic, f1, f2),
+          (Is { term: t1, ty: ty1 }, Is { term: t2, ty: ty2 }) => Self::eq_term(g, lc, ic, t1, t2)
+            .and_then(&g.constrs, || Self::eq_type(g, lc, ic, ty1, ty2)),
+          (And { args: args1 }, And { args: args2 }) =>
+            Self::then(args1.len() == args2.len(), || {
+              Self::merge_many(
+                &g.constrs,
+                args1.iter().zip(args2).map(|(f1, f2)| Self::eq_formula(g, lc, ic, f1, f2)),
+              )
+            }),
+          (
+            SchPred { nr: SchPredId(n1), args: args1 },
+            SchPred { nr: SchPredId(n2), args: args2 },
+          )
+          | (
+            PrivPred { nr: PrivPredId(n1), args: args1, .. },
+            PrivPred { nr: PrivPredId(n2), args: args2, .. },
+          )
+          | (Attr { nr: AttrId(n1), args: args1 }, Attr { nr: AttrId(n2), args: args2 })
+          | (Pred { nr: PredId(n1), args: args1 }, Pred { nr: PredId(n2), args: args2 })
+            if n1 == n2 =>
+            Self::eq_terms(g, lc, ic, args1, args2),
+          (ForAll { dom: dom1, scope: sc1 }, ForAll { dom: dom2, scope: sc2 }) =>
+            Self::eq_type(g, lc, ic, dom1, dom2)
+              .and_then(&g.constrs, || Self::eq_formula(g, lc, ic, sc1, sc2)),
+          #[allow(clippy::explicit_auto_deref)]
+          (FlexAnd { terms: t1, scope: sc1 }, FlexAnd { terms: t2, scope: sc2 }) =>
+            Self::eq_terms(g, lc, ic, &**t1, &**t2)
+              .and_then(&g.constrs, || Self::eq_formula(g, lc, ic, sc1, sc2)),
+          _ => Self::bool(false),
+        }
+      }
+    }
+
+    struct Apply<'a> {
+      g: &'a Global,
+      lc: &'a LocalContext,
+      t1: &'a Term,
+      t2: &'a Term,
+      base: u32,
+      depth: u32,
+    }
+
+    impl<'a> Apply<'a> {
+      fn term(&mut self, t1: &Term, t2: &Term) -> Term {
+        use Term::*;
+        if ().eq_term(self.g, self.lc, t1, t2) {
+          return t1.visit_cloned(&mut OnVarMut(|nr| {
+            if *nr >= self.base {
+              *nr += 1
+            }
+          }))
+        }
+        if ().eq_term(self.g, self.lc, self.t1, t1) && ().eq_term(self.g, self.lc, self.t2, t2) {
+          return Term::Bound(BoundId(self.depth))
+        }
+        match (t1, t2) {
+          (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) if n1 == n2 =>
+            Functor { nr: *n1, args: self.terms(args1, args2) },
+          (SchFunc { nr: n1, args: args1 }, SchFunc { nr: n2, args: args2 }) if n1 == n2 =>
+            SchFunc { nr: *n1, args: self.terms(args1, args2) },
+          (Aggregate { nr: n1, args: args1 }, Aggregate { nr: n2, args: args2 }) if n1 == n2 =>
+            Aggregate { nr: *n1, args: self.terms(args1, args2) },
+          (Selector { nr: n1, args: args1 }, Selector { nr: n2, args: args2 }) if n1 == n2 =>
+            Selector { nr: *n1, args: self.terms(args1, args2) },
+          (The { ty: ty1 }, The { ty: ty2 }) => The { ty: Box::new(self.ty(ty1, ty2)) },
+          (
+            Fraenkel { args: args1, scope: sc1, compr: c1 },
+            Fraenkel { args: args2, scope: sc2, compr: c2 },
+          ) => {
+            let depth = self.depth;
+            let args = args1
+              .iter()
+              .zip(&**args2)
+              .map(|(t1, t2)| {
+                let t = self.ty(t1, t2);
+                self.depth += 1;
+                t
+              })
+              .collect();
+            let scope = Box::new(self.term(sc1, sc2));
+            let compr = Box::new(self.formula(c1, c2));
+            self.depth = depth;
+            Fraenkel { args, scope, compr }
+          }
+          (_, &Infer(nr)) => self.term(t1, &self.lc.infer_const.borrow()[nr].def),
+          (&Infer(nr), _) => self.term(&self.lc.infer_const.borrow()[nr].def, t2),
+          (Locus(_), _) | (_, Locus(_)) => unreachable!(),
+          (Qua { .. }, _) | (_, Qua { .. }) => unreachable!(),
+          (EqMark(_), _) | (_, EqMark(_)) => unreachable!(),
+          (EqClass(_), _) | (_, EqClass(_)) => unreachable!(),
+          (FreeVar(_), _) | (_, FreeVar(_)) => unreachable!(),
+          (PrivFunc { .. }, _) | (_, PrivFunc { .. }) =>
+            self.term(t1.skip_priv_func(None), t2.skip_priv_func(None)),
+          _ => panic!("flex-and construction failed"),
+        }
+      }
+
+      fn terms(&mut self, args1: &[Term], args2: &[Term]) -> Box<[Term]> {
+        args1.iter().zip(args2).map(|(t1, t2)| self.term(t1, t2)).collect()
+      }
+
+      fn ty(&mut self, ty1: &Type, ty2: &Type) -> Type {
+        assert!(().eq_attrs(self.g, self.lc, ty1, ty2) && ty1.kind == ty2.kind);
+        let attrs = ty1.attrs.visit_cloned(&mut OnVarMut(|nr| {
+          if *nr >= self.base {
+            *nr += 1
+          }
+        }));
+        Type { attrs, kind: ty1.kind, args: self.terms(&ty1.args, &ty2.args).into() }
+      }
+
+      fn formula(&mut self, f1: &Formula, f2: &Formula) -> Formula {
+        use Formula::*;
+        if ().eq_formula(self.g, self.lc, f1, f2) {
+          return f1.visit_cloned(&mut OnVarMut(|nr| {
+            if *nr >= self.base {
+              *nr += 1
+            }
+          }))
+        }
+        match (f1.skip_priv_pred(), f2.skip_priv_pred()) {
+          (Neg { f: f1 }, Neg { f: f2 }) => Neg { f: Box::new(self.formula(f1, f2)) },
+          (Is { term: t1, ty: ty1 }, Is { term: t2, ty: ty2 }) =>
+            Is { term: Box::new(self.term(t1, t2)), ty: Box::new(self.ty(ty1, ty2)) },
+          (And { args: args1 }, And { args: args2 }) =>
+            And { args: args1.iter().zip(args2).map(|(f1, f2)| self.formula(f1, f2)).collect() },
+          (SchPred { nr: n1, args: args1 }, SchPred { nr: n2, args: args2 }) if n1 == n2 =>
+            SchPred { nr: *n1, args: self.terms(args1, args2) },
+          (
+            PrivPred { nr: n1, args: args1, value: v1 },
+            PrivPred { nr: n2, args: args2, value: v2 },
+          ) if n1 == n2 => PrivPred {
+            nr: *n1,
+            args: self.terms(args1, args2),
+            value: Box::new(self.formula(v1, v2)),
+          },
+          (Attr { nr: n1, args: args1 }, Attr { nr: n2, args: args2 }) if n1 == n2 =>
+            Attr { nr: *n1, args: self.terms(args1, args2) },
+          (Pred { nr: n1, args: args1 }, Pred { nr: n2, args: args2 }) if n1 == n2 =>
+            Pred { nr: *n1, args: self.terms(args1, args2) },
+          (ForAll { dom: dom1, scope: sc1 }, ForAll { dom: dom2, scope: sc2 }) => {
+            let dom = Box::new(self.ty(dom1, dom2));
+            self.depth += 1;
+            let scope = Box::new(self.formula(sc1, sc2));
+            self.depth -= 1;
+            ForAll { dom, scope }
+          }
+          #[allow(clippy::explicit_auto_deref)]
+          (FlexAnd { terms: t1, scope: sc1 }, FlexAnd { terms: t2, scope: sc2 }) => {
+            let terms = Box::new([self.term(&t1[0], &t2[0]), self.term(&t1[1], &t2[1])]);
+            self.depth += 1;
+            let scope = Box::new(self.formula(sc1, sc2));
+            self.depth -= 1;
+            FlexAnd { terms, scope }
+          }
+          _ => panic!("flex-and construction failed"),
+        }
+      }
+    }
+
     let Some(natural) = self.g.reqs.natural() else { panic!("requirement NUMERALS missing") };
     let Some(le) = self.g.reqs.less_or_equal() else { panic!("requirement REAL missing") };
     let f1 = self.elab_formula(f1, pos);
     let f2 = self.elab_formula(f2, pos);
-    todo!()
+    let (t1, t2) = {
+      let ic = self.lc.infer_const.borrow();
+      let OneDiff::One(t1, t2) = OneDiff::eq_formula(&self.g, &self.lc, &ic, &f1, &f2) else {
+        panic!("can't abstract flex-and term, must have exactly one difference")
+      };
+      (t1.clone(), t2.clone())
+    };
+    let base = self.lc.bound_var.len() as u32;
+    let only_constant = !CheckBound::get(base, |cb| {
+      cb.visit_term(&t1);
+      cb.visit_term(&t2);
+    });
+    assert!(only_constant, "can't abstract flex-and term, contains bound variables");
+    let natural = Attrs::Consistent(vec![Attr::new0(natural, true)]);
+    let is_natural = |t: &Term| {
+      natural.is_subset_of(&t.get_type(&self.g, &self.lc, false).attrs.1, |a1, a2| {
+        ().eq_attr(&self.g, &self.lc, a1, a2)
+      })
+    };
+    assert!(
+      is_natural(&t1) && is_natural(&t2),
+      "can't abstract flex-and term, boundary variable does not have 'natural' adjective"
+    );
+    let scope =
+      Apply { g: &self.g, lc: &self.lc, t1: &t1, t2: &t2, base, depth: base }.formula(&f1, &f2);
+    Formula::FlexAnd { terms: Box::new([t1, t2]), scope: Box::new(scope) }
   }
 
   fn elab_push_conjuncts(&mut self, f: &ast::Formula, conjs: &mut Vec<Formula>, pos: bool) {

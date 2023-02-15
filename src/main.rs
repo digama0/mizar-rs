@@ -607,7 +607,7 @@ impl Formula {
             n1.cmp(&n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style))
           }
         },
-        (ForAll { dom: dom1, scope: sc1, .. }, ForAll { dom: dom2, scope: sc2, .. }) =>
+        (ForAll { dom: dom1, scope: sc1 }, ForAll { dom: dom2, scope: sc2 }) =>
           dom1.cmp(ctx, lc, dom2, style).then_with(|| sc1.cmp(ctx, lc, sc2, style)),
         #[allow(clippy::explicit_auto_deref)]
         (FlexAnd { terms: t1, scope: sc1 }, FlexAnd { terms: t2, scope: sc2 }) =>
@@ -788,7 +788,7 @@ trait Equate {
       }
       (Pred { nr: n1, args: args1 }, Pred { nr: n2, args: args2 }) =>
         self.eq_pred(g, lc, *n1, *n2, args1, args2),
-      (ForAll { dom: dom1, scope: sc1, .. }, ForAll { dom: dom2, scope: sc2, .. }) =>
+      (ForAll { dom: dom1, scope: sc1 }, ForAll { dom: dom2, scope: sc2 }) =>
         self.eq_forall(g, lc, dom1, dom2, sc1, sc2),
       #[allow(clippy::explicit_auto_deref)]
       (FlexAnd { terms: t1, scope: sc1 }, FlexAnd { terms: t2, scope: sc2 }) =>
@@ -951,7 +951,7 @@ macro_rules! mk_visit {
             for f in args {
               self.visit_formula(f)
             },
-          Formula::ForAll { dom, scope, .. } => {
+          Formula::ForAll { dom, scope } => {
             self.visit_type(dom);
             self.push_bound(Some(dom));
             self.visit_formula(scope);
