@@ -1832,10 +1832,10 @@ impl FunctorCluster {
       && subst.check_loci_types::<false>(g, lc, &self.primary, recursive);
     if !eq {
       if let Term::Functor { nr, ref args } = *term {
-        let c = &g.constrs.functor[nr];
-        if c.properties.get(PropertyKind::Commutativity) {
+        let props = g.constrs.functor[nr].properties;
+        if props.get(PropertyKind::Commutativity) {
           let mut args = args.clone();
-          args.swap(c.arg1 as usize, c.arg2 as usize);
+          args.swap(props.arg1 as usize, props.arg2 as usize);
           let term = Term::Functor { nr, args };
           subst.clear();
           eq = subst.eq_term(g, lc, &self.term, &term)
@@ -2436,7 +2436,7 @@ impl LocalContext {
       if abst.depth != 0 {
         abst.visit_type(&mut ty);
       }
-      *f = Formula::ForAll { dom: Box::new(ty), scope: Box::new(std::mem::take(f)) };
+      *f = Formula::forall(ty, std::mem::take(f));
     };
     if pop {
       self.fixed_var.0.drain(range).rev().for_each(|var| process(var.ty))

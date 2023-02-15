@@ -337,7 +337,7 @@ impl Term {
     compr.append_conjuncts_to(&mut conjs);
     let mut f = Formula::Neg { f: Box::new(Formula::And { args: conjs }) };
     for ty in args.into_vec().into_iter().rev() {
-      f = Formula::ForAll { dom: Box::new(ty), scope: Box::new(f) }
+      f = Formula::forall(ty, f)
     }
     f
   }
@@ -464,17 +464,13 @@ impl Unify<'_> {
       // We already DNF'd f so there should be no top-level propositional connectives remaining
       Formula::True | Formula::Neg { .. } | Formula::And { .. } => unreachable!(),
       Formula::Pred { nr, ref args } => {
-        let pred = &self.g.constrs.predicate[nr];
-        if pred.properties.get(if pos {
-          PropertyKind::Irreflexivity
-        } else {
-          PropertyKind::Reflexivity
-        }) {
+        let props = self.g.constrs.predicate[nr].properties;
+        if props.get(if pos { PropertyKind::Irreflexivity } else { PropertyKind::Reflexivity }) {
           for (ec, _) in self.eq_class.enum_iter() {
             let t = Term::EqClass(ec);
-            let mut inst1 = self.unify_term(&args[pred.arg1 as usize], &t)?;
+            let mut inst1 = self.unify_term(&args[props.arg1 as usize], &t)?;
             if !inst1.is_false() {
-              inst1.mk_and(self.unify_term(&args[pred.arg2 as usize], &t)?)?;
+              inst1.mk_and(self.unify_term(&args[props.arg2 as usize], &t)?)?;
               inst.mk_or(inst1)?;
             }
           }
@@ -1000,7 +996,7 @@ impl Unify<'_> {
         if c.properties.get(PropertyKind::Symmetry) {
           inst.mk_or_else(|| {
             let mut args1 = args1.to_vec();
-            args1.swap(c.arg1 as usize, c.arg2 as usize);
+            args1.swap(c.properties.arg1 as usize, c.properties.arg2 as usize);
             self.unify_terms(&args1[c.superfluous as usize..], args2_adj)
           })?;
         }
@@ -1008,7 +1004,7 @@ impl Unify<'_> {
         if c.properties.get(PropertyKind::Symmetry) {
           inst.mk_or_else(|| {
             let mut args2 = args2.to_vec();
-            args2.swap(c.arg1 as usize, c.arg2 as usize);
+            args2.swap(c.properties.arg1 as usize, c.properties.arg2 as usize);
             self.unify_terms(args1_adj, &args2[c.superfluous as usize..])
           })?;
         }
@@ -1293,7 +1289,7 @@ impl Equate for EquateClass<'_> {
     let c = &g.constrs.predicate[n1];
     if c.properties.get(PropertyKind::Symmetry) {
       let mut args1 = args1.iter().collect_vec();
-      args1.swap(c.arg1 as usize, c.arg2 as usize);
+      args1.swap(c.properties.arg1 as usize, c.properties.arg2 as usize);
       args1[c.superfluous as usize..]
         .iter()
         .zip(args2_adj)
@@ -1302,7 +1298,7 @@ impl Equate for EquateClass<'_> {
       let c = &g.constrs.predicate[n2];
       c.properties.get(PropertyKind::Symmetry) && {
         let mut args2 = args2.iter().collect_vec();
-        args2.swap(c.arg1 as usize, c.arg2 as usize);
+        args2.swap(c.properties.arg1 as usize, c.properties.arg2 as usize);
         (args1_adj.iter().zip(&args2[c.superfluous as usize..]))
           .all(|(t1, t2)| self.eq_term(g, lc, t1, t2))
       }

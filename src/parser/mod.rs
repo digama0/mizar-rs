@@ -749,7 +749,7 @@ impl MizReader<'_> {
     &mut self, buf: &mut Vec<u8>,
     ConstructorAttrs { redefines, superfluous, kind, aggr, base, .. }: ConstructorAttrs,
   ) -> ConstructorDef {
-    let ((arg1, arg2, properties), primary) = match self.parse_elem(buf) {
+    let (properties, primary) = match self.parse_elem(buf) {
       Elem::Properties(props) => (props, self.parse_arg_types(buf)),
       Elem::ArgTypes(args) => (Default::default(), args),
       _ => panic!("expected <ArgTypes>"),
@@ -757,7 +757,7 @@ impl MizReader<'_> {
     macro_rules! constructor {
       ($id:ident) => {{
         let redefines = redefines.checked_sub(1).map($id);
-        Constructor { primary, redefines, superfluous, properties, arg1, arg2 }
+        Constructor { primary, redefines, superfluous, properties }
       }};
     }
     let kind = match kind {
@@ -985,19 +985,19 @@ impl MizReader<'_> {
           Elem::Type(Type { kind, attrs: (lower, upper), args })
         }
         b"Properties" => {
-          let mut args = (0, 0, PropertySet::EMPTY);
+          let mut props = Properties::EMPTY;
           for attr in e.attributes().map(Result::unwrap) {
             match attr.key {
-              b"propertyarg1" => args.0 = self.get_attr::<u8>(&attr.value).saturating_sub(1),
-              b"propertyarg2" => args.1 = self.get_attr::<u8>(&attr.value).saturating_sub(1),
+              b"propertyarg1" => props.arg1 = self.get_attr::<u8>(&attr.value).saturating_sub(1),
+              b"propertyarg2" => props.arg2 = self.get_attr::<u8>(&attr.value).saturating_sub(1),
               _ => {}
             }
           }
           while let Event::Start(e) = self.read_event(buf) {
-            args.2.set(e.local_name().try_into().expect("unexpected property"));
+            props.set(e.local_name().try_into().expect("unexpected property"));
             self.end_tag(buf);
           }
-          Elem::Properties(args)
+          Elem::Properties(props)
         }
         b"ArgTypes" => {
           let mut primaries = vec![];
@@ -1236,7 +1236,7 @@ enum Elem {
   Type(Type),
   Term(Term),
   Formula(Formula),
-  Properties((u8, u8, PropertySet)),
+  Properties(Properties),
   ArgTypes(Box<[Type]>),
   Fields(Box<[SelId]>),
   Essentials(Box<[LocusId]>),

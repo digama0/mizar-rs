@@ -820,6 +820,11 @@ impl Formula {
     }
   }
 
+  #[inline]
+  pub fn forall(dom: Type, scope: Self) -> Self {
+    Self::ForAll { dom: Box::new(dom), scope: Box::new(scope) }
+  }
+
   pub fn conjuncts(&self) -> &[Formula] {
     match self {
       Formula::True => &[],
@@ -1025,6 +1030,27 @@ impl PropertySet {
   pub fn set(&mut self, prop: PropertyKind) { self.0 |= 1 << prop as u16 }
 }
 
+#[derive(Clone, Copy, Default, Debug)]
+pub struct Properties {
+  pub properties: PropertySet,
+  pub arg1: u8,
+  pub arg2: u8,
+}
+impl std::ops::DerefMut for Properties {
+  fn deref_mut(&mut self) -> &mut Self::Target { &mut self.properties }
+}
+impl std::ops::Deref for Properties {
+  type Target = PropertySet;
+
+  fn deref(&self) -> &Self::Target { &self.properties }
+}
+impl Properties {
+  pub const EMPTY: Self = Self { properties: PropertySet::EMPTY, arg1: 0, arg2: 0 };
+  pub const fn offset(self, n: u8) -> Self {
+    Self { properties: self.properties, arg1: self.arg1 + n, arg2: self.arg2 + n }
+  }
+}
+
 #[derive(Clone, Default, Debug)]
 pub struct Constructor<I> {
   // pub article: Article,
@@ -1033,21 +1059,12 @@ pub struct Constructor<I> {
   pub primary: Box<[Type]>,
   pub redefines: Option<I>,
   pub superfluous: u8,
-  pub properties: PropertySet,
-  pub arg1: u8,
-  pub arg2: u8,
+  pub properties: Properties,
 }
 
 impl<I> Constructor<I> {
   pub const fn new(primary: Box<[Type]>) -> Self {
-    Self {
-      primary,
-      redefines: None,
-      superfluous: 0,
-      properties: PropertySet::EMPTY,
-      arg1: 0,
-      arg2: 0,
-    }
+    Self { primary, redefines: None, superfluous: 0, properties: Properties::EMPTY }
   }
 }
 impl<I, V: VisitMut> Visitable<V> for Constructor<I> {

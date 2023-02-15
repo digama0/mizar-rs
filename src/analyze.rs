@@ -328,13 +328,6 @@ impl Analyzer<'_> {
     assert!(cc.0.iter().all(|p| p.1.is_none()));
   }
 
-  fn elab_properties(&mut self, props: &[ast::Property], out: &mut PropertySet) {
-    for prop in props {
-      // todo!();
-      out.set(prop.kind);
-    }
-  }
-
   fn elab_def_case<T, U>(
     &mut self, def: &ast::DefCase<T>, f: impl FnOnce(&mut Self, &T) -> U + Copy,
   ) -> DefCase<U> {
@@ -743,8 +736,7 @@ impl Analyzer<'_> {
     self.push_many_bound(dom, var.vars.len());
     let mut scope = self.elab_formula(scope, pos);
     for i in 0..var.vars.len() {
-      let dom = Box::new(self.lc.bound_var.0.pop().unwrap());
-      scope = Formula::ForAll { dom, scope: Box::new(scope) }
+      scope = Formula::forall(self.lc.bound_var.0.pop().unwrap(), scope)
     }
     self.lc.term_cache.get_mut().close_scope();
     scope
@@ -1084,6 +1076,203 @@ impl Analyzer<'_> {
   }
 }
 
+#[derive(Clone, Copy)]
+struct ArgsN<'a, const N: usize> {
+  v: [LocusId; N],
+  c: [ConstId; N],
+  args: &'a [Term],
+}
+
+#[derive(Clone, Copy)]
+enum Args<'a> {
+  Unary(ArgsN<'a, 1>),
+  Binary(ArgsN<'a, 2>),
+}
+
+struct InstN<const N: usize> {
+  from: [ConstId; N],
+  to: [BoundId; N],
+  it: BoundId,
+}
+
+impl<const N: usize> InstN<N> {
+  fn new(args: &ArgsN<N>, it: u32, tgt: [u32; N]) -> InstN<N> {
+    InstN { from: args.c, to: tgt.map(BoundId), it: BoundId(it) }
+  }
+}
+
+impl<const N: usize> VisitMut for InstN<N> {
+  fn visit_term(&mut self, tm: &mut Term) {
+    match *tm {
+      Term::Bound(_) => unreachable!(),
+      Term::Constant(c) =>
+        for i in 0..N {
+          if c == self.from[i] {
+            *tm = Term::Bound(self.to[i]);
+            return
+          }
+        },
+      Term::It => *tm = Term::Bound(self.it),
+      _ => self.super_visit_term(tm),
+    }
+  }
+}
+
+#[derive(Clone, Copy)]
+enum PropertyDeclKind<'a> {
+  Func(Option<FuncId>, Args<'a>),
+  Pred(Args<'a>, bool),
+  Mode(&'a DefBody<Formula>),
+  None,
+}
+
+struct PropertiesBuilder<'a> {
+  visible: &'a [LocusId],
+  kind: PropertyDeclKind<'a>,
+  props: Properties,
+  formula: Option<Box<Formula>>,
+}
+
+impl<'a> PropertiesBuilder<'a> {
+  const fn new(visible: &'a [LocusId]) -> Self {
+    Self { visible, kind: PropertyDeclKind::None, props: Properties::EMPTY, formula: None }
+  }
+
+  fn load_args(
+    &mut self, g: &Global, lc: &LocalContext, args: &'a [Term],
+    f: impl FnOnce(Args<'a>) -> PropertyDeclKind<'a>,
+  ) {
+    match *self.visible {
+      [v1] => {
+        let Term::Constant(c1) = args[self.props.arg1 as usize] else { panic!() };
+        self.props.arg1 = v1.0;
+        self.kind = f(Args::Unary(ArgsN { v: [v1], c: [c1], args }));
+      }
+      [v1, v2] => {
+        let Term::Constant(c1) = args[self.props.arg1 as usize] else { panic!() };
+        let Term::Constant(c2) = args[self.props.arg2 as usize] else { panic!() };
+        if ().eq_type(g, lc, &lc.fixed_var[c1].ty, &lc.fixed_var[c2].ty) {
+          self.props.arg1 = v1.0;
+          self.props.arg2 = v2.0;
+          self.kind = f(Args::Binary(ArgsN { v: [v1, v2], c: [c1, c2], args }));
+        }
+      }
+      _ => {}
+    }
+  }
+
+  fn the_formula<const N: usize>(&self, args: &ArgsN<'_, N>, it: u32, tgt: [u32; N]) -> Formula {
+    let f = self.formula.as_deref().unwrap();
+    f.visit_cloned(&mut InstN::new(args, it, tgt))
+  }
+
+  fn reflexivity(&self, lc: &LocalContext, args: &ArgsN<'_, 2>, pos: bool) -> Formula {
+    let ty = &lc.fixed_var[args.c[0]].ty;
+    Formula::forall(
+      ty.clone(),
+      Formula::forall(ty.clone(), self.the_formula(args, 0, [0, 0]).maybe_neg(pos)),
+    )
+  }
+
+  fn asymmetry(&self, lc: &LocalContext, args: &ArgsN<'_, 2>, pos1: bool, pos2: bool) -> Formula {
+    let ty = &lc.fixed_var[args.c[0]].ty;
+    let f = Formula::mk_and_with(|conj| {
+      self.the_formula(args, 0, [0, 1]).maybe_neg(pos1).append_conjuncts_to(conj);
+      self.the_formula(args, 0, [1, 0]).maybe_neg(pos2).append_conjuncts_to(conj);
+    });
+    Formula::forall(ty.clone(), Formula::forall(ty.clone(), f.mk_neg()))
+  }
+
+  fn elab_properties(&mut self, elab: &mut Analyzer<'_>, props: &[ast::Property]) {
+    for prop in props {
+      let (g, lc) = (&elab.g, &elab.lc);
+      let thesis = match (prop.kind, &self.kind) {
+        (PropertyKind::Symmetry, &PropertyDeclKind::Pred(Args::Binary(ref args), pos)) =>
+          self.asymmetry(lc, args, pos, !pos),
+        (PropertyKind::Reflexivity, &PropertyDeclKind::Pred(Args::Binary(ref args), pos)) =>
+          self.reflexivity(lc, args, pos),
+        (PropertyKind::Irreflexivity, &PropertyDeclKind::Pred(Args::Binary(ref args), pos)) =>
+          self.reflexivity(lc, args, !pos),
+        (PropertyKind::Connectedness, &PropertyDeclKind::Pred(Args::Binary(ref args), pos)) =>
+          self.asymmetry(lc, args, !pos, !pos),
+        (PropertyKind::Asymmetry, &PropertyDeclKind::Pred(Args::Binary(ref args), pos)) =>
+          self.asymmetry(lc, args, pos, pos),
+        (PropertyKind::Commutativity, &PropertyDeclKind::Func(t, Args::Binary(ref args))) => {
+          let ty = &lc.fixed_var[args.c[0]].ty;
+          if let Some(nr) = t {
+            let term = |tgt| {
+              let inst = &mut InstN::new(args, 0, tgt);
+              Term::Functor { nr, args: args.args.iter().map(|t| t.visit_cloned(inst)).collect() }
+            };
+            Formula::forall(
+              ty.clone(),
+              Formula::forall(ty.clone(), g.reqs.mk_eq(term([0, 1]), term([1, 0]))),
+            )
+          } else {
+            let f = Formula::mk_and_with(|conj| {
+              self.the_formula(args, 0, [1, 2]).append_conjuncts_to(conj);
+              self.the_formula(args, 0, [2, 1]).mk_neg().append_conjuncts_to(conj);
+            });
+            Formula::forall(
+              lc.it_type.as_deref().unwrap().clone(),
+              Formula::forall(ty.clone(), Formula::forall(ty.clone(), f.mk_neg())),
+            )
+          }
+        }
+        (PropertyKind::Idempotence, &PropertyDeclKind::Func(_, Args::Unary(ref args))) => {
+          let ty = &lc.fixed_var[args.c[0]].ty;
+          assert!(lc.it_type.as_ref().unwrap().is_wider_than(g, lc, ty));
+          Formula::forall(ty.clone(), self.the_formula(args, 0, [0]))
+        }
+        (PropertyKind::Involutiveness, &PropertyDeclKind::Func(_, Args::Unary(ref args))) => {
+          let ty = &lc.fixed_var[args.c[0]].ty;
+          let it_ty = lc.it_type.as_deref().unwrap();
+          assert!(().eq_type(g, lc, it_ty, ty));
+          let f = Formula::mk_and_with(|conj| {
+            self.the_formula(args, 0, [1]).append_conjuncts_to(conj);
+            self.the_formula(args, 1, [0]).mk_neg().append_conjuncts_to(conj);
+          });
+          Formula::forall(it_ty.clone(), Formula::forall(it_ty.clone(), f.mk_neg()))
+        }
+        (PropertyKind::Projectivity, &PropertyDeclKind::Func(_, Args::Unary(ref args))) => {
+          let ty = &lc.fixed_var[args.c[0]].ty;
+          let it_ty = lc.it_type.as_deref().unwrap();
+          let wty = &*ty.widening_of(g, it_ty).unwrap();
+          assert!(().eq_radices(g, lc, wty, ty));
+          assert!(ty.attrs.0.is_subset_of(&wty.attrs.1, |a1, a2| ().eq_attr(g, lc, a1, a2)));
+          let f = Formula::mk_and_with(|conj| {
+            self.the_formula(args, 0, [1]).append_conjuncts_to(conj);
+            self.the_formula(args, 0, [0]).mk_neg().append_conjuncts_to(conj);
+          });
+          Formula::forall(it_ty.clone(), Formula::forall(ty.clone(), f.mk_neg()))
+        }
+        (PropertyKind::Sethood, PropertyDeclKind::Mode(value)) => {
+          let it_ty = lc.it_type.as_deref().unwrap();
+          let f = value.by_cases(|case| {
+            let f = Formula::mk_and_with(|conj| {
+              case.visit_cloned(&mut AbstractIt(1, 2)).append_conjuncts_to(conj);
+              conj.push(Formula::Pred {
+                nr: g.reqs.belongs_to().unwrap(),
+                args: Box::new([Term::Bound(BoundId(1)), Term::Bound(BoundId(0))]),
+              })
+            });
+            Formula::forall(Type::SET, Formula::forall(it_ty.clone(), f.mk_neg()).mk_neg())
+          });
+          f.mk_neg()
+        }
+        (PropertyKind::Associativity, PropertyDeclKind::Func(t, Args::Binary(_))) =>
+          panic!("associativity declarations are not supported"),
+        (PropertyKind::Transitivity, &PropertyDeclKind::Pred(Args::Binary(_), _)) =>
+          panic!("transitivity declarations are not supported"),
+        (PropertyKind::Abstractness, _) => unreachable!(),
+        _ => panic!("this property is not applicable"),
+      };
+      elab.elab_justification(&thesis, &prop.just);
+      self.props.set(prop.kind);
+    }
+  }
+}
+
 struct Exportable;
 
 impl Visit for Exportable {
@@ -1253,7 +1442,7 @@ struct AbstractIt(u32, u32);
 impl AbstractIt {
   fn forall(it_type: &Type, mut f: Formula, pos: bool) -> Formula {
     AbstractIt(0, 1).visit_formula(&mut f);
-    Formula::ForAll { dom: Box::new(it_type.clone()), scope: Box::new(f.maybe_neg(pos)) }
+    Formula::forall(it_type.clone(), f.maybe_neg(pos))
   }
 }
 
@@ -1367,8 +1556,7 @@ impl DefBody<Formula> {
       })
     });
     let it_type2 = it_type.visit_cloned(&mut AbstractIt(0, 1));
-    let scope = Box::new(Formula::ForAll { dom: Box::new(it_type2), scope });
-    Box::new(Formula::ForAll { dom: Box::new(it_type.clone()), scope })
+    Box::new(Formula::forall(it_type.clone(), Formula::forall(it_type2, *scope)))
   }
 }
 
@@ -1381,17 +1569,14 @@ impl DefBody<Term> {
 }
 
 fn mk_mode_coherence(nr: ModeId, attrs: &Attrs, args: &[Term], it_type: &Type) -> Box<Formula> {
-  Box::new(Formula::ForAll {
-    dom: Box::new(Type {
+  Box::new(Formula::forall(
+    Type {
       kind: TypeKind::Mode(nr),
       attrs: (Attrs::EMPTY, attrs.visit_cloned(&mut Inst::new(args))),
       args: args.into(),
-    }),
-    scope: Box::new(Formula::Is {
-      term: Box::new(Term::Bound(BoundId(0))),
-      ty: Box::new(it_type.clone()),
-    }),
-  })
+    },
+    Formula::Is { term: Box::new(Term::Bound(BoundId(0))), ty: Box::new(it_type.clone()) },
+  ))
 }
 
 fn mk_func_coherence(nr: FuncId, args: &[Term], it_type: &Type) -> Box<Formula> {
@@ -1415,6 +1600,13 @@ impl DefValue {
     match self {
       DefValue::Term(value) => value.mk_compatibility(g, it_type, defines),
       DefValue::Formula(value) => value.mk_compatibility(g, it_type, defines),
+    }
+  }
+
+  fn as_formula(&self, g: &Global) -> Box<Formula> {
+    match self {
+      DefValue::Term(value) => value.by_cases(|case| case.it_eq(g).mk_neg()),
+      DefValue::Formula(value) => value.by_cases(|case| case.it_eq(g).mk_neg()),
     }
   }
 }
@@ -1760,8 +1952,9 @@ impl BlockReader {
     let mut cc = CorrConds::new();
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     let visible: Box<[_]> = pat.args().iter().map(|v| self.to_locus.get(ConstId(v.id.0))).collect();
+    let mut properties = PropertiesBuilder::new(&visible);
     let args: Box<[_]>;
-    let (redefines, superfluous, it_type, mut properties, arg1, arg2);
+    let (redefines, superfluous, it_type);
     if it.redef {
       args = pat.args().iter().map(|v| Term::Constant(ConstId(v.id.0))).collect();
       let pat = elab.notations.functor.iter().rev().find(|pat| {
@@ -1775,7 +1968,7 @@ impl BlockReader {
       let PatternKind::Func(nr) = pat.kind else { unreachable!() };
       (redefines, superfluous) = (Some(nr), (self.primary.len() - pat.primary.len()) as u8);
       let c = &elab.g.constrs.functor[nr];
-      (properties, arg1, arg2) = (c.properties, c.arg1 + superfluous, c.arg2 + superfluous);
+      properties.props = c.properties.offset(superfluous);
       it_type = elab.elab_spec(spec, &c.ty.clone());
       if spec.is_some() {
         cc.0[CorrCondKind::Coherence] =
@@ -1784,7 +1977,6 @@ impl BlockReader {
     } else {
       (args, redefines, superfluous) = (Box::new([]), None, 0);
       it_type = spec.map_or(Type::ANY, |ty| elab.elab_type(ty));
-      (properties, arg1, arg2) = Default::default();
     }
     elab.lc.it_type = Some(Box::new(it_type));
     let value = def.as_ref().map(|def| elab.elab_def_value(&def.kind, true));
@@ -1792,10 +1984,11 @@ impl BlockReader {
     if let Some(value) = &value {
       cc.0[CorrCondKind::Consistency] = value.mk_consistency(&elab.g, Some(&it_type));
       if let Some(nr) = redefines {
-        let defined = Term::Functor { nr, args }.it_eq(&elab.g);
+        let defined = Term::Functor { nr, args: args.clone() }.it_eq(&elab.g);
         cc.0[CorrCondKind::Compatibility] =
           Some(value.mk_compatibility(&elab.g, Some(&it_type), &defined));
       }
+      properties.formula = Some(value.as_formula(&elab.g))
     }
     if !it.redef {
       match value.as_ref().unwrap() {
@@ -1807,13 +2000,20 @@ impl BlockReader {
       }
     }
     elab.elab_corr_conds(cc, &it.conds, &it.corr);
-    elab.elab_properties(&it.props, &mut properties);
+    if self.assums.is_empty() {
+      properties.load_args(&elab.g, &elab.lc, &args, |args| {
+        PropertyDeclKind::Func(redefines.filter(|_| it.redef), args)
+      });
+    }
+    elab.lc.it_type = Some(it_type);
+    properties.elab_properties(elab, &it.props);
+    it_type = elab.lc.it_type.take().unwrap();
     it_type.visit(&mut self.to_locus);
     let n;
     if value.is_some() || superfluous != 0 || !it.props.is_empty() {
       let primary = primary.clone();
       n = elab.g.constrs.functor.push(TyConstructor {
-        c: Constructor { primary, redefines, superfluous, properties, arg1, arg2 },
+        c: Constructor { primary, redefines, superfluous, properties: properties.props },
         ty: (*it_type).clone(),
       });
       elab.push_constr(ConstrKind::Func(n));
@@ -1863,7 +2063,8 @@ impl BlockReader {
     let mut cc = CorrConds::new();
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     let visible: Box<[_]> = pat.args.iter().map(|v| self.to_locus.get(ConstId(v.id.0))).collect();
-    let (args, redefines, superfluous, pos, mut properties, arg1, arg2);
+    let mut properties = PropertiesBuilder::new(&visible);
+    let (args, redefines, superfluous, pos);
     if it.redef {
       args = pat.args.iter().map(|v| Term::Constant(ConstId(v.id.0))).collect::<Box<[_]>>();
       let pat = elab.notations.predicate.iter().rev().find(|pat| {
@@ -1878,25 +2079,30 @@ impl BlockReader {
       let c = &elab.g.constrs.predicate[nr];
       (redefines, superfluous, pos) =
         (Some(nr), (self.primary.len() - pat.primary.len()) as u8, pat.pos);
-      (properties, arg1, arg2) = (c.properties, c.arg1 + superfluous, c.arg2 + superfluous)
+      properties.props = c.properties.offset(superfluous)
     } else {
-      (redefines, superfluous, pos) = (None, 0, true);
-      (args, properties, arg1, arg2) = Default::default();
+      (redefines, superfluous, pos, args) = (None, 0, true, Box::new([]))
     }
     let value = def.as_ref().map(|def| elab.elab_def_value(&def.kind, pos));
     if let Some(value) = &value {
       cc.0[CorrCondKind::Consistency] = value.mk_consistency(&elab.g, None);
       if let Some(nr) = redefines {
         cc.0[CorrCondKind::Compatibility] =
-          Some(value.mk_compatibility(&elab.g, None, &Formula::Pred { nr, args }));
+          Some(value.mk_compatibility(&elab.g, None, &Formula::Pred { nr, args: args.clone() }));
       }
+      properties.formula = Some(value.as_formula(&elab.g))
+    } else if let Some(nr) = redefines {
+      properties.formula = Some(Box::new(Formula::Pred { nr, args: args.clone() }))
     }
     elab.elab_corr_conds(cc, &it.conds, &it.corr);
-    elab.elab_properties(&it.props, &mut properties);
+    if self.assums.is_empty() {
+      properties.load_args(&elab.g, &elab.lc, &args, |args| PropertyDeclKind::Pred(args, pos));
+    }
+    properties.elab_properties(elab, &it.props);
     let n;
     if superfluous != 0 || !it.props.is_empty() {
       let p = primary.clone();
-      let c = Constructor { primary: p, redefines, superfluous, properties, arg1, arg2 };
+      let c = Constructor { primary: p, redefines, superfluous, properties: properties.props };
       n = elab.g.constrs.predicate.push(c);
       elab.push_constr(ConstrKind::Pred(n));
       if let Some(mut value) = value {
@@ -1929,14 +2135,14 @@ impl BlockReader {
   ) {
     let fmt = elab.formats[&Format::Mode(pat.to_format())];
     let mut cc = CorrConds::new();
-    let mut properties = Default::default();
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
-    let visible = pat.args.iter().map(|v| self.to_locus.get(ConstId(v.id.0))).collect();
+    let visible: Box<[_]> = pat.args.iter().map(|v| self.to_locus.get(ConstId(v.id.0))).collect();
+    let mut properties = PropertiesBuilder::new(&visible);
     match kind {
       ast::DefModeKind::Expandable { expansion } => {
         let mut expansion = Box::new(elab.elab_type(expansion));
         elab.elab_corr_conds(cc, &it.conds, &it.corr);
-        elab.elab_properties(&it.props, &mut properties);
+        properties.elab_properties(elab, &it.props);
         expansion.visit(&mut self.to_locus);
         let kind = PatternKind::ExpandableMode { expansion };
         let pat = Pattern { kind, fmt, primary, visible, pos: true };
@@ -1960,7 +2166,7 @@ impl BlockReader {
           (redefines, superfluous) = (Some(nr), (self.primary.len() - pat.primary.len()) as u8);
           let tgt = elab.g.constrs.mode[nr].ty.clone();
           if elab.g.constrs.mode[nr].properties.get(PropertyKind::Sethood) {
-            properties.set(PropertyKind::Sethood)
+            properties.props.set(PropertyKind::Sethood)
           }
           it_type = elab.elab_spec(spec.as_deref(), &tgt);
           if spec.is_some() {
@@ -1991,20 +2197,21 @@ impl BlockReader {
         if !it.redef {
           let Some(DefValue::Formula(value)) = &value else { panic!() };
           cc.0[CorrCondKind::Existence] = Some(value.mk_existence(&it_type));
+          properties.kind = PropertyDeclKind::Mode(value);
         }
         if let TypeKind::Mode(nr) = it_type.kind {
           if elab.g.constrs.mode[nr].properties.get(PropertyKind::Sethood) {
-            properties.set(PropertyKind::Sethood)
+            properties.props.set(PropertyKind::Sethood)
           }
         }
         elab.elab_corr_conds(cc, &it.conds, &it.corr);
-        elab.elab_properties(&it.props, &mut properties);
+        properties.elab_properties(elab, &it.props);
         it_type.visit(&mut self.to_locus);
         let n;
         if value.is_some() || superfluous != 0 {
           let primary = primary.clone();
           n = elab.g.constrs.mode.push(TyConstructor {
-            c: Constructor { primary, redefines, superfluous, properties, arg1: 0, arg2: 0 },
+            c: Constructor { primary, redefines, superfluous, properties: properties.props },
             ty: (*it_type).clone(),
           });
           elab.push_constr(ConstrKind::Mode(n));
@@ -2079,13 +2286,13 @@ impl BlockReader {
       }
     }
     elab.elab_corr_conds(cc, &it.conds, &it.corr);
-    let mut properties = Default::default();
-    elab.elab_properties(&it.props, &mut properties);
+    let mut properties = PropertiesBuilder::new(&visible);
+    properties.elab_properties(elab, &it.props);
     let n;
     if superfluous != 0 || !it.props.is_empty() {
       let p = primary.clone();
       n = elab.g.constrs.attribute.push(TyConstructor {
-        c: Constructor { primary: p, redefines, superfluous, properties, arg1: 0, arg2: 0 },
+        c: Constructor { primary: p, redefines, superfluous, properties: properties.props },
         ty: self.primary.0.last().unwrap().clone(),
       });
       elab.push_constr(ConstrKind::Attr(n));
@@ -2296,8 +2503,7 @@ impl BlockReader {
     };
     let mut ty2 = Type { kind, attrs: ty.attrs.clone(), args: args.to_vec() };
     let mut cc = CorrConds::new();
-    cc.0[CorrCondKind::Existence] =
-      Some(Box::new(Formula::ForAll { dom: Box::new(ty), scope: Box::new(f.mk_neg()) }.mk_neg()));
+    cc.0[CorrCondKind::Existence] = Some(Box::new(Formula::forall(ty, f.mk_neg()).mk_neg()));
     elab.elab_corr_conds(cc, &it.conds, &it.corr);
 
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
@@ -2343,8 +2549,7 @@ impl BlockReader {
       f.mk_neg().append_conjuncts_to(conjs)
     });
     let mut cc = CorrConds::new();
-    cc.0[CorrCondKind::Coherence] =
-      Some(Box::new(Formula::ForAll { dom: Box::new(ty), scope: Box::new(f.mk_neg()) }));
+    cc.0[CorrCondKind::Coherence] = Some(Box::new(Formula::forall(ty, f.mk_neg())));
     elab.elab_corr_conds(cc, &it.conds, &it.corr);
 
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
@@ -2395,7 +2600,7 @@ impl BlockReader {
         });
         f.mk_neg().append_conjuncts_to(conj)
       });
-      Formula::ForAll { dom: Box::new(ty.clone()), scope: Box::new(f.mk_neg()) }
+      Formula::forall(ty.clone(), f.mk_neg())
     } else {
       Formula::mk_and_with(|conj| {
         for attr in &concl {
@@ -2552,20 +2757,16 @@ impl BlockReader {
   ) {
     let mut ty = elab.elab_type(ty);
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
-    let mut property = Formula::Neg {
-      f: Box::new(Formula::ForAll {
-        dom: Box::new(Type::SET),
-        scope: Box::new(Formula::Neg {
-          f: Box::new(Formula::ForAll {
-            dom: Box::new(ty.clone()),
-            scope: Box::new(Formula::Pred {
-              nr: elab.g.reqs.belongs_to().unwrap(),
-              args: Box::new([Term::Bound(BoundId(1)), Term::Bound(BoundId(0))]),
-            }),
-          }),
-        }),
-      }),
-    };
+    let mut property = Formula::mk_neg(Formula::forall(
+      Type::SET,
+      Formula::mk_neg(Formula::forall(
+        ty.clone(),
+        Formula::Pred {
+          nr: elab.g.reqs.belongs_to().unwrap(),
+          args: Box::new([Term::Bound(BoundId(1)), Term::Bound(BoundId(0))]),
+        },
+      )),
+    ));
     ty.visit(&mut self.to_locus);
     CheckAccess::with(&primary, |occ| occ.visit_type(&ty));
     property.visit(&mut elab.intern_const());

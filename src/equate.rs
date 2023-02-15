@@ -134,7 +134,7 @@ impl Equate for EqMarks {
           let c = &g.constrs.predicate[n1];
           c.properties.get(PropertyKind::Symmetry) && {
             let mut args1 = args1.iter().collect_vec();
-            args1.swap(c.arg1 as usize, c.arg2 as usize);
+            args1.swap(c.properties.arg1 as usize, c.properties.arg2 as usize);
             args1[c.superfluous as usize..]
               .iter()
               .zip(args2_adj)
@@ -145,7 +145,7 @@ impl Equate for EqMarks {
           let c = &g.constrs.predicate[n2];
           c.properties.get(PropertyKind::Symmetry) && {
             let mut args2 = args2.iter().collect_vec();
-            args2.swap(c.arg1 as usize, c.arg2 as usize);
+            args2.swap(c.properties.arg1 as usize, c.properties.arg2 as usize);
             args1_adj
               .iter()
               .zip(&args2[c.superfluous as usize..])
@@ -390,7 +390,7 @@ impl VisitMut for Y<'_, '_> {
         }
         let constr = &self.g.constrs.functor[nr];
         if constr.properties.get(PropertyKind::Commutativity) {
-          args1.swap(constr.arg1 as usize, constr.arg2 as usize);
+          args1.swap(constr.properties.arg1 as usize, constr.properties.arg2 as usize);
           let (nr3, comm_args) = Term::adjust(nr, &args1, &self.g.constrs);
           let m =
             self.lc.marks.push((Term::Functor { nr: nr3, args: comm_args.to_vec().into() }, et));
@@ -535,7 +535,7 @@ impl Equalizer<'_> {
         }
         let comm_args = if c.properties.get(PropertyKind::Commutativity) {
           let mut args = args.clone();
-          args.swap(c.arg1 as usize, c.arg2 as usize);
+          args.swap(c.properties.arg1 as usize, c.properties.arg2 as usize);
           if let Some(m) = self.constrs.functor.find(self.g, self.lc, nr1, &args) {
             return Ok(self.lc.marks[m].1)
           }
@@ -854,7 +854,7 @@ impl<'a> Equalizer<'a> {
         // Why are we searching for f in neg_bas here?
         if pred.properties.get(prop) && neg.find(self.g, self.lc, f).is_none() {
           let mut args = args.clone();
-          args.swap(pred.arg1 as usize, pred.arg2 as usize);
+          args.swap(pred.properties.arg1 as usize, pred.properties.arg2 as usize);
           neg.insert(self.g, self.lc, Cow::Owned(Formula::Pred { nr: *nr, args }));
         }
       }
@@ -864,8 +864,8 @@ impl<'a> Equalizer<'a> {
   fn check_refl(&self, atoms: &Atoms, prop: PropertyKind, ineqs: &mut Ineqs) -> OrUnsat<()> {
     for f in &atoms.0 .0 {
       if let Formula::Pred { nr, args } = f {
-        let pred = &self.g.constrs.predicate[*nr];
-        if pred.properties.get(prop) {
+        let pred = self.g.constrs.predicate[*nr].properties;
+        if pred.get(prop) {
           let et1 = self.lc.marks[args[pred.arg1 as usize].mark().unwrap()].1;
           let et2 = self.lc.marks[args[pred.arg2 as usize].mark().unwrap()].1;
           if et1 == et2 {
@@ -1113,42 +1113,46 @@ impl<'a> Equalizer<'a> {
       }
 
       for (&i, marks) in &self.constrs.functor.0 {
-        let c = &self.g.constrs.functor[i];
-        if c.properties.get(PropertyKind::Idempotence) {
+        let props = self.g.constrs.functor[i].properties;
+        if props.get(PropertyKind::Idempotence) {
           for &m in marks {
             let (Term::Functor { ref args, .. }, et) = self.lc.marks[m] else { unreachable!() };
-            let et1 = self.lc.marks[args[c.arg1 as usize].mark().unwrap()].1;
-            let et2 = self.lc.marks[args[c.arg2 as usize].mark().unwrap()].1;
+            let et1 = self.lc.marks[args[props.arg1 as usize].mark().unwrap()].1;
+            let et2 = self.lc.marks[args[props.arg2 as usize].mark().unwrap()].1;
             if self.lc.marks[self.terms[et1].mark].1 == self.lc.marks[self.terms[et2].mark].1 {
               to_union.push((self.lc.marks[self.terms[et].mark].1, et1))
             }
           }
         }
-        if c.properties.get(PropertyKind::Involutiveness) {
+        if props.get(PropertyKind::Involutiveness) {
           for &m in marks {
             let (Term::Functor { ref args, .. }, et) = self.lc.marks[m] else { unreachable!() };
-            assert!(c.arg1 as usize + 1 == args.len());
-            let et1 = self.lc.marks[args[c.arg1 as usize].mark().unwrap()].1;
-            let args1 = &args[..c.arg1 as usize];
+            assert!(props.arg1 as usize + 1 == args.len());
+            let et1 = self.lc.marks[args[props.arg1 as usize].mark().unwrap()].1;
+            let args1 = &args[..props.arg1 as usize];
             for &m2 in &self.terms[self.lc.marks[self.terms[et1].mark].1].eq_class {
               if let Term::Functor { nr, args: ref args2 } = self.lc.marks[m2].0 {
-                if nr == i && EqMarks.eq_terms(self.g, self.lc, args1, &args2[..c.arg1 as usize]) {
-                  let et2 = self.lc.marks[args2[c.arg1 as usize].mark().unwrap()].1;
+                if nr == i
+                  && EqMarks.eq_terms(self.g, self.lc, args1, &args2[..props.arg1 as usize])
+                {
+                  let et2 = self.lc.marks[args2[props.arg1 as usize].mark().unwrap()].1;
                   to_union.push((self.lc.marks[self.terms[et].mark].1, et2))
                 }
               }
             }
           }
         }
-        if c.properties.get(PropertyKind::Projectivity) {
+        if props.get(PropertyKind::Projectivity) {
           for &m in marks {
             let (Term::Functor { ref args, .. }, et) = self.lc.marks[m] else { unreachable!() };
-            assert!(c.arg1 as usize + 1 == args.len());
-            let et1 = self.lc.marks[args[c.arg1 as usize].mark().unwrap()].1;
-            let args1 = &args[..c.arg1 as usize];
+            assert!(props.arg1 as usize + 1 == args.len());
+            let et1 = self.lc.marks[args[props.arg1 as usize].mark().unwrap()].1;
+            let args1 = &args[..props.arg1 as usize];
             for &m2 in &self.terms[self.lc.marks[self.terms[et1].mark].1].eq_class {
               if let Term::Functor { nr, args: ref args2 } = self.lc.marks[m2].0 {
-                if nr == i && EqMarks.eq_terms(self.g, self.lc, args1, &args2[..c.arg1 as usize]) {
+                if nr == i
+                  && EqMarks.eq_terms(self.g, self.lc, args1, &args2[..props.arg1 as usize])
+                {
                   to_union.push((self.lc.marks[self.terms[et].mark].1, et1))
                 }
               }
@@ -2087,10 +2091,10 @@ impl<'a> Equalizer<'a> {
       match neg {
         Formula::Attr { nr, args } => self.check_neg_attr(*nr, args)?,
         Formula::Pred { nr, args } => {
-          let c = &self.g.constrs.predicate[*nr];
-          if c.properties.get(PropertyKind::Reflexivity)
-            && self.lc.marks[args[c.arg1 as usize].mark().unwrap()].1
-              == self.lc.marks[args[c.arg2 as usize].mark().unwrap()].1
+          let props = self.g.constrs.predicate[*nr].properties;
+          if props.get(PropertyKind::Reflexivity)
+            && self.lc.marks[args[props.arg1 as usize].mark().unwrap()].1
+              == self.lc.marks[args[props.arg2 as usize].mark().unwrap()].1
           {
             return Err(Unsat)
           }
@@ -2119,10 +2123,10 @@ impl<'a> Equalizer<'a> {
 
     for neg in &neg_bas.0 .0 {
       if let Formula::Pred { nr, args } = neg {
-        let c = &self.g.constrs.predicate[*nr];
-        if c.properties.get(PropertyKind::Reflexivity) {
-          let et1 = self.lc.marks[args[c.arg1 as usize].mark().unwrap()].1;
-          let et2 = self.lc.marks[args[c.arg2 as usize].mark().unwrap()].1;
+        let props = self.g.constrs.predicate[*nr].properties;
+        if props.get(PropertyKind::Reflexivity) {
+          let et1 = self.lc.marks[args[props.arg1 as usize].mark().unwrap()].1;
+          let et2 = self.lc.marks[args[props.arg2 as usize].mark().unwrap()].1;
           self.nonempty_nonzero_of_ne(et1, et2)?;
         }
       }
@@ -2457,12 +2461,12 @@ impl<'a> Equalizer<'a> {
       match f {
         Formula::Pred { nr, args } => {
           let (nr, args) = Formula::adjust_pred(*nr, args, &self.g.constrs);
-          let pred = &self.g.constrs.predicate[nr];
-          if pred.properties.get(PropertyKind::Reflexivity) {
+          let props = self.g.constrs.predicate[nr].properties;
+          if props.get(PropertyKind::Reflexivity) {
             ineqs.process_ineq(
               self,
-              args[pred.arg1 as usize].mark().unwrap(),
-              args[pred.arg2 as usize].mark().unwrap(),
+              args[props.arg1 as usize].mark().unwrap(),
+              args[props.arg2 as usize].mark().unwrap(),
             );
           }
           if self.g.reqs.equals_to() != Some(nr) {
