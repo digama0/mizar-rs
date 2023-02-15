@@ -272,27 +272,24 @@ impl Expand<'_> {
         let expansions = self.well_matched_expansions(ConstrKind::Attr(n2), args);
         f.conjdisj_many(pos, expansions);
       }
-      Formula::FlexAnd { orig, terms, expansion } =>
+      Formula::FlexAnd { terms, scope } =>
         if self.lc.bound_var.is_empty() {
+          let nat = self.g.nat.as_ref().unwrap();
+          let le = self.g.reqs.less_or_equal().unwrap();
           let mut epf = ExpandPrivFunc(&self.g.constrs);
-          let mut f1 = Formula::FlexAnd {
-            orig: orig.clone(),
-            terms: terms.clone(),
-            expansion: expansion.clone(),
-          };
+          let mut f1 = Formula::FlexAnd { terms: terms.clone(), scope: scope.clone() };
           epf.visit_formula(&mut f1);
           let f2 = {
-            let Formula::FlexAnd { expansion, .. } = &f1 else { unreachable!() };
-            (**expansion).clone()
+            let Formula::FlexAnd { terms, scope } = &f1 else { unreachable!() };
+            self.g.expand_flex_and(nat, le, (**terms).clone(), scope.clone(), 0)
           };
           *f = Formula::mk_and_with(|conjs| {
             conjs.push(f1.maybe_neg(pos));
             f2.maybe_neg(pos).append_conjuncts_to(conjs);
             if pos {
-              self.expand_flex(terms, expansion, conjs, pos);
+              self.expand_flex(terms, scope, conjs, pos);
             } else {
-              let f =
-                Formula::mk_and_with(|conjs2| self.expand_flex(terms, expansion, conjs2, pos));
+              let f = Formula::mk_and_with(|conjs2| self.expand_flex(terms, scope, conjs2, pos));
               f.mk_neg().append_conjuncts_to(conjs);
             }
           })
@@ -308,7 +305,7 @@ impl Expand<'_> {
 
   /// ExpandFlex
   fn expand_flex(
-    &mut self, terms: &mut Box<[Term; 2]>, expansion: &Formula, conjs: &mut Vec<Formula>, pos: bool,
+    &mut self, terms: &mut Box<[Term; 2]>, scope: &Formula, conjs: &mut Vec<Formula>, pos: bool,
   ) {
     assert!(self.lc.bound_var.is_empty());
     let mut zero = None;
@@ -324,17 +321,9 @@ impl Expand<'_> {
     };
     let Term::Numeral(right) = terms[1] else { return };
     if right.saturating_sub(left) <= 100 {
-      let Formula::ForAll { scope, .. } = expansion else { unreachable!() };
-      let Formula::Neg { f } = &**scope else { unreachable!() };
-      let Formula::And { args } = &**f else { unreachable!() };
-      // FIXME: this could be wrong if the scope expression is an And,
-      // but mizar already segfaults on (0 = 0 & 0 = 0) & ... & (1 = 1 & 1 = 1);
-      let scope = &args[2];
       for i in left..=right {
         let i = if i == 0 { zero.clone().unwrap() } else { Term::Numeral(i) };
-        let mut tm = scope.clone();
-        Inst0(&i).visit_formula(&mut tm);
-        tm.maybe_neg(pos).append_conjuncts_to(conjs);
+        scope.visit_cloned(&mut Inst0(&i)).maybe_neg(pos).append_conjuncts_to(conjs);
       }
     }
   }
@@ -860,8 +849,15 @@ impl<'a> SchemeCtx<'a> {
           r
         },
       #[allow(clippy::explicit_auto_deref)]
-      (FlexAnd { orig: orig1, .. }, FlexAnd { orig: orig2, .. }) if pos =>
-        self.eq_formulas(&**orig1, &**orig2),
+      (FlexAnd { terms: t1, scope: sc1 }, FlexAnd { terms: t2, scope: sc2 }) if pos =>
+        self.eq_terms(&**t1, &**t2) && {
+          self.lc.term_cache.get_mut().open_scope();
+          self.lc.bound_var.0.push(self.g.nat.as_deref().unwrap().clone());
+          let r = self.eq_formula(sc1, sc2, true);
+          self.lc.bound_var.0.pop();
+          self.lc.term_cache.get_mut().close_scope();
+          r
+        },
       (_, PrivPred { value, .. }) => self.eq_formula(f1, value, pos),
       _ => false,
     };

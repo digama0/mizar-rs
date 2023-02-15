@@ -104,6 +104,13 @@ impl MizPath {
     v.g.numeral_type.attrs.1 = attrs;
     v.lc.clear_term_cache();
     v.g.round_up_clusters(&mut v.lc);
+    if let Some(natural) = v.g.reqs.natural() {
+      let attrs = || Attrs::Consistent(vec![Attr::new0(natural, true)]);
+      let mut ty =
+        Box::new(Type { kind: ModeId::SET.into(), attrs: (attrs(), attrs()), args: vec![] });
+      ty.round_up_with_self(&v.g, &v.lc, false);
+      v.g.nat = Some(ty)
+    }
 
     if ENABLE_ANALYZER {
       // LoadSGN
@@ -184,6 +191,7 @@ impl MizPath {
     // CollectConstInEnvConstructors
     let cc = &mut v.intern_const();
     let numeral_type = v.g.numeral_type.visit_cloned(cc);
+    let nat = v.g.nat.visit_cloned(cc);
     let mut constrs = v.g.constrs.clone();
     constrs.mode.visit(cc);
     constrs.struct_mode.visit(cc);
@@ -198,6 +206,7 @@ impl MizPath {
     // note: collecting in the functor term breaks the sort order
     clusters.functor.vec.0.iter_mut().for_each(|c| c.consequent.1.visit(cc));
     v.g.numeral_type = numeral_type;
+    v.g.nat = nat;
     v.g.constrs = constrs;
     v.g.clusters = clusters;
 
@@ -243,6 +252,7 @@ impl Reader {
         constrs: Default::default(),
         clusters: Default::default(),
         numeral_type,
+        nat: None,
         rounded_up_clusters: false,
       },
       lc: LocalContext::default(),

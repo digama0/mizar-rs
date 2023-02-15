@@ -1120,11 +1120,13 @@ impl MizReader<'_> {
           Elem::Formula(Formula::Is { term, ty })
         }
         b"FlexFrm" => {
-          let orig = Box::new([self.parse_formula(buf).unwrap(), self.parse_formula(buf).unwrap()]);
+          let _orig1 = self.parse_formula(buf).unwrap();
+          let _orig2 = self.parse_formula(buf).unwrap();
           let terms = Box::new([self.parse_term(buf).unwrap(), self.parse_term(buf).unwrap()]);
-          let expansion = Box::new(self.parse_formula(buf).unwrap());
+          let Formula::ForAll { scope, .. } = self.parse_formula(buf).unwrap() else { panic!() };
+          let scope = Formula::mk_and(scope.mk_neg().conjuncts().iter().skip(2).cloned().collect());
           self.end_tag(buf);
-          Elem::Formula(Formula::FlexAnd { orig, terms, expansion })
+          Elem::Formula(Formula::FlexAnd { terms, scope: Box::new(scope) })
         }
         b"Verum" => {
           self.end_tag(buf);

@@ -1039,9 +1039,12 @@ impl Unify<'_> {
         inst.mk_and_then(|| self.unify_type(ty1, ty2))?;
         inst
       }
-      (Formula::FlexAnd { orig: orig1, .. }, Formula::FlexAnd { orig: orig2, .. }) => {
-        let mut inst = self.unify_formula(&orig1[0], &orig2[0])?;
-        inst.mk_and_then(|| self.unify_formula(&orig1[1], &orig2[1]))?;
+      (Formula::FlexAnd { terms: t1, scope: sc1 }, Formula::FlexAnd { terms: t2, scope: sc2 }) => {
+        let mut inst = self.unify_term(&t1[0], &t2[0])?;
+        inst.mk_and_then(|| self.unify_term(&t1[1], &t2[1]))?;
+        self.depth += 1;
+        inst.mk_and_then(|| self.unify_formula(sc1, sc2))?;
+        self.depth -= 1;
         inst
       }
       _ => Dnf::FALSE,

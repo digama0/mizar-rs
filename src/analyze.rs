@@ -861,8 +861,14 @@ impl Analyzer<'_> {
           *f = (!f.0, std::mem::take(f2));
           continue 'start
         }
-        Formula::PrivPred { value, .. } | Formula::FlexAnd { expansion: value, .. } => {
+        Formula::PrivPred { value, .. } => {
           f.1 = std::mem::take(value);
+          continue 'start
+        }
+        Formula::FlexAnd { terms, scope } => {
+          let (Some(nat), Some(le)) = (&self.g.nat, self.g.reqs.less_or_equal()) else { break };
+          let Formula::FlexAnd { terms, scope } = std::mem::take(&mut *f.1) else { unreachable!() };
+          *f.1 = self.g.expand_flex_and(nat, le, *terms, scope, 0);
           continue 'start
         }
         Formula::Pred { nr, args } if atomic > 0 => {
@@ -2953,6 +2959,10 @@ impl ReadProof for BlockReader {
       let mut attrs = elab.g.numeral_type.attrs.1.clone();
       attrs.round_up_with(&elab.g, &elab.lc, &elab.g.numeral_type, false);
       elab.g.numeral_type.attrs.1 = attrs;
+      if let Some(mut nat) = elab.g.nat.take() {
+        nat.round_up_with_self(&elab.g, &elab.lc, false);
+        elab.g.nat = Some(nat)
+      }
       for i in 0..elab.g.clusters.registered.len() {
         let cl = &elab.r.g.clusters.registered[i];
         let mut attrs = cl.consequent.1.clone();

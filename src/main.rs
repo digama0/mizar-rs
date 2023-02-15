@@ -103,6 +103,17 @@ impl Global {
   fn parent_struct(&self, sel: SelId) -> StructId {
     self.constrs.struct_mode.enum_iter().find(|c| c.1.fields.contains(&sel)).unwrap().0
   }
+
+  pub fn expand_flex_and(
+    &self, nat: &Type, le: PredId, [t1, t2]: [Term; 2], scope: Box<Formula>, depth: u32,
+  ) -> Formula {
+    let f = Formula::mk_and_with(|conjs| {
+      conjs.push(Formula::Pred { nr: le, args: Box::new([t1, Term::Bound(BoundId(depth))]) });
+      conjs.push(Formula::Pred { nr: le, args: Box::new([Term::Bound(BoundId(depth)), t2]) });
+      scope.mk_neg().append_conjuncts_to(conjs);
+    });
+    Formula::forall(nat.clone(), f.mk_neg())
+  }
 }
 
 struct RoundUpTypes<'a> {
@@ -111,7 +122,12 @@ struct RoundUpTypes<'a> {
 }
 
 impl VisitMut for RoundUpTypes<'_> {
-  fn push_bound(&mut self, ty: &mut Type) { self.lc.bound_var.push(ty.clone()); }
+  fn push_bound(&mut self, ty: Option<&mut Type>) {
+    self.lc.bound_var.push(match ty {
+      Some(t) => t.clone(),
+      None => self.g.nat.as_deref().unwrap().clone(),
+    });
+  }
   fn pop_bound(&mut self, n: u32) {
     self.lc.bound_var.0.truncate(self.lc.bound_var.0.len() - n as usize)
   }
@@ -594,8 +610,8 @@ impl Formula {
         (ForAll { dom: dom1, scope: sc1, .. }, ForAll { dom: dom2, scope: sc2, .. }) =>
           dom1.cmp(ctx, lc, dom2, style).then_with(|| sc1.cmp(ctx, lc, sc2, style)),
         #[allow(clippy::explicit_auto_deref)]
-        (FlexAnd { orig: orig1, .. }, FlexAnd { orig: orig2, .. }) =>
-          Formula::cmp_list(ctx, lc, &**orig1, &**orig2, style),
+        (FlexAnd { terms: t1, scope: sc1 }, FlexAnd { terms: t2, scope: sc2 }) =>
+          Term::cmp_list(ctx, lc, &**t1, &**t2, style).then_with(|| sc1.cmp(ctx, lc, sc2, style)),
         _ => unreachable!(),
       }
     })
@@ -775,8 +791,8 @@ trait Equate {
       (ForAll { dom: dom1, scope: sc1, .. }, ForAll { dom: dom2, scope: sc2, .. }) =>
         self.eq_forall(g, lc, dom1, dom2, sc1, sc2),
       #[allow(clippy::explicit_auto_deref)]
-      (FlexAnd { orig: orig1, .. }, FlexAnd { orig: orig2, .. }) =>
-        self.eq_formulas(g, lc, &**orig1, &**orig2),
+      (FlexAnd { terms: t1, scope: sc1 }, FlexAnd { terms: t2, scope: sc2 }) =>
+        self.eq_terms(g, lc, &**t1, &**t2) && self.eq_formula(g, lc, sc1, sc2),
       _ => false,
     }
   }
@@ -830,7 +846,8 @@ macro_rules! mk_visit {
   ($visit:ident$(, $mutbl:tt)?) => {
     pub trait $visit {
       #[inline] fn abort(&self) -> bool { false }
-      fn push_bound(&mut self, _ty: &$($mutbl)? Type) {}
+      /// This is called with `None` only for FlexAnd binders, which use type `g.nat`
+      fn push_bound(&mut self, _ty: Option<&$($mutbl)? Type>) {}
       fn pop_bound(&mut self, _n: u32) {}
 
       fn super_visit_term(&mut self, tm: &$($mutbl)? Term) {
@@ -857,7 +874,7 @@ macro_rules! mk_visit {
           Term::Fraenkel { args, scope, compr } => {
             for ty in &$($mutbl)? **args {
               self.visit_type(ty);
-              self.push_bound(ty);
+              self.push_bound(Some(ty));
             }
             self.visit_term(scope);
             self.visit_formula(compr);
@@ -905,14 +922,14 @@ macro_rules! mk_visit {
       }
 
       fn visit_flex_and(
-        &mut self, [orig_l, orig_r]: &$($mutbl)? [Formula; 2], [tm_l, tm_r]: &$($mutbl)? [Term; 2],
-        expansion: &$($mutbl)? Formula,
+        &mut self, [tm_l, tm_r]: &$($mutbl)? [Term; 2],
+        scope: &$($mutbl)? Formula,
       ) {
-        self.visit_formula(orig_l);
-        self.visit_formula(orig_r);
-        self.visit_formula(expansion);
         self.visit_term(tm_l);
         self.visit_term(tm_r);
+        self.push_bound(None);
+        self.visit_formula(scope);
+        self.pop_bound(1)
       }
 
       fn super_visit_formula(&mut self, f: &$($mutbl)? Formula) {
@@ -936,12 +953,11 @@ macro_rules! mk_visit {
             },
           Formula::ForAll { dom, scope, .. } => {
             self.visit_type(dom);
-            self.push_bound(dom);
+            self.push_bound(Some(dom));
             self.visit_formula(scope);
             self.pop_bound(1)
           }
-          Formula::FlexAnd { orig, terms, expansion } =>
-            self.visit_flex_and(orig, terms, expansion),
+          Formula::FlexAnd { terms, scope } => self.visit_flex_and(terms,scope),
           Formula::True => {}
         }
       }
@@ -1054,7 +1070,7 @@ impl<'a> Inst<'a> {
 }
 
 impl VisitMut for Inst<'_> {
-  fn push_bound(&mut self, _: &mut Type) { self.depth += 1 }
+  fn push_bound(&mut self, _: Option<&mut Type>) { self.depth += 1 }
   fn pop_bound(&mut self, n: u32) { self.depth -= n }
   fn visit_term(&mut self, tm: &mut Term) {
     match *tm {
@@ -2112,7 +2128,7 @@ impl<'a> InternConst<'a> {
 }
 
 impl VisitMut for InternConst<'_> {
-  fn push_bound(&mut self, _: &mut Type) { self.depth += 1 }
+  fn push_bound(&mut self, _: Option<&mut Type>) { self.depth += 1 }
   fn pop_bound(&mut self, n: u32) { self.depth -= n }
 
   /// CollectConstInTrm
@@ -2176,7 +2192,7 @@ impl VisitMut for InternConst<'_> {
       Term::Fraenkel { args, scope, compr } => {
         for ty in &mut **args {
           self.visit_type(ty);
-          self.push_bound(ty);
+          self.push_bound(Some(ty));
         }
         self.visit_term(scope);
         self.visit_formula(compr);
@@ -2199,12 +2215,8 @@ impl VisitMut for InternConst<'_> {
     attrs.reinsert_all(&self.g.constrs, |attr| self.visit_terms(&mut attr.args))
   }
 
-  fn visit_flex_and(
-    &mut self, [orig_l, orig_r]: &mut [Formula; 2], _: &mut [Term; 2], expansion: &mut Formula,
-  ) {
-    self.visit_formula(orig_l);
-    self.visit_formula(orig_r);
-    self.visit_formula(expansion);
+  fn visit_flex_and(&mut self, _: &mut [Term; 2], scope: &mut Formula) {
+    self.visit_formula(scope);
     // don't intern the endpoint terms
   }
 
@@ -2220,7 +2232,7 @@ impl LocalContext {
 }
 
 impl VisitMut for ExpandConsts<'_> {
-  fn push_bound(&mut self, _: &mut Type) { self.1 += 1 }
+  fn push_bound(&mut self, _: Option<&mut Type>) { self.1 += 1 }
   fn pop_bound(&mut self, n: u32) { self.1 -= n }
 
   /// ExpandInferConsts
@@ -2290,6 +2302,8 @@ pub struct Global {
   /// It is `set` until the NUMERALS requirement is read,
   /// and then it changes to `Element of omega`
   numeral_type: Type,
+  /// This is the type `natural set`, with an up to date upper cluster
+  nat: Option<Box<Type>>,
   /// AfterClusters
   rounded_up_clusters: bool,
 }

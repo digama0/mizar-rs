@@ -770,9 +770,8 @@ pub enum Formula {
   },
   /// ikFrmFlexConj
   FlexAnd {
-    orig: Box<[Formula; 2]>,
     terms: Box<[Term; 2]>,
-    expansion: Box<Formula>,
+    scope: Box<Formula>,
   },
   /// ikFrmVerum
   True,
