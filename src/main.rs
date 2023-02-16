@@ -7,11 +7,11 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::File;
-use std::io;
+use std::io::{self, Write};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32};
-use std::sync::Mutex;
+use std::sync::{Mutex, RwLock};
 
 mod analyze;
 mod ast;
@@ -612,6 +612,8 @@ impl Formula {
         #[allow(clippy::explicit_auto_deref)]
         (FlexAnd { terms: t1, scope: sc1 }, FlexAnd { terms: t2, scope: sc2 }) =>
           Term::cmp_list(ctx, lc, &**t1, &**t2, style).then_with(|| sc1.cmp(ctx, lc, sc2, style)),
+        (LegacyFlexAnd { orig: args1 }, LegacyFlexAnd { orig: args2 }) =>
+          Formula::cmp_list(ctx, lc, &**args1, &**args2, style),
         _ => unreachable!(),
       }
     })
@@ -793,6 +795,8 @@ trait Equate {
       #[allow(clippy::explicit_auto_deref)]
       (FlexAnd { terms: t1, scope: sc1 }, FlexAnd { terms: t2, scope: sc2 }) =>
         self.eq_terms(g, lc, &**t1, &**t2) && self.eq_formula(g, lc, sc1, sc2),
+      (LegacyFlexAnd { orig: args1 }, LegacyFlexAnd { orig: args2 }) =>
+        self.eq_formulas(g, lc, &**args1, &**args2),
       _ => false,
     }
   }
@@ -958,6 +962,10 @@ macro_rules! mk_visit {
             self.pop_bound(1)
           }
           Formula::FlexAnd { terms, scope } => self.visit_flex_and(terms,scope),
+          Formula::LegacyFlexAnd { orig } =>
+            for f in &$($mutbl)? **orig {
+              self.visit_formula(f)
+            },
           Formula::True => {}
         }
       }
@@ -1090,13 +1098,16 @@ impl VisitMut for Inst<'_> {
   }
 }
 
-struct Inst0<'a>(&'a Term);
+struct Inst0<'a>(u32, &'a Term);
 impl VisitMut for Inst0<'_> {
   /// ReplacePlaceHolderByConjunctNumber
   fn visit_term(&mut self, tm: &mut Term) {
     match tm {
-      Term::Bound(BoundId(0)) => *tm = self.0.clone(),
-      Term::Bound(nr) => nr.0 -= 1,
+      Term::Bound(nr) => match nr.0.cmp(&self.0) {
+        Ordering::Less => {}
+        Ordering::Equal => *tm = self.1.clone(),
+        Ordering::Greater => nr.0 -= 1,
+      },
       _ => self.super_visit_term(tm),
     }
   }
@@ -2215,11 +2226,6 @@ impl VisitMut for InternConst<'_> {
     attrs.reinsert_all(&self.g.constrs, |attr| self.visit_terms(&mut attr.args))
   }
 
-  fn visit_flex_and(&mut self, _: &mut [Term; 2], scope: &mut Formula) {
-    self.visit_formula(scope);
-    // don't intern the endpoint terms
-  }
-
   // locus types are not interned
   fn visit_push_locus_tys(&mut self, _: &mut [Type]) {}
 }
@@ -2589,6 +2595,7 @@ fn print_stats_and_exit() {
   let mut g = STATS.lock().unwrap();
   let mut vec: Vec<_> = g.get_or_insert_with(HashMap::new).iter().collect();
   vec.sort();
+  print!("{:w$}\r", "", w = PARALLELISM * 11); // clear line
   for (s, i) in vec {
     println!("{s}: {i}");
   }
@@ -2614,6 +2621,12 @@ const DUMP_FORMATTER: bool = false;
 const ENABLE_ANALYZER: bool = true;
 const ENABLE_CHECKER: bool = true;
 
+//// Unsound flags ////
+// This flag is unsound but needed to check MML right now
+const LEGACY_FLEX_HANDLING: bool = true;
+// This is a Mizar bug which is required to check aofa_l00 (the proof should be patched)
+const FLEX_EXPANSION_BUG: bool = true;
+
 const FIRST_FILE: usize = 0;
 const ONE_FILE: bool = false;
 const PANIC_ON_FAIL: bool = DEBUG;
@@ -2626,23 +2639,50 @@ const PARALLELISM: usize = if DEBUG || ONE_FILE { 1 } else { 7 };
 fn main() {
   ctrlc::set_handler(print_stats_and_exit).expect("Error setting Ctrl-C handler");
   // set_verbose(true);
-  // let path = MizPath(Article::from_bytes(b"TEST"), format!("../test/text/test").into());
+  // let path = MizPath(Article::from_bytes(b"TEST"), "../test/text/test".into());
   // path.with_reader(|v| v.run_checker(&path));
   // print_stats_and_exit();
   let first_file = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(FIRST_FILE);
   let file = std::fs::read_to_string("../mizshare/mml.lar").unwrap();
   let jobs = &Mutex::new(file.lines().enumerate().skip(first_file).collect_vec().into_iter());
+  let running = &std::array::from_fn::<_, PARALLELISM, _>(|_| RwLock::new(None));
+  let refresh_status_line = |mut msg: String| {
+    use std::fmt::Write;
+    for j in running {
+      let art = *j.read().unwrap();
+      match art {
+        None => write!(msg, "{:8} | ", "").unwrap(),
+        Some(art) => write!(msg, "{art:8} | ").unwrap(),
+      }
+    }
+    msg.push('\r');
+    let mut stdout = std::io::stdout().lock();
+    stdout.write_all(msg.as_bytes()).unwrap();
+    stdout.flush().unwrap();
+  };
   std::thread::scope(|s| {
-    for _ in 0..PARALLELISM {
+    for thread in running {
       s.spawn(move || {
         while let Some((i, s)) = {
           let mut lock = jobs.lock().unwrap();
           lock.next()
         } {
-          println!("{i}: {s}");
           let path = MizPath::new(s);
-          // path.with_reader(|v| v.run_checker(&path));
-          path.with_reader(|v| v.run_analyzer(&path));
+          *thread.write().unwrap() = Some(path.0);
+          refresh_status_line(format!("{:w$}\r{i}: {s}\n", "", w = PARALLELISM * 11));
+          if let Err(_payload) = std::panic::catch_unwind(|| {
+            if ENABLE_ANALYZER {
+              path.with_reader(|v| v.run_analyzer(&path));
+            } else if ENABLE_CHECKER {
+              path.with_reader(|v| v.run_checker(&path));
+            }
+          }) {
+            eprintln!("error: {s} panicked");
+            if PANIC_ON_FAIL {
+              std::process::abort()
+            }
+          }
+
           // let items = path.open_wsx().unwrap().parse_items();
           // println!("parsed {s}, {} wsx items", items.len());
           // path.open_msx().unwrap().parse_items();
@@ -2658,6 +2698,8 @@ fn main() {
             break
           }
         }
+        *thread.write().unwrap() = None;
+        refresh_status_line(String::new());
       });
     }
   });

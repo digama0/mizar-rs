@@ -526,6 +526,9 @@ impl<V, T: Visitable<V>> Visitable<V> for Box<T> {
 impl<V, T: Visitable<V>> Visitable<V> for Box<[T]> {
   fn visit(&mut self, v: &mut V) { self.iter_mut().for_each(|t| t.visit(v)) }
 }
+impl<V, T: Visitable<V>, const N: usize> Visitable<V> for [T; N] {
+  fn visit(&mut self, v: &mut V) { self.iter_mut().for_each(|t| t.visit(v)) }
+}
 impl<V, T: Visitable<V>> Visitable<V> for Option<T> {
   fn visit(&mut self, v: &mut V) { self.iter_mut().for_each(|t| t.visit(v)) }
 }
@@ -773,6 +776,9 @@ pub enum Formula {
     terms: Box<[Term; 2]>,
     scope: Box<Formula>,
   },
+  LegacyFlexAnd {
+    orig: Box<[Formula; 2]>,
+  },
   /// ikFrmVerum
   True,
 }
@@ -796,7 +802,7 @@ impl Formula {
       Formula::Neg { .. } => 170,
       Formula::And { .. } => b'&',
       Formula::ForAll { .. } => 157,
-      Formula::FlexAnd { .. } => b'b',
+      Formula::FlexAnd { .. } | Formula::LegacyFlexAnd { .. } => b'b',
       Formula::True => b'%',
       // Formula::Thesis => b'$',
     }

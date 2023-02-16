@@ -105,6 +105,7 @@ impl Formula {
       Formula::Neg { f } => f.is_positive(!pos),
       Formula::And { args } => args.iter().all(|f| f.is_positive(pos)),
       Formula::ForAll { scope, .. } | Formula::FlexAnd { scope, .. } => scope.is_positive(pos),
+      Formula::LegacyFlexAnd { orig } => orig.iter().all(|f| f.is_positive(pos)),
       _ => pos,
     }
   }
@@ -490,12 +491,20 @@ impl<'a> Pretty<'a> {
       }
       (pos, Formula::FlexAnd { terms, scope }) => {
         let doc = self
-          .text(format!("{}[b{depth}=", if pos { "⋀" } else { "⋁" }))
+          .text(format!("{} [b{depth}=", if pos { "⋀" } else { "⋁" }))
           .append(self.term(false, &terms[0], depth, lift))
           .append(" to ")
           .append(self.term(false, &terms[1], depth, lift))
           .append("]")
           .append(self.line().append(self.formula(false, pos, scope, depth + 1, lift)).nest(2));
+        self.parens_if(prec, doc.group())
+      }
+      (pos, Formula::LegacyFlexAnd { orig }) => {
+        let doc = self
+          .formula(false, pos, &orig[0], depth, lift)
+          .append(if pos { " ∧ ... ∧" } else { " ∨ ... ∨" })
+          .append(self.line())
+          .append(self.formula(false, pos, &orig[1], depth, lift));
         self.parens_if(prec, doc.group())
       }
       (pos, Formula::True) => self.as_string(pos),

@@ -3,7 +3,7 @@ use crate::types::*;
 use crate::unify::Unifier;
 use crate::util::RetainMutFrom;
 use crate::{
-  set_verbose, stat, CheckBound, Equate, ExpandPrivFunc, FixedVar, Global, Inst, Inst0,
+  set_verbose, stat, Assignment, CheckBound, Equate, ExpandPrivFunc, FixedVar, Global, Inst, Inst0,
   InternConst, LocalContext, OnVarMut, Visit, VisitMut,
 };
 use itertools::Itertools;
@@ -50,6 +50,9 @@ impl<'a> Checker<'a> {
         }
         let mut f = f.clone();
         Expand { g: self.g, lc: self.lc, expansions: self.expansions }.expand(&mut f, true);
+        if crate::LEGACY_FLEX_HANDLING {
+          ExpandLegacyFlex { depth: 0 }.visit_formula(&mut f);
+        }
         // vprintln!("expand: {f:?}");
         f.distribute_quantifiers(&self.g.constrs, 0);
         // vprintln!("distributed: {f:?}");
@@ -74,6 +77,7 @@ impl<'a> Checker<'a> {
     self.process_is(&mut atoms, &mut normal_form).unwrap();
     // vprintln!("process_is {} @ {:?}:{:?}:\n  {normal_form:?}", self.idx, self.article, self.pos);
 
+    let mut err = false;
     for (i, f) in normal_form.into_iter().enumerate() {
       if crate::CHECKER_CONJUNCTS {
         eprintln!(
@@ -89,7 +93,6 @@ impl<'a> Checker<'a> {
       })();
       // assert!(sat.is_err(), "failed to justify");
       if sat.is_err() {
-        stat("success");
         if crate::CHECKER_RESULT {
           eprintln!(
             "proved {}.{i} @ {:?}:{:?}! {:#?}",
@@ -100,6 +103,7 @@ impl<'a> Checker<'a> {
           );
         }
       } else {
+        err = true;
         stat("failure");
         if crate::CHECKER_RESULT {
           eprintln!(
@@ -114,7 +118,11 @@ impl<'a> Checker<'a> {
         if crate::PANIC_ON_FAIL {
           panic!("failed to justify {}.{i} @ {:?}:{:?}", self.idx, self.article, self.pos);
         }
+        break
       }
+    }
+    if !err {
+      stat("success");
     }
     self.lc.fixed_var.0.truncate(fixed_var);
     self.lc.infer_const.get_mut().truncate(infer_const);
@@ -277,25 +285,36 @@ impl Expand<'_> {
           let nat = self.g.nat.as_ref().unwrap();
           let le = self.g.reqs.less_or_equal().unwrap();
           let mut epf = ExpandPrivFunc(&self.g.constrs);
-          let mut f1 = Formula::FlexAnd { terms: terms.clone(), scope: scope.clone() };
-          epf.visit_formula(&mut f1);
-          let f2 = {
-            let Formula::FlexAnd { terms, scope } = &f1 else { unreachable!() };
-            self.g.expand_flex_and(nat, le, (**terms).clone(), scope.clone(), 0)
-          };
           *f = Formula::mk_and_with(|conjs| {
-            conjs.push(f1.maybe_neg(pos));
-            f2.maybe_neg(pos).append_conjuncts_to(conjs);
+            {
+              let terms2 = (*terms).visit_cloned(&mut epf);
+              let scope2 = (*scope).visit_cloned(&mut epf);
+              let scope3 = if crate::FLEX_EXPANSION_BUG {
+                let mut f = (*scope2).clone().mk_neg();
+                if f.conjuncts().len() > 1 {
+                  stat("flex expansion bug");
+                  f = f.conjuncts()[0].clone()
+                }
+                Box::new(f.mk_neg())
+              } else {
+                scope2.clone()
+              };
+              let f2 = self.g.expand_flex_and(nat, le, (*terms2).clone(), scope3, 0);
+              let f1 = Formula::FlexAnd { terms: terms2, scope: scope2 };
+              conjs.push(f1.maybe_neg(pos));
+              f2.maybe_neg(pos).append_conjuncts_to(conjs);
+            }
             if pos {
-              self.expand_flex(terms, scope, conjs, pos);
+              self.expand_flex(terms, scope, conjs);
             } else {
-              let f = Formula::mk_and_with(|conjs2| self.expand_flex(terms, scope, conjs2, pos));
+              let f = Formula::mk_and_with(|conjs2| self.expand_flex(terms, scope, conjs2));
               f.mk_neg().append_conjuncts_to(conjs);
             }
           })
-          .maybe_neg(pos)
+          .maybe_neg(pos);
         },
-      Formula::SchPred { .. }
+      Formula::LegacyFlexAnd { .. }
+      | Formula::SchPred { .. }
       | Formula::PrivPred { .. }
       | Formula::Is { .. }
       | Formula::ForAll { .. }
@@ -304,26 +323,36 @@ impl Expand<'_> {
   }
 
   /// ExpandFlex
-  fn expand_flex(
-    &mut self, terms: &mut Box<[Term; 2]>, scope: &Formula, conjs: &mut Vec<Formula>, pos: bool,
-  ) {
+  fn expand_flex(&mut self, terms: &mut Box<[Term; 2]>, scope: &Formula, conjs: &mut Vec<Formula>) {
+    fn get_number<'a>(
+      g: &Global, ic: &'a IdxVec<InferId, Assignment>, mut tm: &'a Term, zero: &mut Option<Term>,
+    ) -> Option<u32> {
+      loop {
+        match tm {
+          Term::Functor { nr, args }
+            if Some(Term::adjust(*nr, args, &g.constrs).0) == g.reqs.zero_number() =>
+          {
+            *zero = Some(tm.clone());
+            return Some(0)
+          }
+          &Term::Numeral(nr) => return Some(nr),
+          &Term::Infer(nr) => {
+            tm = &ic[nr].def;
+            continue
+          }
+          _ => return None,
+        }
+      }
+    }
     assert!(self.lc.bound_var.is_empty());
     let mut zero = None;
-    let left = match &terms[0] {
-      Term::Functor { nr, args }
-        if Some(Term::adjust(*nr, args, &self.g.constrs).0) == self.g.reqs.zero_number() =>
-      {
-        zero = Some(terms[0].clone());
-        0
-      }
-      Term::Numeral(nr) => *nr,
-      _ => return,
-    };
-    let Term::Numeral(right) = terms[1] else { return };
+    let ic = self.lc.infer_const.borrow();
+    let Some(left) = get_number(self.g, &ic, &terms[0], &mut zero) else { return };
+    let Some(right) = get_number(self.g, &ic, &terms[1], &mut zero) else { return };
     if right.saturating_sub(left) <= 100 {
       for i in left..=right {
-        let i = if i == 0 { zero.clone().unwrap() } else { Term::Numeral(i) };
-        scope.visit_cloned(&mut Inst0(&i)).maybe_neg(pos).append_conjuncts_to(conjs);
+        let i = if i == 0 { zero.take().unwrap() } else { Term::Numeral(i) };
+        scope.visit_cloned(&mut Inst0(0, &i)).append_conjuncts_to(conjs);
       }
     }
   }
@@ -342,6 +371,22 @@ impl Expand<'_> {
       expansions.push(result)
     }
     expansions
+  }
+}
+
+struct ExpandLegacyFlex {
+  depth: u32,
+}
+impl VisitMut for ExpandLegacyFlex {
+  fn push_bound(&mut self, _: Option<&mut Type>) { self.depth += 1 }
+  fn pop_bound(&mut self, n: u32) { self.depth -= n }
+  fn visit_formula(&mut self, f: &mut Formula) {
+    if let Formula::FlexAnd { terms: terms2, scope: scope2 } = f {
+      let orig1 = (**scope2).visit_cloned(&mut Inst0(self.depth, &terms2[0]));
+      let orig2 = (**scope2).visit_cloned(&mut Inst0(self.depth, &terms2[1]));
+      *f = Formula::LegacyFlexAnd { orig: Box::new([orig1, orig2]) };
+    }
+    self.super_visit_formula(f)
   }
 }
 
@@ -386,7 +431,8 @@ impl Formula {
           *self = std::mem::take(value);
           continue
         }
-        Formula::SchPred { .. }
+        Formula::LegacyFlexAnd { .. }
+        | Formula::SchPred { .. }
         | Formula::Pred { .. }
         | Formula::Attr { .. }
         | Formula::Is { .. }
@@ -436,7 +482,8 @@ pub trait Open {
             *fmla = *f;
             continue
           },
-        Formula::SchPred { .. }
+        Formula::LegacyFlexAnd { .. }
+        | Formula::SchPred { .. }
         | Formula::Pred { .. }
         | Formula::Attr { .. }
         | Formula::PrivPred { .. }

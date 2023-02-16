@@ -97,11 +97,11 @@ impl<'a> Unifier<'a> {
         ec.supercluster = etm.supercluster;
       }
     }
-    if crate::UNIFY_HEADER {
+    if crate::UNIFY_HEADER && crate::verbose() {
       for (ec, etm) in u.eq_class.enum_iter() {
         vprintln!("e{ec:?} = {etm:?}");
       }
-      for (i, j) in &u.infer {
+      for (i, j) in u.infer.iter().sorted() {
         vprintln!("{:?} = e{j:#?}", Term::Infer(*i));
       }
       for (pos, ats) in u.bas.iter() {
@@ -401,7 +401,7 @@ impl Standardize<'_> {
           self.visit_term(term);
           self.visit_type(ty)
         }
-        Formula::FlexAnd { .. } | Formula::True => {}
+        Formula::LegacyFlexAnd { .. } | Formula::FlexAnd { .. } | Formula::True => {}
       }
       break
     }
@@ -1047,6 +1047,11 @@ impl Unify<'_> {
         self.depth -= 1;
         inst
       }
+      (Formula::LegacyFlexAnd { orig: t1 }, Formula::LegacyFlexAnd { orig: t2 }) => {
+        let mut inst = self.unify_formula(&t1[0], &t2[0])?;
+        inst.mk_and_then(|| self.unify_formula(&t1[1], &t2[1]))?;
+        inst
+      }
       _ => Dnf::FALSE,
     };
     // vprintln!("unify_formula {f1:?} <> {f2:?} -> {res:?}");
@@ -1204,6 +1209,7 @@ impl UnifyWithConst<'_> {
       (Formula::Neg { .. }, _)
       | (Formula::And { .. }, _)
       | (Formula::FlexAnd { .. }, _)
+      | (Formula::LegacyFlexAnd { .. }, _)
       | (Formula::True, _) => unreachable!(),
       _ => Ok(Dnf::FALSE),
     }

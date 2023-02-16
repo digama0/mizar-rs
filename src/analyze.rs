@@ -1270,7 +1270,7 @@ impl Analyzer<'_> {
     assert!(f.0, "not a forall");
     let Formula::ForAll { dom, scope } = &mut *f.1 else { panic!("not a forall") };
     let ty = term.get_type(&self.g, &self.lc, false);
-    Inst0(term).visit_formula(scope);
+    Inst0(0, term).visit_formula(scope);
     let ok = if !widenable {
       ().eq_type(&self.g, &self.lc, dom, &ty)
     } else if up {

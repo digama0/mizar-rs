@@ -372,7 +372,7 @@ impl Reader {
   /// Prepare
   pub fn run_checker(&mut self, path: &MizPath) {
     let r = path.read_xml().unwrap();
-    println!("parsed {:?}, {} items", path.0, r.len());
+    // println!("parsed {:?}, {} items", path.0, r.len());
     for (i, it) in r.iter().enumerate() {
       assert!(matches!(
         it,

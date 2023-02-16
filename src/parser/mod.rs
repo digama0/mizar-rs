@@ -1126,7 +1126,7 @@ impl MizReader<'_> {
           let Formula::ForAll { scope, .. } = self.parse_formula(buf).unwrap() else { panic!() };
           let scope = Formula::mk_and(scope.mk_neg().conjuncts().iter().skip(2).cloned().collect());
           self.end_tag(buf);
-          Elem::Formula(Formula::FlexAnd { terms, scope: Box::new(scope) })
+          Elem::Formula(Formula::FlexAnd { terms, scope: Box::new(scope.mk_neg()) })
         }
         b"Verum" => {
           self.end_tag(buf);
