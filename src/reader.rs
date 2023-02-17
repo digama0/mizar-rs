@@ -46,7 +46,7 @@ pub struct Reader {
   props: Vec<Formula>,
   labels: IdxVec<LabelId, Option<usize>>,
   pending_defs: Vec<PendingDef>,
-  items: usize,
+  pub items: usize,
   inference_nr: usize,
 }
 
@@ -288,7 +288,7 @@ impl Reader {
   }
 
   pub fn push_prop(&mut self, label: Option<LabelId>, prop: Formula) {
-    // eprintln!("push_prop {:?}", label);
+    // eprintln!("push_prop {label:?}: {prop:?}");
     if let Some(label) = label {
       assert_eq!(label, self.labels.push(Some(self.props.len())));
     }
@@ -430,7 +430,6 @@ impl Reader {
           Item::Theorem { prop, .. } => eprintln!("Theorem @ {:?}", prop.pos),
           Item::DefTheorem { kind, prop } => eprintln!("DefTheorem {kind:?} @ {:?}", prop.pos),
           Item::Reservation { .. } => eprintln!("Reservation"),
-          Item::Section => eprintln!("Section"),
           Item::Canceled(_) => eprintln!("Canceled"),
           Item::Definition(it) => eprintln!("Definition @ {:?}", it.pos),
           Item::DefStruct(it) => eprintln!("DefStruct @ {:?}", it.pos),
@@ -443,7 +442,7 @@ impl Reader {
     self.items += 1;
     match it {
       // reservations not handled by checker
-      Item::Reservation { .. } | Item::Section => {}
+      Item::Reservation { .. } => {}
       Item::Let(vars) => self.read_fixed_vars(vars),
       Item::Given(GivenItem { prop, fixed, intro }) => {
         self.read_proposition(prop);
@@ -453,7 +452,7 @@ impl Reader {
       Item::Assume(intro) => intro.iter().for_each(|prop| self.read_proposition(prop)),
       Item::Take(_) => {}
       Item::TakeAsVar(ty, tm) => {
-        let fv = FixedVar { ty: self.intern(ty), def: Some(Box::new(self.intern(tm))) };
+        let fv = FixedVar { ty: self.intern(ty), def: Some((Box::new(self.intern(tm)), false)) };
         self.lc.fixed_var.push(fv);
       }
       Item::PerCases(PerCases { label, block_thesis, cases, prop, just, .. }) => {
@@ -471,23 +470,23 @@ impl Reader {
               }
             });
           }
-          this.read_just_prop(prop, just)
+          this.read_just_prop(prop, just, false)
         });
         self.push_prop(*label, self.intern(block_thesis))
       }
       Item::AuxiliaryItem(AuxiliaryItem::Statement(it)) | Item::Thus(it) => self.read_stmt(it),
       Item::AuxiliaryItem(AuxiliaryItem::Consider { prop, just, fixed, intro }) => {
-        self.read_just_prop(prop, just);
+        self.read_just_prop(prop, just, false);
         self.read_fixed_vars(fixed);
         intro.iter().for_each(|prop| self.read_proposition(prop));
       }
       Item::AuxiliaryItem(AuxiliaryItem::Set { ty, .. }) => self.push_fixed_var(ty),
       Item::AuxiliaryItem(AuxiliaryItem::Reconsider { terms, prop, just }) => {
         for (ty, tm) in terms {
-          let fv = FixedVar { ty: self.intern(ty), def: Some(Box::new(self.intern(tm))) };
+          let fv = FixedVar { ty: self.intern(ty), def: Some((Box::new(self.intern(tm)), false)) };
           self.lc.fixed_var.push(fv);
         }
-        self.read_just_prop(prop, just);
+        self.read_just_prop(prop, just, false);
       }
       Item::AuxiliaryItem(AuxiliaryItem::DefFunc { args, ty, value }) => {
         self.lc.priv_func.push(FuncDef {
@@ -507,16 +506,19 @@ impl Reader {
           self.read_corr_conds(conds, corr);
           self.reductions.push(kind.clone())
         }
-        Registration::Property { prop, just, .. } => self.read_just_prop(prop, just),
+        Registration::Property { prop, just, .. } => self.read_just_prop(prop, just, false),
       },
       Item::Scheme(sch) => self.read_scheme(sch),
-      Item::Theorem { prop, just } => self.read_just_prop(prop, just),
-      Item::DefTheorem { prop, .. } => self.read_proposition(prop),
+      Item::Theorem { prop, just } => self.read_just_prop(prop, just, true),
+      Item::DefTheorem { prop, .. } => {
+        self.items -= 1; // this is not a real item
+        self.read_proposition(prop)
+      }
       Item::Canceled(_) => {}
       Item::Definition(Definition { conds, corr, props, constr, patts, .. }) => {
         self.read_corr_conds(conds, corr);
         for JustifiedProperty { prop, just, .. } in props {
-          self.read_just_prop(prop, just)
+          self.read_just_prop(prop, just, false)
         }
         if let Some(constr) = constr {
           let id = self.g.constrs.push(self.intern(constr));
@@ -533,7 +535,10 @@ impl Reader {
         self.read_corr_conds(conds, corr);
         self.lc.formatter.extend(&self.g.constrs, patts)
       }
-      Item::Definiens(df) => self.read_definiens(df),
+      Item::Definiens(df) => {
+        self.items -= 1; // this is not a real item
+        self.read_definiens(df)
+      }
       Item::Block { kind, label, items, .. } => {
         let check = matches!(kind, BlockKind::Definition | BlockKind::Registration);
         self.scope(*label, check, |this| {
@@ -625,15 +630,17 @@ impl Reader {
     }
   }
 
-  fn read_just_prop(&mut self, prop: &Proposition, just: &Justification) {
+  fn read_just_prop(&mut self, prop: &Proposition, just: &Justification, quotable: bool) {
     let f = self.intern(&prop.f);
     self.read_justification(&f, just);
-    self.push_prop(prop.label, f);
+    if quotable {
+      self.push_prop(prop.label, f);
+    }
   }
 
   fn read_stmt(&mut self, it: &Statement) {
     match it {
-      Statement::Proposition { prop, just } => self.read_just_prop(prop, just),
+      Statement::Proposition { prop, just } => self.read_just_prop(prop, just, true),
       Statement::IterEquality { label, lhs, steps, .. } => {
         let mut lhs = self.intern(lhs);
         let llhs = lhs.clone();
@@ -656,9 +663,9 @@ impl Reader {
   }
 
   fn read_corr_conds(&mut self, conds: &[CorrCond], corr: &Option<Correctness>) {
-    conds.iter().for_each(|c| self.read_just_prop(&c.prop, &c.just));
+    conds.iter().for_each(|c| self.read_just_prop(&c.prop, &c.just, false));
     if let Some(c) = corr {
-      self.read_just_prop(&c.prop, &c.just)
+      self.read_just_prop(&c.prop, &c.just, false)
     }
   }
 

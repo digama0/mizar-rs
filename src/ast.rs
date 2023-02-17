@@ -1,15 +1,23 @@
 use crate::mk_id;
 use crate::types::{
-  AttrSymId, BlockKind, CorrCondKind, FormatAggr, FormatAttr, FormatFunc, FormatMode, FormatPred,
-  FormatStruct, FuncSymId, LabelId, LeftBrkSymId, LocusId, ModeSymId, Position, PredSymId,
-  PropertyKind, Reference, RightBrkSymId, SchId, SchRef, SelSymId, StructSymId,
+  AttrSymId, BlockKind, ConstId, CorrCondKind, FormatAggr, FormatAttr, FormatFunc, FormatMode,
+  FormatPred, FormatStruct, FuncSymId, LabelId, LeftBrkSymId, LocusId, ModeSymId, Position,
+  PredSymId, PropertyKind, Reference, RightBrkSymId, SchId, SchRef, SelSymId, StructSymId,
 };
 use enum_map::Enum;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Variable {
   pub pos: Position,
-  pub id: (u32, String),
+  /// 'idnr' attribute, LocusObj.nVarId, VariableObj.nIdent
+  pub id: u32,
+  /// 'varnr' attribute, MSLocusObj.nVarNr, MSVariableObj.nVarNr
+  pub var: Option<ConstId>,
+  pub spelling: String,
+}
+
+impl Variable {
+  pub fn var(&self) -> ConstId { self.var.unwrap() }
 }
 
 #[derive(Copy, Clone, Debug, Enum)]
@@ -41,18 +49,16 @@ pub enum Term {
   },
   Simple {
     pos: Position,
-    sym: (u32, String),
-    origin: VarKind,
     kind: VarKind,
-    serial: u32,
     var: u32,
+    spelling: String,
+    origin: VarKind,
   },
   PrivFunc {
     pos: Position,
-    sym: (u32, String),
     kind: VarKind,
-    serial: u32,
     var: u32,
+    spelling: String,
     args: Vec<Term>,
   },
   Infix {
@@ -183,7 +189,7 @@ pub enum Formula {
   Binop { kind: FormulaBinop, pos: Position, f1: Box<Formula>, f2: Box<Formula> },
   Pred { pos: Position, pred: Pred },
   ChainPred { pos: Position, first: Pred, rest: Vec<PredRhs> },
-  PrivPred { pos: Position, sym: (u32, String), kind: VarKind, args: Vec<Term> },
+  PrivPred { pos: Position, kind: VarKind, var: u32, spelling: String, args: Vec<Term> },
   Attr { pos: Position, term: Box<Term>, attrs: Vec<Attr> },
   Is { pos: Position, term: Box<Term>, ty: Box<Type> },
   Binder { kind: FormulaBinder, pos: Position, var: Box<BinderGroup>, scope: Box<Formula> },
@@ -610,12 +616,8 @@ pub enum ItemKind {
     var: Box<Variable>,
     value: Box<Term>,
   },
-  /// itGeneralization
+  /// itGeneralization, itLociDeclaration
   Let {
-    var: Box<BinderGroup>,
-  },
-  /// itLociDeclaration
-  LetLocus {
     var: Box<BinderGroup>,
   },
   /// itExistentialAssumption

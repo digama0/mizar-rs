@@ -264,11 +264,6 @@ impl ArticleParser<'_> {
   fn parse_elem(&mut self) -> ArticleElem {
     if let Event::Start(e) = self.r.read_event(&mut self.buf) {
       match e.local_name() {
-        b"Section" => {
-          // note: unattested in MML
-          self.r.end_tag(&mut self.buf);
-          ArticleElem::Item(Item::Section)
-        }
         b"DefinitionBlock" => {
           let (start, label) = self.r.get_pos_and_label(&e);
           let mut items = vec![];

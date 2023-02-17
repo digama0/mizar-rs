@@ -2153,7 +2153,7 @@ impl VisitMut for InternConst<'_> {
       Term::Locus(_) | Term::Bound(_) | Term::FreeVar(_) => self.only_constants = false,
       &mut Term::Constant(nr) => {
         let mut eq = BTreeSet::new();
-        if let Some(fv) = &self.lc.fixed_var[nr].def {
+        if let Some((ref fv, _)) = self.lc.fixed_var[nr].def {
           let mut fv = (**fv).visit_cloned(&mut ExpandPrivFunc(&self.g.constrs));
           self.visit_term(&mut fv);
           if self.only_constants {
@@ -2271,9 +2271,8 @@ impl VisitMut for Renumber {
 struct FixedVar {
   // ident: u32,
   ty: Type,
-  // exp: bool,
-  def: Option<Box<Term>>,
-  // skel_const: u32,
+  // if true, it will unfold eagerly
+  def: Option<(Box<Term>, bool)>,
 }
 
 #[derive(Debug)]
@@ -2445,15 +2444,20 @@ impl LocalContext {
     renumber
   }
 
-  fn mk_forall(&mut self, range: Range<usize>, pop: bool, f: &mut Formula) {
+  fn mk_forall(&mut self, range: Range<usize>, istart: u32, pop: bool, f: &mut Formula) {
     if pop {
       self.fixed_var.0.truncate(range.end);
     }
-    let mut abst = Abstract { base: range.start as u32, depth: (range.end - range.start) as u32 };
+    let mut abst = Abstract {
+      base: range.start as u32,
+      lift: (range.end - range.start) as u32,
+      ic: self.infer_const.get_mut(),
+      istart,
+    };
     abst.visit_formula(f);
     let mut process = |mut ty| {
-      abst.depth -= 1;
-      if abst.depth != 0 {
+      abst.lift -= 1;
+      if abst.lift != 0 {
         abst.visit_type(&mut ty);
       }
       *f = Formula::forall(ty, std::mem::take(f));
@@ -2466,17 +2470,28 @@ impl LocalContext {
   }
 }
 
-struct Abstract {
+#[derive(Debug)]
+struct Abstract<'a> {
   base: u32,
-  depth: u32,
+  lift: u32,
+  ic: &'a IdxVec<InferId, Assignment>,
+  istart: u32,
 }
 
-impl VisitMut for Abstract {
+impl VisitMut for Abstract<'_> {
   fn visit_term(&mut self, tm: &mut Term) {
-    match tm {
-      Term::Bound(nr) => nr.0 += self.depth,
-      Term::Constant(nr) if nr.0 >= self.base => *tm = Term::Bound(BoundId(nr.0 - self.base)),
-      _ => self.super_visit_term(tm),
+    loop {
+      match tm {
+        Term::Bound(nr) => nr.0 += self.lift,
+        Term::Constant(nr) if nr.0 >= self.base => *tm = Term::Bound(BoundId(nr.0 - self.base)),
+        Term::Infer(nr) =>
+          if nr.0 >= self.istart {
+            *tm = self.ic[*nr].def.clone();
+            continue
+          },
+        _ => self.super_visit_term(tm),
+      }
+      return
     }
   }
 }
@@ -2605,7 +2620,7 @@ fn print_stats_and_exit() {
 const DEBUG: bool = cfg!(debug_assertions);
 const TOP_ITEM_HEADER: bool = false;
 const ALWAYS_VERBOSE_ITEM: bool = false;
-const ITEM_HEADER: bool = false;
+const ITEM_HEADER: bool = DEBUG;
 const CHECKER_INPUTS: bool = DEBUG;
 const CHECKER_HEADER: bool = DEBUG;
 const CHECKER_CONJUNCTS: bool = false;

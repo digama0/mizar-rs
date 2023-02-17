@@ -1907,7 +1907,6 @@ pub enum Item {
     ids: Vec<u32>,
     ty: Box<Type>,
   },
-  Section,
   Canceled(CancelKind),
   Definition(Definition),
   DefStruct(DefStruct),
