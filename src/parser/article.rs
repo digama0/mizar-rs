@@ -149,7 +149,7 @@ impl ArticleParser<'_> {
         }
       }
       let kind = match kind {
-        0 => ReferenceKind::Priv(label.unwrap()),
+        0 => ReferenceKind::Priv(label),
         b'T' => ReferenceKind::Thm((ArticleId(article_nr), ThmId(nr))),
         b'D' => ReferenceKind::Def((ArticleId(article_nr), DefId(nr))),
         _ => panic!("unexpected inference kind"),

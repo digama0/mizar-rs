@@ -23,7 +23,7 @@ pub struct Reader {
   pub g: Global,
   pub lc: LocalContext,
   pub libs: Libraries,
-  article: Article,
+  pub article: Article,
   treat_thm_as_axiom: bool,
   /// gFormatsColl
   pub formats: BTreeMap<Format, FormatId>,
@@ -312,6 +312,7 @@ impl Reader {
     // eprintln!("new block {:?}, labels = {labels}", label);
     if push_label {
       self.labels.push(None);
+      // eprintln!("push_prop open {l:?}");
     }
     let fixed_var = self.lc.fixed_var.len();
     let props = self.props.len();
@@ -338,6 +339,7 @@ impl Reader {
     // );
     self.lc.fixed_var.0.truncate(sc.fixed_var);
     self.props.truncate(sc.props);
+    // eprintln!("push_prop reset {} / {}", sc.props, sc.labels);
     self.labels.0.truncate(sc.labels);
     self.lc.priv_func.0.truncate(sc.priv_funcs);
     let mut renumber =
@@ -578,31 +580,36 @@ impl Reader {
   }
 
   pub fn read_definiens(&mut self, df: &Definiens) {
-    self.equalities.push(df.clone());
-    self.expansions.push(df.clone());
-    if let Some(func) = df.equals_expansion() {
-      let f = func.pattern.0;
-      if !func.expansion.has_func(&self.g.constrs, f) {
-        let mut i = 0;
-        loop {
-          let mut ic = self.lc.infer_const.borrow_mut();
-          let Some(asgn) = ic.0.get_mut(i) else { break };
-          if let Term::Functor { nr, args } = &asgn.def {
-            let (nr, args) = Term::adjust(*nr, args, &self.g.constrs);
-            if f == nr {
-              let args = &args.to_owned();
-              drop(ic);
-              if let Some(mut t) = func.expand_if_equal(&self.g, &self.lc, args, 0) {
-                t.visit(&mut self.intern_const());
-                let Term::Infer(nr) = t else { unreachable!() };
-                ic = self.lc.infer_const.borrow_mut();
-                ic.0[i].eq_const.insert(nr);
+    if ENABLE_ANALYZER {
+      self.definitions.push(df.clone());
+    }
+    if ENABLE_CHECKER {
+      self.equalities.push(df.clone());
+      self.expansions.push(df.clone());
+      if let Some(func) = df.equals_expansion() {
+        let f = func.pattern.0;
+        if !func.expansion.has_func(&self.g.constrs, f) {
+          let mut i = 0;
+          loop {
+            let mut ic = self.lc.infer_const.borrow_mut();
+            let Some(asgn) = ic.0.get_mut(i) else { break };
+            if let Term::Functor { nr, args } = &asgn.def {
+              let (nr, args) = Term::adjust(*nr, args, &self.g.constrs);
+              if f == nr {
+                let args = &args.to_owned();
+                drop(ic);
+                if let Some(mut t) = func.expand_if_equal(&self.g, &self.lc, args, 0) {
+                  t.visit(&mut self.intern_const());
+                  let Term::Infer(nr) = t else { unreachable!() };
+                  ic = self.lc.infer_const.borrow_mut();
+                  ic.0[i].eq_const.insert(nr);
+                }
               }
             }
+            i += 1;
           }
-          i += 1;
+          self.equals.entry(df.constr).or_default().push(func);
         }
-        self.equals.entry(df.constr).or_default().push(func);
       }
     }
   }
@@ -800,7 +807,9 @@ impl Reader {
       return
     }
     let refs = it.refs.iter().map(|r| match r.kind {
-      ReferenceKind::Priv(lab) => &self.props[self.labels[lab].unwrap()],
+      // The label cannot be `None` because that only occurs in the spurious anonymous
+      // reference added in MSM, which we strip
+      ReferenceKind::Priv(lab) => &self.props[self.labels[lab.unwrap()].unwrap()],
       ReferenceKind::Thm(thm) => &self.libs.thm[&thm],
       ReferenceKind::Def(def) => &self.libs.def[&def],
     });

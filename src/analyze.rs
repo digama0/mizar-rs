@@ -134,17 +134,18 @@ impl Analyzer<'_> {
     }
     match &it.kind {
       ast::ItemKind::Section | ast::ItemKind::Pragma { .. } => {}
-      ast::ItemKind::Block { kind, items, .. } => {
+      ast::ItemKind::Block { end, kind, items } => {
         let mut br = BlockReader::new(*kind, &self.lc);
-        self.scope(None, false, false, |this| br.elab_proof(this, items));
+        self.scope(None, false, false, |this| br.elab_proof(this, items, *end));
         br.after_scope(self)
       }
       ast::ItemKind::SchemeBlock(it) => self.scope(None, false, false, |this| this.elab_scheme(it)),
       ast::ItemKind::Theorem { prop, just } => {
         let f = self.elab_intern_formula(&prop.f, true);
         Exportable.visit_formula(&f);
-        self.elab_justification(&f, just);
-        self.push_prop(prop.label.as_ref().map(|l| l.id.0), f);
+        let label = prop.label.as_ref().map(|l| l.id.0);
+        self.elab_justification(label, &f, just);
+        self.push_prop(label, f);
       }
       ast::ItemKind::Reservation(it) => {
         self.lc.term_cache.get_mut().open_scope();
@@ -192,7 +193,7 @@ impl Analyzer<'_> {
     }
     let prems = prems.iter().map(|prop| self.elab_proposition(prop, true)).collect::<Box<[_]>>();
     let mut thesis = self.elab_intern_formula(concl, true);
-    self.elab_proof(None, &thesis, items);
+    self.elab_proof(None, &thesis, items, *end);
     let mut primary = self.lc.sch_func_ty.0.drain(..).collect::<Box<[_]>>();
     let mut sch = Scheme { sch_funcs: primary, prems, thesis };
     self.lc.expand_consts(|c| sch.visit(c));
@@ -246,7 +247,7 @@ impl Analyzer<'_> {
             self.lc.fixed_var.push(FixedVar { ty: ty.clone(), def: Some((tm, false)) });
           }
         });
-        self.elab_justification(&f, just)
+        self.elab_justification(None, &f, just)
       }
       ast::ItemKind::Consider { vars, conds, just } => {
         let start = self.lc.fixed_var.len();
@@ -265,7 +266,7 @@ impl Analyzer<'_> {
         .mk_neg();
         let end = self.lc.fixed_var.len();
         self.lc.mk_forall(start..end, istart, false, &mut f);
-        self.elab_justification(&f.mk_neg(), just);
+        self.elab_justification(None, &f.mk_neg(), just);
         for (label, f) in to_push {
           self.push_prop(label, f);
         }
@@ -282,19 +283,20 @@ impl Analyzer<'_> {
     match stmt {
       ast::Statement::Proposition { prop, just } => {
         let f = self.elab_intern_formula(&prop.f, true);
-        self.elab_justification(&f, just);
-        self.push_prop(prop.label.as_ref().map(|l| l.id.0), f.clone());
+        let label = prop.label.as_ref().map(|l| l.id.0);
+        self.elab_justification(label, &f, just);
+        self.push_prop(label, f.clone());
         f
       }
       ast::Statement::IterEquality { prop, just, steps } => {
         if let Formula::Pred { nr, args } = self.elab_intern_formula(&prop.f, true) {
           if let (nr, [lhs, rhs]) = Formula::adjust_pred(nr, &args, &self.g.constrs) {
             if self.g.reqs.equals_to() == Some(nr) {
-              self.elab_justification(&self.g.reqs.mk_eq(lhs.clone(), rhs.clone()), just);
+              self.elab_justification(None, &self.g.reqs.mk_eq(lhs.clone(), rhs.clone()), just);
               let mut mid = rhs.clone();
               for ast::IterStep { rhs, just, .. } in steps {
                 let rhs = self.elab_intern_term(rhs);
-                self.elab_justification(&self.g.reqs.mk_eq(mid, rhs.clone()), just);
+                self.elab_justification(None, &self.g.reqs.mk_eq(mid, rhs.clone()), just);
                 mid = rhs;
               }
               let f = self.g.reqs.mk_eq(lhs.clone(), mid);
@@ -305,10 +307,10 @@ impl Analyzer<'_> {
         }
         panic!("not an equality")
       }
-      ast::Statement::Now { label, items, .. } => {
+      ast::Statement::Now { end, label, items } => {
         let label = label.as_ref().map(|l| l.id.0);
         let f = self.scope(label, false, true, |this| {
-          ReconstructThesis { stack: vec![] }.elab_proof(this, items);
+          ReconstructThesis { stack: vec![] }.elab_proof(this, items, *end);
           *this.thesis.take().unwrap()
         });
         self.push_prop(label, f.clone());
@@ -317,10 +319,12 @@ impl Analyzer<'_> {
     }
   }
 
-  fn elab_proof(&mut self, label: Option<LabelId>, thesis: &Formula, items: &[ast::Item]) {
+  fn elab_proof(
+    &mut self, label: Option<LabelId>, thesis: &Formula, items: &[ast::Item], end: Position,
+  ) {
     self.scope(label, false, false, |this| {
       this.thesis = Some(Box::new(thesis.clone()));
-      WithThesis.elab_proof(this, items)
+      WithThesis.elab_proof(this, items, end)
     })
   }
 
@@ -341,7 +345,9 @@ impl Analyzer<'_> {
     f
   }
 
-  fn elab_justification(&mut self, thesis: &Formula, just: &ast::Justification) {
+  fn elab_justification(
+    &mut self, label: Option<LabelId>, thesis: &Formula, just: &ast::Justification,
+  ) {
     match just {
       &ast::Justification::Inference { pos, ref kind, ref refs } => {
         let it = Inference {
@@ -354,7 +360,7 @@ impl Analyzer<'_> {
         };
         self.r.read_inference(thesis, &it)
       }
-      ast::Justification::Block { items, .. } => self.elab_proof(None, thesis, items),
+      ast::Justification::Block { pos, items } => self.elab_proof(label, thesis, items, pos.1),
     }
   }
 
@@ -364,7 +370,7 @@ impl Analyzer<'_> {
     for cond in conds {
       let mut thesis = cc.0[cond.kind].take().unwrap();
       thesis.visit(&mut self.intern_const());
-      self.elab_justification(&thesis, &cond.just);
+      self.elab_justification(None, &thesis, &cond.just);
     }
     if let Some(corr) = corr {
       let mut thesis = Formula::mk_and_with(|conjs| {
@@ -373,7 +379,7 @@ impl Analyzer<'_> {
         }
       });
       thesis.visit(&mut self.intern_const());
-      self.elab_justification(&thesis, &corr.just);
+      self.elab_justification(None, &thesis, &corr.just);
     }
     assert!(cc.0.iter().all(|p| p.1.is_none()));
   }
@@ -477,8 +483,8 @@ impl Analyzer<'_> {
             let def = &self.lc.priv_func[nr];
             assert!(agrees(&self.g, &self.lc, &args, &def.primary));
             args.iter_mut().for_each(|t| t.strip_qua_mut());
-            let depth = self.lc.bound_var.len() as u32;
-            let value = def.value.visit_cloned(&mut Inst { subst: &args, base: 0, depth });
+            let base = self.lc.bound_var.len() as u32;
+            let value = def.value.visit_cloned(&mut Inst { subst: &args, base, depth: 0 });
             Term::PrivFunc { nr, args, value }
           }
           VarKind::SchFunc => {
@@ -704,7 +710,7 @@ impl Analyzer<'_> {
           let mut subst = Subst::new(cl.primary.len());
           if subst.eq_radices(&self.g, &self.lc, &cl.ty, &ty)
             && (ty2.attrs.0)
-              .is_subset_of(&cl.ty.attrs.1, |a2, a1| subst.eq_attr(&self.g, &self.lc, a1, a2))
+              .is_subset_of(&cl.consequent.1, |a2, a1| subst.eq_attr(&self.g, &self.lc, a1, a2))
             && subst.check_loci_types::<false>(&self.g, &self.lc, &cl.primary, false)
           {
             let mut attrs = ty2.attrs.0.clone();
@@ -716,7 +722,7 @@ impl Analyzer<'_> {
             return ty
           }
         }
-        panic!("non registered cluster")
+        panic!("non registered cluster \"{ty2:?}\"")
       }
       ast::Type::Reservation { nr, subst, .. } => {
         let mut ty = self.reserved[nr.unwrap()].clone();
@@ -1166,11 +1172,11 @@ impl Analyzer<'_> {
         match kind {
           VarKind::PrivPred => {
             let nr = PrivPredId(*var);
-            let def = &self.priv_pred[nr];
-            assert!(agrees(&self.g, &self.lc, &args, &def.0));
+            let (ty, value) = &self.priv_pred[nr];
+            assert!(agrees(&self.g, &self.lc, &args, ty));
             args.iter_mut().for_each(|t| t.strip_qua_mut());
-            let depth = self.lc.bound_var.len() as u32;
-            let value = def.1.visit_cloned(&mut Inst { subst: &args, base: 0, depth });
+            let base = self.lc.bound_var.len() as u32;
+            let value = value.visit_cloned(&mut Inst { subst: &args, base, depth: 0 });
             Formula::PrivPred { nr, args, value }.maybe_neg(pos)
           }
           VarKind::SchPred => {
@@ -1236,6 +1242,7 @@ impl Analyzer<'_> {
   /// satisfying `f -> new_f` (up = true) or `new_f -> f` (up = false)
   fn whnf(&self, up: bool, mut atomic: usize, f: &mut (bool, Box<Formula>)) -> usize {
     'start: loop {
+      // eprintln!("whnf (up = {up}, atomic = {atomic}) <- {f:?}");
       let mut args_buf;
       let (kind, args) = match &mut *f.1 {
         Formula::Neg { f: f2 } => {
@@ -1271,7 +1278,7 @@ impl Analyzer<'_> {
         }
         _ => break,
       };
-      for def in &self.definitions {
+      for def in self.definitions.iter().rev() {
         let Some(subst) = def.matches(&self.g, &self.lc, kind, args) else { continue };
         let subst = subst.finish();
         let mut inst = Inst::new(&subst);
@@ -1371,9 +1378,8 @@ impl Analyzer<'_> {
   /// Attempts to rewrite `conjs := tgt /\ conjs2` to `conjs2`.
   /// * If `up = true` then `conjs -> tgt /\ conjs2` (used for unfolding in hyps)
   /// * If `up = false` then `tgt /\ conjs2 -> conjs` (unfolding thesis)
-  fn and_telescope(
-    &mut self, mut tgt: Vec<Formula>, up: bool, mut conjs: Vec<Formula>,
-  ) -> Vec<Formula> {
+  fn and_telescope(&mut self, tgt: Vec<Formula>, up: bool, conjs: Vec<Formula>) -> Vec<Formula> {
+    // eprintln!("and_telescope {tgt:?} <- {conjs:?}");
     let mut stack1 = vec![];
     let mut stack2 = vec![];
     let mut iter1 = tgt.into_iter();
@@ -1532,7 +1538,6 @@ impl<'a> PropertiesBuilder<'a> {
     &mut self, g: &Global, lc: &LocalContext, args: &'a [Term],
     f: impl FnOnce(Args<'a>) -> PropertyDeclKind<'a>,
   ) {
-    dbg!(self.visible, args);
     match *self.visible {
       [v1] => {
         let Term::Constant(c1) = args[v1.0 as usize] else { panic!() };
@@ -1610,10 +1615,10 @@ impl<'a> PropertiesBuilder<'a> {
             )
           }
         }
-        (PropertyKind::Idempotence, &PropertyDeclKind::Func(_, Args::Unary(ref args))) => {
+        (PropertyKind::Idempotence, &PropertyDeclKind::Func(_, Args::Binary(ref args))) => {
           let ty = &lc.fixed_var[args.c[0]].ty;
           assert!(lc.it_type.as_ref().unwrap().is_wider_than(g, lc, ty));
-          Formula::forall(ty.clone(), self.the_formula(args, 1, 0, [0]))
+          Formula::forall(ty.clone(), self.the_formula(args, 1, 0, [0, 0]))
         }
         (PropertyKind::Involutiveness, &PropertyDeclKind::Func(_, Args::Unary(ref args))) => {
           let ty = &lc.fixed_var[args.c[0]].ty;
@@ -1656,9 +1661,9 @@ impl<'a> PropertiesBuilder<'a> {
         (PropertyKind::Transitivity, &PropertyDeclKind::Pred(Args::Binary(_), _)) =>
           panic!("transitivity declarations are not supported"),
         (PropertyKind::Abstractness, _) => unreachable!(),
-        _ => panic!("this property is not applicable"),
+        (k, tgt) => panic!("property {k:?} is not applicable to {tgt:?}"),
       };
-      elab.elab_justification(&thesis, &prop.just);
+      elab.elab_justification(None, &thesis, &prop.just);
       self.props.set(prop.kind);
     }
   }
@@ -1724,7 +1729,9 @@ trait ReadProof {
 
   fn next_suppose(&mut self, elab: &mut Analyzer, recv: &mut Self::SupposeRecv) {}
 
-  fn finish_proof(&mut self, elab: &mut Analyzer);
+  fn end_suppose(&mut self, elab: &mut Analyzer, recv: Self::SupposeRecv) {}
+
+  fn end_block(&mut self, elab: &mut Analyzer, end: Position);
 
   fn super_elab_item(&mut self, elab: &mut Analyzer, it: &ast::Item) -> bool {
     match &it.kind {
@@ -1788,12 +1795,12 @@ trait ReadProof {
                 self.next_thesis_case(elab, &mut iter, conjs);
               });
               f.mk_neg().append_conjuncts_to(disjs);
-              self.elab_proof(elab, &bl.items);
+              self.elab_proof(elab, &bl.items, bl.end);
             });
           }
           self.finish_thesis_case(elab, iter);
         });
-        elab.elab_justification(&f.mk_neg(), just);
+        elab.elab_justification(None, &f.mk_neg(), just);
         return false
       }
       ast::ItemKind::PerCases { just, kind: CaseKind::Suppose, blocks } => {
@@ -1807,12 +1814,13 @@ trait ReadProof {
                 }
               });
               f.mk_neg().append_conjuncts_to(disjs);
-              self.elab_proof(elab, &bl.items);
+              self.elab_proof(elab, &bl.items, bl.end);
               self.next_suppose(elab, &mut recv);
             });
           }
+          self.end_suppose(elab, recv)
         });
-        elab.elab_justification(&f.mk_neg(), just);
+        elab.elab_justification(None, &f.mk_neg(), just);
         return false
       }
       _ => elab.elab_stmt_item(it),
@@ -1824,13 +1832,13 @@ trait ReadProof {
     self.super_elab_item(elab, item)
   }
 
-  fn elab_proof(&mut self, elab: &mut Analyzer, items: &[ast::Item]) {
+  fn elab_proof(&mut self, elab: &mut Analyzer, items: &[ast::Item], end: Position) {
     for item in items {
       if !self.elab_item(elab, item) {
         break
       }
     }
-    self.finish_proof(elab)
+    self.end_block(elab, end)
   }
 }
 
@@ -2068,13 +2076,25 @@ impl ReadProof for WithThesis {
   }
 
   fn finish_thesis_case(&mut self, elab: &mut Analyzer, mut case: Self::CaseIter<'_>) {
-    assert!(case.next().is_none())
+    assert!(case.next().is_none());
+    **elab.thesis.as_mut().unwrap() = Formula::True;
   }
 
   fn new_suppose(&mut self, _: &mut Analyzer) {}
 
-  fn finish_proof(&mut self, elab: &mut Analyzer) {
-    assert!(matches!(elab.thesis.as_deref(), Some(Formula::True)))
+  fn end_suppose(&mut self, elab: &mut Analyzer, _: ()) {
+    **elab.thesis.as_mut().unwrap() = Formula::True;
+  }
+
+  fn end_block(&mut self, elab: &mut Analyzer, end: Position) {
+    let f = elab.thesis.as_deref().unwrap();
+    if !matches!(f, Formula::True) {
+      eprintln!(
+        "error at {}:{end:?}: block incomplete; thesis at end of block:\n  {f:?}",
+        elab.article
+      );
+      panic!("{end:?}: block incomplete")
+    }
   }
 }
 
@@ -2201,7 +2221,7 @@ impl ReadProof for ReconstructThesis {
     self.assume(elab, vec![f]);
   }
 
-  fn new_suppose(&mut self, _: &mut Analyzer) -> Self::SupposeRecv { Default::default() }
+  fn new_suppose(&mut self, _: &mut Analyzer) -> Self::SupposeRecv { None }
 
   fn next_suppose(&mut self, elab: &mut Analyzer, recv: &mut Self::SupposeRecv) {
     if let Some(thesis) = recv {
@@ -2211,7 +2231,7 @@ impl ReadProof for ReconstructThesis {
     }
   }
 
-  fn finish_proof(&mut self, elab: &mut Analyzer) {
+  fn end_block(&mut self, elab: &mut Analyzer, _: Position) {
     elab.thesis = Some(Box::new(self.reconstruct(elab, true)))
   }
 }
@@ -2318,8 +2338,8 @@ impl BlockReader {
   }
 
   fn after_scope(self, elab: &mut Analyzer) {
-    for (label, thm) in self.defthms {
-      let thm = elab.intern(&thm);
+    for (label, mut thm) in self.defthms {
+      thm.visit(&mut elab.intern_const());
       elab.push_prop(label, *thm)
     }
   }
@@ -2361,7 +2381,6 @@ impl BlockReader {
     let fmt = elab.formats[&Format::Func(pat.to_format())];
     let mut cc = CorrConds::new();
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
-    dbg!(&self.to_locus.0, pat);
     let visible: Box<[_]> = pat.args().iter().map(|v| self.to_locus.get(v.var())).collect();
     let mut properties = PropertiesBuilder::new(&visible);
     let args: Box<[_]> = pat.args().iter().map(|v| Term::Constant(v.var())).collect();
@@ -2429,35 +2448,35 @@ impl BlockReader {
         ty: (*it_type).clone(),
       });
       elab.push_constr(ConstrKind::Func(n));
-      if let Some(mut value) = value {
-        value.visit(&mut self.to_locus);
-        let formals: Box<[_]> = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect();
-        let primary: Box<[_]> = self.primary.0.iter().chain([&*it_type]).cloned().collect();
-        it_type.visit(&mut Inst::new(&formals));
-        let defined = Term::Functor { nr: n, args: formals };
-        let depth = self.primary.len() as u32;
-        let mut f;
-        match &value {
-          DefValue::Term(value) => {
-            f = value.defthm_for(&elab.g, &defined);
-            AbstractLocus(depth).visit_formula(&mut f);
-          }
-          DefValue::Formula(value) => {
-            f = value.iffthm_for(&elab.g, &defined.it_eq(&elab.g));
-            AbstractLocus(depth + 1).visit_formula(&mut f);
-            AbstractLocus(depth).visit_type(&mut it_type);
-            f = Box::new(Formula::ForAll { dom: it_type, scope: f });
-          }
-        };
-        let thm = self.forall_locus(f);
-        self.defthms.push((def.as_ref().unwrap().label.as_ref().map(|l| l.id.0), thm));
-        elab.r.read_definiens(&Definiens {
-          essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
-          c: ConstrDef { constr: ConstrKind::Func(n), primary },
-          assumptions: Formula::mk_and(self.assums.clone()),
-          value,
-        });
-      }
+    }
+    if let Some(mut value) = value {
+      value.visit(&mut self.to_locus);
+      let formals: Box<[_]> = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect();
+      let primary: Box<[_]> = self.primary.0.iter().chain([&*it_type]).cloned().collect();
+      it_type.visit(&mut Inst::new(&formals));
+      let defined = Term::Functor { nr: n, args: formals };
+      let depth = self.primary.len() as u32;
+      let mut f;
+      match &value {
+        DefValue::Term(value) => {
+          f = value.defthm_for(&elab.g, &defined);
+          AbstractLocus(depth).visit_formula(&mut f);
+        }
+        DefValue::Formula(value) => {
+          f = value.iffthm_for(&elab.g, &defined.it_eq(&elab.g));
+          AbstractLocus(depth + 1).visit_formula(&mut f);
+          AbstractLocus(depth).visit_type(&mut it_type);
+          f = Box::new(Formula::ForAll { dom: it_type, scope: f });
+        }
+      };
+      let thm = self.forall_locus(f);
+      self.defthms.push((def.as_ref().unwrap().label.as_ref().map(|l| l.id.0), thm));
+      elab.r.read_definiens(&Definiens {
+        essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
+        c: ConstrDef { constr: ConstrKind::Func(n), primary },
+        assumptions: Formula::mk_and(self.assums.clone()),
+        value,
+      });
     }
     let pat = Pattern { kind: PatternKind::Func(n), fmt, primary, visible, pos: true };
     pat.check_access();
@@ -2517,21 +2536,21 @@ impl BlockReader {
       let c = Constructor { primary: p, redefines, superfluous, properties: properties.props };
       n = elab.g.constrs.predicate.push(c);
       elab.push_constr(ConstrKind::Pred(n));
-      if let Some(mut value) = value {
-        let DefValue::Formula(mut value) = value else { unreachable!() };
-        value.visit(&mut self.to_locus);
-        let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect();
-        let mut f = value.defthm_for(&elab.g, &Formula::Pred { nr: n, args: formals });
-        AbstractLocus(self.primary.len() as u32).visit_formula(&mut f);
-        let thm = self.forall_locus(f);
-        self.defthms.push((def.as_ref().unwrap().label.as_ref().map(|l| l.id.0), thm));
-        elab.r.read_definiens(&Definiens {
-          essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
-          c: ConstrDef { constr: ConstrKind::Pred(n), primary: primary.clone() },
-          assumptions: Formula::mk_and(self.assums.clone()),
-          value: DefValue::Formula(value),
-        });
-      }
+    }
+    if let Some(mut value) = value {
+      let DefValue::Formula(mut value) = value else { unreachable!() };
+      value.visit(&mut self.to_locus);
+      let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect();
+      let mut f = value.defthm_for(&elab.g, &Formula::Pred { nr: n, args: formals });
+      AbstractLocus(self.primary.len() as u32).visit_formula(&mut f);
+      let thm = self.forall_locus(f);
+      self.defthms.push((def.as_ref().unwrap().label.as_ref().map(|l| l.id.0), thm));
+      elab.r.read_definiens(&Definiens {
+        essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
+        c: ConstrDef { constr: ConstrKind::Pred(n), primary: primary.clone() },
+        assumptions: Formula::mk_and(self.assums.clone()),
+        value: DefValue::Formula(value),
+      });
     }
     let pat = Pattern { kind: PatternKind::Pred(n), fmt, primary, visible, pos };
     pat.check_access();
@@ -2627,31 +2646,31 @@ impl BlockReader {
             ty: (*it_type).clone(),
           });
           elab.push_constr(ConstrKind::Mode(n));
-          if let Some(mut value) = value {
-            let DefValue::Formula(mut value) = value else { unreachable!() };
-            value.visit(&mut self.to_locus);
-            let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect_vec();
-            let primary: Box<[_]> = self.primary.0.iter().chain([&*it_type]).cloned().collect();
-            it_type.visit(&mut Inst::new(&formals));
-            let ty = Box::new(Type {
-              kind: TypeKind::Mode(n),
-              attrs: (Attrs::EMPTY, it_type.attrs.1.clone()),
-              args: formals,
-            });
-            let defined = Formula::Is { term: Box::new(Term::It), ty };
-            let mut f = value.defthm_for(&elab.g, &defined);
-            let depth = self.primary.len() as u32;
-            AbstractLocus(depth + 1).visit_formula(&mut f);
-            AbstractLocus(depth).visit_type(&mut it_type);
-            let thm = self.forall_locus(Box::new(Formula::ForAll { dom: it_type, scope: f }));
-            self.defthms.push((def.as_ref().unwrap().label.as_ref().map(|l| l.id.0), thm));
-            elab.r.read_definiens(&Definiens {
-              essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
-              c: ConstrDef { constr: ConstrKind::Mode(n), primary },
-              assumptions: Formula::mk_and(self.assums.clone()),
-              value: DefValue::Formula(value),
-            });
-          }
+        }
+        if let Some(mut value) = value {
+          let DefValue::Formula(mut value) = value else { unreachable!() };
+          value.visit(&mut self.to_locus);
+          let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect_vec();
+          let primary: Box<[_]> = self.primary.0.iter().chain([&*it_type]).cloned().collect();
+          it_type.visit(&mut Inst::new(&formals));
+          let ty = Box::new(Type {
+            kind: TypeKind::Mode(n),
+            attrs: (Attrs::EMPTY, it_type.attrs.1.clone()),
+            args: formals,
+          });
+          let defined = Formula::Is { term: Box::new(Term::It), ty };
+          let mut f = value.defthm_for(&elab.g, &defined);
+          let depth = self.primary.len() as u32;
+          AbstractLocus(depth + 1).visit_formula(&mut f);
+          AbstractLocus(depth).visit_type(&mut it_type);
+          let thm = self.forall_locus(Box::new(Formula::ForAll { dom: it_type, scope: f }));
+          self.defthms.push((def.as_ref().unwrap().label.as_ref().map(|l| l.id.0), thm));
+          elab.r.read_definiens(&Definiens {
+            essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
+            c: ConstrDef { constr: ConstrKind::Mode(n), primary },
+            assumptions: Formula::mk_and(self.assums.clone()),
+            value: DefValue::Formula(value),
+          });
         }
         let pat = Pattern { kind: PatternKind::Mode(n), fmt, primary, visible, pos: true };
         pat.check_access();
@@ -2708,23 +2727,22 @@ impl BlockReader {
         ty: self.primary.0.last().unwrap().clone(),
       });
       elab.push_constr(ConstrKind::Attr(n));
-      if let Some(mut value) = value {
-        let DefValue::Formula(mut value) = value else { unreachable!() };
-        value.visit(&mut self.to_locus);
-        let formals =
-          (superfluous..self.primary.len() as u8).map(LocusId).map(Term::Locus).collect();
-        let mut f =
-          value.defthm_for(&elab.g, &Formula::Attr { nr: redefines.unwrap_or(n), args: formals });
-        AbstractLocus(self.primary.len() as u32).visit_formula(&mut f);
-        let thm = self.forall_locus(f);
-        self.defthms.push((def.as_ref().unwrap().label.as_ref().map(|l| l.id.0), thm));
-        elab.r.read_definiens(&Definiens {
-          essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
-          c: ConstrDef { constr: ConstrKind::Attr(n), primary: primary.clone() },
-          assumptions: Formula::mk_and(self.assums.clone()),
-          value: DefValue::Formula(value),
-        });
-      }
+    }
+    if let Some(mut value) = value {
+      let DefValue::Formula(mut value) = value else { unreachable!() };
+      value.visit(&mut self.to_locus);
+      let formals = (superfluous..self.primary.len() as u8).map(LocusId).map(Term::Locus).collect();
+      let mut f =
+        value.defthm_for(&elab.g, &Formula::Attr { nr: redefines.unwrap_or(n), args: formals });
+      AbstractLocus(self.primary.len() as u32).visit_formula(&mut f);
+      let thm = self.forall_locus(f);
+      self.defthms.push((def.as_ref().unwrap().label.as_ref().map(|l| l.id.0), thm));
+      elab.r.read_definiens(&Definiens {
+        essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
+        c: ConstrDef { constr: ConstrKind::Attr(n), primary: primary.clone() },
+        assumptions: Formula::mk_and(self.assums.clone()),
+        value: DefValue::Formula(value),
+      });
     }
     let pat = Pattern { kind: PatternKind::Attr(n), fmt, primary, visible, pos };
     pat.check_access();
@@ -3180,7 +3198,7 @@ impl BlockReader {
     ty.visit(&mut self.to_locus);
     CheckAccess::with(&primary, |occ| occ.visit_type(&ty));
     property.visit(&mut elab.intern_const());
-    elab.elab_justification(&property, just);
+    elab.elab_justification(None, &property, just);
     elab.properties.push(Property { primary, ty, kind: PropertyKind::Sethood })
   }
 
@@ -3358,7 +3376,7 @@ impl ReadProof for BlockReader {
   fn new_suppose(&mut self, elab: &mut Analyzer) -> Self::SupposeRecv { panic!("invalid item") }
   fn next_suppose(&mut self, elab: &mut Analyzer, recv: &mut Self::SupposeRecv) {}
 
-  fn finish_proof(&mut self, elab: &mut Analyzer) {
+  fn end_block(&mut self, elab: &mut Analyzer, _: Position) {
     if self.needs_round_up {
       let mut attrs = elab.g.numeral_type.attrs.1.clone();
       attrs.round_up_with(&elab.g, &elab.lc, &elab.g.numeral_type, false);

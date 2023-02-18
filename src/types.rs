@@ -1592,7 +1592,7 @@ pub enum InferenceKind {
 
 #[derive(Debug, Clone, Copy)]
 pub enum ReferenceKind {
-  Priv(LabelId),
+  Priv(Option<LabelId>),
   Thm(ThmRef),
   Def(DefRef),
 }

@@ -2,8 +2,8 @@
 use super::XmlReader;
 use crate::ast::*;
 use crate::types::{
-  AttrSymId, ConstId, FuncSymId, LabelId, LeftBrkSymId, LocusId, ModeSymId, Position, PredSymId,
-  PropertyKind, Reference, ReferenceKind, RightBrkSymId, SchRef, SelSymId, StructSymId,
+  ArticleId, AttrSymId, ConstId, FuncSymId, LabelId, LeftBrkSymId, LocusId, ModeSymId, Position,
+  PredSymId, PropertyKind, Reference, ReferenceKind, RightBrkSymId, SchId, SelSymId, StructSymId,
 };
 use crate::{types, MizPath};
 use enum_map::Enum;
@@ -300,7 +300,7 @@ impl MsmParser {
           match attr.key {
             b"line" => pos.line = self.r.get_attr(&attr.value),
             b"col" => pos.col = self.r.get_attr(&attr.value),
-            b"nr" => sym = self.r.get_attr(&attr.value),
+            b"nr" => sym = AttrSymId(self.r.get_attr::<u32>(&attr.value) - 1),
             b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
             _ => {}
           }
@@ -676,7 +676,7 @@ impl MsmParser {
         let (mut sym, mut spelling) = <_>::default();
         for attr in e.attributes().map(Result::unwrap) {
           match attr.key {
-            b"nr" => sym = self.r.get_attr(&attr.value),
+            b"nr" => sym = StructSymId(self.r.get_attr::<u32>(&attr.value) - 1),
             b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
             _ => {}
           }
@@ -701,33 +701,33 @@ impl MsmParser {
         ItemKind::DefStruct(Box::new(DefStruct { parents, fields, pat, conds: vec![], corr: None }))
       }
       b"Pred-Synonym" => {
-        let Pattern::Pred(new) = self.parse_pattern() else { panic!("expected pred pattern") };
         let Pattern::Pred(orig) = self.parse_pattern() else { panic!("expected pred pattern") };
+        let Pattern::Pred(new) = self.parse_pattern() else { panic!("expected pred pattern") };
         ItemKind::PatternRedef(PatternRedef::Pred { new, orig, pos: true })
       }
       b"Pred-Antonym" => {
-        let Pattern::Pred(new) = self.parse_pattern() else { panic!("expected pred pattern") };
         let Pattern::Pred(orig) = self.parse_pattern() else { panic!("expected pred pattern") };
+        let Pattern::Pred(new) = self.parse_pattern() else { panic!("expected pred pattern") };
         ItemKind::PatternRedef(PatternRedef::Pred { new, orig, pos: false })
       }
       b"Func-Synonym" => {
-        let Pattern::Func(new) = self.parse_pattern() else { panic!("expected func pattern") };
         let Pattern::Func(orig) = self.parse_pattern() else { panic!("expected func pattern") };
+        let Pattern::Func(new) = self.parse_pattern() else { panic!("expected func pattern") };
         ItemKind::PatternRedef(PatternRedef::Func { new, orig })
       }
       b"Mode-Synonym" => {
-        let Pattern::Mode(new) = self.parse_pattern() else { panic!("expected mode pattern") };
         let Pattern::Mode(orig) = self.parse_pattern() else { panic!("expected mode pattern") };
+        let Pattern::Mode(new) = self.parse_pattern() else { panic!("expected mode pattern") };
         ItemKind::PatternRedef(PatternRedef::Mode { new, orig })
       }
       b"Attr-Synonym" => {
-        let Pattern::Attr(new) = self.parse_pattern() else { panic!("expected attr pattern") };
         let Pattern::Attr(orig) = self.parse_pattern() else { panic!("expected attr pattern") };
+        let Pattern::Attr(new) = self.parse_pattern() else { panic!("expected attr pattern") };
         ItemKind::PatternRedef(PatternRedef::Attr { new, orig, pos: true })
       }
       b"Attr-Antonym" => {
-        let Pattern::Attr(new) = self.parse_pattern() else { panic!("expected attr pattern") };
         let Pattern::Attr(orig) = self.parse_pattern() else { panic!("expected attr pattern") };
+        let Pattern::Attr(new) = self.parse_pattern() else { panic!("expected attr pattern") };
         ItemKind::PatternRedef(PatternRedef::Attr { new, orig, pos: false })
       }
       b"Cluster" => {
@@ -857,13 +857,14 @@ impl MsmParser {
             return Elem::Inference(pos, InferenceKind::By { link }, refs)
           }
           b"Scheme-Justification" => {
-            let (mut pos, mut sch) = <(Position, SchRef)>::default();
+            let (mut pos, (mut art, mut sch, mut id)) = <(Position, _)>::default();
             for attr in e.attributes().map(Result::unwrap) {
               match attr.key {
                 b"line" => pos.line = self.r.get_attr(&attr.value),
                 b"col" => pos.col = self.r.get_attr(&attr.value),
-                b"idnr" => sch.0 = self.r.get_attr(&attr.value),
-                b"nr" => sch.1 = self.r.get_attr(&attr.value),
+                b"nr" => art = self.r.get_attr(&attr.value),
+                b"idnr" => id = self.r.get_attr(&attr.value),
+                b"schnr" => sch = self.r.get_attr(&attr.value),
                 _ => {}
               }
             }
@@ -875,6 +876,7 @@ impl MsmParser {
                 _ => panic!("unexpected element"),
               }
             }
+            let sch = (ArticleId(art), SchId(if art == 0 { sch } else { id }));
             return Elem::Inference(pos, InferenceKind::From { sch }, refs)
           }
           b"Implicitly-Qualified-Segment" => {
@@ -987,8 +989,9 @@ impl MsmParser {
           b"Local-Reference" => {
             let pos = self.r.get_pos(&e);
             let lab =
-              self.r.get_attr::<u32>(&e.try_get_attribute(b"labelnr").unwrap().unwrap().value) - 1;
-            Elem::Reference(Reference { pos, kind: ReferenceKind::Priv(LabelId(lab)) })
+              self.r.get_attr::<u32>(&e.try_get_attribute(b"labelnr").unwrap().unwrap().value);
+            let kind = ReferenceKind::Priv(lab.checked_sub(1).map(LabelId));
+            Elem::Reference(Reference { pos, kind })
           }
           b"Theorem-Reference" => {
             let (mut pos, (mut article_nr, mut thm_nr)) = <(Position, _)>::default();
@@ -1077,7 +1080,7 @@ impl MsmParser {
                 b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
                 b"shape" => kind = self.r.get_attr(&attr.value),
                 // b"serialnr" => serial = self.r.get_attr(&attr.value),
-                b"varnr" => var = self.r.get_attr::<u32>(&attr.value) - 1,
+                b"nr" => var = self.r.get_attr::<u32>(&attr.value) - 1,
                 _ => {}
               }
             }

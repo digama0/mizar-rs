@@ -2642,7 +2642,7 @@ const LEGACY_FLEX_HANDLING: bool = true;
 // This is a Mizar bug which is required to check aofa_l00 (the proof should be patched)
 const FLEX_EXPANSION_BUG: bool = true;
 
-const FIRST_FILE: usize = 0;
+const FIRST_FILE: usize = 3;
 const ONE_FILE: bool = false;
 const PANIC_ON_FAIL: bool = DEBUG;
 const FIRST_VERBOSE_TOP_ITEM: Option<usize> = if DEBUG { Some(0) } else { None };
