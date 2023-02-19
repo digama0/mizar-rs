@@ -6,8 +6,9 @@ use std::cell::Cell;
 use std::collections::HashMap;
 
 const ENABLE_FORMATTER: bool = true;
-const SHOW_INFER: bool = false;
+const SHOW_INFER: bool = true;
 const SHOW_ONLY_INFER: bool = false;
+const SHOW_PRIV: bool = true;
 const SHOW_MARKS: bool = false;
 const SHOW_INVISIBLE: bool = false;
 const SHOW_ORIG: bool = false;
@@ -269,8 +270,15 @@ impl<'a> Pretty<'a> {
         let doc = doc.unwrap_or_else(|| self.text(format!("G{}", nr.0)));
         self.terms(ovis, args, depth, lift).enclose(doc.append("(#"), "#)")
       }
-      Term::PrivFunc { nr, args, .. } =>
-        self.text(format!("$F{}", nr.0)).append(self.terms(None, args, depth, lift).parens()),
+      Term::PrivFunc { nr, args, value } => {
+        let doc =
+          self.text(format!("$F{}", nr.0)).append(self.terms(None, args, depth, lift).parens());
+        if SHOW_PRIV {
+          doc.append("=").append(self.term(true, value, depth, lift))
+        } else {
+          doc
+        }
+      }
       Term::Functor { nr, args } => {
         if let Some(lc) = self.lc {
           match lc.formatter.func.get(nr) {
@@ -527,8 +535,15 @@ impl<'a> Pretty<'a> {
           .append(self.adjective(*nr, args, depth, lift));
         self.parens_if(prec, doc.group())
       }
-      (true, Formula::PrivPred { nr, args, .. }) =>
-        self.text(format!("$P{}", nr.0)).append(self.terms(None, args, depth, lift).brackets()),
+      (true, Formula::PrivPred { nr, args, value }) => {
+        let doc =
+          self.text(format!("$P{}", nr.0)).append(self.terms(None, args, depth, lift).brackets());
+        if SHOW_PRIV {
+          doc.append("=").append(self.formula(true, true, value, depth, lift))
+        } else {
+          doc
+        }
+      }
       (true, Formula::Is { term, ty }) => {
         let doc =
           self.term(false, term, depth, lift).append(" is ").append(self.ty(ty, depth, lift));

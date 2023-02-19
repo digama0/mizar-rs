@@ -558,8 +558,8 @@ pub struct IdentifyFunc {
 
 #[derive(Debug)]
 pub struct Reduction {
-  pub orig: Term,
-  pub new: Term,
+  pub from: Term,
+  pub to: Term,
   pub conds: Vec<CorrCond>,
   pub corr: Option<Correctness>,
 }

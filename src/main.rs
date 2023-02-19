@@ -799,6 +799,7 @@ trait Equate {
         self.eq_formulas(g, lc, &**args1, &**args2),
       _ => false,
     }
+    // vprintln!("eq_formula {f1:?} <> {f2:?} -> {res}");
   }
 }
 
@@ -806,11 +807,12 @@ impl Equate for () {
   fn eq_and(
     &mut self, g: &Global, lc: &LocalContext, args1: &[Formula], args2: &[Formula],
   ) -> bool {
+    // vprintln!("eq_and {args1:?} <> {args2:?}");
     if args1.len() == args2.len() {
       args1.iter().zip(args2).all(|(f1, f2)| self.eq_formula(g, lc, f1, f2))
     } else {
-      let mut conjs1 = ConjIter([].iter(), args1.iter());
-      let mut conjs2 = ConjIter([].iter(), args2.iter());
+      let mut conjs1 = ConjIter(args1.iter(), None);
+      let mut conjs2 = ConjIter(args2.iter(), None);
       loop {
         match (conjs1.next(), conjs2.next()) {
           (None, None) => break true,
@@ -1082,6 +1084,7 @@ impl VisitMut for Inst<'_> {
   fn pop_bound(&mut self, n: u32) { self.depth -= n }
   fn visit_term(&mut self, tm: &mut Term) {
     match *tm {
+      Term::Bound(ref mut nr) => nr.0 += self.base,
       Term::Locus(nr) => {
         *tm = self.subst[nr.0 as usize].clone();
         if self.depth != 0 {
@@ -1351,20 +1354,20 @@ impl<'a> Subst<'a> {
     self.subst_term.into_vec().into_iter().skip(n).map(|t| *t.unwrap().to_owned()).collect()
   }
 
-  fn inst_term_mut(self, tm: &mut Term, depth: u32) {
-    Inst { subst: &self.finish(), base: depth, depth }.visit_term(tm)
+  fn inst_term_mut(self, tm: &mut Term, base: u32) {
+    Inst { subst: &self.finish(), base, depth: 0 }.visit_term(tm)
   }
 
   /// InstSubstTrm
-  fn inst_term(self, tm: &Term, depth: u32) -> Term {
+  fn inst_term(self, tm: &Term, base: u32) -> Term {
     let mut tm = tm.clone();
-    self.inst_term_mut(&mut tm, depth);
+    self.inst_term_mut(&mut tm, base);
     tm
   }
 
   /// InstSubstFrm
-  fn inst_formula_mut(self, f: &mut Formula, depth: u32) {
-    Inst { subst: &self.finish(), base: depth, depth }.visit_formula(f)
+  fn inst_formula_mut(self, f: &mut Formula, base: u32) {
+    Inst { subst: &self.finish(), base, depth: 0 }.visit_formula(f)
   }
 
   fn snapshot(&self) -> Box<[bool]> { self.subst_term.iter().map(Option::is_some).collect() }
@@ -1547,18 +1550,23 @@ impl Equate for Subst<'_> {
   }
 }
 
-struct ConjIter<'a>(std::slice::Iter<'a, Formula>, std::slice::Iter<'a, Formula>);
+struct ConjIter<'a>(std::slice::Iter<'a, Formula>, Option<Box<ConjIter<'a>>>);
+
+impl<'a> Default for ConjIter<'a> {
+  fn default() -> Self { Self([].iter(), None) }
+}
 
 impl<'a> Iterator for ConjIter<'a> {
   type Item = &'a Formula;
   fn next(&mut self) -> Option<Self::Item> {
     loop {
-      if let Some(f) = self.0.next() {
-        return Some(f)
-      }
-      match self.1.next()?.skip_priv_pred() {
-        Formula::And { args } => self.0 = args.iter(),
-        f => return Some(f),
+      match self.0.next() {
+        Some(f) => match f.skip_priv_pred() {
+          Formula::And { args } =>
+            *self = ConjIter(args.iter(), Some(Box::new(std::mem::take(self)))),
+          f => return Some(f),
+        },
+        None => *self = *self.1.take()?,
       }
     }
   }
@@ -1567,8 +1575,7 @@ impl<'a> Iterator for ConjIter<'a> {
 impl Formula {
   fn skip_priv_pred(&self) -> &Self {
     let mut ty = self;
-    while let Formula::PrivPred { value, .. } = ty {
-      ty = value;
+    loop {
       while let Formula::PrivPred { value, .. } = ty {
         ty = value
       }
@@ -1579,12 +1586,14 @@ impl Formula {
             l = value
           }
           if let Formula::Neg { f } = l {
-            ty = f
+            ty = f;
+            continue
           }
         }
       }
+      // vprintln!("skip_priv_pred {self:?} -> {ty:?}");
+      return ty
     }
-    ty
   }
 }
 impl Attrs {
@@ -2642,11 +2651,11 @@ const LEGACY_FLEX_HANDLING: bool = true;
 // This is a Mizar bug which is required to check aofa_l00 (the proof should be patched)
 const FLEX_EXPANSION_BUG: bool = true;
 
-const FIRST_FILE: usize = 3;
+const FIRST_FILE: usize = 9;
 const ONE_FILE: bool = false;
 const PANIC_ON_FAIL: bool = DEBUG;
-const FIRST_VERBOSE_TOP_ITEM: Option<usize> = if DEBUG { Some(0) } else { None };
-const FIRST_VERBOSE_ITEM: Option<usize> = None;
+const FIRST_VERBOSE_TOP_ITEM: Option<usize> = None;
+const FIRST_VERBOSE_ITEM: Option<usize> = if DEBUG { Some(0) } else { None };
 const FIRST_VERBOSE_CHECKER: Option<usize> = None;
 const SKIP_TO_VERBOSE: bool = DEBUG;
 const PARALLELISM: usize = if DEBUG || ONE_FILE { 1 } else { 7 };

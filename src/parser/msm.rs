@@ -775,8 +775,8 @@ impl MsmParser {
         }
       }
       b"Reduction" => ItemKind::Reduction(Box::new(Reduction {
-        orig: *self.parse_term().unwrap(),
-        new: *self.parse_term().unwrap(),
+        to: *self.parse_term().unwrap(),
+        from: *self.parse_term().unwrap(),
         conds: vec![],
         corr: None,
       })),
@@ -1346,7 +1346,7 @@ impl MsmParser {
                 // b"idnr" => id = self.r.get_attr::<u32>(&attr.value) - 1,
                 b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
                 b"shape" => kind = self.r.get_attr(&attr.value),
-                b"varnr" => var = self.r.get_attr::<u32>(&attr.value) - 1,
+                b"nr" => var = self.r.get_attr::<u32>(&attr.value) - 1,
                 _ => {}
               }
             }

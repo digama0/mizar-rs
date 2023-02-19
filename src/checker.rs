@@ -366,7 +366,6 @@ impl Expand<'_> {
       let Some(subst) = exp.matches(self.g, self.lc, kind, args) else { continue };
       let base = self.lc.bound_var.len() as u32;
       let mut result = body.otherwise.as_ref().expect("no cases and no otherwise?").clone();
-      OnVarMut(|nr| *nr += base).visit_formula(&mut result);
       subst.inst_formula_mut(&mut result, base);
       expansions.push(result)
     }
