@@ -60,7 +60,7 @@ impl<'a> Checker<'a> {
       }
     });
     if crate::CHECKER_HEADER {
-      eprintln!("checking {} @ {:?}:{:?}:\n  {check_f:?}", self.idx, self.article, self.pos);
+      eprintln!("refuting {} @ {:?}:{:?}:\n  {check_f:?}", self.idx, self.article, self.pos);
     }
 
     OpenAsConst(self).open_quantifiers(&mut check_f, true);

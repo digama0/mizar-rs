@@ -317,8 +317,8 @@ impl ArticleId {
 ///
 /// * `HIDDEN`: this introduces `object`, `set`, `=`, `in`.
 ///   This is not a proper mizar file, and every mizar file implicitly depends on it.
-/// * `BOOLE` (introduced after XBOOLE_0):
-///   introduces set operators: `A \/ B`, `A /\ B`, `A \ B`, `A \+\ B`, `A meets B`.
+/// * `BOOLE` (introduced after XBOOLE_0): this introduces `x is empty`, `{}`, as well as
+///   set operators: `A \/ B`, `A /\ B`, `A \ B`, `A \+\ B`, `A meets B`.
 ///   This is not used for much, just a few extra properties in the equalizer.
 /// * `SUBSET` (introduced after SUBSET_1):
 ///   introduces `Element of A`, `bool A`, `A c= B`, `Subset of A`.
