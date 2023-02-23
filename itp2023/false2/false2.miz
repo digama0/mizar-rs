@@ -1,0 +1,10 @@
+environ begin
+
+scheme Foo{P[set,set]}: P[1,1] implies P[1,1]
+proof thus thesis; end;
+
+theorem contradiction
+proof
+  1 = 1 implies 1 <> 1 from Foo;
+  hence thesis;
+end;

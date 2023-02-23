@@ -1,0 +1,95 @@
+environ
+  vocabularies ARYTM_3, CARD_1, XXREAL_0, RELAT_1, NAT_1, CAT_7;
+  notations ORDINAL1, XCMPLX_0, XXREAL_0;
+  constructors WSIERP_1, MOEBIUS1;
+  registrations  XREAL_0, ORDINAL1, NAT_1;
+  requirements SUBSET, NUMERALS, ARITHM, REAL;
+  theorems XXREAL_0, XREAL_1, NAT_1;
+begin
+
+definition
+  let x,a be Nat;
+  attr a is x-ordered means :Def1: x < a;
+end;
+
+registration
+  let x be Nat;
+  cluster x-ordered for Nat;
+  existence
+  proof
+    x+0 < x+1 by XREAL_1:8;
+    then x+1 is x-ordered;
+    hence thesis;
+  end;
+end;
+
+registration
+  cluster 1-ordered -> 0-ordered for Nat;
+  coherence
+  proof
+    let x be Nat;
+    assume 1 < x;
+    hence 0 < x by XXREAL_0:2;
+  end;
+
+  let x be 0-ordered Nat;
+  let a be x-ordered Nat;
+  cluster a*a -> x-ordered;
+  coherence
+  proof
+    0 < x by Def1;
+    then A1: 0+1 <= x by NAT_1:13;
+    A2: x < a by Def1;
+    then 1 < a by A1,XXREAL_0:2;
+    then a < a * a by XREAL_1:155;
+    then x < a * a by A2,XXREAL_0:2;
+    hence thesis;
+  end;
+end;
+
+theorem contradiction
+proof
+  consider x being 1-ordered Nat such that not contradiction;
+  1 is 0-ordered; then
+  A1: x * x is 1-ordered; then
+  consider x1 being 0-ordered Nat such that B1: x1 = x * x;
+  A2: 1 < x1 by A1,B1; then
+  x1 * x1 is x1-ordered by XREAL_1:155; then
+  consider x2 being x1-ordered Nat such that B2: x2 = x1 * x1;
+  consider x3 being x1-ordered Nat such that B3: x3 = x2 * x2;
+  consider x4 being x1-ordered Nat such that B4: x4 = x3 * x3;
+  consider x5 being x1-ordered Nat such that B5: x5 = x4 * x4;
+  consider x6 being x1-ordered Nat such that B6: x6 = x5 * x5;
+  consider x7 being x1-ordered Nat such that B7: x7 = x6 * x6;
+  consider x8 being x1-ordered Nat such that B8: x8 = x7 * x7;
+  consider x9 being x1-ordered Nat such that B9: x9 = x8 * x8;
+  consider x10 being x1-ordered Nat such that B10: x10 = x9 * x9;
+  consider x11 being x1-ordered Nat such that B11: x11 = x10 * x10;
+  consider x12 being x1-ordered Nat such that B12: x12 = x11 * x11;
+  consider x13 being x1-ordered Nat such that B13: x13 = x12 * x12;
+  consider x14 being x1-ordered Nat such that B14: x14 = x13 * x13;
+  consider x15 being x1-ordered Nat such that B15: x15 = x14 * x14;
+  consider x16 being x1-ordered Nat such that B16: x16 = x15 * x15;
+  consider x17 being x1-ordered Nat such that B17: x17 = x16 * x16;
+  consider x18 being x1-ordered Nat such that B18: x18 = x17 * x17;
+  consider x19 being x1-ordered Nat such that B19: x19 = x18 * x18;
+  consider x20 being x1-ordered Nat such that B20: x20 = x19 * x19;
+  consider x21 being x1-ordered Nat such that B21: x21 = x20 * x20;
+  consider x22 being x1-ordered Nat such that B22: x22 = x21 * x21;
+  consider x23 being x1-ordered Nat such that B23: x23 = x22 * x22;
+  consider x24 being x1-ordered Nat such that B24: x24 = x23 * x23;
+  consider x25 being x1-ordered Nat such that B25: x25 = x24 * x24;
+  consider x26 being x1-ordered Nat such that B26: x26 = x25 * x25;
+  consider x27 being x1-ordered Nat such that B27: x27 = x26 * x26;
+  consider x28 being x1-ordered Nat such that B28: x28 = x27 * x27;
+  consider x29 being x1-ordered Nat such that B29: x29 = x28 * x28;
+  consider x30 being x1-ordered Nat such that B30: x30 = x29 * x29;
+  consider x31 being x1-ordered Nat such that B31: x31 = x30 * x30;
+  consider x32 being x1-ordered Nat such that B32: x32 = x31 * x31;
+  C: x32 * x1 = x1 by
+    B1,B2,B3,B4,B5,B6,B7,B8,B9,B10,B11,B12,B13,B14,B15,B16,
+    B17,B18,B19,B20,B21,B22,B23,B24,B25,B26,B27,B28,B29,B30,B31,B32;
+  x32 is x1-ordered implies x1 < x32;
+  then 0 < x1 & 1 < x32 by A2,XXREAL_0:2;
+  hence contradiction by C,XREAL_1:155;
+end;

@@ -1,0 +1,8 @@
+environ
+  vocabularies ZFMISC_1, SUBSET_1;
+  notations ZFMISC_1, SUBSET_1;
+  constructors TARSKI, SUBSET_1;
+  requirements SUBSET; ::, BOOLE;
+begin
+
+for x,B being set, A being Element of bool B st x in A holds x in B;
