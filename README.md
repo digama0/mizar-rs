@@ -229,3 +229,22 @@ internally and use only `∧` and `∀`.
 
 *Note: Currently we are making no attempt to make these expressions re-parsable by Mizar.
 They are intended purely for presentation purposes.*
+
+## Future directions
+
+Right now this project contains the checker and analyzer parts of the Mizar system, but
+with a bit more work the parser too can be incorporated and then this will be a fully
+fledged potential `mizf` replacement. Besides this, a major component that has not yet
+been started is proof export; this will require a bit of design work but should help
+to address the soundness issues in the current architecture.
+
+## License
+
+This project is based on the [Mizar system](https://github.com/MizarProject/system),
+and is distributed under the terms of the GPLv3 license. See [LICENSE](LICENSE) for more information.
+
+## Contributing
+
+Contributions are most welcome. Please post issues for any bugs you find or submit PRs for improvements.
+I (@digama0) hope that this tool and its open development process can improve the state of Mizar tooling
+for everyone.
