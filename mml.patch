@@ -1,0 +1,235 @@
+--- binari_2.miz
++++ binari_2.miz
+@@ -28 +28 @@
+- requirements REAL, NUMERALS, SUBSET, ARITHM;
++ requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
+--- complex1.miz
++++ complex1.miz
+@@ -25 +25 @@
+- requirements REAL, NUMERALS, SUBSET, ARITHM;
++ requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
+--- complex2.miz
++++ complex2.miz
+@@ -27 +27 @@
+- requirements SUBSET, REAL, NUMERALS, ARITHM;
++ requirements BOOLE, SUBSET, REAL, NUMERALS, ARITHM;
+--- complsp1.miz
++++ complsp1.miz
+@@ -26 +26 @@
+- requirements NUMERALS, SUBSET, ARITHM;
++ requirements BOOLE, NUMERALS, SUBSET, ARITHM;
+--- comptrig.miz
++++ comptrig.miz
+@@ -30 +30 @@
+- requirements NUMERALS, SUBSET, REAL, ARITHM;
++ requirements BOOLE, NUMERALS, SUBSET, REAL, ARITHM;
+--- decomp_1.miz
++++ decomp_1.miz
+@@ -22 +22 @@
+- requirements SUBSET;
++ requirements BOOLE, SUBSET;
+--- diophan2.miz
++++ diophan2.miz
+@@ -31 +31 @@
+- requirements REAL, NUMERALS, SUBSET, ARITHM;
++ requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
+--- euclid_8.miz
++++ euclid_8.miz
+@@ -31 +31 @@
+- requirements SUBSET, NUMERALS, ARITHM;
++ requirements BOOLE, SUBSET, NUMERALS, ARITHM;
+--- fdiff_10.miz
++++ fdiff_10.miz
+@@ -28 +28 @@
+- requirements SUBSET, NUMERALS, ARITHM;
++ requirements BOOLE, SUBSET, NUMERALS, ARITHM;
+--- fdiff_11.miz
++++ fdiff_11.miz
+@@ -29 +29 @@
+- requirements SUBSET, NUMERALS, ARITHM, REAL;
++ requirements BOOLE, SUBSET, NUMERALS, ARITHM, REAL;
+--- fdiff_4.miz
++++ fdiff_4.miz
+@@ -29 +29 @@
+- requirements SUBSET, REAL, NUMERALS, ARITHM;
++ requirements BOOLE, SUBSET, REAL, NUMERALS, ARITHM;
+--- fdiff_6.miz
++++ fdiff_6.miz
+@@ -30 +30 @@
+- requirements SUBSET, REAL, NUMERALS, ARITHM;
++ requirements BOOLE, SUBSET, REAL, NUMERALS, ARITHM;
+--- fdiff_7.miz
++++ fdiff_7.miz
+@@ -30 +30 @@
+- requirements SUBSET, NUMERALS, ARITHM;
++ requirements BOOLE, SUBSET, NUMERALS, ARITHM;
+--- fdiff_8.miz
++++ fdiff_8.miz
+@@ -30 +30 @@
+- requirements SUBSET, REAL, NUMERALS, ARITHM;
++ requirements BOOLE, SUBSET, REAL, NUMERALS, ARITHM;
+--- fdiff_9.miz
++++ fdiff_9.miz
+@@ -30 +30 @@
+- requirements SUBSET, REAL, NUMERALS, ARITHM;
++ requirements BOOLE, SUBSET, REAL, NUMERALS, ARITHM;
+--- field_4.miz
++++ field_4.miz
+@@ -48 +48 @@
+-      REALSET1, FIELD_2, FIELD_3;
++      REALSET1, FIELD_1, FIELD_2, FIELD_3;
+--- funct_9.miz
++++ funct_9.miz
+@@ -27 +27 @@
+- requirements NUMERALS, SUBSET, ARITHM;
++ requirements BOOLE, NUMERALS, SUBSET, ARITHM;
+--- fuzzy_5.miz
++++ fuzzy_5.miz
+@@ -32 +32 @@
+- requirements NUMERALS, REAL, SUBSET, ARITHM;
++ requirements BOOLE, NUMERALS, REAL, SUBSET, ARITHM;
+--- gobrd12.miz
++++ gobrd12.miz
+@@ -31 +31 @@
+- requirements NUMERALS, REAL, SUBSET, ARITHM;
++ requirements BOOLE, NUMERALS, REAL, SUBSET, ARITHM;
+--- gobrd13.miz
++++ gobrd13.miz
+@@ -29 +29 @@
+- requirements NUMERALS, REAL, SUBSET, ARITHM;
++ requirements BOOLE, NUMERALS, REAL, SUBSET, ARITHM;
+--- hilb10_4.miz
++++ hilb10_4.miz
+@@ -35 +35 @@
+- requirements NUMERALS, SUBSET, ARITHM, REAL;
++ requirements BOOLE, NUMERALS, SUBSET, ARITHM, REAL;
+--- hilb10_5.miz
++++ hilb10_5.miz
+@@ -44 +44 @@
+- requirements NUMERALS, SUBSET, ARITHM, REAL;
++ requirements BOOLE, NUMERALS, SUBSET, ARITHM, REAL;
+--- integr12.miz
++++ integr12.miz
+@@ -35 +35 @@
+- requirements NUMERALS, SUBSET, ARITHM, REAL;
++ requirements BOOLE, NUMERALS, SUBSET, ARITHM, REAL;
+--- integr13.miz
++++ integr13.miz
+@@ -30 +30 @@
+- requirements NUMERALS, SUBSET, ARITHM;
++ requirements BOOLE, NUMERALS, SUBSET, ARITHM;
+--- integr14.miz
++++ integr14.miz
+@@ -30 +30 @@
+- requirements NUMERALS, SUBSET, ARITHM;
++ requirements BOOLE, NUMERALS, SUBSET, ARITHM;
+--- jordan1d.miz
++++ jordan1d.miz
+@@ -31 +31 @@
+- requirements NUMERALS, SUBSET, REAL, ARITHM;
++ requirements BOOLE, NUMERALS, SUBSET, REAL, ARITHM;
+--- lagra4sq.miz
++++ lagra4sq.miz
+@@ -31 +31 @@
+- requirements REAL, NUMERALS, SUBSET, ARITHM;
++ requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
+--- l_hospit.miz
++++ l_hospit.miz
+@@ -30 +30 @@
+- requirements SUBSET, ARITHM, NUMERALS;
++ requirements BOOLE, SUBSET, ARITHM, NUMERALS;
+--- limfunc4.miz
++++ limfunc4.miz
+@@ -27 +27 @@
+- requirements SUBSET, ARITHM, NUMERALS;
++ requirements BOOLE, SUBSET, ARITHM, NUMERALS;
+--- ltlaxio2.miz
++++ ltlaxio2.miz
+@@ -34 +34 @@
+- requirements NUMERALS, SUBSET, ARITHM, REAL;
++ requirements BOOLE, NUMERALS, SUBSET, ARITHM, REAL;
+--- matrixc1.miz
++++ matrixc1.miz
+@@ -32 +32 @@
+- requirements NUMERALS, SUBSET, REAL, ARITHM;
++ requirements BOOLE, NUMERALS, SUBSET, REAL, ARITHM;
+--- menelaus.miz
++++ menelaus.miz
+@@ -30 +30 @@
+- requirements SUBSET, NUMERALS, ARITHM;
++ requirements BOOLE, SUBSET, NUMERALS, ARITHM;
+--- pdiff_3.miz
++++ pdiff_3.miz
+@@ -29 +29 @@
+- requirements SUBSET, REAL, NUMERALS, ARITHM;
++ requirements BOOLE, SUBSET, REAL, NUMERALS, ARITHM;
+--- pdiff_5.miz
++++ pdiff_5.miz
+@@ -29 +29 @@
+- requirements SUBSET, REAL, NUMERALS, ARITHM;
++ requirements BOOLE, SUBSET, REAL, NUMERALS, ARITHM;
+--- prgcor_1.miz
++++ prgcor_1.miz
+@@ -25 +25 @@
+- requirements REAL, NUMERALS, SUBSET, ARITHM;
++ requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
+--- realset1.miz
++++ realset1.miz
+@@ -23 +23 @@
+- requirements SUBSET;
++ requirements BOOLE, SUBSET;
+--- scmfsa8b.miz
++++ scmfsa8b.miz
+@@ -36 +36 @@
+- requirements NUMERALS, REAL, SUBSET, ARITHM;
++ requirements BOOLE, NUMERALS, REAL, SUBSET, ARITHM;
+--- scmfsa8c.miz
++++ scmfsa8c.miz
+@@ -37 +37 @@
+- requirements REAL, NUMERALS, SUBSET, ARITHM;
++ requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
+--- scmfsa_9.miz
++++ scmfsa_9.miz
+@@ -33 +33 @@
+- requirements REAL, NUMERALS, SUBSET, ARITHM;
++ requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
+--- scmfsa_x.miz
++++ scmfsa_x.miz
+@@ -35 +35 @@
+- requirements NUMERALS, SUBSET, ARITHM, REAL;
++ requirements BOOLE, NUMERALS, SUBSET, ARITHM, REAL;
+--- scmpds_6.miz
++++ scmpds_6.miz
+@@ -32 +32 @@
+- requirements NUMERALS, REAL, SUBSET, ARITHM;
++ requirements BOOLE, NUMERALS, REAL, SUBSET, ARITHM;
+--- scmpds_7.miz
++++ scmpds_7.miz
+@@ -33 +33 @@
+- requirements REAL, NUMERALS, SUBSET, ARITHM;
++ requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
+--- seqfunc.miz
++++ seqfunc.miz
+@@ -28 +28 @@
+- requirements NUMERALS, SUBSET, ARITHM;
++ requirements BOOLE, NUMERALS, SUBSET, ARITHM;
+--- sfmastr3.miz
++++ sfmastr3.miz
+@@ -39 +39 @@
+- requirements REAL, NUMERALS, SUBSET, ARITHM;
++ requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
+--- sin_cos6.miz
++++ sin_cos6.miz
+@@ -27 +27 @@
+- requirements SUBSET, NUMERALS, ARITHM, REAL;
++ requirements BOOLE, SUBSET, NUMERALS, ARITHM, REAL;
+--- sin_cos9.miz
++++ sin_cos9.miz
+@@ -31 +31 @@
+- requirements SUBSET, NUMERALS, ARITHM, REAL;
++ requirements BOOLE, SUBSET, NUMERALS, ARITHM, REAL;
+--- tops_4.miz
++++ tops_4.miz
+@@ -28 +28 @@
+- requirements SUBSET, REAL;
++ requirements BOOLE, SUBSET, REAL;

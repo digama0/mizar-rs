@@ -2071,7 +2071,6 @@ impl<'a> InternConst<'a> {
   }
 
   /// CollectInferConst
-  /// * precondition: tm must be Term::Functor
   /// * postcondition: if self.only_constants, then tm will be Term::Infer after
   fn collect_infer_const(&mut self, tm: &mut Term) {
     if self.only_constants {
@@ -2127,7 +2126,7 @@ impl<'a> InternConst<'a> {
     };
     if let Some(eq_defs) = self.equals.get(&ConstrKind::Func(nr)) {
       for eq_def in eq_defs {
-        if let Some(tm2) = eq_def.expand_if_equal(self.g, self.lc, args, self.depth) {
+        if let Some(tm2) = eq_def.expand_if_equal(self.g, self.lc, args, 0) {
           // vprintln!("{tm:?} -> {tm2:?} using {eq_def:?}");
           insert_one(self, tm2);
         }
@@ -2138,7 +2137,7 @@ impl<'a> InternConst<'a> {
         let id = &self.identify[id];
         // vprintln!("applying {tm:?} <- {id:?}");
         if let Some(subst) = id.try_apply_lhs(self.g, self.lc, &id.lhs, tm) {
-          let tm = subst.inst_term(&id.rhs, self.depth);
+          let tm = subst.inst_term(&id.rhs, 0);
           insert_one(self, tm);
         }
       }
@@ -2584,7 +2583,7 @@ pub struct MizPath(Article, PathBuf);
 
 impl MizPath {
   fn new(s: &str) -> Self {
-    Self(Article::from_bytes(s.as_bytes()), format!("../mizshare/mml/{s}").into())
+    Self(Article::from_bytes(s.as_bytes()), format!("miz/mizshare/mml/{s}").into())
   }
 
   fn open(&self, ext: &str) -> io::Result<File> {
@@ -2642,8 +2641,9 @@ const DUMP_REQUIREMENTS: bool = false;
 const DUMP_LIBRARIES: bool = false;
 const DUMP_FORMATTER: bool = false;
 
-const ENABLE_ANALYZER: bool = true;
+const ENABLE_ANALYZER: bool = false;
 const ENABLE_CHECKER: bool = true;
+const ORIG_MIZAR: bool = false;
 
 //// Unsound flags ////
 // This flag is unsound but needed to check MML right now
@@ -2651,14 +2651,19 @@ const LEGACY_FLEX_HANDLING: bool = true;
 // This is a Mizar bug which is required to check aofa_l00 (the proof should be patched)
 const FLEX_EXPANSION_BUG: bool = true;
 
-const FIRST_FILE: usize = 9;
+const EXPECTED_ERRORS: &[(&str, usize)] =
+  // These failures are caused by a bug in the statement of FLEXARY1:def 9
+  // which requires a patch to Mizar, at least as long as we are using the Mizar analyzer
+  &[("eulrpart", 153), ("eulrpart", 154), ("eulrpart", 628)];
+
+const FIRST_FILE: usize = 0;
 const ONE_FILE: bool = false;
 const PANIC_ON_FAIL: bool = DEBUG;
 const FIRST_VERBOSE_TOP_ITEM: Option<usize> = None;
-const FIRST_VERBOSE_ITEM: Option<usize> = if DEBUG { Some(0) } else { None };
-const FIRST_VERBOSE_CHECKER: Option<usize> = None;
-const SKIP_TO_VERBOSE: bool = DEBUG;
-const PARALLELISM: usize = if DEBUG || ONE_FILE { 1 } else { 7 };
+const FIRST_VERBOSE_ITEM: Option<usize> = None; // if DEBUG { Some(829) } else { None };
+const FIRST_VERBOSE_CHECKER: Option<usize> = None; //if DEBUG { Some(568) } else { None };
+const SKIP_TO_VERBOSE: bool = false;
+const PARALLELISM: usize = if DEBUG || ONE_FILE { 1 } else { 8 };
 
 fn main() {
   ctrlc::set_handler(print_stats_and_exit).expect("Error setting Ctrl-C handler");
@@ -2667,7 +2672,7 @@ fn main() {
   // path.with_reader(|v| v.run_checker(&path));
   // print_stats_and_exit();
   let first_file = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(FIRST_FILE);
-  let file = std::fs::read_to_string("../mizshare/mml.lar").unwrap();
+  let file = std::fs::read_to_string("miz/mizshare/mml.lar").unwrap();
   let jobs = &Mutex::new(file.lines().enumerate().skip(first_file).collect_vec().into_iter());
   let running = &std::array::from_fn::<_, PARALLELISM, _>(|_| RwLock::new(None));
   let refresh_status_line = |mut msg: String| {
@@ -2695,7 +2700,24 @@ fn main() {
           *thread.write().unwrap() = Some(path.0);
           refresh_status_line(format!("{:w$}\r{i}: {s}\n", "", w = PARALLELISM * 11));
           if let Err(_payload) = std::panic::catch_unwind(|| {
-            if ENABLE_ANALYZER {
+            if ORIG_MIZAR {
+              let mut cmd = std::process::Command::new("miz/mizbin/verifier");
+              let cmd = match (ENABLE_ANALYZER, ENABLE_CHECKER) {
+                (true, false) => cmd.arg("-a"),
+                (false, true) => cmd.arg("-c"),
+                (true, true) => &mut cmd,
+                (false, false) => panic!("unsupported"),
+              };
+              let output = cmd.arg(format!("{}.miz", path.1.display())).output().unwrap();
+              if !output.status.success() {
+                eprintln!("\nfile {} failed. Output:", path.0);
+                std::io::stderr().write_all(&output.stderr).unwrap();
+                std::io::stdout().write_all(&output.stdout).unwrap();
+                std::io::stdout().flush().unwrap();
+                panic!("mizar failed")
+              }
+              // println!("{}", String::from_utf8(output.stdout).unwrap());
+            } else if ENABLE_ANALYZER {
               path.with_reader(|v| v.run_analyzer(&path));
             } else if ENABLE_CHECKER {
               path.with_reader(|v| v.run_checker(&path));
@@ -2712,12 +2734,6 @@ fn main() {
           // path.open_msx().unwrap().parse_items();
           // println!("parsed {s}, {} msx items", items.len());
 
-          // let output = std::process::Command::new("../src/kernel/verifier")
-          //   .arg("-a")
-          //   .arg(format!("{}.miz", path.1.display()))
-          //   .output()
-          //   .unwrap();
-          // println!("{}", String::from_utf8(output.stdout).unwrap());
           if ONE_FILE {
             break
           }

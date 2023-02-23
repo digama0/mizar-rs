@@ -483,17 +483,21 @@ impl Unify<'_> {
               if etm.supercluster.find0(&self.g.constrs, empty, pos) {
                 let mut inst1 = self.unify_term(arg2, &Term::EqClass(ec))?;
                 if !inst1.is_false() {
-                  if let (false, Some(element)) = (pos, self.g.reqs.element()) {
+                  if pos {
+                    // x in A, A is empty |- false
+                    inst.mk_or(inst1)?;
+                  } else if let Some(element) = self.g.reqs.element() {
                     let ty = Type { args: vec![Term::EqClass(ec)], ..Type::new(element.into()) };
                     let mut inst2 = Dnf::FALSE;
                     for (ec2, etm2) in self.eq_class.enum_iter() {
                       if etm2.ty_class.iter().any(|ty2| ().eq_radices(self.g, self.lc, ty2, &ty)) {
+                        // !(x in A), A is not empty, x is Element of A |- false
                         inst2.mk_or_else(|| self.unify_term(arg1, &Term::EqClass(ec2)))?;
                       }
                     }
                     inst1.mk_and(inst2)?;
+                    inst.mk_or(inst1)?;
                   }
-                  inst.mk_or(inst1)?;
                 }
               }
             }

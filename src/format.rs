@@ -6,9 +6,9 @@ use std::cell::Cell;
 use std::collections::HashMap;
 
 const ENABLE_FORMATTER: bool = true;
-const SHOW_INFER: bool = true;
+const SHOW_INFER: bool = false;
 const SHOW_ONLY_INFER: bool = false;
-const SHOW_PRIV: bool = true;
+const SHOW_PRIV: bool = false;
 const SHOW_MARKS: bool = false;
 const SHOW_INVISIBLE: bool = false;
 const SHOW_ORIG: bool = false;

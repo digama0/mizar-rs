@@ -104,8 +104,8 @@ impl<'a> Checker<'a> {
         }
       } else {
         err = true;
-        stat("failure");
-        if crate::CHECKER_RESULT {
+        let expected = crate::EXPECTED_ERRORS.contains(&(self.article.as_str(), self.idx));
+        if !expected && crate::CHECKER_RESULT {
           eprintln!(
             "FAILED TO JUSTIFY {}.{i} @ {:?}:{:?}: {:#?}",
             self.idx,
@@ -114,9 +114,18 @@ impl<'a> Checker<'a> {
             f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
           );
         }
-        println!("failed to justify {}.{i} @ {:?}:{:?}", self.idx, self.article, self.pos);
-        if crate::PANIC_ON_FAIL {
-          panic!("failed to justify {}.{i} @ {:?}:{:?}", self.idx, self.article, self.pos);
+        if expected {
+          stat("expected failure");
+          println!(
+            "failed to justify {}.{i} @ {:?}:{:?} (expected)",
+            self.idx, self.article, self.pos
+          );
+        } else {
+          stat("failure");
+          println!("failed to justify {}.{i} @ {:?}:{:?}", self.idx, self.article, self.pos);
+          if crate::PANIC_ON_FAIL {
+            panic!("failed to justify {}.{i} @ {:?}:{:?}", self.idx, self.article, self.pos);
+          }
         }
         break
       }
