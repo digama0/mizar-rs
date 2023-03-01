@@ -1836,7 +1836,7 @@ pub struct SchemeBlock {
   pub just: Justification,
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum CancelKind {
   Def,
   Thm,

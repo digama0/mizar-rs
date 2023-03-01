@@ -1,8 +1,9 @@
 use crate::mk_id;
 use crate::types::{
-  AttrSymId, BlockKind, ConstId, CorrCondKind, FormatAggr, FormatAttr, FormatFunc, FormatMode,
-  FormatPred, FormatStruct, FuncSymId, LabelId, LeftBrkSymId, LocusId, ModeSymId, Position,
-  PredSymId, PropertyKind, Reference, RightBrkSymId, SchId, SchRef, SelSymId, StructSymId,
+  AttrSymId, BlockKind, CancelKind, ConstId, CorrCondKind, FormatAggr, FormatAttr, FormatFunc,
+  FormatMode, FormatPred, FormatStruct, FuncSymId, LabelId, LeftBrkSymId, LocusId, ModeSymId,
+  Position, PredSymId, PropertyKind, Reference, RightBrkSymId, SchId, SchRef, SelSymId,
+  StructSymId,
 };
 use enum_map::Enum;
 
@@ -572,6 +573,15 @@ pub struct CaseBlock {
 }
 
 #[derive(Debug)]
+pub enum Pragma {
+  /// $CD, $CT, $CS
+  Canceled(CancelKind, u32),
+  /// $N
+  ThmDesc(String),
+  Other(String),
+}
+
+#[derive(Debug)]
 pub enum ItemKind {
   Section,
   Block {
@@ -646,9 +656,7 @@ pub enum ItemKind {
     ty: Box<Type>,
     just: Box<Justification>,
   },
-  Pragma {
-    spelling: String,
-  },
+  Pragma(Pragma),
   /// parser internal use only
   SchemeHead(Box<SchemeHead>),
   /// parser internal use only

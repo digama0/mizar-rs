@@ -2,8 +2,9 @@
 use super::XmlReader;
 use crate::ast::*;
 use crate::types::{
-  ArticleId, AttrSymId, ConstId, FuncSymId, LabelId, LeftBrkSymId, LocusId, ModeSymId, Position,
-  PredSymId, PropertyKind, Reference, ReferenceKind, RightBrkSymId, SchId, SelSymId, StructSymId,
+  ArticleId, AttrSymId, CancelKind, ConstId, FuncSymId, LabelId, LeftBrkSymId, LocusId, ModeSymId,
+  Position, PredSymId, PropertyKind, Reference, ReferenceKind, RightBrkSymId, SchId, SelSymId,
+  StructSymId,
 };
 use crate::{types, MizPath};
 use enum_map::Enum;
@@ -171,7 +172,7 @@ impl MsmParser {
       let (mut y1, mut y2) = <_>::default();
       for attr in e.attributes().map(Result::unwrap) {
         match attr.key {
-          b"y1" => y1 = VarKind::from_usize(self.r.get_attr(&attr.value)),
+          b"y1" => y1 = VarKind::from_usize(self.r.get_attr::<usize>(&attr.value) + 1),
           b"y2" => y2 = self.r.get_attr::<u32>(&attr.value) - 1,
           _ => {}
         }
@@ -780,7 +781,21 @@ impl MsmParser {
         conds: vec![],
         corr: None,
       })),
-      b"Pragma" => ItemKind::Pragma { spelling: spelling.unwrap() },
+      b"Pragma" => {
+        let spelling = spelling.unwrap();
+        let parse_num = |s: &str| if s.is_empty() { 1 } else { s.parse::<u32>().unwrap() };
+        ItemKind::Pragma(if let Some(s) = spelling.strip_prefix("$CD") {
+          Pragma::Canceled(CancelKind::Def, parse_num(s))
+        } else if let Some(s) = spelling.strip_prefix("$CT") {
+          Pragma::Canceled(CancelKind::Thm, parse_num(s))
+        } else if let Some(s) = spelling.strip_prefix("$CS") {
+          Pragma::Canceled(CancelKind::Sch, parse_num(s))
+        } else if let Some(s) = spelling.strip_prefix("$N") {
+          Pragma::ThmDesc(s.trim_start().to_owned())
+        } else {
+          Pragma::Other(spelling)
+        })
+      }
       _ => panic!("unrecognized item kind"),
     };
     if !end_tag {

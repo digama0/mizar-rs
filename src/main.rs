@@ -2279,7 +2279,7 @@ impl VisitMut for Renumber {
 struct FixedVar {
   // ident: u32,
   ty: Type,
-  // if true, it will unfold eagerly
+  /// if true, it will unfold eagerly
   def: Option<(Box<Term>, bool)>,
 }
 
