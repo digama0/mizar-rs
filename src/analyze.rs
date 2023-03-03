@@ -165,6 +165,8 @@ impl Analyzer<'_> {
 
   fn elab_scheme(&mut self, ast::SchemeBlock { end, head, items }: &ast::SchemeBlock) {
     let ast::SchemeHead { nr, groups, concl, prems, .. } = head;
+    assert!(self.sch_func_args.is_empty());
+    assert!(self.sch_pred_args.is_empty());
     assert!(self.lc.sch_func_ty.is_empty());
     let infer_consts = self.lc.infer_const.get_mut().0.len();
     for group in groups {
@@ -200,6 +202,8 @@ impl Analyzer<'_> {
     sch.prems.iter().for_each(|ty| Exportable.visit_formula(ty));
     Exportable.visit_formula(&sch.thesis);
     self.lc.infer_const.get_mut().truncate(infer_consts);
+    self.sch_func_args.0.clear();
+    self.sch_pred_args.0.clear();
     self.libs.sch.insert((ArticleId::SELF, *nr), sch);
   }
 
@@ -655,7 +659,9 @@ impl Analyzer<'_> {
                 }
                 PatternKind::ExpandableMode { ref expansion } => {
                   ty = (**expansion).clone();
-                  ty.visit(&mut Inst { subst: &subst.finish(), base, depth: 0 });
+                  let mut args = subst.finish();
+                  args.iter_mut().for_each(|t| t.strip_qua_mut());
+                  ty.visit(&mut Inst { subst: &args, base, depth: 0 });
                 }
                 _ => unreachable!(),
               }
@@ -713,7 +719,6 @@ impl Analyzer<'_> {
             attrs.round_up_with(&self.g, &self.lc, &ty, false);
             assert!(matches!(ty2.attrs.0, Attrs::Consistent(_)));
             ty.attrs = (ty2.attrs.0, attrs);
-            subst.finish();
             return ty
           }
         }
@@ -1092,6 +1097,9 @@ impl Analyzer<'_> {
 
   fn push_many_bound(&mut self, mut dom: Type, n: usize) {
     assert!(n != 0);
+    // for i in 0..n {
+    //   vprintln!("push_bound b{}: {dom:?}", self.lc.bound_var.len() + i);
+    // }
     for _ in 1..n {
       let base = self.lc.bound_var.len() as u32;
       let dom2 = dom.visit_cloned(&mut OnVarMut(|nr| {
@@ -1313,6 +1321,7 @@ impl Analyzer<'_> {
             f.0 = !up;
           });
         }
+        // vprintln!("expanded {def:?}");
         atomic -= 1;
         continue 'start
       }
@@ -2533,7 +2542,7 @@ impl BlockReader {
       self.defthms.push((def.as_ref().unwrap().label.as_ref().map(|l| l.id.0), thm));
       elab.r.read_definiens(&Definiens {
         essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
-        c: ConstrDef { constr: ConstrKind::Func(n), primary },
+        c: ConstrDef { constr: ConstrKind::Func(redefines.unwrap_or(n)), primary },
         assumptions: Formula::mk_and(self.assums.clone()),
         value,
       });
@@ -2612,7 +2621,7 @@ impl BlockReader {
       self.defthms.push((def.as_ref().unwrap().label.as_ref().map(|l| l.id.0), thm));
       elab.r.read_definiens(&Definiens {
         essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
-        c: ConstrDef { constr: ConstrKind::Pred(n), primary: primary.clone() },
+        c: ConstrDef { constr: ConstrKind::Pred(redefines.unwrap_or(n)), primary: primary.clone() },
         assumptions: Formula::mk_and(self.assums.clone()),
         value: DefValue::Formula(value),
       });
@@ -2735,7 +2744,7 @@ impl BlockReader {
           self.defthms.push((def.as_ref().unwrap().label.as_ref().map(|l| l.id.0), thm));
           elab.r.read_definiens(&Definiens {
             essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
-            c: ConstrDef { constr: ConstrKind::Mode(n), primary },
+            c: ConstrDef { constr: ConstrKind::Mode(redefines.unwrap_or(n)), primary },
             assumptions: Formula::mk_and(self.assums.clone()),
             value: DefValue::Formula(value),
           });
@@ -2806,7 +2815,7 @@ impl BlockReader {
       self.defthms.push((def.as_ref().unwrap().label.as_ref().map(|l| l.id.0), thm));
       elab.r.read_definiens(&Definiens {
         essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
-        c: ConstrDef { constr: ConstrKind::Attr(n), primary: primary.clone() },
+        c: ConstrDef { constr: ConstrKind::Attr(redefines.unwrap_or(n)), primary: primary.clone() },
         assumptions: Formula::mk_and(self.assums.clone()),
         value: DefValue::Formula(value),
       });

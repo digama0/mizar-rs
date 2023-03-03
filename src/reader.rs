@@ -131,16 +131,31 @@ impl MizPath {
     // LoadDefinitions
     if crate::ENABLE_ANALYZER {
       self.read_definitions(&v.g.constrs, "dfs", &mut v.definitions).unwrap();
+      if crate::DUMP_DEFINITIONS {
+        for d in &v.definitions {
+          eprintln!("definition: {d:?}");
+        }
+      }
     }
 
     // LoadEqualities
     if crate::ENABLE_CHECKER {
       self.read_definitions(&v.g.constrs, "dfe", &mut v.equalities).unwrap();
+      if crate::DUMP_DEFINITIONS {
+        for d in &v.equalities {
+          eprintln!("equality: {d:?}");
+        }
+      }
     }
 
     // LoadExpansions
     if crate::ENABLE_CHECKER {
       self.read_definitions(&v.g.constrs, "dfx", &mut v.expansions).unwrap();
+      if crate::DUMP_DEFINITIONS {
+        for d in &v.expansions {
+          eprintln!("expansion: {d:?}");
+        }
+      }
     }
 
     // LoadPropertiesReg

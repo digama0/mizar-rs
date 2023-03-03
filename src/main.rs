@@ -2654,6 +2654,7 @@ const UNIFY_INSTS: bool = false;
 
 const DUMP_CONSTRUCTORS: bool = false;
 const DUMP_REQUIREMENTS: bool = false;
+const DUMP_DEFINITIONS: bool = false;
 const DUMP_LIBRARIES: bool = false;
 const DUMP_FORMATTER: bool = false;
 

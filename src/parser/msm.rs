@@ -783,7 +783,13 @@ impl MsmParser {
       })),
       b"Pragma" => {
         let spelling = spelling.unwrap();
-        let parse_num = |s: &str| if s.is_empty() { 1 } else { s.parse::<u32>().unwrap() };
+        let parse_num = |s: &str| {
+          if s.is_empty() {
+            1
+          } else {
+            s.trim().parse::<u32>().unwrap()
+          }
+        };
         ItemKind::Pragma(if let Some(s) = spelling.strip_prefix("$CD") {
           Pragma::Canceled(CancelKind::Def, parse_num(s))
         } else if let Some(s) = spelling.strip_prefix("$CT") {

@@ -73,6 +73,7 @@ There are also options to dump various parts of the input state:
 ```rust
 const DUMP_CONSTRUCTORS: bool = false;
 const DUMP_REQUIREMENTS: bool = false;
+const DUMP_DEFINITIONS: bool = false;
 const DUMP_LIBRARIES: bool = false;
 const DUMP_FORMATTER: bool = false;
 ```
