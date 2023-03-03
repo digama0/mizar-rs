@@ -86,20 +86,21 @@ impl Analyzer<'_> {
     Scope { sc: self.r.open_scope(push_label), priv_preds: self.priv_pred.len() }
   }
 
-  fn close_scope(&mut self, sc: Scope, check_for_local_const: bool) {
+  fn close_scope(&mut self, sc: Scope, check_for_local_const: bool) -> Descope {
     self.priv_func_args.0.truncate(sc.sc.priv_funcs);
     self.priv_pred.0.truncate(sc.priv_preds);
     self.thesis = self.thesis_stack.pop().unwrap();
-    self.r.close_scope(sc.sc, check_for_local_const);
+    self.r.close_scope(sc.sc, check_for_local_const)
   }
 
-  fn scope<R>(
+  fn scope<R: Visitable<Descope>>(
     &mut self, label: Option<LabelId>, copy_thesis: bool, check_for_local_const: bool,
     f: impl FnOnce(&mut Self) -> R,
   ) -> R {
     let sc = self.open_scope(label.is_some(), copy_thesis);
-    let r = f(self);
-    self.close_scope(sc, check_for_local_const);
+    let mut r = f(self);
+    let mut dsc = self.close_scope(sc, check_for_local_const);
+    r.visit(&mut dsc);
     r
   }
 
@@ -1703,7 +1704,7 @@ trait ReadProof {
   type CaseIterable;
   type CaseIter<'a>;
   type SupposeRecv;
-  type Output;
+  type Output: Visitable<Descope>;
 
   /// Changes the thesis from `for x1..xn holds P` to `P`
   /// where `x1..xn` are the fixed_vars introduced since `start`
@@ -1733,11 +1734,11 @@ trait ReadProof {
     &mut self, elab: &mut Analyzer, case: &'a mut Self::CaseIterable,
   ) -> Self::CaseIter<'a>;
 
-  fn new_case(&mut self, elab: &mut Analyzer, case: &mut Self::CaseIter<'_>, f: &[Formula]);
+  fn new_case(&mut self, _: &mut Analyzer, _: &mut Self::CaseIter<'_>, _: &[Formula]) {}
 
   fn end_case(&mut self, _: &mut Analyzer, _: &mut Self::CaseIter<'_>, _: Self::Output) {}
 
-  fn end_cases(&mut self, elab: &mut Analyzer, case: Self::CaseIter<'_>);
+  fn end_cases(&mut self, _: &mut Analyzer, _: Self::CaseIter<'_>) {}
 
   fn new_supposes(&mut self, elab: &mut Analyzer) -> Self::SupposeRecv;
 
@@ -1803,16 +1804,16 @@ trait ReadProof {
         let mut iter = self.new_cases_iter(elab, &mut iter);
         let f = Formula::mk_and_with(|disjs| {
           for bl in blocks {
-            let o = elab.scope(None, true, false, |elab| {
-              let f = Formula::mk_and_with(|conjs| {
+            let (case, o) = elab.scope(None, true, false, |elab| {
+              let case = Formula::mk_and_with(|conjs| {
                 for prop in bl.hyp.conds() {
                   elab.elab_proposition(prop, true).append_conjuncts_to(conjs);
                 }
-                self.new_case(elab, &mut iter, conjs);
+                self.new_case(elab, &mut iter, conjs)
               });
-              f.mk_neg().append_conjuncts_to(disjs);
-              self.elab_proof(elab, &bl.items, bl.end)
+              (case, self.elab_proof(elab, &bl.items, bl.end))
             });
+            case.mk_neg().append_conjuncts_to(disjs);
             self.end_case(elab, &mut iter, o);
           }
           self.end_cases(elab, iter);
@@ -1824,17 +1825,17 @@ trait ReadProof {
         let f = Formula::mk_and_with(|disjs| {
           let mut recv = self.new_supposes(elab);
           for bl in blocks {
-            elab.scope(None, true, false, |elab| {
-              let f = Formula::mk_and_with(|conjs| {
+            let (case, o) = elab.scope(None, true, false, |elab| {
+              let case = Formula::mk_and_with(|conjs| {
                 for prop in bl.hyp.conds() {
                   elab.elab_proposition(prop, true).append_conjuncts_to(conjs);
                 }
                 self.new_suppose(elab, &mut recv, conjs);
               });
-              f.mk_neg().append_conjuncts_to(disjs);
-              let o = self.elab_proof(elab, &bl.items, bl.end);
-              self.end_suppose(elab, &mut recv, o);
+              (case, self.elab_proof(elab, &bl.items, bl.end))
             });
+            case.mk_neg().append_conjuncts_to(disjs);
+            self.end_suppose(elab, &mut recv, o);
           }
           self.end_supposes(elab, recv)
         });
@@ -3437,11 +3438,7 @@ impl ReadProof for BlockReader {
     *case
   }
 
-  fn new_case(&mut self, _: &mut Analyzer, _: &mut Self::CaseIter<'_>, _: &[Formula]) {}
-
-  fn end_cases(&mut self, _: &mut Analyzer, case: Self::CaseIter<'_>) { match case {} }
   fn new_supposes(&mut self, _: &mut Analyzer) -> Self::SupposeRecv { panic!("invalid item") }
-  fn end_suppose(&mut self, _: &mut Analyzer, _: &mut Self::SupposeRecv, _: ()) {}
 
   fn end_block(&mut self, elab: &mut Analyzer, _: Position) {
     if self.needs_round_up {

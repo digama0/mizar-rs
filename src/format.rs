@@ -241,11 +241,13 @@ impl<'a> Pretty<'a> {
       Term::Infer(nr) => {
         if !SHOW_ONLY_INFER {
           if let Some(ic) = self.lc.and_then(|lc| lc.infer_const.try_borrow().ok()) {
-            return if SHOW_INFER {
-              let doc = self.term(true, &ic[*nr].def, depth, depth);
-              self.text(format!("?{}=", nr.0)).append(doc)
-            } else {
-              self.term(prec, &ic[*nr].def, depth, depth)
+            return match ic.get(*nr) {
+              None => self.text(format!("?{}=??", nr.0)),
+              Some(asgn) if SHOW_INFER => {
+                let doc = self.term(true, &asgn.def, depth, depth);
+                self.text(format!("?{}=", nr.0)).append(doc)
+              }
+              Some(asgn) => self.term(prec, &asgn.def, depth, depth),
             }
           }
         }

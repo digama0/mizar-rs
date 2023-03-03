@@ -307,7 +307,7 @@ impl Reader {
     vars.iter().for_each(|ty| self.push_fixed_var(ty))
   }
 
-  pub fn open_scope(&mut self, push_label: bool) -> Scope {
+  pub(crate) fn open_scope(&mut self, push_label: bool) -> Scope {
     let labels = self.labels.len();
     // eprintln!("new block {:?}, labels = {labels}", label);
     if push_label {
@@ -325,41 +325,43 @@ impl Reader {
     Scope { fixed_var, props, labels, priv_funcs, infer_const, pending_defs }
   }
 
-  pub fn close_scope(&mut self, sc: Scope, check_for_local_const: bool) {
+  pub(crate) fn close_scope(&mut self, sc: Scope, check_for_local_const: bool) -> Descope {
     self.lc.term_cache.get_mut().close_scope();
     // let labels2 = self.labels.len();
     // let fixed_var2 = self.lc.fixed_var.len();
     // let props2 = self.props.len();
     // let priv_funcs2 = self.lc.priv_func.len();
     // let infer_const2 = self.lc.infer_const.get_mut().len();
+    // let sc2 = self.lc.term_cache.get_mut().scope;
     // vprintln!(
     //   "close scope {:?} <- {:?}",
-    //   (labels, fixed_var, props, priv_funcs, infer_const, sc),
-    //   (labels2, fixed_var2, props2, priv_funcs2, infer_const2, sc + 1)
+    //   (sc.labels, sc.fixed_var, sc.props, sc.priv_funcs, sc.infer_const, sc2),
+    //   (labels2, fixed_var2, props2, priv_funcs2, infer_const2, sc2 + 1)
     // );
     self.lc.fixed_var.0.truncate(sc.fixed_var);
     self.props.truncate(sc.props);
     // eprintln!("push_prop reset {} / {}", sc.props, sc.labels);
     self.labels.0.truncate(sc.labels);
     self.lc.priv_func.0.truncate(sc.priv_funcs);
-    let mut renumber =
+    let mut descope =
       self.lc.truncate_infer_const(&self.g.constrs, check_for_local_const, sc.infer_const);
     // let infer_const3 = self.lc.infer_const.get_mut().len();
-    // if infer_const3 > infer_const {
-    //   vprintln!("reinserted {:?} -> {:?}", infer_const, infer_const3);
+    // if infer_const3 > sc.infer_const {
+    //   vprintln!("reinserted {:?} -> {:?}", sc.infer_const, infer_const3);
     // }
-    if renumber.is_empty() {
+    if descope.remap.is_empty() {
       self.pending_defs.truncate(sc.pending_defs)
     } else {
       for x in self.pending_defs.drain(sc.pending_defs..) {
         match x {
-          PendingDef::Constr(k) => self.g.constrs.visit_at(&mut renumber, k),
+          PendingDef::Constr(k) => self.g.constrs.visit_at(&mut descope, k),
           // PendingDef::Cluster => {}
         }
       }
     }
 
     // self.dbg_scope_check();
+    descope
   }
 
   fn scope<R>(

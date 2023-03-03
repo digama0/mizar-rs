@@ -517,6 +517,9 @@ pub trait Visitable<V> {
   }
 }
 
+impl<V> Visitable<V> for () {
+  fn visit(&mut self, _: &mut V) {}
+}
 impl<V, T: Visitable<V>> Visitable<V> for &mut T {
   fn visit(&mut self, v: &mut V) { (**self).visit(v) }
 }

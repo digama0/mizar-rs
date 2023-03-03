@@ -2258,19 +2258,31 @@ impl VisitMut for ExpandConsts<'_> {
   }
 }
 
-struct Renumber(HashMap<InferId, InferId>);
-
-impl Renumber {
-  fn is_empty(&self) -> bool { self.0.is_empty() }
+struct Descope {
+  num_consts: u32,
+  infer_const: u32,
+  remap: HashMap<InferId, InferId>,
+  // The entries in remap are Assignment::default() (which is invalid)
+  old: Vec<Assignment>,
 }
 
-impl VisitMut for Renumber {
+impl VisitMut for Descope {
   fn visit_term(&mut self, tm: &mut Term) {
-    self.super_visit_term(tm);
-    if let Term::Infer(nr) = tm {
-      if let Some(&nr2) = self.0.get(nr) {
-        *nr = nr2;
+    loop {
+      match *tm {
+        Term::Constant(c) => assert!(c.0 < self.num_consts, "nongeneralizable variable"),
+        Term::Infer(ref mut nr) =>
+          if let Some(i) = nr.0.checked_sub(self.infer_const) {
+            if let Some(nr2) = self.remap.get(nr) {
+              *nr = *nr2
+            } else {
+              *tm = self.old[i as usize].def.clone();
+              continue
+            }
+          },
+        _ => self.super_visit_term(tm),
       }
+      break
     }
   }
 }
@@ -2283,7 +2295,7 @@ struct FixedVar {
   def: Option<(Box<Term>, bool)>,
 }
 
-#[derive(Debug)]
+#[derive(Default, Debug)]
 struct Assignment {
   /// Must be Term::Functor
   def: Term,
@@ -2367,23 +2379,27 @@ impl LocalContext {
   /// FreeConstDef
   fn truncate_infer_const(
     &mut self, ctx: &Constructors, check_for_local_const: bool, len: usize,
-  ) -> Renumber {
+  ) -> Descope {
     let ic = self.infer_const.get_mut();
-    let mut renumber = Renumber(HashMap::new());
+    let mut descope = Descope {
+      remap: HashMap::new(),
+      num_consts: self.fixed_var.len() as u32,
+      infer_const: len as u32,
+      old: vec![],
+    };
     if len >= ic.0.len() {
-      return renumber
+      return descope
     }
-    if !check_for_local_const {
-      ic.truncate(len);
-      return renumber
-    }
-    let old = ic.vec.0.drain(len..).collect_vec();
+    descope.old = ic.vec.0.split_off(len);
     ic.sorted.retain(|t| Idx::into_usize(*t) < len);
     assert!(ic.sorted.len() == len);
+    if !check_for_local_const {
+      return descope
+    }
     let mut has_local_const = HashSet::<InferId>::new();
     // vprintln!("start loop {} -> {}", len, old.len());
     'retry: loop {
-      for (i, asgn) in old.iter().enumerate() {
+      for (i, asgn) in descope.old.iter().enumerate() {
         let i = Idx::from_usize(len + i);
         if has_local_const.contains(&i) {
           continue
@@ -2406,7 +2422,7 @@ impl LocalContext {
         }
         let mut cc = CheckForLocalConst {
           has_local_const: &has_local_const,
-          num_consts: self.fixed_var.len() as u32,
+          num_consts: descope.num_consts,
           found: false,
         };
         cc.visit_term(&asgn.def);
@@ -2420,28 +2436,28 @@ impl LocalContext {
     }
     // vprintln!("done loop {} -> {}", len, old.len());
     let mut i = Idx::from_usize(len);
-    for asgn in old {
+    for asgn in &mut descope.old {
       if !has_local_const.contains(&i) {
         match ic.find_index(|a| a.def.cmp(ctx, None, &asgn.def, CmpStyle::Strict)) {
-          Ok(nr) => renumber.0.insert(i, nr),
+          Ok(nr) => descope.remap.insert(i, nr),
           Err(idx) => {
-            let j = ic.insert_at(idx, asgn);
+            let j = ic.insert_at(idx, std::mem::take(asgn));
             // eprintln!("reinsert ?{i:?} => ?{j:?} : {:?} := {:?}", ic[j].ty, ic[j].def);
-            renumber.0.insert(i, j)
+            descope.remap.insert(i, j)
           }
         };
       }
       i.0 += 1;
     }
-    if !renumber.is_empty() {
+    if !descope.remap.is_empty() {
       for asgn in &mut ic.0[len..] {
-        asgn.visit(&mut renumber);
+        asgn.visit(&mut descope);
       }
     }
     for asgn in &mut ic.0 {
-      if asgn.eq_const.iter().any(|n| renumber.0.contains_key(n)) {
+      if asgn.eq_const.iter().any(|n| descope.remap.contains_key(n)) {
         for n in std::mem::take(&mut asgn.eq_const) {
-          if let Some(&n2) = renumber.0.get(&n) {
+          if let Some(&n2) = descope.remap.get(&n) {
             asgn.eq_const.insert(n2);
           } else if Idx::into_usize(n) < len {
             asgn.eq_const.insert(n);
@@ -2449,7 +2465,7 @@ impl LocalContext {
         }
       }
     }
-    renumber
+    descope
   }
 
   fn mk_forall(&mut self, range: Range<usize>, istart: u32, pop: bool, f: &mut Formula) {
