@@ -2668,17 +2668,20 @@ const LEGACY_FLEX_HANDLING: bool = true;
 // This is a Mizar bug which is required to check aofa_l00 (the proof should be patched)
 const FLEX_EXPANSION_BUG: bool = true;
 
-const EXPECTED_ERRORS: &[(&str, usize)] =
+const EXPECTED_ERRORS: &[(&str, usize)] = if ENABLE_ANALYZER {
+  &[]
+} else {
   // These failures are caused by a bug in the statement of FLEXARY1:def 9
   // which requires a patch to Mizar, at least as long as we are using the Mizar analyzer
-  &[("eulrpart", 153), ("eulrpart", 154), ("eulrpart", 628)];
+  &[("eulrpart", 153), ("eulrpart", 154), ("eulrpart", 628)]
+};
 
 const FIRST_FILE: usize = 0;
 const ONE_FILE: bool = false;
 const PANIC_ON_FAIL: bool = DEBUG;
 const FIRST_VERBOSE_TOP_ITEM: Option<usize> = None;
-const FIRST_VERBOSE_ITEM: Option<usize> = None; // if DEBUG { Some(829) } else { None };
-const FIRST_VERBOSE_CHECKER: Option<usize> = None; //if DEBUG { Some(568) } else { None };
+static FIRST_VERBOSE_ITEM: RwLock<Option<usize>> = RwLock::new(None);
+const FIRST_VERBOSE_CHECKER: Option<usize> = None; //if DEBUG { Some(0) } else { None };
 const SKIP_TO_VERBOSE: bool = false;
 const PARALLELISM: usize = if DEBUG || ONE_FILE { 1 } else { 8 };
 
@@ -2688,7 +2691,11 @@ fn main() {
   // let path = MizPath(Article::from_bytes(b"TEST"), "../test/text/test".into());
   // path.with_reader(|v| v.run_checker(&path));
   // print_stats_and_exit();
-  let first_file = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(FIRST_FILE);
+  let mut args = std::env::args().skip(1);
+  let first_file = args.next().and_then(|s| s.parse().ok()).unwrap_or(FIRST_FILE);
+  if let Some(n) = args.next().and_then(|s| s.parse().ok()) {
+    *FIRST_VERBOSE_ITEM.write().unwrap() = Some(n)
+  }
   let file = std::fs::read_to_string("miz/mizshare/mml.lar").unwrap();
   let jobs = &Mutex::new(file.lines().enumerate().skip(first_file).collect_vec().into_iter());
   let running = &std::array::from_fn::<_, PARALLELISM, _>(|_| RwLock::new(None));

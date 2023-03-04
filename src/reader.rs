@@ -416,7 +416,7 @@ impl Reader {
   }
 
   pub fn read_item(&mut self, it: &Item) {
-    if let Some(n) = crate::FIRST_VERBOSE_ITEM {
+    if let Some(n) = *crate::FIRST_VERBOSE_ITEM.read().unwrap() {
       set_verbose(self.items >= n);
     }
     if crate::ITEM_HEADER {

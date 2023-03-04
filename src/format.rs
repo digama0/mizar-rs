@@ -184,7 +184,19 @@ impl<'a> Pretty<'a> {
     args: &[Term], depth: u32, lift: u32,
   ) -> Doc<'a> {
     let lc = self.lc.unwrap();
+    let symdoc = if SHOW_ORIG {
+      self.text(format!("{}[{}]", &lc.formatter.symbols[&sym], orig))
+    } else {
+      self.text(&lc.formatter.symbols[&sym])
+    };
     assert_eq!(len as usize, args.len());
+    // if len as usize != args.len() {
+    //   return self
+    //     .text(format!("??{len} "))
+    //     .append(symdoc)
+    //     .append(self.terms(None, args, depth, lift).parens())
+    //     .brackets()
+    // }
     let vis = (!SHOW_INVISIBLE || vis.len() == args.len()).then_some(vis);
     let (left, right) = if let Some(vis) = vis {
       assert_eq!(vis.len(), (left + right) as usize);
@@ -198,11 +210,7 @@ impl<'a> Pretty<'a> {
       (_, Some(vis)) =>
         self.terms(Some(&vis[..left as usize]), args, depth, lift).parens().append(self.space()),
     };
-    let doc = if SHOW_ORIG {
-      doc.append(self.text(format!("{}[{}]", &lc.formatter.symbols[&sym], orig)))
-    } else {
-      doc.append(self.text(&lc.formatter.symbols[&sym]))
-    };
+    let doc = doc.append(symdoc);
     let doc = match right {
       0 => doc,
       1 => {
