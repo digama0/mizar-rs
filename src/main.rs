@@ -1520,10 +1520,10 @@ impl<'a> Subst<'a> {
       return true
     }
     self.rollback(&snap, i);
-    if !matches!(ty.kind, TypeKind::Mode(n) if g.constrs.mode[n].redefines.is_none()) {
+    if matches!(ty.kind, TypeKind::Mode(n) if g.constrs.mode[n].redefines.is_none()) {
       while let Some(sty) = wty.widening(g) {
         let Some(wty2) = ty.widening_of(g, &sty) else { break };
-        if self.eq_radices(g, lc, ty, &wty) && self.check_types(g, lc, tys) {
+        if self.eq_radices(g, lc, ty, &wty2) && self.check_types(g, lc, tys) {
           return true
         }
         self.rollback(&snap, i);

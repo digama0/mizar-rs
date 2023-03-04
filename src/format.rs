@@ -369,16 +369,23 @@ impl<'a> Pretty<'a> {
   fn adjective(&self, nr: AttrId, args: &[Term], depth: u32, lift: u32) -> Doc<'a> {
     if let Some(lc) = self.lc {
       if let Some(&(len, ref vis, FormatAttr { sym, args: n })) = lc.formatter.attr.get(&nr) {
-        assert_eq!(len as usize, args.len() + 1);
-        assert_eq!(vis.len(), n as usize);
-        let (v0, vis) = vis.split_last().unwrap();
-        assert_eq!(v0.0 as usize, args.len());
-        let vis = (!SHOW_INVISIBLE || vis.len() == args.len()).then_some(vis);
         let sym = if SHOW_ORIG {
           self.text(format!("{}[{}]", lc.formatter.symbols[&sym.into()], nr.0))
         } else {
           self.text(&lc.formatter.symbols[&sym.into()])
         };
+        assert_eq!(len as usize, args.len() + 1);
+        // if len as usize != args.len() + 1 {
+        //   return self
+        //     .text(format!("??{len} "))
+        //     .append(sym)
+        //     .append(self.terms(None, args, depth, lift).parens())
+        //     .brackets()
+        // }
+        assert_eq!(vis.len(), n as usize);
+        let (v0, vis) = vis.split_last().unwrap();
+        assert_eq!(v0.0 as usize, args.len());
+        let vis = (!SHOW_INVISIBLE || vis.len() == args.len()).then_some(vis);
         return match (vis, args) {
           (None, []) | (Some([]), _) => sym,
           (Some(&[v]), _) => self.term(true, &args[v.0 as usize], depth, lift).append(sym),

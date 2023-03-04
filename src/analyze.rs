@@ -616,6 +616,7 @@ impl Analyzer<'_> {
     match attr {
       ast::Attr::Non { attr, .. } => self.elab_attr(attr, !pos, ty),
       ast::Attr::Attr { sym, args, .. } => {
+        // vprintln!("elab_attr {attr:?} <- {ty:?}");
         let v = self.lc.bound_var.push(std::mem::take(ty));
         let args = (args.iter().map(|t| self.elab_term_qua(t)))
           .chain(std::iter::once(Term::Bound(v)))
@@ -627,14 +628,17 @@ impl Analyzer<'_> {
               let PatternKind::Attr(nr) = pat.kind else { unreachable!() };
               let c = &self.g.constrs.attribute[nr].c;
               let nr = c.redefines.unwrap_or(nr);
-              assert!(c.superfluous == 0); // check with mizar if this fails
-              let args = (subst.subst_term.into_vec().into_iter().take(c.primary.len() - 1))
+              let args = (subst.subst_term.into_vec().into_iter())
+                .take(c.primary.len() - 1)
+                .skip(c.superfluous as _)
                 .map(|t| *t.unwrap().to_owned())
                 .collect::<Box<[_]>>();
               *ty = self.r.lc.bound_var.0.pop().unwrap();
               pos = pat.pos == pos;
               assert!(matches!(ty.attrs.0, Attrs::Consistent(_)));
-              return Attr { nr, pos, args }
+              let out = Attr { nr, pos, args };
+              // vprintln!("elab_attr {attr:?} <- {ty:?}\n  -> {out:?}");
+              return out
             }
           }
         }
@@ -2545,9 +2549,9 @@ impl BlockReader {
     if let Some(value) = &value {
       cc.0[CorrCondKind::Consistency] = value.mk_consistency(&elab.g, Some(&it_type));
       if let Some(nr) = redefines {
-        let args2 =
+        let args =
           self.to_const.0[superfluous as usize..].iter().map(|c| Term::Constant(*c)).collect();
-        let defined = Term::Functor { nr, args: args2 }.it_eq(&elab.g);
+        let defined = Term::Functor { nr, args }.it_eq(&elab.g);
         cc.0[CorrCondKind::Compatibility] =
           Some(value.mk_compatibility(&elab.g, Some(&it_type), &defined));
       }
@@ -2600,7 +2604,8 @@ impl BlockReader {
           AbstractLocus(depth).visit_formula(&mut f);
         }
         DefValue::Formula(value) => {
-          f = value.iffthm_for(&elab.g, &defined.it_eq(&elab.g));
+          let itvar = LocusId(depth as _);
+          f = value.iffthm_for(&elab.g, &elab.g.reqs.mk_eq(Term::Locus(itvar), defined));
           AbstractLocus(depth + 1).visit_formula(&mut f);
           AbstractLocus(depth).visit_type(&mut it_type);
           f = Box::new(Formula::ForAll { dom: it_type, scope: f });
@@ -2630,9 +2635,9 @@ impl BlockReader {
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     let visible: Box<[_]> = pat.args.iter().map(|v| self.locus(v.var())).collect();
     let mut properties = PropertiesBuilder::new(&visible);
-    let args: Box<[_]> = pat.args.iter().map(|v| Term::Constant(v.var())).collect();
     let (redefines, superfluous, pos);
     if it.redef {
+      let args: Box<[_]> = pat.args.iter().map(|v| Term::Constant(v.var())).collect();
       let pat = elab.notations.predicate.iter().rev().find(|pat| {
         pat.fmt == fmt
           && !matches!(pat.kind, PatternKind::Pred(nr)
@@ -2653,16 +2658,16 @@ impl BlockReader {
     if let Some(value) = &value {
       cc.0[CorrCondKind::Consistency] = value.mk_consistency(&elab.g, None);
       if let Some(nr) = redefines {
-        let args2 =
+        let args =
           self.to_const.0[superfluous as usize..].iter().map(|c| Term::Constant(*c)).collect();
         cc.0[CorrCondKind::Compatibility] =
-          Some(value.mk_compatibility(&elab.g, None, &Formula::Pred { nr, args: args2 }));
+          Some(value.mk_compatibility(&elab.g, None, &Formula::Pred { nr, args }));
       }
       properties.formula = Some(value.as_formula(&elab.g))
     } else if let Some(nr) = redefines {
-      let args2 =
+      let args =
         self.to_const.0[superfluous as usize..].iter().map(|c| Term::Constant(*c)).collect();
-      properties.formula = Some(Box::new(Formula::Pred { nr, args: args2 }))
+      properties.formula = Some(Box::new(Formula::Pred { nr, args }))
     }
     elab.elab_corr_conds(cc, &it.conds, &it.corr);
     if self.assums.is_empty() {
@@ -2834,9 +2839,8 @@ impl BlockReader {
     let mut cc = CorrConds::new();
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     let visible: Box<[_]> = pat.args.iter().map(|v| self.locus(v.var())).collect();
-    let args: Box<[_]>;
     let (redefines, superfluous, pos) = if it.redef {
-      args = pat.args.iter().map(|v| Term::Constant(v.var())).collect();
+      let args: Box<[_]> = pat.args.iter().map(|v| Term::Constant(v.var())).collect();
       let pat = elab.notations.attribute.iter().rev().find(|pat| {
         pat.fmt == fmt
           && !matches!(pat.kind, PatternKind::Attr(nr)
@@ -2846,15 +2850,17 @@ impl BlockReader {
       });
       let pat = pat.expect("type error");
       let PatternKind::Attr(nr) = pat.kind else { unreachable!() };
-      (Some(nr), (self.primary.len() - pat.primary.len()) as u8, pat.pos)
+      let c = &elab.g.constrs.attribute[nr];
+      (Some(nr), (self.primary.len() - c.primary.len()) as u8, pat.pos)
     } else {
-      args = Box::new([]);
       (None, 0, true)
     };
     let value = def.as_ref().map(|def| elab.elab_def_value(&def.kind, pos));
     if let Some(value) = &value {
       cc.0[CorrCondKind::Consistency] = value.mk_consistency(&elab.g, None);
       if let Some(nr) = redefines {
+        let args =
+          self.to_const.0[superfluous as usize..].iter().map(|c| Term::Constant(*c)).collect();
         cc.0[CorrCondKind::Compatibility] =
           Some(value.mk_compatibility(&elab.g, None, &Formula::Attr { nr, args }));
       }
@@ -3488,7 +3494,13 @@ impl ReadProof for BlockReader {
   fn intro(&mut self, elab: &mut Analyzer, start: usize, _: u32) {
     self.to_locus.0.resize(start, None);
     for fv in &elab.r.lc.fixed_var.0[start..] {
-      let ty = self.to_locus(elab, |l| fv.ty.visit_cloned(l));
+      let mut ty = if let TypeKind::Mode(n) = fv.ty.kind {
+        let (n, args) = Type::adjust(n, &fv.ty.args, &elab.g.constrs);
+        Type { kind: n.into(), attrs: fv.ty.attrs.clone(), args: args.to_vec() }
+      } else {
+        fv.ty.clone()
+      };
+      self.to_locus(elab, |l| ty.visit(l));
       Exportable.visit_type(&ty);
       let i = self.primary.push(ty);
       self.to_const.0.push(self.to_locus.push(Some(i)));
