@@ -839,6 +839,7 @@ impl Reader {
       func_ids: &self.func_ids,
       reductions: &self.reductions,
       article: self.article,
+      item_idx: self.items - 1,
       idx: self.inference_nr,
       pos: it.pos,
     };

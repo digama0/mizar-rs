@@ -20,6 +20,7 @@ pub struct Checker<'a> {
   pub func_ids: &'a BTreeMap<ConstrKind, Vec<usize>>,
   pub reductions: &'a [Reduction],
   pub article: Article,
+  pub item_idx: usize,
   pub idx: usize,
   pub pos: Position,
 }
@@ -117,14 +118,20 @@ impl<'a> Checker<'a> {
         if expected {
           stat("expected failure");
           println!(
-            "failed to justify {}.{i} @ {:?}:{:?} (expected)",
-            self.idx, self.article, self.pos
+            "[{}] failed to justify {}.{i} @ {:?}:{:?} (expected)",
+            self.item_idx, self.idx, self.article, self.pos
           );
         } else {
           stat("failure");
-          println!("failed to justify {}.{i} @ {:?}:{:?}", self.idx, self.article, self.pos);
+          println!(
+            "[{}] failed to justify {}.{i} @ {:?}:{:?}",
+            self.item_idx, self.idx, self.article, self.pos
+          );
           if crate::PANIC_ON_FAIL {
-            panic!("failed to justify {}.{i} @ {:?}:{:?}", self.idx, self.article, self.pos);
+            panic!(
+              "[{}] failed to justify {}.{i} @ {:?}:{:?}",
+              self.item_idx, self.idx, self.article, self.pos
+            );
           }
         }
         break
@@ -239,9 +246,15 @@ impl<'a> Checker<'a> {
       if crate::CHECKER_RESULT {
         eprintln!("FAILED TO JUSTIFY sch {} @ {:?}:{:?}", self.idx, self.article, self.pos);
       }
-      println!("failed to justify sch {} @ {:?}:{:?}", self.idx, self.article, self.pos);
+      println!(
+        "[{}] failed to justify sch {} @ {:?}:{:?}",
+        self.item_idx, self.idx, self.article, self.pos
+      );
       if crate::PANIC_ON_FAIL {
-        panic!("failed to justify sch {} @ {:?}:{:?}", self.idx, self.article, self.pos);
+        panic!(
+          "[{}] failed to justify sch {} @ {:?}:{:?}",
+          self.item_idx, self.idx, self.article, self.pos
+        );
       }
     }
     self.lc.term_cache.get_mut().close_scope();

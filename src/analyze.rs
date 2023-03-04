@@ -2202,7 +2202,7 @@ impl ReconstructThesis {
       fn as_pos(&mut self, pos: bool) -> &mut Vec<Formula> {
         if self.pos != pos {
           self.pos = pos;
-          self.conjs = vec![Formula::mk_and(std::mem::take(&mut self.conjs)).mk_neg()];
+          self.conjs = Formula::mk_and(std::mem::take(&mut self.conjs)).mk_neg().into_conjuncts();
         }
         &mut self.conjs
       }
@@ -2277,7 +2277,9 @@ impl ReadProof for ReconstructThesis {
   fn take(&mut self, _: &mut Analyzer, _: Term) { panic!("take steps are not reconstructible") }
 
   fn take_as_var(&mut self, elab: &mut Analyzer, v: ConstId) {
-    if !matches!(self.stack.last(), Some(ProofStep::TakeAsVar { .. })) {
+    if let Some(ProofStep::TakeAsVar { range, .. }) = self.stack.last_mut() {
+      range.end = elab.lc.fixed_var.len();
+    } else {
       self.stack.push(ProofStep::TakeAsVar {
         range: v.0 as usize..elab.lc.fixed_var.len(),
         istart: elab.lc.infer_const.get_mut().len() as u32,
@@ -2513,8 +2515,8 @@ impl BlockReader {
       });
       let pat = pat.expect("type error");
       let PatternKind::Func(nr) = pat.kind else { unreachable!() };
-      (redefines, superfluous) = (Some(nr), (self.primary.len() - pat.primary.len()) as u8);
       let c = &elab.g.constrs.functor[nr];
+      (redefines, superfluous) = (Some(nr), (self.primary.len() - c.primary.len()) as u8);
       properties.props = c.properties.offset(superfluous);
       let args2: Box<[_]> =
         self.to_const.0[superfluous as usize..].iter().map(|c| Term::Constant(*c)).collect();
@@ -2563,7 +2565,7 @@ impl BlockReader {
     it_type = elab.lc.it_type.take().unwrap();
     self.to_locus(elab, |l| it_type.visit(l));
     let n;
-    if it.redef && value.is_none() && superfluous == 0 && it.props.is_empty() {
+    if it.redef && spec.is_none() && superfluous == 0 && it.props.is_empty() {
       n = redefines.unwrap()
     } else {
       let primary = primary.clone();
@@ -2631,7 +2633,7 @@ impl BlockReader {
       let PatternKind::Pred(nr) = pat.kind else { unreachable!() };
       let c = &elab.g.constrs.predicate[nr];
       (redefines, superfluous, pos) =
-        (Some(nr), (self.primary.len() - pat.primary.len()) as u8, pat.pos);
+        (Some(nr), (self.primary.len() - c.primary.len()) as u8, pat.pos);
       properties.props = c.properties.offset(superfluous)
     } else {
       (redefines, superfluous, pos) = (None, 0, true)
@@ -2721,9 +2723,10 @@ impl BlockReader {
           });
           let pat = pat.expect("type error");
           let PatternKind::Mode(nr) = pat.kind else { panic!("redefining expandable mode") };
-          (redefines, superfluous) = (Some(nr), (self.primary.len() - pat.primary.len()) as u8);
-          let tgt = elab.g.constrs.mode[nr].ty.clone();
-          if elab.g.constrs.mode[nr].properties.get(PropertyKind::Sethood) {
+          let c = &elab.g.constrs.mode[nr];
+          (redefines, superfluous) = (Some(nr), (self.primary.len() - c.primary.len()) as u8);
+          let tgt = c.ty.clone();
+          if c.properties.get(PropertyKind::Sethood) {
             properties.props.set(PropertyKind::Sethood)
           }
           it_type = elab.elab_spec(spec.as_deref(), &tgt);
@@ -2769,7 +2772,7 @@ impl BlockReader {
         it_type = elab.lc.it_type.take().unwrap();
         self.to_locus(elab, |l| it_type.visit(l));
         let n;
-        if it.redef && value.is_none() && superfluous == 0 {
+        if it.redef && spec.is_none() && superfluous == 0 {
           n = redefines.unwrap()
         } else {
           let primary = primary.clone();
