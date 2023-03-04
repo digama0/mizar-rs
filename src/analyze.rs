@@ -333,6 +333,9 @@ impl Analyzer<'_> {
   fn elab_fixed_vars(&mut self, var: &ast::BinderGroup) {
     assert!(!var.vars.is_empty());
     let ty = self.elab_intern_type(var.ty.as_deref().unwrap());
+    // for i in 0..var.vars.len() {
+    //   vprintln!("elab_fixed_var c{}: {ty:?}", self.lc.fixed_var.len() + i);
+    // }
     for _ in 1..var.vars.len() {
       self.lc.fixed_var.push(FixedVar { ty: ty.clone(), def: None });
     }
@@ -1287,7 +1290,8 @@ impl Analyzer<'_> {
           if !matches!(&ty.attrs.0, Attrs::Consistent(attrs) if attrs.is_empty()) {
             break
           }
-          args_buf = ty.args.clone();
+          let (n, args) = Type::adjust(n, &ty.args, &self.g.constrs);
+          args_buf = args.to_vec();
           args_buf.push((**term).clone());
           (ConstrKind::Mode(n), &*args_buf)
         }
@@ -1810,6 +1814,7 @@ trait ReadProof {
       ast::ItemKind::PerCases { .. } => elab.item_header(it, "PerCases"),
       _ => {}
     }
+    // vprintln!("thesis = {:?}", elab.thesis);
     match &it.kind {
       ast::ItemKind::Let { var } => {
         let n = elab.lc.fixed_var.len();
@@ -1943,7 +1948,7 @@ impl VisitMut for AbstractLocus {
       Term::Bound(n) => n.0 += self.0,
       Term::Constant(_) => panic!("unexpected local constant"),
       Term::Locus(LocusId(n)) => *tm = Term::Bound(BoundId(*n as _)),
-      Term::It => *tm = Term::Bound(BoundId(self.0 - 1)),
+      Term::It => panic!("unexpected 'it'"),
       _ => self.super_visit_term(tm),
     }
   }
@@ -2336,6 +2341,7 @@ impl ReadProof for ReconstructThesis {
 struct ToLocus<'a> {
   infer_const: &'a IdxVec<InferId, Assignment>,
   to_locus: &'a IdxVec<ConstId, Option<LocusId>>,
+  it: LocusId,
 }
 
 impl ToLocus<'_> {
@@ -2353,6 +2359,7 @@ impl VisitMut for ToLocus<'_> {
           *tm = self.infer_const[n].def.clone();
           continue
         }
+        Term::It => *tm = Term::Locus(self.it),
         _ => self.super_visit_term(tm),
       }
       break
@@ -2446,7 +2453,11 @@ impl BlockReader {
   }
 
   fn to_locus<R>(&self, elab: &Analyzer, f: impl FnOnce(&mut ToLocus<'_>) -> R) -> R {
-    f(&mut ToLocus { infer_const: &elab.lc.infer_const.borrow(), to_locus: &self.to_locus })
+    f(&mut ToLocus {
+      infer_const: &elab.lc.infer_const.borrow(),
+      to_locus: &self.to_locus,
+      it: LocusId(self.primary.len() as _),
+    })
   }
 
   fn locus(&self, c: ConstId) -> LocusId {
@@ -2793,9 +2804,9 @@ impl BlockReader {
             attrs: (Attrs::EMPTY, it_type.attrs.1.clone()),
             args: formals,
           });
-          let defined = Formula::Is { term: Box::new(Term::It), ty };
-          let mut f = value.defthm_for(&elab.g, &defined);
           let depth = self.primary.len() as u32;
+          let defined = Formula::Is { term: Box::new(Term::Locus(LocusId(depth as _))), ty };
+          let mut f = value.defthm_for(&elab.g, &defined);
           AbstractLocus(depth + 1).visit_formula(&mut f);
           AbstractLocus(depth).visit_type(&mut it_type);
           let thm = self.forall_locus(Box::new(Formula::ForAll { dom: it_type, scope: f }));

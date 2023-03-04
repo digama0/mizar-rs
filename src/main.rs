@@ -1226,7 +1226,7 @@ impl Term {
       Term::Aggregate { nr, ref args } =>
         g.constrs.aggregate[nr].ty.visit_cloned(&mut Inst::new(args)),
       Term::Fraenkel { .. } => Type::SET,
-      Term::It => (**lc.it_type.as_ref().unwrap()).clone(),
+      Term::It => lc.it_type.as_deref().expect("unexpected 'it'").clone(),
       Term::The { ref ty } | Term::Qua { ref ty, .. } => (**ty).clone(),
       Term::EqMark(m) => lc.marks[m].0.get_type_uncached(g, lc),
       Term::EqClass(_) | Term::FreeVar(_) => unreachable!("get_type_uncached(EqClass | FreeVar)"),

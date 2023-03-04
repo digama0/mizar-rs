@@ -233,3 +233,17 @@
 @@ -28 +28 @@
 - requirements SUBSET, REAL;
 + requirements BOOLE, SUBSET, REAL;
+--- valued_0.miz
++++ valued_0.miz
+@@ -1050 +1050 @@
+-    rng(X --> x) c= INT by MEMBERED:5;
++    rng(X --> x qua Function of X,{x}) c= INT by MEMBERED:5;
+@@ -1061 +1061 @@
+-    rng(X --> x) c= NAT by MEMBERED:6;
++    rng(X --> x qua Function of X,{x}) c= NAT by MEMBERED:6;
+@@ -1225 +1225 @@
+-    thus rng R c= INT by MEMBERED:5;
++    thus rng (R qua Relation of X,Y) c= INT by MEMBERED:5;
+@@ -1236 +1236 @@
+-    thus rng R c= NAT by MEMBERED:6;
++    thus rng (R qua Relation of X,Y) c= NAT by MEMBERED:6;
