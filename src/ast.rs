@@ -550,8 +550,8 @@ pub struct Cluster {
 
 #[derive(Debug)]
 pub struct IdentifyFunc {
-  pub orig: PatternFunc,
-  pub new: PatternFunc,
+  pub lhs: PatternFunc,
+  pub rhs: PatternFunc,
   pub eqs: Vec<(Variable, Variable)>,
   pub conds: Vec<CorrCond>,
   pub corr: Option<Correctness>,

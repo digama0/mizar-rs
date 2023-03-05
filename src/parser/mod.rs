@@ -567,7 +567,7 @@ impl MizReader<'_> {
       attrs.push(attr)
     }
     if let Some(ctx) = self.ctx.get() {
-      attrs.sort_by(|a, b| a.cmp(ctx, None, b, CmpStyle::Strict));
+      attrs.sort_by(|a, b| a.cmp(ctx, None, b, CmpStyle::Attr));
     }
     Attrs::Consistent(attrs)
   }

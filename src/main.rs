@@ -80,7 +80,7 @@ impl Global {
         None => cl.term.round_up_type(self, lc, false),
         Some(ty) => CowBox::Borrowed(&**ty),
       };
-      attrs.enlarge_by(&self.constrs, &ty.attrs.1, |a| a.clone());
+      attrs.enlarge_by(&self.constrs, lc, &ty.attrs.1);
       attrs.round_up_with(self, lc, &ty, false);
       self.clusters.functor[k].consequent.1 = attrs;
       lc.unload_locus_tys();
@@ -136,8 +136,9 @@ impl VisitMut for RoundUpTypes<'_> {
     self.visit_terms(&mut ty.args);
     ty.attrs.1 = ty.attrs.0.clone();
     if let TypeKind::Mode(n) = ty.kind {
-      let new = self.g.constrs.mode[n].ty.attrs.1.visit_cloned(&mut Inst::new(&ty.args));
-      ty.attrs.1.enlarge_by(&self.g.constrs, &new, |a| a.clone());
+      let mut inst = Inst::new(&self.g.constrs, self.lc, &ty.args, 0);
+      let new = self.g.constrs.mode[n].ty.attrs.1.visit_cloned(&mut inst);
+      ty.attrs.1.enlarge_by(&self.g.constrs, self.lc, &new);
     }
     ty.round_up_with_self(self.g, self.lc, false)
   }
@@ -215,6 +216,7 @@ impl Attr {
 #[derive(Copy, Clone)]
 enum CmpStyle {
   Strict,
+  Attr,
   Red,
   Alt,
 }
@@ -234,6 +236,13 @@ impl Term {
 
   pub fn adjusted_nr(nr: FuncId, ctx: &Constructors) -> FuncId {
     ctx.functor[nr].c.redefines.unwrap_or(nr)
+  }
+
+  fn skip_infer<R>(&self, lc: Option<&LocalContext>, f: impl FnOnce(&Self) -> R) -> R {
+    match *self {
+      Term::Infer(n) => f(&lc.unwrap().infer_const.borrow()[n].def),
+      _ => f(self),
+    }
   }
 
   fn skip_priv_func<'a>(&'a self, lc: Option<&'a LocalContext>) -> &'a Self {
@@ -268,56 +277,65 @@ impl Term {
     &self, ctx: &Constructors, lc: Option<&LocalContext>, other: &Term, style: CmpStyle,
   ) -> Ordering {
     use Term::*;
-    let (this, other) = match style {
-      CmpStyle::Strict => (self, other),
-      CmpStyle::Red => (self.skip_priv_func(lc), other.skip_priv_func(lc)),
+    fn cmp(
+      ctx: &Constructors, lc: Option<&LocalContext>, this: &Term, other: &Term, style: CmpStyle,
+    ) -> Ordering {
+      Term::discr(this).cmp(&Term::discr(other)).then_with(|| match (this, other) {
+        (Locus(LocusId(n1)), Locus(LocusId(n2))) => n1.cmp(n2),
+        (Bound(BoundId(n1)), Bound(BoundId(n2)))
+        | (Constant(ConstId(n1)), Constant(ConstId(n2)))
+        | (Infer(InferId(n1)), Infer(InferId(n2)))
+        | (FreeVar(FVarId(n1)), FreeVar(FVarId(n2)))
+        | (EqClass(EqClassId(n1)), EqClass(EqClassId(n2)))
+        | (EqMark(EqMarkId(n1)), EqMark(EqMarkId(n2)))
+        | (Numeral(n1), Numeral(n2)) => n1.cmp(n2),
+        (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) => match style {
+          CmpStyle::Strict | CmpStyle::Attr | CmpStyle::Alt =>
+            n1.cmp(n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style)),
+          CmpStyle::Red => {
+            let (n1, args1) = Term::adjust(*n1, args1, ctx);
+            let (n2, args2) = Term::adjust(*n2, args2, ctx);
+            n1.cmp(&n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style))
+          }
+        },
+        (
+          SchFunc { nr: SchFuncId(n1), args: args1 },
+          SchFunc { nr: SchFuncId(n2), args: args2 },
+        )
+        | (Aggregate { nr: AggrId(n1), args: args1 }, Aggregate { nr: AggrId(n2), args: args2 })
+        | (
+          PrivFunc { nr: PrivFuncId(n1), args: args1, .. },
+          PrivFunc { nr: PrivFuncId(n2), args: args2, .. },
+        )
+        | (Selector { nr: SelId(n1), args: args1 }, Selector { nr: SelId(n2), args: args2 }) =>
+          n1.cmp(n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style)),
+        (The { ty: ty1 }, The { ty: ty2 }) => ty1.cmp(ctx, lc, ty2, style),
+        (
+          Fraenkel { args: args1, scope: sc1, compr: c1 },
+          Fraenkel { args: args2, scope: sc2, compr: c2 },
+        ) => sc1.cmp(ctx, lc, sc2, style).then_with(|| {
+          c1.cmp(ctx, lc, c2, style)
+            .then_with(|| cmp_list(args1, args2, |ty1, ty2| ty1.cmp(ctx, lc, ty2, style)))
+        }),
+        (It, It) => Ordering::Equal,
+        (Qua { value: val1, ty: ty1 }, Qua { value: val2, ty: ty2 }) =>
+          val1.cmp(ctx, lc, val2, style).then_with(|| ty1.cmp(ctx, lc, ty2, style)),
+        _ => unreachable!(),
+      })
+    }
+    match style {
+      CmpStyle::Strict => cmp(ctx, lc, self, other, style),
+      CmpStyle::Attr =>
+        self.skip_infer(lc, |this| other.skip_infer(lc, |other| cmp(ctx, lc, this, other, style))),
+      CmpStyle::Red => cmp(ctx, lc, self.skip_priv_func(lc), other.skip_priv_func(lc), style),
       CmpStyle::Alt => {
         match self.size().cmp(&other.size()) {
           Ordering::Equal => {}
           o => return o,
         }
-        (self.skip_priv_func(lc), other.skip_priv_func(lc))
+        cmp(ctx, lc, self.skip_priv_func(lc), other.skip_priv_func(lc), style)
       }
-    };
-    this.discr().cmp(&other.discr()).then_with(|| match (this, other) {
-      (Locus(LocusId(n1)), Locus(LocusId(n2))) => n1.cmp(n2),
-      (Bound(BoundId(n1)), Bound(BoundId(n2)))
-      | (Constant(ConstId(n1)), Constant(ConstId(n2)))
-      | (Infer(InferId(n1)), Infer(InferId(n2)))
-      | (FreeVar(FVarId(n1)), FreeVar(FVarId(n2)))
-      | (EqClass(EqClassId(n1)), EqClass(EqClassId(n2)))
-      | (EqMark(EqMarkId(n1)), EqMark(EqMarkId(n2)))
-      | (Numeral(n1), Numeral(n2)) => n1.cmp(n2),
-      (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) => match style {
-        CmpStyle::Strict | CmpStyle::Alt =>
-          n1.cmp(n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style)),
-        CmpStyle::Red => {
-          let (n1, args1) = Term::adjust(*n1, args1, ctx);
-          let (n2, args2) = Term::adjust(*n2, args2, ctx);
-          n1.cmp(&n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style))
-        }
-      },
-      (SchFunc { nr: SchFuncId(n1), args: args1 }, SchFunc { nr: SchFuncId(n2), args: args2 })
-      | (Aggregate { nr: AggrId(n1), args: args1 }, Aggregate { nr: AggrId(n2), args: args2 })
-      | (
-        PrivFunc { nr: PrivFuncId(n1), args: args1, .. },
-        PrivFunc { nr: PrivFuncId(n2), args: args2, .. },
-      )
-      | (Selector { nr: SelId(n1), args: args1 }, Selector { nr: SelId(n2), args: args2 }) =>
-        n1.cmp(n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style)),
-      (The { ty: ty1 }, The { ty: ty2 }) => ty1.cmp(ctx, lc, ty2, style),
-      (
-        Fraenkel { args: args1, scope: sc1, compr: c1 },
-        Fraenkel { args: args2, scope: sc2, compr: c2 },
-      ) => sc1.cmp(ctx, lc, sc2, style).then_with(|| {
-        c1.cmp(ctx, lc, c2, style)
-          .then_with(|| cmp_list(args1, args2, |ty1, ty2| ty1.cmp(ctx, lc, ty2, style)))
-      }),
-      (It, It) => Ordering::Equal,
-      (Qua { value: val1, ty: ty1 }, Qua { value: val2, ty: ty2 }) =>
-        val1.cmp(ctx, lc, val2, style).then_with(|| ty1.cmp(ctx, lc, ty2, style)),
-      _ => unreachable!(),
-    })
+    }
   }
 
   fn cmp_list(
@@ -327,23 +345,23 @@ impl Term {
   }
 
   /// ReconSelectTrm
-  fn mk_select(g: &Global, nr: SelId, arg: &Term, ty: &Type) -> Term {
+  fn mk_select(g: &Global, lc: &LocalContext, nr: SelId, arg: &Term, ty: &Type) -> Term {
     assert!(matches!(ty.kind, TypeKind::Struct(_)));
     let mut args =
-      Type::new(g.parent_struct(nr).into()).widening_of(g, ty).unwrap().to_owned().args;
+      Type::new(g.parent_struct(nr).into()).widening_of(g, lc, ty).unwrap().to_owned().args;
     args.push(arg.clone());
     Self::Selector { nr, args: args.into() }
   }
 
   /// ReconAggregTrm
   /// performs eta expansion of aggregates: `foo` ~> `(# foo.1 , foo.2 #)`
-  fn mk_aggr(g: &Global, s: StructId, arg: &Term, ty: &Type) -> Term {
+  fn mk_aggr(g: &Global, lc: &LocalContext, s: StructId, arg: &Term, ty: &Type) -> Term {
     assert!(!g.constrs.struct_mode[s].fields.is_empty());
     let nr = g.constrs.struct_mode[s].aggr;
-    let ty = &*Type::new(s.into()).widening_of(g, ty).unwrap();
+    let ty = &*Type::new(s.into()).widening_of(g, lc, ty).unwrap();
     let mut args = ty.args.clone();
     for &sel in &*g.constrs.aggregate[nr].fields {
-      args.push(Self::mk_select(g, sel, arg, ty));
+      args.push(Self::mk_select(g, lc, sel, arg, ty));
     }
     Term::Aggregate { nr, args: args.into() }
   }
@@ -417,14 +435,14 @@ impl Type {
   }
 
   /// TypObj.Widening
-  fn widening(&self, g: &Global) -> Option<Box<Self>> {
+  fn widening(&self, g: &Global, lc: &LocalContext) -> Option<Box<Self>> {
     match self.kind {
       TypeKind::Mode(n) => {
         if n == ModeId::ANY {
           return None
         }
         let cnst = &g.constrs.mode[n];
-        let mut ty = cnst.ty.visit_cloned(&mut Inst::new(&self.args));
+        let mut ty = cnst.ty.visit_cloned(&mut Inst::new(&g.constrs, lc, &self.args, 0));
         ty.attrs.1 = self.attrs.1.clone_allowed(&g.constrs, n, &self.args);
         Some(Box::new(ty))
       }
@@ -434,16 +452,18 @@ impl Type {
 
   /// TypObj.WidenToStruct
   /// postcondition: the returned type has kind Struct
-  fn widen_to_struct(&self, g: &Global) -> Option<Box<Self>> {
+  fn widen_to_struct(&self, g: &Global, lc: &LocalContext) -> Option<Box<Self>> {
     let mut ty = Box::new(self.clone());
     while let TypeKind::Mode(_) = ty.kind {
-      ty = ty.widening(g)?
+      ty = ty.widening(g, lc)?
     }
     Some(ty)
   }
 
   /// TypObj.WideningOf
-  fn widening_of<'a>(&self, g: &Global, from: &'a Type) -> Option<CowBox<'a, Self>> {
+  fn widening_of<'a>(
+    &self, g: &Global, lc: &LocalContext, from: &'a Type,
+  ) -> Option<CowBox<'a, Self>> {
     match self.kind {
       TypeKind::Mode(n) => {
         let (n, _) = Type::adjust(n, &self.args, &g.constrs);
@@ -458,7 +478,7 @@ impl Type {
               if cnst.redefines == Some(n) {
                 return Some(ty)
               }
-              ty = CowBox::Owned(ty.widening(g)?);
+              ty = CowBox::Owned(ty.widening(g, lc)?);
             }
             TypeKind::Struct(_) if n == ModeId::SET || n == ModeId::ANY =>
               return Some(CowBox::Owned(Box::new(Type::new(n.into())))),
@@ -467,7 +487,7 @@ impl Type {
         }
       }
       TypeKind::Struct(tgt) => {
-        let mut ty = from.widen_to_struct(g)?;
+        let mut ty = from.widen_to_struct(g, lc)?;
         let n = ty.struct_id();
         if tgt == n {
           return Some(CowBox::Owned(ty))
@@ -481,7 +501,7 @@ impl Type {
           return None
         }
         for ty2 in widening.stack {
-          ty = Box::new(ty2.unwrap().visit_cloned(&mut Inst::new(&ty.args)));
+          ty = Box::new(ty2.unwrap().visit_cloned(&mut Inst::new(&g.constrs, lc, &ty.args, 0)));
         }
         Some(CowBox::Owned(ty))
       }
@@ -503,13 +523,13 @@ impl Type {
           if ().eq_radices(g, lc, self, &w) {
             return true
           }
-          let Some(w2) = w.widening(g) else { break };
+          let Some(w2) = w.widening(g, lc) else { break };
           w = CowBox::Owned(w2)
         }
         matches!(w.kind, TypeKind::Struct(_)) && (n == ModeId::SET || n == ModeId::ANY)
       }
       TypeKind::Struct(_) => {
-        let Some(w) = other.widening(g) else { return false };
+        let Some(w) = other.widening(g, lc) else { return false };
         ().eq_radices(g, lc, self, &w)
       }
     }
@@ -537,7 +557,7 @@ impl Type {
         continue
       }
       let mut subst = Subst::new(prop.primary.len());
-      let Some(ty) = prop.ty.widening_of(g, self) else { continue };
+      let Some(ty) = prop.ty.widening_of(g, lc, self) else { continue };
       if subst.eq_radices(g, lc, &prop.ty, self)
         && prop.ty.attrs.0.is_subset_of(&ty.attrs.1, |a1, a2| subst.eq_attr(g, lc, a1, a2))
         && subst.check_loci_types::<false>(g, lc, &prop.primary, false)
@@ -590,22 +610,20 @@ impl Formula {
           PrivPred { nr: PrivPredId(n2), args: args2, .. },
         ) => n1.cmp(n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style)),
         (Attr { nr: n1, args: args1 }, Attr { nr: n2, args: args2 }) => match style {
-          CmpStyle::Strict | CmpStyle::Alt =>
-            n1.cmp(n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style)),
           CmpStyle::Red => {
             let (n1, args1) = Formula::adjust_attr(*n1, args1, ctx);
             let (n2, args2) = Formula::adjust_attr(*n2, args2, ctx);
             n1.cmp(&n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style))
           }
+          _ => n1.cmp(n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style)),
         },
         (Pred { nr: n1, args: args1 }, Pred { nr: n2, args: args2 }) => match style {
-          CmpStyle::Strict | CmpStyle::Alt =>
-            n1.cmp(n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style)),
           CmpStyle::Red => {
             let (n1, args1) = Formula::adjust_pred(*n1, args1, ctx);
             let (n2, args2) = Formula::adjust_pred(*n2, args2, ctx);
             n1.cmp(&n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style))
           }
+          _ => n1.cmp(n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style)),
         },
         (ForAll { dom: dom1, scope: sc1 }, ForAll { dom: dom2, scope: sc2 }) =>
           dom1.cmp(ctx, lc, dom2, style).then_with(|| sc1.cmp(ctx, lc, sc2, style)),
@@ -1070,13 +1088,17 @@ fn has_func<'a>(ctx: &'a Constructors, nr: FuncId, found: &'a mut bool) -> impl 
 }
 
 struct Inst<'a> {
+  ctx: &'a Constructors,
+  lc: &'a LocalContext,
   subst: &'a [Term],
   base: u32,
   depth: u32,
 }
 
 impl<'a> Inst<'a> {
-  fn new(subst: &'a [Term]) -> Self { Self { subst, base: 0, depth: 0 } }
+  fn new(ctx: &'a Constructors, lc: &'a LocalContext, subst: &'a [Term], base: u32) -> Self {
+    Self { ctx, lc, subst, base, depth: 0 }
+  }
 }
 
 impl VisitMut for Inst<'_> {
@@ -1098,6 +1120,10 @@ impl VisitMut for Inst<'_> {
       }
       _ => self.super_visit_term(tm),
     }
+  }
+
+  fn visit_attrs(&mut self, attrs: &mut Attrs) {
+    attrs.reinsert_all(self.ctx, self.lc, !ATTR_SORT_BUG, |attr| self.visit_terms(&mut attr.args))
   }
 }
 
@@ -1219,12 +1245,13 @@ impl Term {
       Term::Locus(nr) => lc.locus_ty[nr].clone(),
       Term::SchFunc { nr, .. } => lc.sch_func_ty[nr].clone(),
       Term::PrivFunc { nr, ref args, .. } =>
-        (*lc.priv_func[nr].ty).visit_cloned(&mut Inst::new(args)),
-      Term::Functor { nr, ref args } => g.constrs.functor[nr].ty.visit_cloned(&mut Inst::new(args)),
+        (*lc.priv_func[nr].ty).visit_cloned(&mut Inst::new(&g.constrs, lc, args, 0)),
+      Term::Functor { nr, ref args } =>
+        g.constrs.functor[nr].ty.visit_cloned(&mut Inst::new(&g.constrs, lc, args, 0)),
       Term::Selector { nr, ref args } =>
-        g.constrs.selector[nr].ty.visit_cloned(&mut Inst::new(args)),
+        g.constrs.selector[nr].ty.visit_cloned(&mut Inst::new(&g.constrs, lc, args, 0)),
       Term::Aggregate { nr, ref args } =>
-        g.constrs.aggregate[nr].ty.visit_cloned(&mut Inst::new(args)),
+        g.constrs.aggregate[nr].ty.visit_cloned(&mut Inst::new(&g.constrs, lc, args, 0)),
       Term::Fraenkel { .. } => Type::SET,
       Term::It => lc.it_type.as_deref().expect("unexpected 'it'").clone(),
       Term::The { ref ty } | Term::Qua { ref ty, .. } => (**ty).clone(),
@@ -1354,20 +1381,20 @@ impl<'a> Subst<'a> {
     self.subst_term.into_vec().into_iter().skip(n).map(|t| *t.unwrap().to_owned()).collect()
   }
 
-  fn inst_term_mut(self, tm: &mut Term, base: u32) {
-    Inst { subst: &self.finish(), base, depth: 0 }.visit_term(tm)
+  fn inst_term_mut(self, ctx: &Constructors, lc: &LocalContext, tm: &mut Term, base: u32) {
+    Inst::new(ctx, lc, &self.finish(), base).visit_term(tm)
   }
 
   /// InstSubstTrm
-  fn inst_term(self, tm: &Term, base: u32) -> Term {
+  fn inst_term(self, ctx: &Constructors, lc: &LocalContext, tm: &Term, base: u32) -> Term {
     let mut tm = tm.clone();
-    self.inst_term_mut(&mut tm, base);
+    self.inst_term_mut(ctx, lc, &mut tm, base);
     tm
   }
 
   /// InstSubstFrm
-  fn inst_formula_mut(self, f: &mut Formula, base: u32) {
-    Inst { subst: &self.finish(), base, depth: 0 }.visit_formula(f)
+  fn inst_formula_mut(self, ctx: &Constructors, lc: &LocalContext, f: &mut Formula, base: u32) {
+    Inst::new(ctx, lc, &self.finish(), base).visit_formula(f)
   }
 
   fn snapshot(&self) -> Box<[bool]> { self.subst_term.iter().map(Option::is_some).collect() }
@@ -1443,7 +1470,7 @@ impl<'a> Subst<'a> {
 
           // Try widening wty to make it a candidate for unification with tys[i].
           // If this fails, we have to backtrack
-          let Some(wty) = tys[i].widening_of(g, &wty) else {
+          let Some(wty) = tys[i].widening_of(g, lc, &wty) else {
             ok = None;
             continue
           };
@@ -1498,7 +1525,7 @@ impl<'a> Subst<'a> {
         // So we unset it and widen it:
         // * if the widening fails, then we continue to backtrack
         // * If we get wty we pass it back to the unification check
-        ok = subst_ty[i].take().unwrap().widening(g).map(CowBox::Owned)
+        ok = subst_ty[i].take().unwrap().widening(g, lc).map(CowBox::Owned)
       }
     }
   }
@@ -1514,15 +1541,15 @@ impl<'a> Subst<'a> {
     if !wty.decreasing_attrs(ty, |a1, a2| self.eq_attr(g, lc, a1, a2)) {
       return false
     }
-    let Some(mut wty) = ty.widening_of(g, &wty) else { return false };
+    let Some(mut wty) = ty.widening_of(g, lc, &wty) else { return false };
     let snap = self.snapshot();
     if self.eq_radices(g, lc, ty, &wty) && self.check_types(g, lc, tys) {
       return true
     }
     self.rollback(&snap, i);
     if matches!(ty.kind, TypeKind::Mode(n) if g.constrs.mode[n].redefines.is_none()) {
-      while let Some(sty) = wty.widening(g) {
-        let Some(wty2) = ty.widening_of(g, &sty) else { break };
+      while let Some(sty) = wty.widening(g, lc) {
+        let Some(wty2) = ty.widening_of(g, lc, &sty) else { break };
         if self.eq_radices(g, lc, ty, &wty2) && self.check_types(g, lc, tys) {
           return true
         }
@@ -1661,9 +1688,9 @@ impl Attrs {
 
   /// MAttrCollection.Insert(self = self, aItem = item)
   /// returns true if self changed
-  pub fn insert(&mut self, ctx: &Constructors, item: Attr) -> bool {
+  pub fn insert(&mut self, ctx: &Constructors, lc: &LocalContext, item: Attr) -> bool {
     let Self::Consistent(this) = self else { return false };
-    match this.binary_search_by(|attr| attr.cmp_abs(ctx, None, &item, CmpStyle::Strict)) {
+    match this.binary_search_by(|attr| attr.cmp_abs(ctx, Some(lc), &item, CmpStyle::Attr)) {
       Ok(i) =>
         if this[i].pos != item.pos {
           *self = Self::Inconsistent;
@@ -1679,9 +1706,10 @@ impl Attrs {
   }
 
   /// MAttrCollection.GetAttr(self = self, aAttrNr = item.nr, aAttrArgs = item.args)
-  pub fn find(&self, ctx: &Constructors, item: &Attr) -> Option<&Attr> {
+  pub fn find(&self, ctx: &Constructors, lc: &LocalContext, item: &Attr) -> Option<&Attr> {
     let Self::Consistent(this) = self else { return None };
-    Some(&this[this.binary_search_by(|attr| attr.cmp_abs(ctx, None, item, CmpStyle::Strict)).ok()?])
+    let n = this.binary_search_by(|attr| attr.cmp_abs(ctx, Some(lc), item, CmpStyle::Attr));
+    Some(&this[n.ok()?])
   }
 
   pub fn find0_abs(&self, ctx: &Constructors, nr: AttrId) -> Option<&Attr> {
@@ -1694,17 +1722,41 @@ impl Attrs {
     self.find0_abs(ctx, nr).map_or(false, |attr| attr.pos == pos)
   }
 
-  fn reinsert_all(&mut self, ctx: &Constructors, mut f: impl FnMut(&mut Attr)) {
+  fn reinsert_all(
+    &mut self, ctx: &Constructors, lc: &LocalContext, yes: bool, mut f: impl FnMut(&mut Attr),
+  ) {
     if let Attrs::Consistent(attrs1) = self {
-      for mut attr in std::mem::take(attrs1) {
-        f(&mut attr);
-        self.insert(ctx, attr);
+      if yes {
+        for mut attr in std::mem::take(attrs1) {
+          f(&mut attr);
+          self.insert(ctx, lc, attr);
+        }
+      } else {
+        attrs1.iter_mut().for_each(f)
+      }
+    }
+  }
+
+  pub fn visit_enlarge_by(
+    &mut self, ctx: &Constructors, lc: &LocalContext, other: &Self, v: &mut impl VisitMut,
+  ) {
+    if ATTR_SORT_BUG {
+      self.enlarge_by_map(ctx, lc, other, |a| a.visit_cloned(v))
+    } else if let Self::Consistent(_) = self {
+      if let Self::Consistent(other) = other {
+        for attr in other {
+          self.insert(ctx, lc, attr.visit_cloned(v));
+        }
+      } else {
+        *self = Self::Inconsistent
       }
     }
   }
 
   /// MAttrCollection.EnlargeBy(self = self, aAnother = other, CopyAttribute = map)
-  pub fn enlarge_by(&mut self, ctx: &Constructors, other: &Self, map: impl FnMut(&Attr) -> Attr) {
+  pub fn enlarge_by_map(
+    &mut self, ctx: &Constructors, lc: &LocalContext, other: &Self, map: impl FnMut(&Attr) -> Attr,
+  ) {
     if let Self::Consistent(this) = self {
       if let Self::Consistent(other) = other {
         if other.is_empty() {
@@ -1713,7 +1765,7 @@ impl Attrs {
         for item in itertools::merge_join_by(
           std::mem::take(this).into_iter(),
           other.iter().map(map),
-          |a, b| a.cmp_abs(ctx, None, b, CmpStyle::Strict),
+          |a, b| a.cmp_abs(ctx, Some(lc), b, CmpStyle::Attr),
         ) {
           match item {
             EitherOrBoth::Left(attr) | EitherOrBoth::Right(attr) => this.push(attr),
@@ -1732,10 +1784,14 @@ impl Attrs {
     }
   }
 
+  pub fn enlarge_by(&mut self, ctx: &Constructors, lc: &LocalContext, other: &Self) {
+    self.enlarge_by_map(ctx, lc, other, Attr::clone)
+  }
+
   /// ContradictoryAttrs(aClu1 = self, aClu2 = other)
-  pub fn contradicts(&self, ctx: &Constructors, other: &Self) -> bool {
+  pub fn contradicts(&self, ctx: &Constructors, lc: &LocalContext, other: &Self) -> bool {
     let (Self::Consistent(this), Self::Consistent(other)) = (self, other) else { return true };
-    itertools::merge_join_by(this, other, |a, b| a.cmp_abs(ctx, None, b, CmpStyle::Strict))
+    itertools::merge_join_by(this, other, |a, b| a.cmp_abs(ctx, Some(lc), b, CmpStyle::Attr))
       .any(|item| matches!(item, EitherOrBoth::Both(attr1, attr2) if attr1.pos != attr2.pos))
   }
 
@@ -1784,7 +1840,7 @@ impl Attrs {
       }
     }
 
-    // eprintln!("round_up_with {:?}", self);
+    // eprintln!("round_up_with {self:?} in {ty:?}");
     let mut state = State {
       cl_fire: Default::default(),
       jobs: Default::default(),
@@ -1806,8 +1862,9 @@ impl Attrs {
       // vprintln!("job {last}");
       let cl = &g.clusters.conditional.vec[last as usize];
       if let Some(subst) = cl.try_apply(g, lc, self, ty, round_up) {
-        // eprintln!("enlarge {:?} by {:?}", self, cl.consequent.1);
-        self.enlarge_by(&g.constrs, &cl.consequent.1, |a| a.visit_cloned(&mut Inst::new(&subst)));
+        // vprintln!("enlarge {:?} by {:?}\n  {cl:?}", self, cl.consequent.1);
+        let mut inst = Inst::new(&g.constrs, lc, &subst, 0);
+        self.visit_enlarge_by(&g.constrs, lc, &cl.consequent.1, &mut inst);
         state.handle_usage_and_fire(g, self)
       }
     }
@@ -1830,7 +1887,7 @@ impl ConditionalCluster {
     {
       return None
     }
-    let ty = self.ty.widening_of(g, ty)?;
+    let ty = self.ty.widening_of(g, lc, ty)?;
     if subst.eq_radices(g, lc, &self.ty, &ty)
       && self.ty.attrs.0.is_subset_of(&ty.attrs.1, |a1, a2| subst.eq_attr(g, lc, a1, a2))
       && subst.check_loci_types::<false>(g, lc, &self.primary, round_up)
@@ -1846,8 +1903,9 @@ impl<I> TyConstructor<I> {
   fn round_up(&self, g: &Global, lc: &mut LocalContext) -> Attrs {
     let mut attrs = self.ty.attrs.0.clone();
     if let TypeKind::Mode(nr) = self.ty.kind {
-      let cl = g.constrs.mode[nr].ty.attrs.1.visit_cloned(&mut Inst::new(&self.ty.args));
-      attrs.enlarge_by(&g.constrs, &cl, |a| a.clone())
+      let mut inst = Inst::new(&g.constrs, lc, &self.ty.args, 0);
+      let cl = g.constrs.mode[nr].ty.attrs.1.visit_cloned(&mut inst);
+      attrs.enlarge_by(&g.constrs, lc, &cl)
     }
     lc.load_locus_tys(&self.primary);
     attrs.round_up_with(g, lc, &self.ty, false);
@@ -1881,7 +1939,7 @@ impl FunctorCluster {
     }
     if eq {
       if let Some(cluster_ty) = &self.ty {
-        match cluster_ty.widening_of(g, ty) {
+        match cluster_ty.widening_of(g, lc, ty) {
           Some(ty)
             if subst.eq_radices(g, lc, cluster_ty, &ty)
               && (cluster_ty.attrs.0)
@@ -1891,7 +1949,8 @@ impl FunctorCluster {
         }
       }
       let subst = subst.finish();
-      attrs.enlarge_by(&g.constrs, &self.consequent.1, |a| a.visit_cloned(&mut Inst::new(&subst)));
+      let mut inst = Inst::new(&g.constrs, lc, &subst, 0);
+      attrs.visit_enlarge_by(&g.constrs, lc, &self.consequent.1, &mut inst);
     }
     eq
   }
@@ -1933,7 +1992,7 @@ impl EqualsDef {
   ) -> Option<Term> {
     let mut subst = Subst::from_essential(self.primary.len(), &self.essential, args);
     let true = subst.check_loci_types::<true>(g, lc, &self.primary, false) else { return None };
-    Some(subst.inst_term(&self.expansion, depth))
+    Some(subst.inst_term(&g.constrs, lc, &self.expansion, depth))
   }
 }
 
@@ -1953,7 +2012,7 @@ impl IdentifyFunc {
     Some(subst)
   }
 }
-struct ExpandPrivFunc<'a>(&'a Constructors);
+struct ExpandPrivFunc<'a>(&'a Constructors, &'a LocalContext);
 
 impl VisitMut for ExpandPrivFunc<'_> {
   /// CopyExpTrm
@@ -1967,7 +2026,7 @@ impl VisitMut for ExpandPrivFunc<'_> {
   }
 
   fn visit_attrs(&mut self, attrs: &mut Attrs) {
-    attrs.reinsert_all(self.0, |attr| self.visit_terms(&mut attr.args))
+    attrs.reinsert_all(self.0, self.1, true, |attr| self.visit_terms(&mut attr.args))
   }
 
   /// CopyExpFrm
@@ -2084,7 +2143,7 @@ impl<'a> InternConst<'a> {
           let def = std::mem::take(tm);
           let number = def.try_to_number(self.g, self.lc);
           ic = self.lc.infer_const.borrow_mut();
-          let nr = ic.insert_at(i, Assignment { def, ty, number, eq_const: Default::default() });
+          let nr = ic.insert_at(i, Assignment { def, ty, number, eq_const: vec![] });
           // vprintln!("insert ?{nr:?} : {:?} := {:?}", ic[nr].ty, ic[nr].def);
           let mut ty = ic[nr].ty.clone();
           drop(ic);
@@ -2099,9 +2158,9 @@ impl<'a> InternConst<'a> {
 
   /// CollectEqualsConst
   /// precondition: tm must be Term::Functor
-  fn collect_equals_const(&mut self, tm: &Term) -> BTreeSet<InferId> {
+  fn collect_equals_const(&mut self, tm: &Term) -> Vec<InferId> {
     // vprintln!("collect_equals_const {tm:?}");
-    let mut eq = BTreeSet::new();
+    let mut eq = vec![];
     if self.equals_expansion_level >= 3 {
       return eq
     }
@@ -2113,7 +2172,7 @@ impl<'a> InternConst<'a> {
       return eq
     }
     let mut insert_one = |this: &mut Self, mut tm| {
-      ExpandPrivFunc(&this.g.constrs).visit_term(&mut tm);
+      ExpandPrivFunc(&this.g.constrs, this.lc).visit_term(&mut tm);
       this.equals_expansion_level += 1;
       this.infer_consts.insert(nr);
       let depth = std::mem::take(&mut this.depth);
@@ -2122,7 +2181,7 @@ impl<'a> InternConst<'a> {
       this.equals_expansion_level -= 1;
       this.infer_consts.remove(&nr);
       let Term::Infer(nr) = tm else { unreachable!("{:?}", tm) };
-      eq.insert(nr);
+      eq.push(nr);
     };
     if let Some(eq_defs) = self.equals.get(&ConstrKind::Func(nr)) {
       for eq_def in eq_defs {
@@ -2137,7 +2196,7 @@ impl<'a> InternConst<'a> {
         let id = &self.identify[id];
         // vprintln!("applying {tm:?} <- {id:?}");
         if let Some(subst) = id.try_apply_lhs(self.g, self.lc, &id.lhs, tm) {
-          let tm = subst.inst_term(&id.rhs, 0);
+          let tm = subst.inst_term(&self.g.constrs, self.lc, &id.rhs, 0);
           insert_one(self, tm);
         }
       }
@@ -2160,20 +2219,21 @@ impl VisitMut for InternConst<'_> {
     match tm {
       Term::Locus(_) | Term::Bound(_) | Term::FreeVar(_) => self.only_constants = false,
       &mut Term::Constant(nr) => {
-        let mut eq = BTreeSet::new();
+        let mut eq = None;
         if let Some((ref fv, _)) = self.lc.fixed_var[nr].def {
-          let mut fv = (**fv).visit_cloned(&mut ExpandPrivFunc(&self.g.constrs));
+          let mut fv = (**fv).visit_cloned(&mut ExpandPrivFunc(&self.g.constrs, self.lc));
           self.visit_term(&mut fv);
           if self.only_constants {
             let Term::Infer(nr) = fv else { unreachable!() };
-            eq.insert(nr);
+            eq = Some(nr);
           }
           self.only_constants = true;
         }
         self.collect_infer_const(tm);
         let Term::Infer(nr) = *tm else { unreachable!() };
-        let asgn = &mut self.lc.infer_const.borrow_mut()[nr];
-        asgn.eq_const.extend(eq);
+        if let Some(n) = eq {
+          self.lc.infer_const.borrow_mut()[nr].insert_eq_const(n)
+        }
       }
       Term::Infer(_) => {}
       Term::SchFunc { args, .. } | Term::Aggregate { args, .. } | Term::Selector { args, .. } => {
@@ -2198,7 +2258,8 @@ impl VisitMut for InternConst<'_> {
               self.equals_expansion_level = equals_expansion_level;
               let tm = self.lc.infer_const.borrow()[nr].def.clone();
               let eq = self.collect_equals_const(&tm);
-              self.lc.infer_const.borrow_mut()[nr].eq_const.extend(eq);
+              let asgn = &mut self.lc.infer_const.borrow_mut()[nr];
+              eq.into_iter().for_each(|n| asgn.insert_eq_const(n));
             }
           }
         }
@@ -2231,30 +2292,41 @@ impl VisitMut for InternConst<'_> {
   }
 
   fn visit_attrs(&mut self, attrs: &mut Attrs) {
-    attrs.reinsert_all(&self.g.constrs, |attr| self.visit_terms(&mut attr.args))
+    attrs.reinsert_all(&self.g.constrs, self.lc, !ATTR_SORT_BUG, |attr| {
+      self.visit_terms(&mut attr.args)
+    })
   }
 
   // locus types are not interned
   fn visit_push_locus_tys(&mut self, _: &mut [Type]) {}
 }
 
-pub struct ExpandConsts<'a>(&'a IdxVec<InferId, Assignment>, u32);
+pub struct ExpandConsts<'a> {
+  ctx: &'a Constructors,
+  lc: &'a LocalContext,
+  ic: &'a IdxVec<InferId, Assignment>,
+  depth: u32,
+}
 impl LocalContext {
-  pub fn expand_consts(&self, f: impl FnOnce(&mut ExpandConsts<'_>)) {
-    f(&mut ExpandConsts(&self.infer_const.borrow().vec, 0))
+  pub fn expand_consts(&self, ctx: &Constructors, f: impl FnOnce(&mut ExpandConsts<'_>)) {
+    f(&mut ExpandConsts { ctx, lc: self, ic: &self.infer_const.borrow().vec, depth: 0 })
   }
 }
 
 impl VisitMut for ExpandConsts<'_> {
-  fn push_bound(&mut self, _: Option<&mut Type>) { self.1 += 1 }
-  fn pop_bound(&mut self, n: u32) { self.1 -= n }
+  fn push_bound(&mut self, _: Option<&mut Type>) { self.depth += 1 }
+  fn pop_bound(&mut self, n: u32) { self.depth -= n }
 
   /// ExpandInferConsts
   fn visit_term(&mut self, tm: &mut Term) {
     if let Term::Infer(nr) = *tm {
-      *tm = self.0[nr].def.visit_cloned(&mut OnVarMut(|v| *v += self.1));
+      *tm = self.ic[nr].def.visit_cloned(&mut OnVarMut(|v| *v += self.depth));
     }
     self.super_visit_term(tm);
+  }
+
+  fn visit_attrs(&mut self, attrs: &mut Attrs) {
+    attrs.reinsert_all(self.ctx, self.lc, !ATTR_SORT_BUG, |attr| self.visit_terms(&mut attr.args))
   }
 }
 
@@ -2301,9 +2373,18 @@ struct Assignment {
   def: Term,
   ty: Type,
   number: Option<Complex>,
-  eq_const: BTreeSet<InferId>,
+  eq_const: Vec<InferId>,
   // numeric_value: Option<Complex>,
 }
+
+impl Assignment {
+  fn insert_eq_const(&mut self, n: InferId) {
+    if !self.eq_const.contains(&n) {
+      self.eq_const.push(n)
+    }
+  }
+}
+
 impl<V: VisitMut> Visitable<V> for Assignment {
   fn visit(&mut self, v: &mut V) {
     self.def.visit(v);
@@ -2393,76 +2474,76 @@ impl LocalContext {
     descope.old = ic.vec.0.split_off(len);
     ic.sorted.retain(|t| Idx::into_usize(*t) < len);
     assert!(ic.sorted.len() == len);
-    if !check_for_local_const {
-      return descope
-    }
-    let mut has_local_const = HashSet::<InferId>::new();
-    // vprintln!("start loop {} -> {}", len, old.len());
-    'retry: loop {
-      for (i, asgn) in descope.old.iter().enumerate() {
-        let i = Idx::from_usize(len + i);
-        if has_local_const.contains(&i) {
-          continue
-        }
-        struct CheckForLocalConst<'a> {
-          has_local_const: &'a HashSet<InferId>,
-          num_consts: u32,
-          found: bool,
-        }
-        impl Visit for CheckForLocalConst<'_> {
-          fn abort(&self) -> bool { self.found }
-          fn visit_term(&mut self, tm: &Term) {
-            self.super_visit_term(tm);
-            match tm {
-              Term::Constant(nr) => self.found |= nr.0 >= self.num_consts,
-              Term::Infer(nr) => self.found |= self.has_local_const.contains(nr),
-              _ => {}
+    if check_for_local_const {
+      let mut has_local_const = HashSet::<InferId>::new();
+      // vprintln!("start loop {} -> {}", len, old.len());
+      'retry: loop {
+        for (i, asgn) in descope.old.iter().enumerate() {
+          let i = Idx::from_usize(len + i);
+          if has_local_const.contains(&i) {
+            continue
+          }
+          struct CheckForLocalConst<'a> {
+            has_local_const: &'a HashSet<InferId>,
+            num_consts: u32,
+            found: bool,
+          }
+          impl Visit for CheckForLocalConst<'_> {
+            fn abort(&self) -> bool { self.found }
+            fn visit_term(&mut self, tm: &Term) {
+              self.super_visit_term(tm);
+              match tm {
+                Term::Constant(nr) => self.found |= nr.0 >= self.num_consts,
+                Term::Infer(nr) => self.found |= self.has_local_const.contains(nr),
+                _ => {}
+              }
             }
           }
-        }
-        let mut cc = CheckForLocalConst {
-          has_local_const: &has_local_const,
-          num_consts: descope.num_consts,
-          found: false,
-        };
-        cc.visit_term(&asgn.def);
-        cc.visit_type(&asgn.ty);
-        if cc.found {
-          has_local_const.insert(i);
-          continue 'retry
-        }
-      }
-      break
-    }
-    // vprintln!("done loop {} -> {}", len, old.len());
-    let mut i = Idx::from_usize(len);
-    for asgn in &mut descope.old {
-      if !has_local_const.contains(&i) {
-        match ic.find_index(|a| a.def.cmp(ctx, None, &asgn.def, CmpStyle::Strict)) {
-          Ok(nr) => descope.remap.insert(i, nr),
-          Err(idx) => {
-            let j = ic.insert_at(idx, std::mem::take(asgn));
-            // eprintln!("reinsert ?{i:?} => ?{j:?} : {:?} := {:?}", ic[j].ty, ic[j].def);
-            descope.remap.insert(i, j)
+          let mut cc = CheckForLocalConst {
+            has_local_const: &has_local_const,
+            num_consts: descope.num_consts,
+            found: false,
+          };
+          cc.visit_term(&asgn.def);
+          cc.visit_type(&asgn.ty);
+          if cc.found {
+            has_local_const.insert(i);
+            continue 'retry
           }
-        };
+        }
+        break
       }
-      i.0 += 1;
-    }
-    if !descope.remap.is_empty() {
-      for asgn in &mut ic.0[len..] {
-        asgn.visit(&mut descope);
+      // vprintln!("done loop {} -> {}", len, old.len());
+      let mut i = Idx::from_usize(len);
+      for asgn in &mut descope.old {
+        if !has_local_const.contains(&i) {
+          match ic.find_index(|a| a.def.cmp(ctx, None, &asgn.def, CmpStyle::Strict)) {
+            Ok(nr) => descope.remap.insert(i, nr),
+            Err(idx) => {
+              let j = ic.insert_at(idx, std::mem::take(asgn));
+              // eprintln!("reinsert ?{i:?} => ?{j:?} : {:?} := {:?}", ic[j].ty, ic[j].def);
+              descope.remap.insert(i, j)
+            }
+          };
+        }
+        i.0 += 1;
+      }
+      if !descope.remap.is_empty() {
+        for asgn in &mut ic.0[len..] {
+          asgn.visit(&mut descope);
+        }
       }
     }
     for asgn in &mut ic.0 {
-      if asgn.eq_const.iter().any(|n| descope.remap.contains_key(n)) {
-        for n in std::mem::take(&mut asgn.eq_const) {
-          if let Some(&n2) = descope.remap.get(&n) {
-            asgn.eq_const.insert(n2);
-          } else if Idx::into_usize(n) < len {
-            asgn.eq_const.insert(n);
+      if asgn.eq_const.iter().any(|n| n.0 >= descope.infer_const) {
+        asgn.eq_const.retain_mut(|n| {
+          if let Some(&n2) = descope.remap.get(n) {
+            *n = n2;
+            true
+          } else {
+            n.0 < descope.infer_const
           }
-        }
+        });
       }
     }
     descope
@@ -2663,10 +2744,22 @@ const ENABLE_CHECKER: bool = true;
 const ORIG_MIZAR: bool = false;
 
 //// Unsound flags ////
-// This flag is unsound but needed to check MML right now
+/// This flag enables checking of `P[a] & ... & P[b]` equality by checking
+/// only the endpoints `P[a]` and `P[b]`. This is unsound, but needed to
+/// check some proofs
 const LEGACY_FLEX_HANDLING: bool = true;
-// This is a Mizar bug which is required to check aofa_l00 (the proof should be patched)
+/// This is completely wrong and unsound behavior, when expanding a flex-and
+/// only the first conjunct is used, but aofa_l00 can't be checked without
+/// it (the proof should be patched).
 const FLEX_EXPANSION_BUG: bool = true;
+
+/// Cluster lists in `Attrs` are supposed to be sorted, but Mizar fails
+/// to re-sort after some operations that can change relative sort order,
+/// notably instantiation. Unfortunately this is user-visible because of
+/// implicit argument inference in ambiguous cases; afinsq_2 needs a bunch
+/// of `qua`s and I think there are some cases which are just impossible
+/// to specify this way. (This is not unsound.)
+const ATTR_SORT_BUG: bool = true;
 
 const EXPECTED_ERRORS: &[(&str, usize)] = if ENABLE_ANALYZER {
   &[]

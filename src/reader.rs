@@ -114,9 +114,15 @@ impl MizPath {
 
     if ENABLE_ANALYZER {
       // LoadSGN
-      for pat in notations {
+      for mut pat in notations {
         match pat.kind {
-          PatternKind::Mode(_) | PatternKind::ExpandableMode { .. } => v.notations.mode.push(pat),
+          PatternKind::Mode(_) => v.notations.mode.push(pat),
+          PatternKind::ExpandableMode { ref mut expansion } => {
+            v.lc.load_locus_tys(&pat.primary);
+            expansion.round_up_with_self(&v.g, &v.lc, false);
+            v.lc.unload_locus_tys();
+            v.notations.mode.push(pat)
+          }
           PatternKind::Struct(_) => v.notations.struct_mode.push(pat),
           PatternKind::Attr(_) => v.notations.attribute.push(pat),
           PatternKind::Pred(_) => v.notations.predicate.push(pat),
@@ -590,7 +596,10 @@ impl Reader {
       let mut thesis = this.intern(&thesis.f);
       this.read_justification(&thesis, just);
       let mut primary = this.lc.sch_func_ty.0.drain(..).collect();
-      this.lc.expand_consts(|c| (&mut primary, (&mut prems, &mut thesis)).visit(c));
+      this.lc.expand_consts(&this.g.constrs, |c| {
+        (&mut primary, &mut prems).visit(c);
+        thesis.visit(c)
+      });
       this.lc.infer_const.get_mut().truncate(infer_consts);
       this.libs.sch.insert((ArticleId::SELF, *nr), Scheme { sch_funcs: primary, prems, thesis });
     });
@@ -618,8 +627,7 @@ impl Reader {
                 if let Some(mut t) = func.expand_if_equal(&self.g, &self.lc, args, 0) {
                   t.visit(&mut self.intern_const());
                   let Term::Infer(nr) = t else { unreachable!() };
-                  ic = self.lc.infer_const.borrow_mut();
-                  ic.0[i].eq_const.insert(nr);
+                  self.lc.infer_const.borrow_mut().0[i].insert_eq_const(nr);
                 }
               }
             }
@@ -704,11 +712,11 @@ impl Reader {
       let asgn = &ic.0[i];
       if matches!(asgn.def, Term::Functor { .. }) {
         if let Some(subst) = id.try_apply_lhs(&self.g, &self.lc, &id.lhs, &asgn.def) {
-          let mut tm = subst.inst_term(&id.rhs, 0);
+          let mut tm = subst.inst_term(&self.g.constrs, &self.lc, &id.rhs, 0);
           drop(ic);
           tm.visit(&mut self.intern_const());
           let Term::Infer(n) = tm else { unreachable!() };
-          self.lc.infer_const.borrow_mut().0[i].eq_const.insert(n);
+          self.lc.infer_const.borrow_mut().0[i].insert_eq_const(n);
           ic = self.lc.infer_const.borrow();
         }
       }
@@ -778,9 +786,8 @@ impl Reader {
         let mut attrs = asgn.ty.attrs.1.clone();
         let orig = attrs.attrs().len();
         // eprintln!("enlarge {:?} by {:?}", self, cl.consequent.1);
-        attrs.enlarge_by(&self.g.constrs, &cl.consequent.1, |a| {
-          a.visit_cloned(&mut Inst::new(&subst))
-        });
+        let mut inst = Inst::new(&self.g.constrs, &self.lc, &subst, 0);
+        attrs.visit_enlarge_by(&self.g.constrs, &self.lc, &cl.consequent.1, &mut inst);
         assert!(matches!(attrs, Attrs::Consistent(_)));
         attrs.round_up_with(&self.g, &self.lc, &asgn.ty, false);
         if attrs.attrs().len() > orig {

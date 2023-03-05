@@ -765,7 +765,7 @@ impl MsmParser {
           }
         }
         end_tag = true;
-        let id = IdentifyFunc { orig: *p1, new: *p2, eqs, conds: vec![], corr: None };
+        let id = IdentifyFunc { lhs: *p2, rhs: *p1, eqs, conds: vec![], corr: None };
         ItemKind::IdentifyFunc(Box::new(id))
       }
       b"Property-Registration" => {

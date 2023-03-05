@@ -55,7 +55,7 @@ impl<'a> Checker<'a> {
           ExpandLegacyFlex { depth: 0 }.visit_formula(&mut f);
         }
         // vprintln!("expand: {f:?}");
-        f.distribute_quantifiers(&self.g.constrs, 0);
+        f.distribute_quantifiers(&self.g.constrs, self.lc, 0);
         // vprintln!("distributed: {f:?}");
         f.append_conjuncts_to(conjs);
       }
@@ -175,9 +175,10 @@ impl<'a> Checker<'a> {
         let mut inst1 = vec![];
         for attr in attrs {
           let c = &self.g.constrs.attribute[attr.nr];
-          let mut attrs = c.ty.attrs.1.visit_cloned(&mut Inst::new(&attr.args));
-          attrs
-            .insert(&self.g.constrs, Attr { nr: attr.nr, pos: !attr.pos, args: attr.args.clone() });
+          let mut inst = Inst::new(&self.g.constrs, self.lc, &attr.args, 0);
+          let mut attrs = c.ty.attrs.1.visit_cloned(&mut inst);
+          let attr = Attr { nr: attr.nr, pos: !attr.pos, args: attr.args.clone() };
+          attrs.insert(&self.g.constrs, self.lc, attr);
           attrs.visit(&mut self.intern_const());
           let ty3 = Type { kind: ty.kind, attrs: (attrs.clone(), attrs), args: ty.args.clone() };
           let f3 = Formula::Is { term: term.clone(), ty: Box::new(ty3) };
@@ -187,13 +188,13 @@ impl<'a> Checker<'a> {
         let mut inst2 = vec![Conjunct::single(a2, false)];
         if let TypeKind::Struct(n) = ty.kind {
           let orig = term.get_type_uncached(self.g, self.lc);
-          if let Some(w) = ty.widening_of(self.g, &orig).as_deref() {
+          if let Some(w) = ty.widening_of(self.g, self.lc, &orig).as_deref() {
             let c = &self.g.constrs.struct_mode[n];
             let mut inst3 = vec![];
             for &sel in &*c.fields {
-              let tm2 = Term::mk_select(self.g, sel, term, ty);
+              let tm2 = Term::mk_select(self.g, self.lc, sel, term, ty);
               let f3 = Formula::Is {
-                term: Box::new(Term::mk_select(self.g, sel, term, w)),
+                term: Box::new(Term::mk_select(self.g, self.lc, sel, term, w)),
                 ty: Box::new(tm2.get_type_uncached(self.g, self.lc)),
               };
               let a3 = atoms.insert(self.g, self.lc, Cow::Owned(f3));
@@ -306,9 +307,9 @@ impl Expand<'_> {
         if self.lc.bound_var.is_empty() {
           let nat = self.g.nat.as_ref().unwrap();
           let le = self.g.reqs.less_or_equal().unwrap();
-          let mut epf = ExpandPrivFunc(&self.g.constrs);
           *f = Formula::mk_and_with(|conjs| {
             {
+              let mut epf = ExpandPrivFunc(&self.g.constrs, self.lc);
               let terms2 = (*terms).visit_cloned(&mut epf);
               let scope2 = (*scope).visit_cloned(&mut epf);
               let scope3 = if crate::FLEX_EXPANSION_BUG {
@@ -388,7 +389,7 @@ impl Expand<'_> {
       let Some(subst) = exp.matches(self.g, self.lc, kind, args) else { continue };
       let base = self.lc.bound_var.len() as u32;
       let mut result = body.otherwise.as_ref().expect("no cases and no otherwise?").clone();
-      subst.inst_formula_mut(&mut result, base);
+      subst.inst_formula_mut(&self.g.constrs, self.lc, &mut result, base);
       expansions.push(result)
     }
     expansions
@@ -412,11 +413,11 @@ impl VisitMut for ExpandLegacyFlex {
 }
 
 impl Formula {
-  pub fn distribute_quantifiers(&mut self, ctx: &Constructors, depth: u32) {
+  pub fn distribute_quantifiers(&mut self, ctx: &Constructors, lc: &LocalContext, depth: u32) {
     loop {
       match self {
         Formula::Neg { f: arg } => {
-          arg.distribute_quantifiers(ctx, depth);
+          arg.distribute_quantifiers(ctx, lc, depth);
           if let Formula::Neg { f: f2 } = &mut **arg {
             *self = std::mem::take(&mut **f2)
           }
@@ -424,13 +425,13 @@ impl Formula {
         Formula::And { args } =>
           *self = Formula::mk_and_with(|conjs| {
             for mut f in std::mem::take(args) {
-              f.distribute_quantifiers(ctx, depth);
+              f.distribute_quantifiers(ctx, lc, depth);
               f.append_conjuncts_to(conjs)
             }
           }),
         Formula::ForAll { dom, scope } => {
-          ExpandPrivFunc(ctx).visit_type(dom);
-          scope.distribute_quantifiers(ctx, depth + 1);
+          ExpandPrivFunc(ctx, lc).visit_type(dom);
+          scope.distribute_quantifiers(ctx, lc, depth + 1);
           if let Formula::And { args } = &mut **scope {
             for f in args {
               let mut nontrivial = false;
@@ -458,7 +459,7 @@ impl Formula {
         | Formula::Attr { .. }
         | Formula::Is { .. }
         | Formula::FlexAnd { .. }
-        | Formula::True => ExpandPrivFunc(ctx).visit_formula(self),
+        | Formula::True => ExpandPrivFunc(ctx, lc).visit_formula(self),
       }
       break
     }
@@ -945,8 +946,8 @@ impl<'a> SchemeCtx<'a> {
           && if let TypeKind::Mode(n1) = tgt.kind {
             let mut src = CowBox::Borrowed(src);
             loop {
-              let Some(w) = src.widening(self.g) else { return false };
-              let Some(w) = tgt.widening_of(self.g, &w) else { return false };
+              let Some(w) = src.widening(self.g, self.lc) else { return false };
+              let Some(w) = tgt.widening_of(self.g, self.lc, &w) else { return false };
               if self.observing(|this| this.eq_radices(tgt, &w)) {
                 return true
               }
@@ -956,7 +957,7 @@ impl<'a> SchemeCtx<'a> {
               src = CowBox::Owned(w.to_owned());
             }
           } else {
-            let Some(src) = tgt.widening_of(self.g, src) else { return false };
+            let Some(src) = tgt.widening_of(self.g, self.lc, src) else { return false };
             tgt.kind == src.kind && self.eq_radices(tgt, &src)
           })
   }

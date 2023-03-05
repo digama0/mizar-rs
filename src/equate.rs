@@ -58,9 +58,9 @@ impl Attrs {
       Attrs::Consistent(attrs) => Ok(attrs),
     }
   }
-  fn try_insert(&mut self, ctx: &Constructors, item: Attr) -> OrUnsat<bool> {
+  fn try_insert(&mut self, ctx: &Constructors, lc: &LocalContext, item: Attr) -> OrUnsat<bool> {
     // vprintln!("insert {item:?} -> {self:?}");
-    let changed = self.insert(ctx, item);
+    let changed = self.insert(ctx, lc, item);
     self.try_attrs()?;
     Ok(changed)
   }
@@ -216,7 +216,7 @@ impl Equalizer<'_> {
           .is_subset_of(&eq_term.supercluster, |a1, a2| ().eq_attr(self.g, self.lc, a1, a2))
         {
           for attr in new.attrs.1.try_attrs().unwrap() {
-            added |= eq_term.supercluster.try_insert(&self.g.constrs, attr.clone())?;
+            added |= eq_term.supercluster.try_insert(&self.g.constrs, self.lc, attr.clone())?;
           }
         }
         return Ok(added)
@@ -225,10 +225,10 @@ impl Equalizer<'_> {
       let Attrs::Consistent(attrs) = std::mem::take(&mut new.attrs).1 else { unreachable!() };
       eq_term = &mut self.terms[et];
       for attr in attrs {
-        eq_term.supercluster.try_insert(&self.g.constrs, attr)?;
+        eq_term.supercluster.try_insert(&self.g.constrs, self.lc, attr)?;
       }
       if matches!(new.kind, TypeKind::Mode(_)) {
-        if let Some(new2) = new.widening(self.g) {
+        if let Some(new2) = new.widening(self.g, self.lc) {
           eq_term.ty_class.push(std::mem::replace(&mut new, *new2));
           added = true;
           continue
@@ -242,7 +242,7 @@ impl Equalizer<'_> {
       loop {
         let parents = self.g.constrs.struct_mode[m].parents.clone();
         for mut ty in parents.into_vec() {
-          ty.visit(&mut Inst::new(&eq_term.ty_class[i].args));
+          ty.visit(&mut Inst::new(&self.g.constrs, self.lc, &eq_term.ty_class[i].args, 0));
           self.y(|y| y.visit_type(&mut ty))?;
           eq_term = &mut self.terms[et];
           ty.attrs = Default::default();
@@ -357,9 +357,11 @@ impl VisitMut for Y<'_, '_> {
         } else {
           let et = self.new_eq_class(tm).1;
           *self.eq.infers.get_mut_extending(nr) = Some(self.eq.terms[et].mark);
-          let ic = self.eq.lc.infer_const.get_mut();
-          let ty = ic[nr].ty.visit_cloned(&mut ExpandPrivFunc(&self.eq.g.constrs));
-          self.eq.terms[et].number = ic[nr].number.clone();
+          let ty = {
+            let ic = self.eq.lc.infer_const.borrow();
+            self.eq.terms[et].number = ic[nr].number.clone();
+            ic[nr].ty.visit_cloned(&mut ExpandPrivFunc(&self.eq.g.constrs, self.eq.lc))
+          };
           y_try!(self, self.insert_type(ty, et));
           *tm = Term::EqMark(self.terms[et].mark);
         }
@@ -808,9 +810,11 @@ fn is_empty_set(g: &Global, lc: &LocalContext, terms: &[EqMarkId]) -> bool {
 }
 
 impl Attrs {
-  fn try_enlarge_by(&mut self, ctx: &Constructors, other: &Attrs) -> OrUnsat<bool> {
+  fn try_enlarge_by(
+    &mut self, ctx: &Constructors, lc: &LocalContext, other: &Attrs,
+  ) -> OrUnsat<bool> {
     let c = self.attrs().len();
-    self.enlarge_by(ctx, other, Attr::clone);
+    self.enlarge_by(ctx, lc, other);
     Ok(self.try_attrs()?.len() != c)
   }
 }
@@ -909,7 +913,7 @@ impl<'a> Equalizer<'a> {
     let Attrs::Consistent(attrs) = std::mem::take(&mut self.terms[from].supercluster)
     else { unreachable!() };
     for attr in attrs {
-      self.terms[to].supercluster.try_insert(&self.g.constrs, attr)?;
+      self.terms[to].supercluster.try_insert(&self.g.constrs, self.lc, attr)?;
     }
     for ty in std::mem::take(&mut self.terms[from].ty_class) {
       self.insert_type(ty, to)?;
@@ -1011,7 +1015,7 @@ impl<'a> Equalizer<'a> {
             res.push(Attr { nr: attr.nr, pos: attr.pos, args })
           }
         }
-        res.sort_by(|a1, a2| a1.cmp_abs(&self.g.constrs, None, a2, CmpStyle::Strict));
+        res.sort_by(|a1, a2| a1.cmp_abs(&self.g.constrs, Some(self.lc), a2, CmpStyle::Attr));
         Attrs::Consistent(res)
       }
     }
@@ -1592,7 +1596,7 @@ impl<'a> Equalizer<'a> {
 
   fn insert_non_attr0(&mut self, et1: EqTermId, et2: EqTermId, nr: AttrId) -> OrUnsat<()> {
     if self.terms[et1].supercluster.find0(&self.g.constrs, nr, true) {
-      self.terms[et2].supercluster.try_insert(&self.g.constrs, Attr::new0(nr, false))?;
+      self.terms[et2].supercluster.try_insert(&self.g.constrs, self.lc, Attr::new0(nr, false))?;
     }
     Ok(())
   }
@@ -1615,10 +1619,11 @@ impl<'a> Equalizer<'a> {
 
   fn check_neg_attr(&self, nr: AttrId, args: &[Term]) -> OrUnsat<()> {
     let (last, args1) = args.split_last().unwrap();
-    if let Some(attr) = self.terms[self.lc.marks[last.mark().unwrap()].1]
-      .supercluster
-      .find(&self.g.constrs, &Attr { nr, pos: true, args: args1.to_vec().into() })
-    {
+    if let Some(attr) = self.terms[self.lc.marks[last.mark().unwrap()].1].supercluster.find(
+      &self.g.constrs,
+      self.lc,
+      &Attr { nr, pos: true, args: args1.to_vec().into() },
+    ) {
       if attr.pos {
         return Err(Unsat)
       }
@@ -1690,13 +1695,13 @@ impl<'a> Equalizer<'a> {
     match inst {
       Dnf::True => {
         let attrs = self.locate_attrs(&Conjunct::TRUE, attrs);
-        self.terms[et].supercluster.try_enlarge_by(&self.g.constrs, &attrs)
+        self.terms[et].supercluster.try_enlarge_by(&self.g.constrs, self.lc, &attrs)
       }
       Dnf::Or(conjs) => {
         let mut added = false;
         for conj in conjs {
           let attrs = self.locate_attrs(conj, attrs);
-          added |= self.terms[et].supercluster.try_enlarge_by(&self.g.constrs, &attrs)?;
+          added |= self.terms[et].supercluster.try_enlarge_by(&self.g.constrs, self.lc, &attrs)?;
         }
         Ok(added)
       }
@@ -1709,6 +1714,12 @@ impl<'a> Equalizer<'a> {
     self.lc.marks.0.clear();
     let mut eqs = Equals::default();
     let mut bas = EnumMap::<bool, Atoms>::default();
+    // for (i, fv) in self.lc.fixed_var.enum_iter() {
+    //   vprintln!("c{i:?} := {:#?}", fv);
+    // }
+    // for (i, asgn) in self.lc.infer_const.get_mut().enum_iter() {
+    //   vprintln!("?{i:?} := {:#?}", asgn);
+    // }
     for pos in [true, false] {
       for (i, f) in atoms.0.enum_iter() {
         // vprintln!("y pass atom {f:?}");
@@ -1726,7 +1737,7 @@ impl<'a> Equalizer<'a> {
               let et = self.lc.marks[term.mark().unwrap()].1;
               let et = self.lc.marks[self.terms[et].mark].1;
               let attr = Attr { nr: *nr, pos, args: args.into() };
-              self.terms[et].supercluster.try_insert(&self.g.constrs, attr)?;
+              self.terms[et].supercluster.try_insert(&self.g.constrs, self.lc, attr)?;
               self.terms[et].supercluster.try_attrs()?;
             }
             Formula::Pred { nr, args } if pos => {
@@ -1766,11 +1777,11 @@ impl<'a> Equalizer<'a> {
     while let Some(ets) = self.terms.get(i) {
       for &m in &ets.eq_class {
         if let Term::Infer(id) = self.lc.marks[m].0 {
-          let asgn = &self.lc.infer_const.get_mut()[id];
+          let asgn = &self.lc.infer_const.borrow()[id];
           for &z in &asgn.eq_const {
             to_y_term.push((i, Term::Infer(z)));
           }
-          to_yy_term.push((i, asgn.def.visit_cloned(&mut ExpandPrivFunc(&self.g.constrs))))
+          to_yy_term.push((i, asgn.def.visit_cloned(&mut ExpandPrivFunc(&self.g.constrs, self.lc))))
         }
       }
       self.drain_pending(&mut to_y_term, &mut eqs)?;
@@ -1824,7 +1835,7 @@ impl<'a> Equalizer<'a> {
         if let Some(s) = strict_struct {
           for ty in &ets.ty_class {
             if ty.kind == TypeKind::Struct(s) {
-              to_y_term.push((ei, Term::mk_aggr(self.g, s, &Term::EqMark(ets.mark), ty)))
+              to_y_term.push((ei, Term::mk_aggr(self.g, self.lc, s, &Term::EqMark(ets.mark), ty)))
             }
           }
         }
@@ -1869,7 +1880,7 @@ impl<'a> Equalizer<'a> {
       }
       for et in to_complex {
         let attr = Attr::new0(complex, true);
-        self.terms[et].supercluster.try_insert(&self.g.constrs, attr)?;
+        self.terms[et].supercluster.try_insert(&self.g.constrs, self.lc, attr)?;
       }
     }
 
@@ -1885,9 +1896,9 @@ impl<'a> Equalizer<'a> {
         {
           unsat = unsat.and_then(|_| {
             let attr = Attr::new0(complex, true);
-            self.terms[et1].supercluster.try_insert(&self.g.constrs, attr)?;
+            self.terms[et1].supercluster.try_insert(&self.g.constrs, self.lc, attr)?;
             let attr = Attr::new0(complex, true);
-            self.terms[et2].supercluster.try_insert(&self.g.constrs, attr)?;
+            self.terms[et2].supercluster.try_insert(&self.g.constrs, self.lc, attr)?;
             Ok(())
           });
           true
@@ -2069,7 +2080,7 @@ impl<'a> Equalizer<'a> {
             let Term::EqMark(m) = tm else { unreachable!() };
             *m = self.terms[self.lc.marks[*m].1].mark
           }
-          self.terms.0[i].supercluster.try_insert(&self.g.constrs, a)?;
+          self.terms.0[i].supercluster.try_insert(&self.g.constrs, self.lc, a)?;
         }
       }
     }
@@ -2144,39 +2155,51 @@ impl<'a> Equalizer<'a> {
               // a <= b, a is positive => b is positive
               let pos1 = self.terms[et1].supercluster.find0(&self.g.constrs, positive, true);
               added |= pos1
-                && self.terms[et2]
-                  .supercluster
-                  .try_insert(&self.g.constrs, Attr::new0(positive, true))?;
+                && self.terms[et2].supercluster.try_insert(
+                  &self.g.constrs,
+                  self.lc,
+                  Attr::new0(positive, true),
+                )?;
               // a <= b, b is negative => a is negative
               let neg2 = self.terms[et2].supercluster.find0(&self.g.constrs, negative, true);
               added |= neg2
-                && self.terms[et1]
-                  .supercluster
-                  .try_insert(&self.g.constrs, Attr::new0(negative, true))?;
+                && self.terms[et1].supercluster.try_insert(
+                  &self.g.constrs,
+                  self.lc,
+                  Attr::new0(negative, true),
+                )?;
               // a <= b, a is non negative => b is non negative
               let nonneg1 = self.terms[et1].supercluster.find0(&self.g.constrs, negative, false);
               added |= nonneg1
-                && self.terms[et2]
-                  .supercluster
-                  .try_insert(&self.g.constrs, Attr::new0(negative, false))?;
+                && self.terms[et2].supercluster.try_insert(
+                  &self.g.constrs,
+                  self.lc,
+                  Attr::new0(negative, false),
+                )?;
               // a <= b, b is non positive => a is non positive
               let nonpos2 = self.terms[et2].supercluster.find0(&self.g.constrs, positive, false);
               added |= nonpos2
-                && self.terms[et1]
-                  .supercluster
-                  .try_insert(&self.g.constrs, Attr::new0(positive, false))?;
+                && self.terms[et1].supercluster.try_insert(
+                  &self.g.constrs,
+                  self.lc,
+                  Attr::new0(positive, false),
+                )?;
               if let Some(zero) = self.g.reqs.zero() {
                 // a <= b, a is non negative, b is non zero => b is positive
                 if nonneg1 && self.terms[et2].supercluster.find0(&self.g.constrs, zero, false) {
-                  added |= self.terms[et2]
-                    .supercluster
-                    .try_insert(&self.g.constrs, Attr::new0(positive, true))?;
+                  added |= self.terms[et2].supercluster.try_insert(
+                    &self.g.constrs,
+                    self.lc,
+                    Attr::new0(positive, true),
+                  )?;
                 }
                 // a <= b, b is non positive, a is non zero => a is negative
                 if nonpos2 && self.terms[et1].supercluster.find0(&self.g.constrs, zero, false) {
-                  added |= self.terms[et2]
-                    .supercluster
-                    .try_insert(&self.g.constrs, Attr::new0(negative, true))?;
+                  added |= self.terms[et2].supercluster.try_insert(
+                    &self.g.constrs,
+                    self.lc,
+                    Attr::new0(negative, true),
+                  )?;
                 }
               }
             }
@@ -2191,9 +2214,11 @@ impl<'a> Equalizer<'a> {
             let et2 = self.lc.marks[arg2.mark().unwrap()].1;
             if let Some(empty) = self.g.reqs.empty() {
               // A in B => B is non empty
-              added |= self.terms[et2]
-                .supercluster
-                .try_insert(&self.g.constrs, Attr::new0(empty, false))?;
+              added |= self.terms[et2].supercluster.try_insert(
+                &self.g.constrs,
+                self.lc,
+                Attr::new0(empty, false),
+              )?;
             }
             if let Some(element) = self.g.reqs.element() {
               // A in B => A: Element of B
@@ -2250,9 +2275,11 @@ impl<'a> Equalizer<'a> {
             if let Some(empty) = self.g.reqs.empty() {
               for &m in &to_push {
                 let et = self.lc.marks[m].1;
-                self.terms[et]
-                  .supercluster
-                  .try_insert(&self.g.constrs, Attr::new0(empty, false))?;
+                self.terms[et].supercluster.try_insert(
+                  &self.g.constrs,
+                  self.lc,
+                  Attr::new0(empty, false),
+                )?;
               }
             }
             if let Some(element) = self.g.reqs.element() {
@@ -2295,14 +2322,18 @@ impl<'a> Equalizer<'a> {
               {
                 // b < a, a is non positive => b is negative
                 added |= self.terms[et1].supercluster.find0(&self.g.constrs, positive, false)
-                  && self.terms[et2]
-                    .supercluster
-                    .try_insert(&self.g.constrs, Attr::new0(negative, true))?;
+                  && self.terms[et2].supercluster.try_insert(
+                    &self.g.constrs,
+                    self.lc,
+                    Attr::new0(negative, true),
+                  )?;
                 // b < a, b is non negative => a is positive
                 added |= self.terms[et2].supercluster.find0(&self.g.constrs, negative, false)
-                  && self.terms[et1]
-                    .supercluster
-                    .try_insert(&self.g.constrs, Attr::new0(positive, true))?;
+                  && self.terms[et1].supercluster.try_insert(
+                    &self.g.constrs,
+                    self.lc,
+                    Attr::new0(positive, true),
+                  )?;
               }
               if let (Some(n1), Some(n2)) = (&self.terms[et1].number, &self.terms[et2].number) {
                 if n1.im == Rational::ZERO && n2.im == Rational::ZERO && n1.re <= n2.re {
@@ -2446,7 +2477,7 @@ impl<'a> Equalizer<'a> {
       .filter(|etm| !etm.eq_class.is_empty() && !etm.supercluster.attrs().is_empty())
       .tuple_combinations()
     {
-      if etm1.supercluster.contradicts(&self.g.constrs, &etm2.supercluster) {
+      if etm1.supercluster.contradicts(&self.g.constrs, self.lc, &etm2.supercluster) {
         ineqs.push(etm1.mark, etm2.mark)
       }
     }

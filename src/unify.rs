@@ -299,7 +299,7 @@ impl<'a> Unifier<'a> {
                 if let Term::Fraenkel { args: tys, scope, compr } = &self.lc.marks[m].0 {
                   let (tys, scope, compr) = (tys.clone(), (**scope).clone(), (**compr).clone());
                   let mut fm = args[0].clone().not_in_fraenkel(tys, scope, compr, &self.g.reqs);
-                  fm.distribute_quantifiers(&self.g.constrs, 0);
+                  fm.distribute_quantifiers(&self.g.constrs, self.lc, 0);
                   fraenkel_fmlas.push(fm.maybe_neg(!pos))
                 }
               }
@@ -395,7 +395,7 @@ impl Standardize<'_> {
         }
         Formula::PrivPred { args, value, .. } => {
           self.visit_terms(args);
-          ExpandPrivFunc(&self.g.constrs).visit_formula(value);
+          ExpandPrivFunc(&self.g.constrs, self.lc).visit_formula(value);
         }
         Formula::Is { term, ty } => {
           self.visit_term(term);
@@ -412,7 +412,7 @@ impl Term {
   /// ChReconQualFrm
   fn mk_is(self: Box<Term>, g: &Global, lc: &LocalContext, attr: Attr) -> Formula {
     let mut ty = self.get_type_uncached(g, lc);
-    ty.attrs.0.insert(&g.constrs, attr);
+    ty.attrs.0.insert(&g.constrs, lc, attr);
     if matches!(ty.attrs.0, Attrs::Inconsistent) {
       Formula::Neg { f: Box::new(Formula::True) }
     } else {
@@ -687,11 +687,11 @@ impl Unify<'_> {
                           break
                         }
                         inst2.mk_or_else(|| self.unify_radix_type(&pty, ty2))?;
-                        pty = CowBox::Owned(pty.widening(self.g).unwrap());
+                        pty = CowBox::Owned(pty.widening(self.g, self.lc).unwrap());
                       }
                     },
                   TypeKind::Struct(_) =>
-                    if let Some(ty) = ty2.widening_of(self.g, ty) {
+                    if let Some(ty) = ty2.widening_of(self.g, self.lc, ty) {
                       inst2 = self.unify_radix_type(&ty, ty2)?;
                     },
                 }
