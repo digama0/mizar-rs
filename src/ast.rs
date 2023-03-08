@@ -91,7 +91,8 @@ pub enum Term {
   },
   InternalSelector {
     pos: Position,
-    sym: (u32, String),
+    sym: (SelSymId, String),
+    id: ConstId,
   },
   Qua {
     pos: Position,
@@ -289,8 +290,8 @@ impl PatternStruct {
   pub fn to_mode_format(&self) -> FormatStruct {
     FormatStruct { sym: self.sym.0, args: self.args.len() as u8 }
   }
-  pub fn to_aggr_format(&self) -> FormatAggr {
-    FormatAggr { sym: self.sym.0, args: self.args.len() as u8 }
+  pub fn to_aggr_format(&self, n: usize) -> FormatAggr {
+    FormatAggr { sym: self.sym.0, args: n as u8 }
   }
   pub fn to_subaggr_format(&self) -> StructSymId { self.sym.0 }
 }

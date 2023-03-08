@@ -74,7 +74,7 @@ impl MizPath {
     self.read_atr(&mut v.g.constrs).unwrap();
     let old = v.lc.start_stash();
     let mut formats = None;
-    if ENABLE_ANALYZER {
+    if analyzer_enabled() {
       let mut f = Default::default();
       self.read_formats("frx", &mut f).unwrap();
       v.formats.extend(f.formats.enum_iter().map(|(id, f)| (*f, id)));
@@ -112,7 +112,7 @@ impl MizPath {
       v.g.nat = Some(ty)
     }
 
-    if ENABLE_ANALYZER {
+    if analyzer_enabled() {
       // LoadSGN
       for mut pat in notations {
         match pat.kind {
@@ -135,9 +135,9 @@ impl MizPath {
     }
 
     // LoadDefinitions
-    if crate::ENABLE_ANALYZER {
+    if analyzer_enabled() {
       self.read_definitions(&v.g.constrs, "dfs", &mut v.definitions).unwrap();
-      if crate::DUMP_DEFINITIONS {
+      if DUMP_DEFINITIONS {
         for d in &v.definitions {
           eprintln!("definition: {d:?}");
         }
@@ -145,9 +145,9 @@ impl MizPath {
     }
 
     // LoadEqualities
-    if crate::ENABLE_CHECKER {
+    if ENABLE_CHECKER {
       self.read_definitions(&v.g.constrs, "dfe", &mut v.equalities).unwrap();
-      if crate::DUMP_DEFINITIONS {
+      if DUMP_DEFINITIONS {
         for d in &v.equalities {
           eprintln!("equality: {d:?}");
         }
@@ -155,9 +155,9 @@ impl MizPath {
     }
 
     // LoadExpansions
-    if crate::ENABLE_CHECKER {
+    if ENABLE_CHECKER {
       self.read_definitions(&v.g.constrs, "dfx", &mut v.expansions).unwrap();
-      if crate::DUMP_DEFINITIONS {
+      if DUMP_DEFINITIONS {
         for d in &v.expansions {
           eprintln!("expansion: {d:?}");
         }
@@ -168,12 +168,12 @@ impl MizPath {
     self.read_epr(&v.g.constrs, &mut v.properties).unwrap();
 
     // LoadIdentify
-    if crate::ENABLE_CHECKER {
+    if ENABLE_CHECKER {
       self.read_eid(&v.g.constrs, &mut v.identify).unwrap();
     }
 
     // LoadReductions
-    if crate::ENABLE_CHECKER {
+    if ENABLE_CHECKER {
       self.read_erd(&v.g.constrs, &mut v.reductions).unwrap();
     }
 
@@ -232,7 +232,7 @@ impl MizPath {
     v.g.clusters = clusters;
 
     // InLibraries
-    if crate::ENABLE_CHECKER {
+    if ENABLE_CHECKER {
       self.read_eth(&v.g.constrs, &refs, &mut v.libs).unwrap();
       let cc = &mut InternConst::new(&v.g, &v.lc, &v.equals, &v.identify, &v.func_ids);
       v.libs.thm.values_mut().for_each(|f| f.visit(cc));
@@ -422,12 +422,16 @@ impl Reader {
   }
 
   pub fn read_item(&mut self, it: &Item) {
-    if let Some(n) = *crate::FIRST_VERBOSE_ITEM.read().unwrap() {
+    if let Some(n) = *FIRST_VERBOSE_ITEM.read().unwrap() {
+      if self.items == n + 1 && ONE_ITEM.load(std::sync::atomic::Ordering::SeqCst) {
+        eprintln!("exiting");
+        std::process::exit(0)
+      }
       set_verbose(self.items >= n);
     }
-    if crate::ITEM_HEADER {
+    if ITEM_HEADER {
       eprint!("item[{}]: ", self.items);
-      if crate::ALWAYS_VERBOSE_ITEM || verbose() {
+      if ALWAYS_VERBOSE_ITEM || verbose() {
         eprintln!("{it:#?}");
       } else {
         match it {
@@ -606,7 +610,7 @@ impl Reader {
   }
 
   pub fn read_definiens(&mut self, df: &Definiens) {
-    if ENABLE_ANALYZER {
+    if analyzer_enabled() {
       self.definitions.push(df.clone());
     }
     if ENABLE_CHECKER {
@@ -827,7 +831,7 @@ impl Reader {
   }
 
   pub fn read_inference(&mut self, thesis: &Formula, it: &Inference) {
-    if !crate::ENABLE_CHECKER {
+    if !ENABLE_CHECKER {
       return
     }
     let refs = it.refs.iter().map(|r| match r.kind {

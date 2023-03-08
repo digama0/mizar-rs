@@ -269,12 +269,12 @@ impl<'a> Pretty<'a> {
           if let Some(&(len, ref vis, FormatAggr { sym, args: n })) = lc.formatter.aggr.get(nr) {
             assert_eq!(len as usize, args.len());
             assert_eq!(vis.len(), n as usize);
+            ovis = (!SHOW_INVISIBLE || vis.len() == args.len()).then_some(&**vis);
             doc = Some(if SHOW_ORIG {
               self.text(format!("{}[{}]", lc.formatter.symbols[&sym.into()], nr.0))
             } else {
               self.text(&lc.formatter.symbols[&sym.into()])
             });
-            ovis = Some(&**vis)
           }
         }
         let doc = doc.unwrap_or_else(|| self.text(format!("G{}", nr.0)));

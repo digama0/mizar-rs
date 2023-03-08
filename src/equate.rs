@@ -456,7 +456,7 @@ impl VisitMut for Y<'_, '_> {
         let Some(et) = self.add_binder_into(tm, |c| &mut c.choice) else { return };
         et
       }
-      Term::EqMark(m) => match &self.lc.marks[m].0 {
+      Term::EqMark(m) => match self.lc.marks[m].0 {
         Term::Bound(_) | Term::EqClass(_) => return,
         _ => unreachable!("already marked"),
       },

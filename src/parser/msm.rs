@@ -1184,17 +1184,18 @@ impl MsmParser {
             Elem::Term(Box::new(Term::Selector { pos, sym: (sym, spelling), arg }))
           }
           b"Internal-Selector-Term" => {
-            let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
+            let (mut pos, (mut sym, mut spelling, mut id)) = <(Position, _)>::default();
             for attr in e.attributes().map(Result::unwrap) {
               match attr.key {
                 b"line" => pos.line = self.r.get_attr(&attr.value),
                 b"col" => pos.col = self.r.get_attr(&attr.value),
-                b"nr" => sym = self.r.get_attr::<u32>(&attr.value) - 1,
+                b"nr" => sym = SelSymId(self.r.get_attr::<u32>(&attr.value) - 1),
+                b"varnr" => id = ConstId(self.r.get_attr::<u32>(&attr.value) - 1),
                 b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
                 _ => {}
               }
             }
-            Elem::Term(Box::new(Term::InternalSelector { pos, sym: (sym, spelling) }))
+            Elem::Term(Box::new(Term::InternalSelector { pos, sym: (sym, spelling), id }))
           }
           b"Qualification-Term" => {
             let pos = self.r.get_pos(&e);

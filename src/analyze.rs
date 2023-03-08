@@ -26,7 +26,7 @@ impl<'a> std::ops::DerefMut for Analyzer<'a> {
 
 impl Reader {
   pub fn run_analyzer(&mut self, path: &MizPath) {
-    if !ENABLE_ANALYZER {
+    if !analyzer_enabled() {
       panic!("analyzer is not enabled")
     }
     let mut analyzer = Analyzer {
@@ -106,6 +106,10 @@ impl Analyzer<'_> {
 
   fn item_header(&mut self, it: &ast::Item, s: &str) {
     if let Some(n) = *crate::FIRST_VERBOSE_ITEM.read().unwrap() {
+      if self.items == n + 1 && ONE_ITEM.load(std::sync::atomic::Ordering::SeqCst) {
+        eprintln!("exiting");
+        std::process::exit(0)
+      }
       set_verbose(self.items >= n);
     }
     if crate::ITEM_HEADER {
@@ -263,7 +267,7 @@ impl Analyzer<'_> {
         let mut to_push = vec![];
         let mut f = Formula::mk_and_with(|conjs| {
           for prop in conds {
-            let f = self.elab_intern_formula(&prop.f, true);
+            let f = self.elab_formula(&prop.f, true);
             f.clone().append_conjuncts_to(conjs);
             to_push.push((prop.label.as_ref().map(|l| l.id.0), f))
           }
@@ -271,8 +275,10 @@ impl Analyzer<'_> {
         .mk_neg();
         let end = self.lc.fixed_var.len();
         self.lc.mk_forall(start..end, istart, false, &mut f);
+        f.visit(&mut self.intern_const());
         self.elab_justification(None, &f.mk_neg(), just);
-        for (label, f) in to_push {
+        for (label, mut f) in to_push {
+          f.visit(&mut self.intern_const());
           self.push_prop(label, f);
         }
       }
@@ -460,7 +466,7 @@ impl Analyzer<'_> {
 
   fn elab_term_qua(&mut self, tm: &ast::Term) -> TermQua {
     vprintln!("elab_term {tm:?}");
-    let res = match *tm {
+    let res = (|| match *tm {
       ast::Term::Placeholder { nr, .. } => Term::Locus(nr),
       ast::Term::Simple { kind, var, .. } => match kind {
         VarKind::Bound => Term::Bound(BoundId(var)),
@@ -508,7 +514,7 @@ impl Analyzer<'_> {
       ast::Term::Aggregate { ref sym, ref args, .. } => {
         let args = self.elab_terms_qua(args);
         let fmt = self.formats[&Format::Aggr(FormatAggr { sym: sym.0, args: args.len() as u8 })];
-        for pat in self.notations.functor.iter().rev() {
+        for pat in self.notations.aggregate.iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
               let PatternKind::Aggr(nr) = pat.kind else { unreachable!() };
@@ -553,9 +559,9 @@ impl Analyzer<'_> {
         }
         panic!("type error")
       }
-      ast::Term::InternalSelector { ref sym, .. } => {
+      ast::Term::InternalSelector { id, .. } => {
         // only occurs inside elab_struct_def, ensured by parser
-        Term::Constant(ConstId(sym.0))
+        Term::Constant(id)
       }
       ast::Term::The { ref ty, .. } => Term::The { ty: Box::new(self.elab_type(ty)) },
       ast::Term::Fraenkel { ref vars, ref scope, ref compr, .. } => {
@@ -579,7 +585,7 @@ impl Analyzer<'_> {
         assert!(self.lc.it_type.is_some(), "unexpected 'it'");
         Term::It
       }
-    };
+    })();
     vprintln!("elab_term {tm:?}\n -> {res:?}");
     res
   }
@@ -2294,13 +2300,13 @@ impl ReadProof for ReconstructThesis {
   fn take(&mut self, _: &mut Analyzer, _: Term) { panic!("take steps are not reconstructible") }
 
   fn take_as_var(&mut self, elab: &mut Analyzer, v: ConstId) {
-    if let Some(ProofStep::TakeAsVar { range, .. }) = self.stack.last_mut() {
-      range.end = elab.lc.fixed_var.len();
-    } else {
-      self.stack.push(ProofStep::TakeAsVar {
+    match self.stack.last_mut() {
+      Some(ProofStep::TakeAsVar { range, .. }) if range.end == v.0 as usize =>
+        range.end = elab.lc.fixed_var.len(),
+      _ => self.stack.push(ProofStep::TakeAsVar {
         range: v.0 as usize..elab.lc.fixed_var.len(),
         istart: elab.lc.infer_const.get_mut().len() as u32,
-      })
+      }),
     }
   }
 
@@ -2379,19 +2385,24 @@ impl VisitMut for ToLocus<'_> {
   }
 }
 
-struct MakeSelector {
+struct MakeSelector<'a> {
   base: u8,
+  to_locus: &'a IdxVec<ConstId, Option<LocusId>>,
+  to_const: &'a IdxVec<LocusId, ConstId>,
   terms: Vec<Result<Box<Term>, SelId>>,
 }
 
-impl VisitMut for MakeSelector {
+impl VisitMut for MakeSelector<'_> {
   fn visit_term(&mut self, tm: &mut Term) {
-    if let Term::Locus(n) = tm {
+    if let Term::Constant(c) = tm {
+      let n = self.to_locus.get(*c).and_then(|l| *l).expect("local constant in exported item");
       if let Some(i) = n.0.checked_sub(self.base) {
         *tm = match self.terms[i as usize] {
           Ok(ref t) => (**t).clone(),
-          Err(nr) =>
-            Term::Selector { nr, args: (0..=self.base).map(LocusId).map(Term::Locus).collect() },
+          Err(nr) => Term::Selector {
+            nr,
+            args: (0..=self.base).map(|i| Term::Constant(self.to_const[LocusId(i)])).collect(),
+          },
         }
       }
     } else {
@@ -2925,8 +2936,6 @@ impl BlockReader {
       pos: true,
     };
     struct_pat.check_access();
-    elab.r.lc.formatter.push(&elab.r.g.constrs, &struct_pat);
-    elab.r.notations.struct_mode.push(struct_pat);
 
     let struct_ty = Type {
       kind: TypeKind::Struct(struct_id),
@@ -2938,27 +2947,25 @@ impl BlockReader {
     self.to_locus.0.resize(fixed_vars, None);
     let mut cur_locus = LocusId(base);
     for group in &it.fields {
-      let ty = elab.elab_intern_type(&group.ty);
+      let ty = elab.elab_type(&group.ty);
       for _ in &group.vars {
         elab.lc.fixed_var.push(FixedVar { ty: ty.clone(), def: None });
         self.to_locus.0.push(Some(cur_locus.fresh()));
       }
     }
-    let mut field_tys = elab.lc.fixed_var.0.drain(fixed_vars..).map(|v| v.ty).collect_vec();
-    self.to_locus(elab, |l| field_tys.visit(l));
-    let aggr_primary: Box<[_]> = self.primary.0.iter().chain(&field_tys).cloned().collect();
-    let mut fields: Vec<SelId> = vec![];
+    let field_tys = elab.lc.fixed_var.0.drain(fixed_vars..).map(|v| v.ty).collect_vec();
+    let aggr_primary: Box<[_]> = self.to_locus(elab, |l| {
+      self.primary.0.iter().cloned().chain(field_tys.iter().map(|ty| ty.visit_cloned(l))).collect()
+    });
     let aggr_id = AggrId::from_usize(elab.g.constrs.aggregate.len());
     let aggr_pat = Pattern {
       kind: PatternKind::Aggr(aggr_id),
-      fmt: elab.formats[&Format::Aggr(it.pat.to_aggr_format())],
+      fmt: elab.formats[&Format::Aggr(it.pat.to_aggr_format(field_tys.len()))],
       primary: aggr_primary.clone(),
       visible: (base..cur_locus.0).map(LocusId).collect(),
       pos: true,
     };
     aggr_pat.check_access();
-    elab.r.lc.formatter.push(&elab.r.g.constrs, &aggr_pat);
-    elab.r.notations.aggregate.push(aggr_pat);
 
     let mut prefixes = vec![];
     for ty in &*parents {
@@ -2978,7 +2985,9 @@ impl BlockReader {
     elab.r.lc.formatter.push(&elab.r.g.constrs, &subaggr_pat);
     elab.r.notations.sub_aggr.push(subaggr_pat);
 
-    let mut mk_sel = MakeSelector { base, terms: vec![] };
+    let mut mk_sel =
+      MakeSelector { base, to_locus: &self.to_locus, to_const: &self.to_const, terms: vec![] };
+    let mut fields = vec![];
     let mut field_fmt = vec![];
     let mut new_fields = vec![];
     for (v, mut ty) in it.fields.iter().flat_map(|group| &group.vars).zip(field_tys) {
@@ -2986,8 +2995,9 @@ impl BlockReader {
       assert!(!field_fmt.contains(&fmt), "duplicate field name");
       field_fmt.push(fmt);
       ty.visit(&mut mk_sel);
-      let mut iter = parents.iter().zip(&mut prefixes).filter_map(|(ty, fields)| {
-        let arg = Term::Constant(elab.lc.fixed_var.push(FixedVar { ty: ty.clone(), def: None }));
+      let mut iter = parents.iter().zip(&mut prefixes).filter_map(|(parent, fields)| {
+        let arg =
+          Term::Constant(elab.lc.fixed_var.push(FixedVar { ty: parent.clone(), def: None }));
         for pat in elab.notations.selector.iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&elab.g, &elab.lc, std::slice::from_ref(&arg)) {
@@ -2995,7 +3005,10 @@ impl BlockReader {
               let args = subst.trim_to(elab.g.constrs.selector[nr].primary.len());
               let mut inst = Inst::new(&elab.g.constrs, &elab.lc, &args, 0);
               let ty2 = elab.g.constrs.selector[nr].ty.visit_cloned(&mut inst);
-              assert!(().eq_type(&elab.g, &elab.lc, ty, &ty2), "field type mismatch");
+              assert!(
+                ().eq_type(&elab.g, &elab.lc, &ty, &ty2),
+                "field type mismatch:\n  {ty:?} =?=\n  {ty2:?}"
+              );
               elab.lc.fixed_var.0.pop();
               fields.retain(|&x| x != nr);
               return Some((nr, args))
@@ -3010,6 +3023,7 @@ impl BlockReader {
         mk_sel.terms.push(Ok(Box::new(Term::Selector { nr: sel_id, args })));
         fields.push(sel_id);
       } else {
+        self.to_locus(elab, |l| ty.visit(l));
         let sel = TyConstructor { c: Constructor::new(sel_primary_it.clone().collect()), ty };
         let sel_id = elab.g.constrs.selector.push(sel);
         let sel_pat = Pattern {
@@ -3062,6 +3076,8 @@ impl BlockReader {
       fields: fields.clone().into(),
     });
     assert!(struct_id == struct_id2);
+    elab.r.lc.formatter.push(&elab.r.g.constrs, &struct_pat);
+    elab.r.notations.struct_mode.push(struct_pat);
 
     let mut aggr_ty = struct_ty;
     aggr_ty.attrs = (attrs.clone(), attrs);
@@ -3071,6 +3087,8 @@ impl BlockReader {
       fields: fields.into(),
     });
     assert!(aggr_id == aggr_id2);
+    elab.r.lc.formatter.push(&elab.r.g.constrs, &aggr_pat);
+    elab.r.notations.aggregate.push(aggr_pat);
   }
 
   fn elab_exist_reg(

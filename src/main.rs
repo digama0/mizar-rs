@@ -529,7 +529,7 @@ impl Type {
         matches!(w.kind, TypeKind::Struct(_)) && (n == ModeId::SET || n == ModeId::ANY)
       }
       TypeKind::Struct(_) => {
-        let Some(w) = other.widening(g, lc) else { return false };
+        let Some(w) = self.widening_of(g, lc, other) else { return false };
         ().eq_radices(g, lc, self, &w)
       }
     }
@@ -1047,8 +1047,10 @@ impl Visit for CheckBound {
   fn abort(&self) -> bool { self.0 }
   fn visit_term(&mut self, tm: &Term) {
     self.super_visit_term(tm);
-    if let Term::Bound(BoundId(nr)) = *tm {
-      self.0 |= nr < self.1
+    match *tm {
+      Term::Bound(BoundId(nr)) => self.0 |= nr < self.1,
+      Term::Locus(_) => self.0 = true,
+      _ => (),
     }
   }
 }
@@ -1708,14 +1710,15 @@ impl Attrs {
   /// MAttrCollection.GetAttr(self = self, aAttrNr = item.nr, aAttrArgs = item.args)
   pub fn find(&self, ctx: &Constructors, lc: &LocalContext, item: &Attr) -> Option<&Attr> {
     let Self::Consistent(this) = self else { return None };
-    let n = this.binary_search_by(|attr| attr.cmp_abs(ctx, Some(lc), item, CmpStyle::Attr));
-    Some(&this[n.ok()?])
+    let n = this.binary_search_by(|attr| attr.cmp_abs(ctx, Some(lc), item, CmpStyle::Attr)).ok()?;
+    Some(&this[n])
   }
 
   pub fn find0_abs(&self, ctx: &Constructors, nr: AttrId) -> Option<&Attr> {
     let Self::Consistent(this) = self else { return None };
     assert!(&ctx.attribute[nr].c.redefines.is_none());
-    Some(&this[this.binary_search_by(|attr| attr.adjust(ctx).0.cmp(&nr)).ok()?])
+    let n = this.binary_search_by(|attr| attr.adjust(ctx).0.cmp(&nr)).ok()?;
+    Some(&this[n])
   }
 
   pub fn find0(&self, ctx: &Constructors, nr: AttrId, pos: bool) -> bool {
@@ -2217,7 +2220,7 @@ impl VisitMut for InternConst<'_> {
     // let foo = FOO.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     // vprintln!("InternConst {foo} @ {} <- {tm:?}", self.depth);
     match tm {
-      Term::Locus(_) | Term::Bound(_) | Term::FreeVar(_) => self.only_constants = false,
+      Term::Locus(_) | Term::Bound(_) => self.only_constants = false,
       &mut Term::Constant(nr) => {
         let mut eq = None;
         if let Some((ref fv, _)) = self.lc.fixed_var[nr].def {
@@ -2283,8 +2286,8 @@ impl VisitMut for InternConst<'_> {
           self.collect_infer_const(tm)
         }
       }
-      Term::EqClass(_) | Term::EqMark(_) | Term::It | Term::Qua { .. } =>
-        unreachable!("CollectConst::visit_term(EqConst | EqMark | It | Qua)"),
+      Term::FreeVar(_) | Term::EqClass(_) | Term::EqMark(_) | Term::It | Term::Qua { .. } =>
+        unreachable!("CollectConst::visit_term(FreeVar | EqConst | EqMark | It | Qua)"),
     }
     // vprintln!("InternConst {foo} @ {} -> {tm:?}", self.depth);
     self.only_constants &= only_constants;
@@ -2550,6 +2553,7 @@ impl LocalContext {
   }
 
   fn mk_forall(&mut self, range: Range<usize>, istart: u32, pop: bool, f: &mut Formula) {
+    // vprintln!("mk_forall {range:?} (pop = {pop}) <- {f:?}");
     if pop {
       self.fixed_var.0.truncate(range.end);
     }
@@ -2558,6 +2562,7 @@ impl LocalContext {
       lift: (range.end - range.start) as u32,
       ic: self.infer_const.get_mut(),
       istart,
+      depth: 0,
     };
     abst.visit_formula(f);
     let mut process = |mut ty| {
@@ -2572,6 +2577,7 @@ impl LocalContext {
     } else {
       self.fixed_var.0[range].iter().rev().for_each(|var| process(var.ty.clone()))
     }
+    // vprintln!("mk_forall -> {f:?}");
   }
 }
 
@@ -2581,22 +2587,30 @@ struct Abstract<'a> {
   lift: u32,
   ic: &'a IdxVec<InferId, Assignment>,
   istart: u32,
+  depth: u32,
 }
 
 impl VisitMut for Abstract<'_> {
+  fn push_bound(&mut self, _: Option<&mut Type>) { self.depth += 1 }
+  fn pop_bound(&mut self, n: u32) { self.depth -= n }
   fn visit_term(&mut self, tm: &mut Term) {
-    loop {
-      match tm {
-        Term::Bound(nr) => nr.0 += self.lift,
-        Term::Constant(nr) if nr.0 >= self.base => *tm = Term::Bound(BoundId(nr.0 - self.base)),
-        Term::Infer(nr) =>
-          if nr.0 >= self.istart {
-            *tm = self.ic[*nr].def.clone();
-            continue
-          },
-        _ => self.super_visit_term(tm),
+    match tm {
+      Term::Bound(nr) => nr.0 += self.lift,
+      Term::Constant(nr) if nr.0 >= self.base => {
+        let i = nr.0 - self.base;
+        assert!(i < self.lift, "invalid local constant in thesis");
+        *tm = Term::Bound(BoundId(i))
       }
-      return
+      Term::Infer(nr) =>
+        if nr.0 >= self.istart {
+          let depth = self.depth;
+          self.depth = 0;
+          self.lift += depth;
+          *tm = self.ic[*nr].def.visit_cloned(self);
+          self.depth = depth;
+          self.lift -= depth;
+        },
+      _ => self.super_visit_term(tm),
     }
   }
 }
@@ -2707,6 +2721,8 @@ static VERBOSE: AtomicBool = AtomicBool::new(false);
 pub fn verbose() -> bool { DEBUG && VERBOSE.load(std::sync::atomic::Ordering::SeqCst) }
 pub fn set_verbose(b: bool) { VERBOSE.store(b, std::sync::atomic::Ordering::SeqCst) }
 
+pub fn analyzer_enabled() -> bool { ENABLE_ANALYZER.load(std::sync::atomic::Ordering::SeqCst) }
+
 static _CALLS: AtomicU32 = AtomicU32::new(0);
 static _CALLS2: AtomicU32 = AtomicU32::new(0);
 static STATS: Mutex<Option<HashMap<&'static str, u32>>> = Mutex::new(None);
@@ -2739,7 +2755,7 @@ const DUMP_DEFINITIONS: bool = false;
 const DUMP_LIBRARIES: bool = false;
 const DUMP_FORMATTER: bool = false;
 
-const ENABLE_ANALYZER: bool = false;
+static ENABLE_ANALYZER: AtomicBool = AtomicBool::new(false);
 const ENABLE_CHECKER: bool = true;
 const ORIG_MIZAR: bool = false;
 
@@ -2761,19 +2777,17 @@ const FLEX_EXPANSION_BUG: bool = true;
 /// to specify this way. (This is not unsound.)
 const ATTR_SORT_BUG: bool = true;
 
-const EXPECTED_ERRORS: &[(&str, usize)] = if ENABLE_ANALYZER {
-  &[]
-} else {
+const EXPECTED_ERRORS: &[(&str, usize)] =
   // These failures are caused by a bug in the statement of FLEXARY1:def 9
   // which requires a patch to Mizar, at least as long as we are using the Mizar analyzer
-  &[("eulrpart", 153), ("eulrpart", 154), ("eulrpart", 628)]
-};
+  &[("eulrpart", 153), ("eulrpart", 154), ("eulrpart", 628)];
 
 const FIRST_FILE: usize = 0;
 const ONE_FILE: bool = false;
 const PANIC_ON_FAIL: bool = DEBUG;
 const FIRST_VERBOSE_TOP_ITEM: Option<usize> = None;
 static FIRST_VERBOSE_ITEM: RwLock<Option<usize>> = RwLock::new(None);
+static ONE_ITEM: AtomicBool = AtomicBool::new(false);
 const FIRST_VERBOSE_CHECKER: Option<usize> = None; //if DEBUG { Some(0) } else { None };
 const SKIP_TO_VERBOSE: bool = false;
 const PARALLELISM: usize = if DEBUG || ONE_FILE { 1 } else { 8 };
@@ -2784,6 +2798,12 @@ fn main() {
   // let path = MizPath(Article::from_bytes(b"TEST"), "../test/text/test".into());
   // path.with_reader(|v| v.run_checker(&path));
   // print_stats_and_exit();
+  if std::env::var("ANALYZER").is_ok() {
+    ENABLE_ANALYZER.store(true, std::sync::atomic::Ordering::SeqCst)
+  }
+  if std::env::var("ONE_ITEM").is_ok() {
+    ONE_ITEM.store(true, std::sync::atomic::Ordering::SeqCst)
+  }
   let mut args = std::env::args().skip(1);
   let first_file = args.next().and_then(|s| s.parse().ok()).unwrap_or(FIRST_FILE);
   if let Some(n) = args.next().and_then(|s| s.parse().ok()) {
@@ -2819,7 +2839,7 @@ fn main() {
           if let Err(_payload) = std::panic::catch_unwind(|| {
             if ORIG_MIZAR {
               let mut cmd = std::process::Command::new("miz/mizbin/verifier");
-              let cmd = match (ENABLE_ANALYZER, ENABLE_CHECKER) {
+              let cmd = match (analyzer_enabled(), ENABLE_CHECKER) {
                 (true, false) => cmd.arg("-a"),
                 (false, true) => cmd.arg("-c"),
                 (true, true) => &mut cmd,
@@ -2834,7 +2854,7 @@ fn main() {
                 panic!("mizar failed")
               }
               // println!("{}", String::from_utf8(output.stdout).unwrap());
-            } else if ENABLE_ANALYZER {
+            } else if analyzer_enabled() {
               path.with_reader(|v| v.run_analyzer(&path));
             } else if ENABLE_CHECKER {
               path.with_reader(|v| v.run_checker(&path));

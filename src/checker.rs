@@ -105,7 +105,8 @@ impl<'a> Checker<'a> {
         }
       } else {
         err = true;
-        let expected = crate::EXPECTED_ERRORS.contains(&(self.article.as_str(), self.idx));
+        let expected = !crate::analyzer_enabled()
+          && crate::EXPECTED_ERRORS.contains(&(self.article.as_str(), self.idx));
         if !expected && crate::CHECKER_RESULT {
           eprintln!(
             "FAILED TO JUSTIFY {}.{i} @ {:?}:{:?}: {:#?}",
