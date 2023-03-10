@@ -56,33 +56,33 @@ Here is a performance comparison of running the original Mizar checker vs the ne
 ## Configuration
 
 Currently all configuration is stored in the code itself. Most flags are in
-[main.rs](src/main.rs) just before main, and can be used to debug why a proof fails:
+[main.rs](src/main.rs) at the start of `main()`, and can be used to debug why a proof fails:
 ```rust
-const TOP_ITEM_HEADER: bool = false;
-const ALWAYS_VERBOSE_ITEM: bool = false;
-const ITEM_HEADER: bool = DEBUG;
-const CHECKER_INPUTS: bool = DEBUG;
-const CHECKER_HEADER: bool = DEBUG;
-const CHECKER_CONJUNCTS: bool = false;
-const CHECKER_RESULT: bool = false;
-const UNIFY_HEADER: bool = false;
-const UNIFY_INSTS: bool = false;
+top_item_header: false,
+always_verbose_item: false,
+item_header: DEBUG,
+checker_inputs: DEBUG,
+checker_header: DEBUG,
+checker_conjuncts: false,
+checker_result: false,
+unify_header: false,
+unify_insts: false,
 ```
 
 There are also options to dump various parts of the input state:
 ```rust
-const DUMP_CONSTRUCTORS: bool = false;
-const DUMP_REQUIREMENTS: bool = false;
-const DUMP_DEFINITIONS: bool = false;
-const DUMP_LIBRARIES: bool = false;
-const DUMP_FORMATTER: bool = false;
+dump_constructors: false,
+dump_requirements: false,
+dump_definitions: false,
+dump_libraries: false,
+dump_formatter: false,
 ```
 
 This is equivalent to the `-a` and `-c` flags in Mizar. You will want to use this
 if you want to test the new analyzer (which is still experimental).
 ```rust
-const ENABLE_ANALYZER: bool = false;
-const ENABLE_CHECKER: bool = true;
+analyzer_enabled: false,
+checker_enabled: true,
 ```
 
 When this is enabled, the new checker is disabled completely and the only thing
@@ -95,11 +95,9 @@ const ORIG_MIZAR: bool = false;
 These flags cover behavior which is known to be buggy but require more substantial
 patching of MML:
 ```rust
-//// Unsound flags ////
-// This flag is unsound but needed to check MML right now
-const LEGACY_FLEX_HANDLING: bool = true;
-// This is a Mizar bug which is required to check aofa_l00 (the proof should be patched)
-const FLEX_EXPANSION_BUG: bool = true;
+legacy_flex_handling: true,
+flex_expansion_bug: true,
+attr_sort_bug: true,
 
 const EXPECTED_ERRORS: &[(&str, usize)] =
   // These failures are caused by a bug in the statement of FLEXARY1:def 9
@@ -114,14 +112,18 @@ and `ONE_FILE` to process only that file. The `FIRST_VERBOSE` options enable the
 ```rust
 const FIRST_FILE: usize = 0;
 const ONE_FILE: bool = false;
-const PANIC_ON_FAIL: bool = DEBUG;
-const FIRST_VERBOSE_TOP_ITEM: Option<usize> = None;
-const FIRST_VERBOSE_ITEM: Option<usize> = None;
-const FIRST_VERBOSE_CHECKER: Option<usize> = None;
-const SKIP_TO_VERBOSE: bool = DEBUG;
+panic_on_fail: DEBUG,
+first_verbose_top_item: None,
+first_verbose_item: None,
+one_item: false,
+first_verbose_checker: None,
+skip_to_verbose: DEBUG,
 ```
 
-The `PARALLELISM` option controls how many parallel threads are used. Adjust this to taste.
+The `parallelism` option controls how many parallel threads are used. Adjust this to taste.
+```rust
+parallelism: if DEBUG || ONE_FILE { 1 } else { 8 },
+```
 
 Original Mizar `verifier -c`:
 ```
@@ -130,9 +132,6 @@ Executed in   57.37 mins    fish           external
    usr time  417.57 mins  644.00 micros  417.57 mins
    sys time    1.26 mins    0.00 micros    1.26 mins
 ```
-```rust
-const PARALLELISM: usize = if DEBUG || ONE_FILE { 1 } else { 8 };
-```
 
 ## Formatter configuration
 
@@ -140,31 +139,31 @@ There is some additional configuration at the top of [format.rs](src/format.rs) 
 controls how expressions are printed.
 
 ```rust
-const ENABLE_FORMATTER: bool = true;
+enable_formatter: true,
 ```
 This one sounds odd but it is possible to disable the formatter in the sense that it will
 not attempt to load symbols and constructor names. So instead of printing
 `c2 " is Element of bool [:c1, c0:]` it will show `F11(c2) is M2 of F18(F19(c1, c0))`.
 
 ```rust
-const SHOW_INFER: bool = false;
-const SHOW_ONLY_INFER: bool = false;
+show_infer: false,
+show_only_infer: false,
 ```
 These control whether to show "infer constants" as `e`, `?3=e` or `?3`, assuming
 constant `?3` is defined to be `e`.
 
 ```rust
-const SHOW_PRIV: bool = false;
+show_priv: false,
 ```
 This shows private functors/predicates as `$F2(x + 1, y):=(x + 1 - y)` or `$F2(x + 1, y)`.
 
 ```rust
-const SHOW_MARKS: bool = false;
+show_marks: false,
 ```
 This shows EqMark nodes in an expression in the style `3'(x + y)`.
 
 ```rust
-const SHOW_INVISIBLE: bool = false;
+show_invisible: false,
 ```
 This controls whether to show all arguments to a functor or just the ones marked "visible".
 For example `incl A` (where `A is Subset of Y`) has one visible argument but
@@ -174,7 +173,7 @@ how many go to the right, and these have to match the number of visible argument
 this option causes such functions to be displayed in prefix style.)
 
 ```rust
-const SHOW_ORIG: bool = false;
+show_orig: false,
 ```
 This is a slightly more readable version of `ENABLE_FORMATTER = false`. It shows the numbers
 for each constructor in brackets after it. So the example from before would be shown as
@@ -183,8 +182,8 @@ with Mizar numbers, it also makes it clear when overloading or redefinitions are
 since these can appear the same but have different constructor numbers.
 
 ```rust
-const UPPER_CLUSTERS: bool = false;
-const BOTH_CLUSTERS: bool = false;
+upper_clusters: false,
+both_clusters: false,
 ```
 This shows the inferred cluster attributes after each type.
 Upper clusters are marked with a `+`. Example:
@@ -206,7 +205,7 @@ Upper clusters are marked with a `+`. Example:
   ```
 
 ```rust
-const NEGATION_SUGAR: bool = true;
+negation_sugar: true,
 ```
 This controls whether to heuristically use `→`,`∨`,`∧` and `∀`/`∃` to minimize the number
 of explicit `¬` symbols, or whether to use negations precisely as they are represented

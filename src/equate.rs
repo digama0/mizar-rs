@@ -3,8 +3,8 @@ use crate::bignum::{Complex, Rational};
 use crate::checker::{Atoms, Checker, Conjunct, Dnf, OrUnsat, Unsat};
 use crate::types::*;
 use crate::{
-  vprintln, CheckBound, CmpStyle, Equate, ExpandPrivFunc, Global, Inst, LocalContext, OnVarMut,
-  Visit, VisitMut,
+  vprintln, CheckBound, CmpStyle, EqCtx, Equate, ExpandPrivFunc, Global, Inst, LocalContext,
+  OnVarMut, Visit, VisitMut, WithGlobalLocal,
 };
 use enum_map::EnumMap;
 use itertools::Itertools;
@@ -47,7 +47,7 @@ impl<I: Idx> ConstrMap<I> {
 
   fn find(&self, g: &Global, lc: &LocalContext, nr: I, args: &[Term]) -> Option<EqMarkId> {
     let entry = self.0.get(&nr)?;
-    entry.iter().copied().find(|&m| ().eq_terms(g, lc, args, lc.marks[m].0.args().unwrap()))
+    entry.iter().copied().find(|&m| g.eq(lc, args, lc.marks[m].0.args().unwrap()))
   }
 }
 
@@ -93,6 +93,10 @@ pub struct Equalizer<'a> {
   pub next_eq_class: EqClassId,
   clash: bool,
 }
+impl WithGlobalLocal for Equalizer<'_> {
+  fn global(&self) -> &Global { self.g }
+  fn local(&self) -> &LocalContext { self.lc }
+}
 
 struct CheckE<'a> {
   marks: &'a IdxVec<EqMarkId, (Term, EqTermId)>,
@@ -123,33 +127,32 @@ struct EqMarks;
 impl Equate for EqMarks {
   const IGNORE_MARKS: bool = false;
   fn eq_pred(
-    &mut self, g: &Global, lc: &LocalContext, n1: PredId, n2: PredId, args1: &[Term],
-    args2: &[Term],
+    &mut self, ctx: &mut EqCtx<'_>, n1: PredId, n2: PredId, args1: &[Term], args2: &[Term],
   ) -> bool {
-    let (n1_adj, args1_adj) = Formula::adjust_pred(n1, args1, &g.constrs);
-    let (n2_adj, args2_adj) = Formula::adjust_pred(n2, args2, &g.constrs);
+    let (n1_adj, args1_adj) = Formula::adjust_pred(n1, args1, &ctx.g.constrs);
+    let (n2_adj, args2_adj) = Formula::adjust_pred(n2, args2, &ctx.g.constrs);
     n1_adj == n2_adj
-      && (self.eq_terms(g, lc, args1_adj, args2_adj)
+      && (self.eq_terms(ctx, args1_adj, args2_adj)
         || {
-          let c = &g.constrs.predicate[n1];
+          let c = &ctx.g.constrs.predicate[n1];
           c.properties.get(PropertyKind::Symmetry) && {
             let mut args1 = args1.iter().collect_vec();
             args1.swap(c.properties.arg1 as usize, c.properties.arg2 as usize);
             args1[c.superfluous as usize..]
               .iter()
               .zip(args2_adj)
-              .all(|(&t1, t2)| self.eq_term(g, lc, t1, t2))
+              .all(|(&t1, t2)| self.eq_term(ctx, t1, t2))
           }
         }
         || {
-          let c = &g.constrs.predicate[n2];
+          let c = &ctx.g.constrs.predicate[n2];
           c.properties.get(PropertyKind::Symmetry) && {
             let mut args2 = args2.iter().collect_vec();
             args2.swap(c.properties.arg1 as usize, c.properties.arg2 as usize);
             args1_adj
               .iter()
               .zip(&args2[c.superfluous as usize..])
-              .all(|(t1, &t2)| self.eq_term(g, lc, t1, t2))
+              .all(|(t1, &t2)| self.eq_term(ctx, t1, t2))
           }
         })
   }
@@ -210,11 +213,9 @@ impl Equalizer<'_> {
     let mut added = false;
     loop {
       if (eq_term.ty_class.iter())
-        .any(|old| old.kind == new.kind && ().eq_terms(self.g, self.lc, &old.args, &new.args))
+        .any(|old| old.kind == new.kind && self.g.eq(self.lc, &*old.args, &new.args))
       {
-        if !(new.attrs.1)
-          .is_subset_of(&eq_term.supercluster, |a1, a2| ().eq_attr(self.g, self.lc, a1, a2))
-        {
+        if !new.attrs.1.is_subset_of(&eq_term.supercluster, |a1, a2| self.g.eq(self.lc, a1, a2)) {
           for attr in new.attrs.1.try_attrs().unwrap() {
             added |= eq_term.supercluster.try_insert(&self.g.constrs, self.lc, attr.clone())?;
           }
@@ -246,9 +247,9 @@ impl Equalizer<'_> {
           self.y(|y| y.visit_type(&mut ty))?;
           eq_term = &mut self.terms[et];
           ty.attrs = Default::default();
-          if !eq_term.ty_class.iter().any(|old| {
-            old.kind == ty.kind && EqMarks.eq_terms(self.g, self.lc, &old.args, &ty.args)
-          }) {
+          if !(eq_term.ty_class.iter())
+            .any(|old| old.kind == ty.kind && EqMarks.eq(self.g, self.lc, &*old.args, &ty.args))
+          {
             eq_term.ty_class.push(ty)
           }
         }
@@ -564,7 +565,7 @@ impl Equalizer<'_> {
           let base = self.g.constrs.aggregate[nr].base as usize;
           let args = &args[base..];
           for &m in vec {
-            if ().eq_terms(self.g, self.lc, args, &self.lc.marks[m].0.args().unwrap()[base..]) {
+            if self.eq(args, &self.lc.marks[m].0.args().unwrap()[base..]) {
               return Ok(self.lc.marks[m].1)
             }
           }
@@ -1129,9 +1130,7 @@ impl<'a> Equalizer<'a> {
             let args1 = &args[..props.arg1 as usize];
             for &m2 in &self.terms[self.lc.marks[self.terms[et1].mark].1].eq_class {
               if let Term::Functor { nr, args: ref args2 } = self.lc.marks[m2].0 {
-                if nr == i
-                  && EqMarks.eq_terms(self.g, self.lc, args1, &args2[..props.arg1 as usize])
-                {
+                if nr == i && EqMarks.eq(self.g, self.lc, args1, &args2[..props.arg1 as usize]) {
                   let et2 = self.lc.marks[args2[props.arg1 as usize].mark().unwrap()].1;
                   to_union.push((self.lc.marks[self.terms[et].mark].1, et2))
                 }
@@ -1147,9 +1146,7 @@ impl<'a> Equalizer<'a> {
             let args1 = &args[..props.arg1 as usize];
             for &m2 in &self.terms[self.lc.marks[self.terms[et1].mark].1].eq_class {
               if let Term::Functor { nr, args: ref args2 } = self.lc.marks[m2].0 {
-                if nr == i
-                  && EqMarks.eq_terms(self.g, self.lc, args1, &args2[..props.arg1 as usize])
-                {
+                if nr == i && EqMarks.eq(self.g, self.lc, args1, &args2[..props.arg1 as usize]) {
                   to_union.push((self.lc.marks[self.terms[et].mark].1, et1))
                 }
               }
@@ -1312,24 +1309,23 @@ impl<'a> Equalizer<'a> {
                 ) => {
                   let args1 = Term::adjust(*nr1, args1, &self.g.constrs).1;
                   let args2 = Term::adjust(*nr2, args2, &self.g.constrs).1;
-                  if EqMarks.eq_terms(self.g, self.lc, args1, args2) {
+                  if EqMarks.eq(self.g, self.lc, args1, args2) {
                     to_union.push((et1, et2))
                   }
                 }
                 (Term::SchFunc { args: args1, .. }, Term::SchFunc { args: args2, .. })
                 | (Term::PrivFunc { args: args1, .. }, Term::PrivFunc { args: args2, .. }) =>
-                  if EqMarks.eq_terms(self.g, self.lc, args1, args2) {
+                  if EqMarks.eq(self.g, self.lc, args1, args2) {
                     to_union.push((et1, et2))
                   },
                 (Term::Aggregate { args: args1, .. }, Term::Aggregate { nr, args: args2 }) => {
                   let base = self.g.constrs.aggregate[*nr].base as usize;
-                  if EqMarks.eq_terms(self.g, self.lc, &args1[base..], &args2[base..]) {
+                  if EqMarks.eq(self.g, self.lc, &args1[base..], &args2[base..]) {
                     to_union.push((et1, et2))
                   }
                 }
                 (Term::Selector { args: args1, .. }, Term::Selector { args: args2, .. }) =>
-                  if EqMarks.eq_term(self.g, self.lc, args1.last().unwrap(), args2.last().unwrap())
-                  {
+                  if EqMarks.eq(self.g, self.lc, args1.last().unwrap(), args2.last().unwrap()) {
                     to_union.push((et1, et2))
                   },
                 (
@@ -1340,14 +1336,14 @@ impl<'a> Equalizer<'a> {
                     && args1
                       .iter()
                       .zip(&**args2)
-                      .all(|(ty1, ty2)| EqMarks.eq_type(self.g, self.lc, ty1, ty2))
-                    && EqMarks.eq_term(self.g, self.lc, sc1, sc2)
-                    && EqMarks.eq_formula(self.g, self.lc, compr1, compr2)
+                      .all(|(ty1, ty2)| EqMarks.eq(self.g, self.lc, ty1, ty2))
+                    && EqMarks.eq(self.g, self.lc, sc1, sc2)
+                    && EqMarks.eq(self.g, self.lc, compr1, compr2)
                   {
                     to_union.push((et1, et2))
                   },
                 (Term::The { ty: ty1 }, Term::The { ty: ty2 }) =>
-                  if EqMarks.eq_type(self.g, self.lc, ty1, ty2) {
+                  if EqMarks.eq(self.g, self.lc, ty1, ty2) {
                     to_union.push((et1, et2))
                   },
                 _ => unreachable!(),
@@ -1645,7 +1641,7 @@ impl<'a> Equalizer<'a> {
         | (
           Formula::PrivPred { nr: PrivPredId(n1), args: args1, .. },
           Formula::PrivPred { nr: PrivPredId(n2), args: args2, .. },
-        ) if n1 == n2 && EqMarks.eq_terms(self.g, self.lc, args1, args2) => return Err(Unsat),
+        ) if n1 == n2 && EqMarks.eq(self.g, self.lc, args1, args2) => return Err(Unsat),
         _ => {}
       }
     }
@@ -2110,13 +2106,13 @@ impl<'a> Equalizer<'a> {
         | Formula::SchPred { .. }
         | Formula::PrivPred { .. }
         | Formula::Pred { .. } => {
-          if pos_bas.0 .0.iter().any(|pos| EqMarks.eq_formula(self.g, self.lc, pos, neg)) {
+          if pos_bas.0 .0.iter().any(|pos| EqMarks.eq(self.g, self.lc, pos, neg)) {
             return Err(Unsat)
           }
         }
         Formula::Is { term, ty } => {
           for ty2 in &self.terms[self.lc.marks[term.mark().unwrap()].1].ty_class {
-            if EqMarks.eq_radices(self.g, self.lc, ty2, ty) {
+            if self.with_eq(|ctx| EqMarks.eq_radices(ctx, ty2, ty)) {
               return Err(Unsat)
             }
           }
@@ -2349,8 +2345,8 @@ impl<'a> Equalizer<'a> {
                   let ty = Type { args: vec![arg2.clone()], ..Type::new(element.into()) };
                   // B is non empty, A: Element of B => A in B
                   if self.terms[et1].ty_class.iter().any(|ty2| {
-                    ty2.decreasing_attrs(&ty, |a1, a2| EqMarks.eq_attr(self.g, self.lc, a1, a2))
-                      && EqMarks.eq_radices(self.g, self.lc, &ty, ty2)
+                    ty2.decreasing_attrs(&ty, |a1, a2| EqMarks.eq(self.g, self.lc, a1, a2))
+                      && self.with_eq(|ctx| EqMarks.eq_radices(ctx, &ty, ty2))
                   }) {
                     return Err(Unsat)
                   }
@@ -2365,26 +2361,24 @@ impl<'a> Equalizer<'a> {
                 let ty = Type { args: vec![tm], ..Type::new(element.into()) };
                 // A: Element of bool B => A c= B
                 if self.terms[et1].ty_class.iter().any(|ty2| {
-                  ty2.decreasing_attrs(&ty, |a1, a2| EqMarks.eq_attr(self.g, self.lc, a1, a2))
-                    && EqMarks.eq_radices(self.g, self.lc, &ty, ty2)
+                  ty2.decreasing_attrs(&ty, |a1, a2| EqMarks.eq(self.g, self.lc, a1, a2))
+                    && self.with_eq(|ctx| EqMarks.eq_radices(ctx, &ty, ty2))
                 }) {
                   return Err(Unsat)
                 }
               }
             }
             for pos in &pos_bas.0 .0 {
-              if EqMarks.eq_formula(self.g, self.lc, neg, pos) {
+              if EqMarks.eq(self.g, self.lc, neg, pos) {
                 return Err(Unsat)
               }
             }
           }
           Formula::Is { term, ty } => {
             let et = self.lc.marks[term.mark().unwrap()].1;
-            if self.terms[et]
-              .ty_class
-              .iter()
-              .any(|ty2| EqMarks.eq_radices(self.g, self.lc, ty, ty2))
-            {
+            if self.with_eq(|ctx| {
+              self.terms[et].ty_class.iter().any(|ty2| EqMarks.eq_radices(ctx, ty, ty2))
+            }) {
               return Err(Unsat)
             }
           }
@@ -2541,7 +2535,8 @@ impl<'a> Equalizer<'a> {
           for (et2, etm2) in self.terms.enum_iter() {
             if et2 != et1
               && !etm2.eq_class.is_empty()
-              && etm2.ty_class.iter().any(|ty2| EqMarks.eq_radices(self.g, self.lc, ty, ty2))
+              && self
+                .with_eq(|ctx| etm2.ty_class.iter().any(|ty2| EqMarks.eq_radices(ctx, ty, ty2)))
             {
               ineqs.push(m1, etm2.mark);
             }

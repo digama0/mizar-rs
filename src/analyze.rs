@@ -26,7 +26,7 @@ impl<'a> std::ops::DerefMut for Analyzer<'a> {
 
 impl Reader {
   pub fn run_analyzer(&mut self, path: &MizPath) {
-    if !analyzer_enabled() {
+    if !self.g.cfg.analyzer_enabled {
       panic!("analyzer is not enabled")
     }
     let mut analyzer = Analyzer {
@@ -40,12 +40,12 @@ impl Reader {
       reserved: Default::default(),
     };
     let r = path.open_msx().unwrap().parse_items();
-    println!("parsed {:?}, {} items", path.0, r.len());
+    // println!("parsed {:?}, {} items", path.0, r.len());
     for (i, it) in r.iter().enumerate() {
-      if let Some(n) = FIRST_VERBOSE_TOP_ITEM {
+      if let Some(n) = analyzer.g.cfg.first_verbose_top_item {
         set_verbose(i >= n);
       }
-      if TOP_ITEM_HEADER {
+      if analyzer.g.cfg.top_item_header {
         eprintln!("item {i}: {it:?}");
       }
       analyzer.elab_top_item(it);
@@ -105,16 +105,16 @@ impl Analyzer<'_> {
   }
 
   fn item_header(&mut self, it: &ast::Item, s: &str) {
-    if let Some(n) = *crate::FIRST_VERBOSE_ITEM.read().unwrap() {
-      if self.items == n + 1 && ONE_ITEM.load(std::sync::atomic::Ordering::SeqCst) {
+    if let Some(n) = self.g.cfg.first_verbose_item {
+      if self.items == n + 1 && self.g.cfg.one_item {
         eprintln!("exiting");
         std::process::exit(0)
       }
       set_verbose(self.items >= n);
     }
-    if crate::ITEM_HEADER {
+    if self.g.cfg.item_header {
       eprint!("item[{}]: ", self.items);
-      if crate::ALWAYS_VERBOSE_ITEM || verbose() {
+      if self.g.cfg.always_verbose_item || verbose() {
         eprintln!("{it:#?}");
       } else {
         eprintln!("{s} @ {:?}", it.pos)
@@ -729,9 +729,9 @@ impl Analyzer<'_> {
         });
         for cl in self.g.clusters.registered.iter().rev() {
           let mut subst = Subst::new(cl.primary.len());
-          if subst.eq_radices(&self.g, &self.lc, &cl.ty, &ty)
+          if self.g.with_eq(&self.lc, |ctx| subst.eq_radices(ctx, &cl.ty, &ty))
             && (ty2.attrs.0)
-              .is_subset_of(&cl.consequent.1, |a2, a1| subst.eq_attr(&self.g, &self.lc, a1, a2))
+              .is_subset_of(&cl.consequent.1, |a2, a1| subst.eq(&self.g, &self.lc, a1, a2))
             && subst.check_loci_types::<false>(&self.g, &self.lc, &cl.primary, false)
           {
             let mut attrs = ty2.attrs.0.clone();
@@ -812,8 +812,7 @@ impl Analyzer<'_> {
       }
 
       fn eq_term(
-        g: &Global, lc: &LocalContext, ic: &'a IdxVec<InferId, Assignment>, t1: &'a Term,
-        t2: &'a Term,
+        ctx: &mut EqCtx<'_>, ic: &'a IdxVec<InferId, Assignment>, t1: &'a Term, t2: &'a Term,
       ) -> Self {
         use Term::*;
         let res = match (t1, t2) {
@@ -822,9 +821,9 @@ impl Analyzer<'_> {
           | (Numeral(n1), Numeral(n2)) => Self::bool(n1 == n2),
           (Infer(InferId(n1)), Infer(InferId(n2))) if n1 == n2 => Self::bool(true),
           (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) => {
-            let (n1, args1) = Term::adjust(*n1, args1, &g.constrs);
-            let (n2, args2) = Term::adjust(*n2, args2, &g.constrs);
-            Self::then(n1 == n2, || Self::eq_terms(g, lc, ic, args1, args2))
+            let (n1, args1) = Term::adjust(*n1, args1, &ctx.g.constrs);
+            let (n2, args2) = Term::adjust(*n2, args2, &ctx.g.constrs);
+            Self::then(n1 == n2, || Self::eq_terms(ctx, ic, args1, args2))
           }
           (
             SchFunc { nr: SchFuncId(n1), args: args1 },
@@ -836,29 +835,29 @@ impl Analyzer<'_> {
           )
           | (Selector { nr: SelId(n1), args: args1 }, Selector { nr: SelId(n2), args: args2 })
             if n1 == n2 =>
-            Self::eq_terms(g, lc, ic, args1, args2),
-          (The { ty: ty1 }, The { ty: ty2 }) => Self::eq_type(g, lc, ic, ty1, ty2),
+            Self::eq_terms(ctx, ic, args1, args2),
+          (The { ty: ty1 }, The { ty: ty2 }) => Self::eq_type(ctx, ic, ty1, ty2),
           (
             Fraenkel { args: args1, scope: sc1, compr: c1 },
             Fraenkel { args: args2, scope: sc2, compr: c2 },
           ) => Self::then(args1.len() == args2.len(), || {
             Self::merge_many(
-              &g.constrs,
-              args1.iter().zip(&**args2).map(|(ty1, ty2)| Self::eq_type(g, lc, ic, ty1, ty2)),
+              &ctx.g.constrs,
+              args1.iter().zip(&**args2).map(|(ty1, ty2)| Self::eq_type(ctx, ic, ty1, ty2)),
             )
-            .and_then(&g.constrs, || Self::eq_term(g, lc, ic, sc1, sc2))
-            .and_then(&g.constrs, || Self::eq_formula(g, lc, ic, c1, c2))
+            .and_then(&ctx.g.constrs, || Self::eq_term(ctx, ic, sc1, sc2))
+            .and_then(&ctx.g.constrs, || Self::eq_formula(ctx, ic, c1, c2))
           }),
           (It, It) => Self::bool(true),
-          (_, &Infer(nr)) => Self::eq_term(g, lc, ic, t1, &ic[nr].def),
-          (&Infer(nr), _) => Self::eq_term(g, lc, ic, &ic[nr].def, t2),
+          (_, &Infer(nr)) => ctx.lift2(|ctx| Self::eq_term(ctx, ic, t1, &ic[nr].def)),
+          (&Infer(nr), _) => ctx.lift1(|ctx| Self::eq_term(ctx, ic, &ic[nr].def, t2)),
           (Locus(_), _) | (_, Locus(_)) => unreachable!(),
           (Qua { .. }, _) | (_, Qua { .. }) => unreachable!(),
           (EqMark(_), _) | (_, EqMark(_)) => unreachable!(),
           (EqClass(_), _) | (_, EqClass(_)) => unreachable!(),
           (FreeVar(_), _) | (_, FreeVar(_)) => unreachable!(),
           (PrivFunc { .. }, _) | (_, PrivFunc { .. }) =>
-            Self::eq_term(g, lc, ic, t1.skip_priv_func(None), t2.skip_priv_func(None)),
+            Self::eq_term(ctx, ic, t1.skip_priv_func(None), t2.skip_priv_func(None)),
           _ => Self::bool(false),
         };
         if let Self::Fail = res {
@@ -869,41 +868,38 @@ impl Analyzer<'_> {
       }
 
       fn eq_terms(
-        g: &Global, lc: &LocalContext, ic: &'a IdxVec<InferId, Assignment>, t1: &'a [Term],
-        t2: &'a [Term],
+        ctx: &mut EqCtx<'_>, ic: &'a IdxVec<InferId, Assignment>, t1: &'a [Term], t2: &'a [Term],
       ) -> Self {
         Self::then(t1.len() == t2.len(), || {
           Self::merge_many(
-            &g.constrs,
-            t1.iter().zip(t2).map(|(t1, t2)| Self::eq_term(g, lc, ic, t1, t2)),
+            &ctx.g.constrs,
+            t1.iter().zip(t2).map(|(t1, t2)| Self::eq_term(ctx, ic, t1, t2)),
           )
         })
       }
 
       fn eq_type(
-        g: &Global, lc: &LocalContext, ic: &'a IdxVec<InferId, Assignment>, ty1: &'a Type,
-        ty2: &'a Type,
+        ctx: &mut EqCtx<'_>, ic: &'a IdxVec<InferId, Assignment>, ty1: &'a Type, ty2: &'a Type,
       ) -> Self {
-        Self::then(().eq_attrs(g, lc, ty1, ty2) && ty1.kind == ty2.kind, || {
-          Self::eq_terms(g, lc, ic, &ty1.args, &ty2.args)
+        Self::then(().eq_attrs(ctx, ty1, ty2) && ty1.kind == ty2.kind, || {
+          Self::eq_terms(ctx, ic, &ty1.args, &ty2.args)
         })
       }
 
       fn eq_formula(
-        g: &Global, lc: &LocalContext, ic: &'a IdxVec<InferId, Assignment>, f1: &'a Formula,
-        f2: &'a Formula,
+        ctx: &mut EqCtx<'_>, ic: &'a IdxVec<InferId, Assignment>, f1: &'a Formula, f2: &'a Formula,
       ) -> Self {
         use Formula::*;
         match (f1.skip_priv_pred(), f2.skip_priv_pred()) {
           (True, True) => Self::bool(true),
-          (Neg { f: f1 }, Neg { f: f2 }) => Self::eq_formula(g, lc, ic, f1, f2),
-          (Is { term: t1, ty: ty1 }, Is { term: t2, ty: ty2 }) => Self::eq_term(g, lc, ic, t1, t2)
-            .and_then(&g.constrs, || Self::eq_type(g, lc, ic, ty1, ty2)),
+          (Neg { f: f1 }, Neg { f: f2 }) => Self::eq_formula(ctx, ic, f1, f2),
+          (Is { term: t1, ty: ty1 }, Is { term: t2, ty: ty2 }) => Self::eq_term(ctx, ic, t1, t2)
+            .and_then(&ctx.g.constrs, || Self::eq_type(ctx, ic, ty1, ty2)),
           (And { args: args1 }, And { args: args2 }) =>
             Self::then(args1.len() == args2.len(), || {
               Self::merge_many(
-                &g.constrs,
-                args1.iter().zip(args2).map(|(f1, f2)| Self::eq_formula(g, lc, ic, f1, f2)),
+                &ctx.g.constrs,
+                args1.iter().zip(args2).map(|(f1, f2)| Self::eq_formula(ctx, ic, f1, f2)),
               )
             }),
           (
@@ -917,100 +913,100 @@ impl Analyzer<'_> {
           | (Attr { nr: AttrId(n1), args: args1 }, Attr { nr: AttrId(n2), args: args2 })
           | (Pred { nr: PredId(n1), args: args1 }, Pred { nr: PredId(n2), args: args2 })
             if n1 == n2 =>
-            Self::eq_terms(g, lc, ic, args1, args2),
+            Self::eq_terms(ctx, ic, args1, args2),
           (ForAll { dom: dom1, scope: sc1 }, ForAll { dom: dom2, scope: sc2 }) =>
-            Self::eq_type(g, lc, ic, dom1, dom2)
-              .and_then(&g.constrs, || Self::eq_formula(g, lc, ic, sc1, sc2)),
+            Self::eq_type(ctx, ic, dom1, dom2)
+              .and_then(&ctx.g.constrs, || Self::eq_formula(ctx, ic, sc1, sc2)),
           #[allow(clippy::explicit_auto_deref)]
           (FlexAnd { terms: t1, scope: sc1 }, FlexAnd { terms: t2, scope: sc2 }) =>
-            Self::eq_terms(g, lc, ic, &**t1, &**t2)
-              .and_then(&g.constrs, || Self::eq_formula(g, lc, ic, sc1, sc2)),
+            Self::eq_terms(ctx, ic, &**t1, &**t2)
+              .and_then(&ctx.g.constrs, || Self::eq_formula(ctx, ic, sc1, sc2)),
           _ => Self::bool(false),
         }
       }
     }
 
     struct Apply<'a> {
-      g: &'a Global,
-      lc: &'a LocalContext,
       t1: &'a Term,
       t2: &'a Term,
       base: u32,
-      depth: u32,
     }
 
     impl<'a> Apply<'a> {
-      fn term(&mut self, t1: &Term, t2: &Term) -> Term {
+      fn term(&mut self, ctx: &mut EqCtx<'a>, t1: &Term, t2: &Term) -> Term {
         use Term::*;
-        if ().eq_term(self.g, self.lc, t1, t2) {
+        if ().eq_term(ctx, t1, t2) {
           return t1.visit_cloned(&mut OnVarMut(|nr| {
             if *nr >= self.base {
               *nr += 1
             }
           }))
         }
-        if ().eq_term(self.g, self.lc, self.t1, t1) && ().eq_term(self.g, self.lc, self.t2, t2) {
-          return Term::Bound(BoundId(self.depth))
+        if ().eq_term(ctx, self.t1, t1) && ().eq_term(ctx, self.t2, t2) {
+          return Term::Bound(BoundId(ctx.lift1 + ctx.depth1))
         }
         match (t1, t2) {
           (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) if n1 == n2 =>
-            Functor { nr: *n1, args: self.terms(args1, args2) },
+            Functor { nr: *n1, args: self.terms(ctx, args1, args2) },
           (SchFunc { nr: n1, args: args1 }, SchFunc { nr: n2, args: args2 }) if n1 == n2 =>
-            SchFunc { nr: *n1, args: self.terms(args1, args2) },
+            SchFunc { nr: *n1, args: self.terms(ctx, args1, args2) },
           (Aggregate { nr: n1, args: args1 }, Aggregate { nr: n2, args: args2 }) if n1 == n2 =>
-            Aggregate { nr: *n1, args: self.terms(args1, args2) },
+            Aggregate { nr: *n1, args: self.terms(ctx, args1, args2) },
           (Selector { nr: n1, args: args1 }, Selector { nr: n2, args: args2 }) if n1 == n2 =>
-            Selector { nr: *n1, args: self.terms(args1, args2) },
-          (The { ty: ty1 }, The { ty: ty2 }) => The { ty: Box::new(self.ty(ty1, ty2)) },
+            Selector { nr: *n1, args: self.terms(ctx, args1, args2) },
+          (The { ty: ty1 }, The { ty: ty2 }) => The { ty: Box::new(self.ty(ctx, ty1, ty2)) },
           (
             Fraenkel { args: args1, scope: sc1, compr: c1 },
             Fraenkel { args: args2, scope: sc2, compr: c2 },
           ) => {
-            let depth = self.depth;
+            let (depth1, depth2) = (ctx.depth1, ctx.depth2);
             let args = args1
               .iter()
               .zip(&**args2)
               .map(|(t1, t2)| {
-                let t = self.ty(t1, t2);
-                self.depth += 1;
+                let t = self.ty(ctx, t1, t2);
+                ctx.depth1 += 1;
+                ctx.depth2 += 1;
                 t
               })
               .collect();
-            let scope = Box::new(self.term(sc1, sc2));
-            let compr = Box::new(self.formula(c1, c2));
-            self.depth = depth;
+            let scope = Box::new(self.term(ctx, sc1, sc2));
+            let compr = Box::new(self.formula(ctx, c1, c2));
+            (ctx.depth1, ctx.depth2) = (depth1, depth2);
             Fraenkel { args, scope, compr }
           }
-          (_, &Infer(nr)) => self.term(t1, &self.lc.infer_const.borrow()[nr].def),
-          (&Infer(nr), _) => self.term(&self.lc.infer_const.borrow()[nr].def, t2),
+          (_, &Infer(nr)) =>
+            ctx.lift2(|ctx| self.term(ctx, t1, &ctx.lc.infer_const.borrow()[nr].def)),
+          (&Infer(nr), _) =>
+            ctx.lift1(|ctx| self.term(ctx, &ctx.lc.infer_const.borrow()[nr].def, t2)),
           (Locus(_), _) | (_, Locus(_)) => unreachable!(),
           (Qua { .. }, _) | (_, Qua { .. }) => unreachable!(),
           (EqMark(_), _) | (_, EqMark(_)) => unreachable!(),
           (EqClass(_), _) | (_, EqClass(_)) => unreachable!(),
           (FreeVar(_), _) | (_, FreeVar(_)) => unreachable!(),
           (PrivFunc { .. }, _) | (_, PrivFunc { .. }) =>
-            self.term(t1.skip_priv_func(None), t2.skip_priv_func(None)),
+            self.term(ctx, t1.skip_priv_func(None), t2.skip_priv_func(None)),
           _ => panic!("flex-and construction failed"),
         }
       }
 
-      fn terms(&mut self, args1: &[Term], args2: &[Term]) -> Box<[Term]> {
-        args1.iter().zip(args2).map(|(t1, t2)| self.term(t1, t2)).collect()
+      fn terms(&mut self, ctx: &mut EqCtx<'a>, args1: &[Term], args2: &[Term]) -> Box<[Term]> {
+        args1.iter().zip(args2).map(|(t1, t2)| self.term(ctx, t1, t2)).collect()
       }
 
-      fn ty(&mut self, ty1: &Type, ty2: &Type) -> Type {
-        assert!(().eq_attrs(self.g, self.lc, ty1, ty2) && ty1.kind == ty2.kind);
+      fn ty(&mut self, ctx: &mut EqCtx<'a>, ty1: &Type, ty2: &Type) -> Type {
+        assert!(().eq_attrs(ctx, ty1, ty2) && ty1.kind == ty2.kind);
         let attrs = ty1.attrs.visit_cloned(&mut OnVarMut(|nr| {
           if *nr >= self.base {
             *nr += 1
           }
         }));
-        Type { attrs, kind: ty1.kind, args: self.terms(&ty1.args, &ty2.args).into() }
+        Type { attrs, kind: ty1.kind, args: self.terms(ctx, &ty1.args, &ty2.args).into() }
       }
 
-      fn formula(&mut self, f1: &Formula, f2: &Formula) -> Formula {
+      fn formula(&mut self, ctx: &mut EqCtx<'a>, f1: &Formula, f2: &Formula) -> Formula {
         use Formula::*;
-        if ().eq_formula(self.g, self.lc, f1, f2) {
+        if ().eq_formula(ctx, f1, f2) {
           return f1.visit_cloned(&mut OnVarMut(|nr| {
             if *nr >= self.base {
               *nr += 1
@@ -1018,38 +1014,35 @@ impl Analyzer<'_> {
           }))
         }
         match (f1.skip_priv_pred(), f2.skip_priv_pred()) {
-          (Neg { f: f1 }, Neg { f: f2 }) => Neg { f: Box::new(self.formula(f1, f2)) },
+          (Neg { f: f1 }, Neg { f: f2 }) => Neg { f: Box::new(self.formula(ctx, f1, f2)) },
           (Is { term: t1, ty: ty1 }, Is { term: t2, ty: ty2 }) =>
-            Is { term: Box::new(self.term(t1, t2)), ty: Box::new(self.ty(ty1, ty2)) },
-          (And { args: args1 }, And { args: args2 }) =>
-            And { args: args1.iter().zip(args2).map(|(f1, f2)| self.formula(f1, f2)).collect() },
+            Is { term: Box::new(self.term(ctx, t1, t2)), ty: Box::new(self.ty(ctx, ty1, ty2)) },
+          (And { args: args1 }, And { args: args2 }) => And {
+            args: args1.iter().zip(args2).map(|(f1, f2)| self.formula(ctx, f1, f2)).collect(),
+          },
           (SchPred { nr: n1, args: args1 }, SchPred { nr: n2, args: args2 }) if n1 == n2 =>
-            SchPred { nr: *n1, args: self.terms(args1, args2) },
+            SchPred { nr: *n1, args: self.terms(ctx, args1, args2) },
           (
             PrivPred { nr: n1, args: args1, value: v1 },
             PrivPred { nr: n2, args: args2, value: v2 },
           ) if n1 == n2 => PrivPred {
             nr: *n1,
-            args: self.terms(args1, args2),
-            value: Box::new(self.formula(v1, v2)),
+            args: self.terms(ctx, args1, args2),
+            value: Box::new(self.formula(ctx, v1, v2)),
           },
           (Attr { nr: n1, args: args1 }, Attr { nr: n2, args: args2 }) if n1 == n2 =>
-            Attr { nr: *n1, args: self.terms(args1, args2) },
+            Attr { nr: *n1, args: self.terms(ctx, args1, args2) },
           (Pred { nr: n1, args: args1 }, Pred { nr: n2, args: args2 }) if n1 == n2 =>
-            Pred { nr: *n1, args: self.terms(args1, args2) },
+            Pred { nr: *n1, args: self.terms(ctx, args1, args2) },
           (ForAll { dom: dom1, scope: sc1 }, ForAll { dom: dom2, scope: sc2 }) => {
-            let dom = Box::new(self.ty(dom1, dom2));
-            self.depth += 1;
-            let scope = Box::new(self.formula(sc1, sc2));
-            self.depth -= 1;
+            let dom = Box::new(self.ty(ctx, dom1, dom2));
+            let scope = ctx.enter(1, |ctx| Box::new(self.formula(ctx, sc1, sc2)));
             ForAll { dom, scope }
           }
           #[allow(clippy::explicit_auto_deref)]
           (FlexAnd { terms: t1, scope: sc1 }, FlexAnd { terms: t2, scope: sc2 }) => {
-            let terms = Box::new([self.term(&t1[0], &t2[0]), self.term(&t1[1], &t2[1])]);
-            self.depth += 1;
-            let scope = Box::new(self.formula(sc1, sc2));
-            self.depth -= 1;
+            let terms = Box::new([self.term(ctx, &t1[0], &t2[0]), self.term(ctx, &t1[1], &t2[1])]);
+            let scope = ctx.enter(1, |ctx| Box::new(self.formula(ctx, sc1, sc2)));
             FlexAnd { terms, scope }
           }
           _ => panic!("flex-and construction failed"),
@@ -1061,13 +1054,13 @@ impl Analyzer<'_> {
     let Some(_le) = self.g.reqs.less_or_equal() else { panic!("requirement REAL missing") };
     let f1 = self.elab_formula(f1, pos);
     let f2 = self.elab_formula(f2, pos);
-    let (t1, t2) = {
+    let (t1, t2) = self.g.with_eq(&self.lc, |ctx| {
       let ic = self.lc.infer_const.borrow();
-      let OneDiff::One(t1, t2) = OneDiff::eq_formula(&self.g, &self.lc, &ic, &f1, &f2) else {
+      let OneDiff::One(t1, t2) = OneDiff::eq_formula(ctx, &ic, &f1, &f2) else {
         panic!("can't abstract flex-and term, must have exactly one difference")
       };
       (t1.clone(), t2.clone())
-    };
+    });
     let base = self.lc.bound_var.len() as u32;
     let only_constant = !CheckBound::get(base, |cb| {
       cb.visit_term(&t1);
@@ -1076,16 +1069,15 @@ impl Analyzer<'_> {
     assert!(only_constant, "can't abstract flex-and term, contains bound variables");
     let natural = Attrs::Consistent(vec![Attr::new0(natural, true)]);
     let is_natural = |t: &Term| {
-      natural.is_subset_of(&t.get_type(&self.g, &self.lc, false).attrs.1, |a1, a2| {
-        ().eq_attr(&self.g, &self.lc, a1, a2)
-      })
+      let attrs = &t.get_type(&self.g, &self.lc, false).attrs.1;
+      natural.is_subset_of(attrs, |a1, a2| self.g.eq(&self.lc, a1, a2))
     };
     assert!(
       is_natural(&t1) && is_natural(&t2),
       "can't abstract flex-and term, boundary variable does not have 'natural' adjective"
     );
     let scope =
-      Apply { g: &self.g, lc: &self.lc, t1: &t1, t2: &t2, base, depth: base }.formula(&f1, &f2);
+      self.g.with_eq(&self.lc, |ctx| Apply { t1: &t1, t2: &t2, base }.formula(ctx, &f1, &f2));
     Formula::FlexAnd { terms: Box::new([t1, t2]), scope: Box::new(scope) }
   }
 
@@ -1373,7 +1365,7 @@ impl Analyzer<'_> {
     vprintln!("inst_forall {term:?}: {ty:?}");
     Inst0(0, term).visit_formula(scope);
     let ok = if !widenable {
-      ().eq_type(&self.g, &self.lc, dom, &ty)
+      self.g.eq(&self.lc, &**dom, &ty)
     } else if up {
       dom.is_wider_than(&self.g, &self.lc, &ty)
     } else {
@@ -1383,12 +1375,12 @@ impl Analyzer<'_> {
       std::mem::take(scope)
     } else {
       assert!(ty.is_wider_than(&self.g, &self.lc, dom));
-      assert!(().eq_attrs(&self.g, &self.lc, &ty, dom));
+      assert!(self.g.eq(&self.lc, &ty, dom));
       Formula::mk_and_with(|conds| {
         loop {
           conds.push(Formula::Is { term: Box::new(term.clone()), ty: dom.clone() });
           *dom = dom.widening(&self.g, &self.lc).unwrap();
-          if ().eq_radices(&self.g, &self.lc, &ty, dom) {
+          if self.g.eq_radices(&self.lc, &ty, dom) {
             break
           }
         }
@@ -1429,7 +1421,7 @@ impl Analyzer<'_> {
       };
       let mut f2 = (true, Box::new(iter2.next().unwrap_or(Formula::True)));
       loop {
-        if f1.0 == f2.0 && ().eq_formula(&self.g, &self.lc, &f1.1, &f2.1) {
+        if f1.0 == f2.0 && self.g.eq(&self.lc, &f1.1, &f2.1) {
           continue 'ok
         }
         match (&mut f1.1, &mut *f2.1) {
@@ -1633,7 +1625,7 @@ impl<'a> PropertiesBuilder<'a> {
       [v1, v2] => {
         let c1 = to_const[v1];
         let c2 = to_const[v2];
-        if ().eq_type(g, lc, &lc.fixed_var[c1].ty, &lc.fixed_var[c2].ty) {
+        if g.eq(lc, &lc.fixed_var[c1].ty, &lc.fixed_var[c2].ty) {
           self.props.arg1 = v1.0;
           self.props.arg2 = v2.0;
           self.kind = f(Args::Binary([c1, c2]));
@@ -1709,7 +1701,7 @@ impl<'a> PropertiesBuilder<'a> {
         (PropertyKind::Involutiveness, &PropertyDeclKind::Func(_, Args::Unary(args))) => {
           let ty = &lc.fixed_var[args[0]].ty;
           let it_ty = lc.it_type.as_deref().unwrap();
-          assert!(().eq_type(g, lc, it_ty, ty));
+          assert!(g.eq(lc, it_ty, ty));
           let f = Formula::mk_and_with(|conj| {
             self.the_formula(args, 2, 0, [1]).append_conjuncts_to(conj);
             self.the_formula(args, 2, 1, [0]).mk_neg().append_conjuncts_to(conj);
@@ -1720,8 +1712,8 @@ impl<'a> PropertiesBuilder<'a> {
           let ty = &lc.fixed_var[args[0]].ty;
           let it_ty = lc.it_type.as_deref().unwrap();
           let wty = &*ty.widening_of(g, lc, it_ty).unwrap();
-          assert!(().eq_radices(g, lc, wty, ty));
-          assert!(ty.attrs.0.is_subset_of(&wty.attrs.1, |a1, a2| ().eq_attr(g, lc, a1, a2)));
+          assert!(g.eq_radices(lc, wty, ty));
+          assert!(ty.attrs.0.is_subset_of(&wty.attrs.1, |a1, a2| g.eq(lc, a1, a2)));
           let f = Formula::mk_and_with(|conj| {
             self.the_formula(args, 2, 0, [1]).append_conjuncts_to(conj);
             self.the_formula(args, 2, 0, [0]).mk_neg().append_conjuncts_to(conj);
@@ -2341,7 +2333,7 @@ impl ReadProof for ReconstructThesis {
 
   fn end_suppose(&mut self, elab: &mut Analyzer, recv: &mut Self::SupposeRecv, f: Formula) {
     if let Some(thesis) = recv {
-      assert!(().eq_formula(&elab.g, &elab.lc, thesis, &f))
+      assert!(elab.eq(&**thesis, &f))
     } else {
       *recv = Some(Box::new(f))
     }
@@ -2748,9 +2740,9 @@ impl BlockReader {
         elab.r.notations.mode.push(pat)
       }
       ast::DefModeKind::Standard { spec, def } => {
-        let (args, redefines, superfluous, it_type);
+        let (redefines, superfluous, it_type);
         if it.redef {
-          args = pat.args.iter().map(|v| Term::Constant(v.var())).collect::<Box<[_]>>();
+          let args: Box<[_]> = pat.args.iter().map(|v| Term::Constant(v.var())).collect();
           let pat = elab.notations.mode.iter().rev().find(|pat| {
             pat.fmt == fmt
               && !matches!(pat.kind, PatternKind::Mode(nr)
@@ -2762,19 +2754,19 @@ impl BlockReader {
           let PatternKind::Mode(nr) = pat.kind else { panic!("redefining expandable mode") };
           let c = &elab.g.constrs.mode[nr];
           (redefines, superfluous) = (Some(nr), (self.primary.len() - c.primary.len()) as u8);
-          let tgt = c.ty.clone();
           if c.properties.get(PropertyKind::Sethood) {
             properties.props.set(PropertyKind::Sethood)
           }
+          let args2: Vec<_> =
+            self.to_const.0[superfluous as usize..].iter().map(|c| Term::Constant(*c)).collect();
+          let tgt = c.ty.visit_cloned(&mut Inst::new(&elab.g.constrs, &elab.lc, &args2, 0));
           it_type = elab.elab_spec(spec.as_deref(), &tgt);
           if spec.is_some() {
-            let args2 =
-              self.to_const.0[superfluous as usize..].iter().map(|c| Term::Constant(*c)).collect();
             cc.0[CorrCondKind::Coherence] =
               Some(mk_mode_coherence(&elab.g.constrs, &elab.lc, nr, &tgt.attrs.1, args2, &it_type));
           }
         } else {
-          (args, redefines, superfluous) = Default::default();
+          (redefines, superfluous) = Default::default();
           it_type = spec.as_deref().map_or(Type::ANY, |ty| elab.elab_type(ty));
         }
         elab.lc.it_type = Some(Box::new(it_type));
@@ -2783,10 +2775,12 @@ impl BlockReader {
         if let Some(value) = &value {
           cc.0[CorrCondKind::Consistency] = value.mk_consistency(&elab.g, Some(&it_type));
           if let Some(nr) = redefines {
+            let args =
+              self.to_const.0[superfluous as usize..].iter().map(|c| Term::Constant(*c)).collect();
             let ty = Box::new(Type {
               kind: TypeKind::Mode(nr),
               attrs: (Attrs::EMPTY, it_type.attrs.1.clone()),
-              args: (*args).to_owned(),
+              args,
             });
             let defined = Formula::Is { term: Box::new(Term::It), ty };
             cc.0[CorrCondKind::Compatibility] =
@@ -3005,10 +2999,7 @@ impl BlockReader {
               let args = subst.trim_to(elab.g.constrs.selector[nr].primary.len());
               let mut inst = Inst::new(&elab.g.constrs, &elab.lc, &args, 0);
               let ty2 = elab.g.constrs.selector[nr].ty.visit_cloned(&mut inst);
-              assert!(
-                ().eq_type(&elab.g, &elab.lc, &ty, &ty2),
-                "field type mismatch:\n  {ty:?} =?=\n  {ty2:?}"
-              );
+              assert!(elab.eq(&ty, &ty2), "field type mismatch:\n  {ty:?} =?=\n  {ty2:?}");
               elab.lc.fixed_var.0.pop();
               fields.retain(|&x| x != nr);
               return Some((nr, args))
@@ -3069,11 +3060,13 @@ impl BlockReader {
     elab.register_cluster(attrs.clone(), struct_primary.clone(), struct_ty.clone());
     std::mem::swap(&mut self.primary, &mut elab.lc.locus_ty);
 
+    let mut sorted_fields: Box<[_]> = fields.clone().into();
+    sorted_fields.sort_unstable();
     let struct_id2 = elab.g.constrs.struct_mode.push(StructMode {
       c: Constructor::new(struct_primary),
       parents,
       aggr: aggr_id,
-      fields: fields.clone().into(),
+      fields: sorted_fields,
     });
     assert!(struct_id == struct_id2);
     elab.r.lc.formatter.push(&elab.r.g.constrs, &struct_pat);
@@ -3337,21 +3330,21 @@ impl BlockReader {
   }
 
   fn elab_reduction(&mut self, elab: &mut Analyzer, it: &ast::Reduction) {
-    fn is_ssubterm(g: &Global, lc: &LocalContext, sup: &Term, sub: &Term) -> bool {
+    fn is_ssubterm(ctx: &mut EqCtx<'_>, sup: &Term, sub: &Term) -> bool {
       use Term::*;
       match sup {
-        Numeral(_) | Locus(_) | Bound(_) | Constant(_) | Infer(_) => ().eq_term(g, lc, sup, sub),
-        PrivFunc { value, .. } => is_ssubterm(g, lc, value, sub),
+        Numeral(_) | Locus(_) | Bound(_) | Constant(_) | Infer(_) => ().eq_term(ctx, sup, sub),
+        PrivFunc { value, .. } => is_ssubterm(ctx, value, sub),
         Functor { args, .. }
         | SchFunc { args, .. }
         | Aggregate { args, .. }
-        | Selector { args, .. } => subterm_list(g, lc, args, sub),
+        | Selector { args, .. } => subterm_list(ctx, args, sub),
         The { .. } | Fraenkel { .. } => false,
         EqClass(_) | EqMark(_) | Qua { .. } | FreeVar(_) | It => unreachable!(),
       }
     }
-    fn subterm_list(g: &Global, lc: &LocalContext, args: &[Term], sub: &Term) -> bool {
-      args.iter().any(|t| ().eq_term(g, lc, t, sub) || is_ssubterm(g, lc, t, sub))
+    fn subterm_list(ctx: &mut EqCtx<'_>, args: &[Term], sub: &Term) -> bool {
+      args.iter().any(|t| ().eq_term(ctx, t, sub) || is_ssubterm(ctx, t, sub))
     }
 
     let mut from = elab.elab_term(&it.from);
@@ -3361,7 +3354,7 @@ impl BlockReader {
         panic!("reduction must have a functor term on the LHS")
       };
       let args = Term::adjust(nr, args, &elab.g.constrs).1;
-      subterm_list(&elab.g, &elab.lc, args, to.skip_priv_func(Some(&elab.lc)))
+      elab.with_eq(|ctx| subterm_list(ctx, args, to.skip_priv_func(Some(ctx.lc))))
     };
     assert!(reduction_allowed, "Right term must be a subterm of the left term");
     let mut cc = CorrConds::new();

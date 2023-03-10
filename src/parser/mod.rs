@@ -980,8 +980,6 @@ impl MizReader<'_> {
           while let Some(tm) = self.parse_term(buf) {
             args.push(tm)
           }
-          // FIXME: if !g.rounded_up_clusters and we use InEnvFileObj
-          // then we have to round up upper here
           Elem::Type(Type { kind, attrs: (lower, upper), args })
         }
         b"Properties" => {

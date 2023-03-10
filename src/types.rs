@@ -1096,9 +1096,10 @@ impl<I, V: VisitMut> Visitable<V> for TyConstructor<I> {
 #[derive(Clone, Debug)]
 pub struct StructMode {
   pub c: Constructor<StructId>,
-  // These are guaranteed to be struct types
+  /// These are guaranteed to be struct types
   pub parents: Box<[Type]>,
   pub aggr: AggrId,
+  /// sorted by id
   pub fields: Box<[SelId]>,
 }
 
@@ -1116,6 +1117,7 @@ impl<V: VisitMut> Visitable<V> for StructMode {
 pub struct Aggregate {
   pub c: TyConstructor<AggrId>,
   pub base: u8,
+  /// ordered the same as the constructor arguments
   pub fields: Box<[SelId]>,
 }
 impl<V: VisitMut> Visitable<V> for Aggregate {

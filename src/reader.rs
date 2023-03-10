@@ -49,9 +49,13 @@ pub struct Reader {
   pub items: usize,
   inference_nr: usize,
 }
+impl WithGlobalLocal for Reader {
+  fn global(&self) -> &Global { &self.g }
+  fn local(&self) -> &LocalContext { &self.lc }
+}
 
 impl MizPath {
-  pub fn with_reader(&self, f: impl FnOnce(&mut Reader)) {
+  pub fn with_reader(&self, cfg: &Config, f: impl FnOnce(&mut Reader)) {
     // MizPBlockObj.InitPrepData
     let mut refs = References::default();
     self.read_ref(&mut refs).unwrap();
@@ -70,11 +74,13 @@ impl MizPath {
     } else {
       Type::SET
     };
-    let mut v = Reader::new(reqs, numeral_type, self.0);
+    let mut v = Reader::new(cfg, reqs, numeral_type, self.0);
+    v.lc.attr_sort_bug = cfg.attr_sort_bug;
+    v.lc.formatter.cfg.dump_formatter = cfg.dump_formatter;
     self.read_atr(&mut v.g.constrs).unwrap();
     let old = v.lc.start_stash();
     let mut formats = None;
-    if analyzer_enabled() {
+    if cfg.analyzer_enabled {
       let mut f = Default::default();
       self.read_formats("frx", &mut f).unwrap();
       v.formats.extend(f.formats.enum_iter().map(|(id, f)| (*f, id)));
@@ -84,10 +90,10 @@ impl MizPath {
     let mut notations = Default::default();
     self.read_eno(&mut notations).unwrap();
     v.lc.formatter.extend(&v.g.constrs, &notations);
-    if DUMP_CONSTRUCTORS {
+    if cfg.dump_constructors {
       v.g.constrs.dump()
     }
-    if DUMP_REQUIREMENTS {
+    if cfg.dump_requirements {
       v.g.reqs.dump(&v.g.constrs)
     }
     self.read_ecl(&v.g.constrs, &mut v.g.clusters).unwrap();
@@ -112,7 +118,7 @@ impl MizPath {
       v.g.nat = Some(ty)
     }
 
-    if analyzer_enabled() {
+    if cfg.analyzer_enabled {
       // LoadSGN
       for mut pat in notations {
         match pat.kind {
@@ -135,9 +141,9 @@ impl MizPath {
     }
 
     // LoadDefinitions
-    if analyzer_enabled() {
+    if cfg.analyzer_enabled {
       self.read_definitions(&v.g.constrs, "dfs", &mut v.definitions).unwrap();
-      if DUMP_DEFINITIONS {
+      if cfg.dump_definitions {
         for d in &v.definitions {
           eprintln!("definition: {d:?}");
         }
@@ -145,9 +151,9 @@ impl MizPath {
     }
 
     // LoadEqualities
-    if ENABLE_CHECKER {
+    if cfg.checker_enabled {
       self.read_definitions(&v.g.constrs, "dfe", &mut v.equalities).unwrap();
-      if DUMP_DEFINITIONS {
+      if cfg.dump_definitions {
         for d in &v.equalities {
           eprintln!("equality: {d:?}");
         }
@@ -155,9 +161,9 @@ impl MizPath {
     }
 
     // LoadExpansions
-    if ENABLE_CHECKER {
+    if cfg.checker_enabled {
       self.read_definitions(&v.g.constrs, "dfx", &mut v.expansions).unwrap();
-      if DUMP_DEFINITIONS {
+      if cfg.dump_definitions {
         for d in &v.expansions {
           eprintln!("expansion: {d:?}");
         }
@@ -168,23 +174,24 @@ impl MizPath {
     self.read_epr(&v.g.constrs, &mut v.properties).unwrap();
 
     // LoadIdentify
-    if ENABLE_CHECKER {
+    if cfg.checker_enabled {
       self.read_eid(&v.g.constrs, &mut v.identify).unwrap();
     }
 
     // LoadReductions
-    if ENABLE_CHECKER {
+    if cfg.checker_enabled {
       self.read_erd(&v.g.constrs, &mut v.reductions).unwrap();
     }
 
     // in mizar this was done inside the parser
-    let rr = &mut RoundUpTypes { g: &v.g, lc: &mut v.lc };
-    v.definitions.visit(rr);
-    v.equalities.visit(rr);
-    v.expansions.visit(rr);
-    v.properties.visit(rr);
-    v.identify.visit(rr);
-    v.reductions.visit(rr);
+    RoundUpTypes::with(&v.g, &mut v.lc, |rr| {
+      v.definitions.visit(rr);
+      v.equalities.visit(rr);
+      v.expansions.visit(rr);
+      v.properties.visit(rr);
+      v.identify.visit(rr);
+      v.reductions.visit(rr);
+    });
 
     for df in &v.equalities {
       if let Some(func) = df.equals_expansion() {
@@ -232,15 +239,15 @@ impl MizPath {
     v.g.clusters = clusters;
 
     // InLibraries
-    if ENABLE_CHECKER {
+    if cfg.checker_enabled {
       self.read_eth(&v.g.constrs, &refs, &mut v.libs).unwrap();
       let cc = &mut InternConst::new(&v.g, &v.lc, &v.equals, &v.identify, &v.func_ids);
       v.libs.thm.values_mut().for_each(|f| f.visit(cc));
       v.libs.def.values_mut().for_each(|f| f.visit(cc));
       self.read_esh(&v.g.constrs, &refs, &mut v.libs).unwrap();
-      v.libs.visit(&mut RoundUpTypes { g: &v.g, lc: &mut v.lc });
+      RoundUpTypes::with(&v.g, &mut v.lc, |rr| v.libs.visit(rr));
 
-      if DUMP_LIBRARIES {
+      if cfg.dump_libraries {
         for (&(ar, nr), th) in &v.libs.thm {
           eprintln!("art {ar:?}:{nr:?} = {th:?}");
         }
@@ -266,15 +273,15 @@ pub struct Scope {
 }
 
 impl Reader {
-  pub fn new(reqs: RequirementIndexes, numeral_type: Type, article: Article) -> Self {
+  pub fn new(cfg: &Config, reqs: RequirementIndexes, numeral_type: Type, article: Article) -> Self {
     Reader {
       g: Global {
+        cfg: cfg.clone(),
         reqs,
         constrs: Default::default(),
         clusters: Default::default(),
         numeral_type,
         nat: None,
-        rounded_up_clusters: false,
       },
       lc: LocalContext::default(),
       libs: Libraries::default(),
@@ -411,10 +418,10 @@ impl Reader {
           | Item::Block { .. }
       ));
       // stat(s);
-      if let Some(n) = FIRST_VERBOSE_TOP_ITEM {
+      if let Some(n) = self.g.cfg.first_verbose_top_item {
         set_verbose(i >= n);
       }
-      if TOP_ITEM_HEADER {
+      if self.g.cfg.top_item_header {
         eprintln!("item {i}: {it:?}");
       }
       self.read_item(it);
@@ -422,16 +429,16 @@ impl Reader {
   }
 
   pub fn read_item(&mut self, it: &Item) {
-    if let Some(n) = *FIRST_VERBOSE_ITEM.read().unwrap() {
-      if self.items == n + 1 && ONE_ITEM.load(std::sync::atomic::Ordering::SeqCst) {
+    if let Some(n) = self.g.cfg.first_verbose_item {
+      if self.items == n + 1 && self.g.cfg.one_item {
         eprintln!("exiting");
         std::process::exit(0)
       }
       set_verbose(self.items >= n);
     }
-    if ITEM_HEADER {
+    if self.g.cfg.item_header {
       eprint!("item[{}]: ", self.items);
-      if ALWAYS_VERBOSE_ITEM || verbose() {
+      if self.g.cfg.always_verbose_item || verbose() {
         eprintln!("{it:#?}");
       } else {
         match it {
@@ -610,10 +617,10 @@ impl Reader {
   }
 
   pub fn read_definiens(&mut self, df: &Definiens) {
-    if analyzer_enabled() {
+    if self.g.cfg.analyzer_enabled {
       self.definitions.push(df.clone());
     }
-    if ENABLE_CHECKER {
+    if self.g.cfg.checker_enabled {
       self.equalities.push(df.clone());
       self.expansions.push(df.clone());
       if let Some(func) = df.equals_expansion() {
@@ -648,10 +655,7 @@ impl Reader {
       Justification::Simple(it) => self.read_inference(thesis, it),
       Justification::Proof { label, thesis: block_thesis, items, .. } => {
         let block_thesis = self.intern(block_thesis);
-        assert!(
-          ().eq_formula(&self.g, &self.lc, thesis, &block_thesis),
-          "\n{thesis:?}\n !=\n{block_thesis:?}"
-        );
+        assert!(self.g.eq(&self.lc, thesis, &block_thesis), "\n{thesis:?}\n !=\n{block_thesis:?}");
         self.scope(*label, false, |this| {
           for it in items {
             this.read_item(&it.0);
@@ -831,7 +835,7 @@ impl Reader {
   }
 
   pub fn read_inference(&mut self, thesis: &Formula, it: &Inference) {
-    if !ENABLE_CHECKER {
+    if !self.g.cfg.checker_enabled {
       return
     }
     let refs = it.refs.iter().map(|r| match r.kind {

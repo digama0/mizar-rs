@@ -2,9 +2,11 @@ use crate::equate::Equalizer;
 use crate::types::*;
 use crate::unify::Unifier;
 use crate::util::RetainMutFrom;
+#[allow(unused)]
+use crate::vprintln;
 use crate::{
-  set_verbose, stat, Assignment, CheckBound, Equate, ExpandPrivFunc, FixedVar, Global, Inst, Inst0,
-  InternConst, LocalContext, OnVarMut, Visit, VisitMut,
+  set_verbose, stat, Assignment, CheckBound, ExpandPrivFunc, FixedVar, Global, Inst, Inst0,
+  InternConst, LocalContext, OnVarMut, Visit, VisitMut, WithGlobalLocal,
 };
 use itertools::Itertools;
 use std::borrow::Cow;
@@ -31,27 +33,27 @@ impl<'a> Checker<'a> {
   }
 
   pub fn justify(&mut self, premises: Vec<&'a Formula>) {
-    if let Some(n) = crate::FIRST_VERBOSE_CHECKER {
+    if let Some(n) = self.g.cfg.first_verbose_checker {
       set_verbose(self.idx >= n);
     }
-    if crate::SKIP_TO_VERBOSE && !crate::verbose() {
+    if self.g.cfg.skip_to_verbose && !crate::verbose() {
       return
     }
     self.lc.term_cache.get_mut().open_scope();
     let infer_const = self.lc.infer_const.get_mut().len();
     let fixed_var = self.lc.fixed_var.len();
 
-    if crate::CHECKER_INPUTS {
+    if self.g.cfg.checker_inputs {
       eprintln!();
     }
     let mut check_f = Formula::mk_and_with(|conjs| {
       for f in premises {
-        if crate::CHECKER_INPUTS {
+        if self.g.cfg.checker_inputs {
           eprintln!("input: {f:?}");
         }
         let mut f = f.clone();
         Expand { g: self.g, lc: self.lc, expansions: self.expansions }.expand(&mut f, true);
-        if crate::LEGACY_FLEX_HANDLING {
+        if self.g.cfg.legacy_flex_handling {
           ExpandLegacyFlex { depth: 0 }.visit_formula(&mut f);
         }
         // vprintln!("expand: {f:?}");
@@ -60,7 +62,7 @@ impl<'a> Checker<'a> {
         f.append_conjuncts_to(conjs);
       }
     });
-    if crate::CHECKER_HEADER {
+    if self.g.cfg.checker_header {
       eprintln!("refuting {} @ {:?}:{:?}:\n  {check_f:?}", self.idx, self.article, self.pos);
     }
 
@@ -80,7 +82,7 @@ impl<'a> Checker<'a> {
 
     let mut err = false;
     for (i, f) in normal_form.into_iter().enumerate() {
-      if crate::CHECKER_CONJUNCTS {
+      if self.g.cfg.checker_conjuncts {
         eprintln!(
           "falsifying {}.{i}: {:#?}",
           self.idx,
@@ -94,7 +96,7 @@ impl<'a> Checker<'a> {
       })();
       // assert!(sat.is_err(), "failed to justify");
       if sat.is_err() {
-        if crate::CHECKER_RESULT {
+        if self.g.cfg.checker_result {
           eprintln!(
             "proved {}.{i} @ {:?}:{:?}! {:#?}",
             self.idx,
@@ -105,9 +107,9 @@ impl<'a> Checker<'a> {
         }
       } else {
         err = true;
-        let expected = !crate::analyzer_enabled()
+        let expected = !self.g.cfg.analyzer_enabled
           && crate::EXPECTED_ERRORS.contains(&(self.article.as_str(), self.idx));
-        if !expected && crate::CHECKER_RESULT {
+        if !expected && self.g.cfg.checker_result {
           eprintln!(
             "FAILED TO JUSTIFY {}.{i} @ {:?}:{:?}: {:#?}",
             self.idx,
@@ -128,7 +130,7 @@ impl<'a> Checker<'a> {
             "[{}] failed to justify {}.{i} @ {:?}:{:?}",
             self.item_idx, self.idx, self.article, self.pos
           );
-          if crate::PANIC_ON_FAIL {
+          if self.g.cfg.panic_on_fail {
             panic!(
               "[{}] failed to justify {}.{i} @ {:?}:{:?}",
               self.item_idx, self.idx, self.article, self.pos
@@ -217,15 +219,15 @@ impl<'a> Checker<'a> {
   }
 
   pub fn justify_scheme(&mut self, sch: &Scheme, premises: Vec<&'a Formula>, thesis: &'a Formula) {
-    if let Some(n) = crate::FIRST_VERBOSE_CHECKER {
+    if let Some(n) = self.g.cfg.first_verbose_checker {
       set_verbose(self.idx >= n);
     }
-    if crate::SKIP_TO_VERBOSE && !crate::verbose() {
+    if self.g.cfg.skip_to_verbose && !crate::verbose() {
       return
     }
     self.lc.term_cache.get_mut().open_scope();
 
-    if crate::CHECKER_INPUTS {
+    if self.g.cfg.checker_inputs {
       eprintln!();
       for f in &premises {
         eprintln!("input: {f:?}");
@@ -240,19 +242,19 @@ impl<'a> Checker<'a> {
       && (sch.prems.iter().zip(premises.iter())).all(|(f1, f2)| ctx.eq_formula(f1, f2, true))
     {
       stat("success");
-      if crate::CHECKER_RESULT {
+      if self.g.cfg.checker_result {
         eprintln!("proved sch {} @ {:?}:{:?}!", self.idx, self.article, self.pos);
       }
     } else {
       stat("failure");
-      if crate::CHECKER_RESULT {
+      if self.g.cfg.checker_result {
         eprintln!("FAILED TO JUSTIFY sch {} @ {:?}:{:?}", self.idx, self.article, self.pos);
       }
       println!(
         "[{}] failed to justify sch {} @ {:?}:{:?}",
         self.item_idx, self.idx, self.article, self.pos
       );
-      if crate::PANIC_ON_FAIL {
+      if self.g.cfg.panic_on_fail {
         panic!(
           "[{}] failed to justify sch {} @ {:?}:{:?}",
           self.item_idx, self.idx, self.article, self.pos
@@ -313,7 +315,7 @@ impl Expand<'_> {
               let mut epf = ExpandPrivFunc(&self.g.constrs, self.lc);
               let terms2 = (*terms).visit_cloned(&mut epf);
               let scope2 = (*scope).visit_cloned(&mut epf);
-              let scope3 = if crate::FLEX_EXPANSION_BUG {
+              let scope3 = if self.g.cfg.flex_expansion_bug {
                 let mut f = (*scope2).clone().mk_neg();
                 if f.conjuncts().len() > 1 {
                   stat("flex expansion bug");
@@ -561,7 +563,7 @@ pub struct Atoms(pub IdxVec<AtomId, Formula>);
 
 impl Atoms {
   pub fn find(&self, g: &Global, lc: &LocalContext, f: &Formula) -> Option<AtomId> {
-    self.0.enum_iter().find(|(_, atom)| ().eq_formula(g, lc, f, atom)).map(|p| p.0)
+    self.0.enum_iter().find(|(_, atom)| g.eq(lc, f, atom)).map(|p| p.0)
   }
 
   pub fn insert(&mut self, g: &Global, lc: &LocalContext, f: Cow<'_, Formula>) -> AtomId {
@@ -861,6 +863,10 @@ struct SchemeCtx<'a> {
   primary: &'a [Type],
   subst: SchemeSubst,
 }
+impl WithGlobalLocal for SchemeCtx<'_> {
+  fn global(&self) -> &Global { self.g }
+  fn local(&self) -> &LocalContext { self.lc }
+}
 
 impl<'a> SchemeCtx<'a> {
   fn observing(&mut self, f: impl FnOnce(&mut Self) -> bool) -> bool {
@@ -975,7 +981,7 @@ impl<'a> SchemeCtx<'a> {
           }
           let t2 = t2.visit_cloned(&mut OnVarMut(|n| *n -= depth));
           if let Some(tm) = self.subst.cnst.get_mut_extending(*n1) {
-            ().eq_term(self.g, self.lc, &t2, tm)
+            self.g.eq(self.lc, &t2, tm)
           } else if self
             .wider(&self.primary[Idx::into_usize(*n1)], &t2.get_type(self.g, self.lc, false))
           {
