@@ -3244,6 +3244,7 @@ impl BlockReader {
       term: Box::new(term2),
     });
     self.needs_round_up = true;
+    elab.r.g.round_up_term_cache(&mut elab.r.lc);
   }
 
   fn elab_identify_pattern_func(

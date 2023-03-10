@@ -78,10 +78,9 @@ dump_libraries: false,
 dump_formatter: false,
 ```
 
-This is equivalent to the `-a` and `-c` flags in Mizar. You will want to use this
-if you want to test the new analyzer (which is still experimental).
+This is equivalent to the `-a` and `-c` flags in Mizar.
 ```rust
-analyzer_enabled: false,
+analyzer_enabled: true,
 checker_enabled: true,
 ```
 

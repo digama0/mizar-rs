@@ -55,6 +55,17 @@ impl Global {
     }
   }
 
+  fn matching_func_clusters(&self, t: &Term) -> &[usize] {
+    let fcs = &self.clusters.functor.sorted[self.clusters.functor.sorted.partition_point(|&i| {
+      FunctorCluster::cmp_term(&self.clusters.functor.vec[i].term, &self.constrs, t)
+        == Ordering::Less
+    })..];
+    &fcs[..fcs.partition_point(|&i| {
+      FunctorCluster::cmp_term(&self.clusters.functor.vec[i].term, &self.constrs, t)
+        != Ordering::Greater
+    })]
+  }
+
   fn round_up_clusters(&mut self, lc: &mut LocalContext) {
     for k in 0..self.clusters.registered.len() {
       let mut cl = &self.clusters.registered[k];
@@ -97,6 +108,24 @@ impl Global {
     // TODO: why not round up aggregate too? (copied from original source)
     round_up_constrs! { mode, functor, selector };
     lc.term_cache.get_mut().terms = vec![];
+  }
+
+  // RoundUpItem
+  fn round_up_term_cache(&self, lc: &mut LocalContext) {
+    let mut n = 0;
+    while let Some((tm, ty, _)) = lc.term_cache.get_mut().terms.get(n) {
+      let fcs = self.matching_func_clusters(tm);
+      if !fcs.is_empty() {
+        let (tm, ty) = (tm.clone(), ty.clone());
+        let mut attrs = ty.attrs.1.clone();
+        for &i in fcs {
+          let fc = &self.clusters.functor.vec[i];
+          fc.round_up_with(self, lc, &tm, &ty, &mut attrs, false);
+        }
+        lc.term_cache.get_mut().terms[n].1.attrs.1 = attrs;
+      }
+      n += 1;
+    }
   }
 
   /// MotherStructNr
@@ -1288,14 +1317,7 @@ impl Term {
       //     )
       //   }
       // }
-      let fcs = &g.clusters.functor.sorted[g.clusters.functor.sorted.partition_point(|&i| {
-        FunctorCluster::cmp_term(&g.clusters.functor.vec[i].term, &g.constrs, self)
-          == Ordering::Less
-      })..];
-      let fcs = &fcs[..fcs.partition_point(|&i| {
-        FunctorCluster::cmp_term(&g.clusters.functor.vec[i].term, &g.constrs, self)
-          != Ordering::Greater
-      })];
+      let fcs = g.matching_func_clusters(self);
       if !fcs.is_empty() {
         let mut used = vec![false; fcs.len()];
         'main: loop {
@@ -2933,14 +2955,14 @@ const EXPECTED_ERRORS: &[(&str, usize)] =
 const DEFAULT_FORMATTER_CONFIG: FormatterConfig = FormatterConfig {
   dump_formatter: false, // overwritten by Config
   enable_formatter: true,
-  show_infer: false,
+  show_infer: true,
   show_only_infer: false,
   show_priv: false,
   show_marks: false,
-  show_invisible: false,
-  show_orig: false,
+  show_invisible: true,
+  show_orig: true,
   upper_clusters: false,
-  both_clusters: false,
+  both_clusters: true,
   negation_sugar: true,
 };
 
@@ -2951,10 +2973,10 @@ fn main() {
     item_header: DEBUG,
     checker_inputs: DEBUG,
     checker_header: DEBUG,
-    checker_conjuncts: false,
-    checker_result: false,
-    unify_header: false,
-    unify_insts: false,
+    checker_conjuncts: DEBUG,
+    checker_result: DEBUG,
+    unify_header: DEBUG,
+    unify_insts: DEBUG,
 
     dump_constructors: false,
     dump_requirements: false,
@@ -2962,7 +2984,7 @@ fn main() {
     dump_libraries: false,
     dump_formatter: false,
 
-    analyzer_enabled: false,
+    analyzer_enabled: true,
     checker_enabled: true,
 
     legacy_flex_handling: true,
@@ -2986,8 +3008,8 @@ fn main() {
   // let path = MizPath(Article::from_bytes(b"TEST"), "../test/text/test".into());
   // path.with_reader(&cfg, |v| v.run_checker(&path));
   // print_stats_and_exit(cfg.parallelism);
-  if std::env::var("ANALYZER").is_ok() {
-    cfg.analyzer_enabled = true;
+  if std::env::var("CHECKER_ONLY").is_ok() {
+    cfg.analyzer_enabled = false;
   }
   if std::env::var("ONE_ITEM").is_ok() {
     cfg.one_item = true;
