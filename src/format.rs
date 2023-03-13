@@ -1,5 +1,5 @@
 use crate::types::*;
-use crate::{LocalContext, MizPath, DEFAULT_FORMATTER_CONFIG};
+use crate::{LocalContext, MizPath};
 use pretty::{Arena, DocAllocator, DocBuilder};
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -7,7 +7,6 @@ use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct FormatterConfig {
-  pub dump_formatter: bool,
   pub enable_formatter: bool,
   pub show_infer: bool,
   pub show_only_infer: bool,
@@ -21,12 +20,13 @@ pub struct FormatterConfig {
 }
 
 impl Default for FormatterConfig {
-  fn default() -> Self { DEFAULT_FORMATTER_CONFIG }
+  fn default() -> Self { Self::DEFAULT }
 }
 
 #[derive(Default, Debug)]
 pub struct Formatter {
-  pub cfg: FormatterConfig,
+  pub dump: bool,
+  cfg: FormatterConfig,
   symbols: HashMap<SymbolKind, String>,
   formats: IdxVec<FormatId, Format>,
   mode: HashMap<ModeId, (u8, Box<[LocusId]>, FormatMode)>,
@@ -43,7 +43,7 @@ impl Formatter {
     if !self.cfg.enable_formatter {
       return
     }
-    if self.cfg.dump_formatter {
+    if self.dump {
       eprintln!("{pat:#?}")
     }
     fn ins<I: Idx, F: std::fmt::Debug>(
@@ -153,7 +153,7 @@ struct Pretty<'a> {
 impl Pretty<'_> {
   fn with_lc<R>(lc: Option<&LocalContext>, f: impl for<'b> FnOnce(&'b Pretty<'b>) -> R) -> R {
     let arena = Arena::new();
-    let cfg = lc.map_or(&DEFAULT_FORMATTER_CONFIG, |lc| &lc.formatter.cfg);
+    let cfg = lc.map_or(&FormatterConfig::DEFAULT, |lc| &lc.formatter.cfg);
     f(&Pretty { lc, cfg, arena: &arena, comma: arena.text(",").append(arena.line()) })
   }
 

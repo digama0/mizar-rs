@@ -16,7 +16,7 @@ pub struct Notations {
 
 enum PendingDef {
   Constr(ConstrKind),
-  // Cluster,
+  Cluster(ClusterKind, usize),
 }
 
 pub struct Reader {
@@ -76,7 +76,7 @@ impl MizPath {
     };
     let mut v = Reader::new(cfg, reqs, numeral_type, self.0);
     v.lc.attr_sort_bug = cfg.attr_sort_bug;
-    v.lc.formatter.cfg.dump_formatter = cfg.dump_formatter;
+    v.lc.formatter.dump = cfg.dump_formatter;
     self.read_atr(&mut v.g.constrs).unwrap();
     let old = v.lc.start_stash();
     let mut formats = None;
@@ -383,7 +383,11 @@ impl Reader {
       for x in self.pending_defs.drain(sc.pending_defs..) {
         match x {
           PendingDef::Constr(k) => self.g.constrs.visit_at(&mut descope, k),
-          // PendingDef::Cluster => {}
+          PendingDef::Cluster(ClusterKind::R, i) =>
+            self.g.clusters.registered[i].visit(&mut descope),
+          PendingDef::Cluster(ClusterKind::F, i) => self.g.clusters.functor[i].visit(&mut descope),
+          PendingDef::Cluster(ClusterKind::C, i) =>
+            self.g.clusters.conditional.vec[i].visit(&mut descope),
         }
       }
     }
@@ -783,7 +787,9 @@ impl Reader {
 
   pub fn read_registered_cluster(&mut self, mut cl: RegisteredCluster) {
     cl.consequent.1.visit(&mut self.intern_const());
-    self.g.clusters.registered.push(cl)
+    let i = self.g.clusters.registered.len();
+    self.g.clusters.registered.push(cl);
+    self.pending_defs.push(PendingDef::Cluster(ClusterKind::R, i))
   }
 
   pub fn read_conditional_cluster(&mut self, mut cl: ConditionalCluster) {
@@ -803,12 +809,14 @@ impl Reader {
         }
       }
     }
+    let i = self.g.clusters.conditional.len();
     self.g.clusters.conditional.push(&self.g.constrs, cl);
     for (&i, attrs) in &mut rounded_up {
       attrs.visit(&mut self.intern_const());
       self.lc.infer_const.get_mut()[i].ty.attrs.1 = std::mem::take(attrs);
     }
     self.round_up_further(rounded_up);
+    self.pending_defs.push(PendingDef::Cluster(ClusterKind::C, i))
   }
 
   pub fn read_functor_cluster(&mut self, mut cl: FunctorCluster) {
@@ -832,6 +840,7 @@ impl Reader {
       self.lc.infer_const.get_mut()[i].ty.attrs.1 = std::mem::take(attrs);
     }
     self.round_up_further(rounded_up);
+    self.pending_defs.push(PendingDef::Cluster(ClusterKind::F, i))
   }
 
   pub fn read_inference(&mut self, thesis: &Formula, it: &Inference) {

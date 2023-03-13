@@ -597,7 +597,7 @@ impl Type {
       }
       let mut subst = Subst::new(prop.primary.len());
       let Some(ty) = prop.ty.widening_of(g, lc, self) else { continue };
-      if subst.eq_radices(&mut subst.eq_ctx(g, lc), &prop.ty, self)
+      if subst.eq_radices(&mut subst.eq_ctx(g, lc), &prop.ty, &ty)
         && prop.ty.attrs.0.is_subset_of(&ty.attrs.1, |a1, a2| subst.eq(g, lc, a1, a2))
         && subst.check_loci_types::<false>(g, lc, &prop.primary, false)
       {
@@ -791,7 +791,7 @@ trait Equate {
           res
         },
       (It, It) => true,
-      (Qua { .. }, Qua { .. }) => panic!("invalid qua"),
+      (Qua { .. }, _) | (_, Qua { .. }) => panic!("invalid qua"),
       (_, &Infer(nr)) =>
         ctx.lift2(|ctx| self.eq_term(ctx, t1, &ctx.lc.infer_const.borrow()[nr].def)),
       (&Infer(nr), _) =>
@@ -891,7 +891,6 @@ trait Equate {
         self.eq_pred(ctx, *n1, *n2, args1, args2),
       (ForAll { dom: dom1, scope: sc1 }, ForAll { dom: dom2, scope: sc2 }) =>
         self.eq_forall(ctx, dom1, dom2, sc1, sc2),
-      #[allow(clippy::explicit_auto_deref)]
       (FlexAnd { terms: t1, scope: sc1 }, FlexAnd { terms: t2, scope: sc2 }) =>
         self.eq_terms(ctx, &**t1, &**t2) && self.eq_formula(ctx, sc1, sc2),
       (LegacyFlexAnd { orig: args1 }, LegacyFlexAnd { orig: args2 }) =>
@@ -979,6 +978,9 @@ impl Global {
   fn eq_radices<'a>(&'a self, lc: &'a LocalContext, a: &Type, b: &Type) -> bool {
     self.with_eq(lc, |ctx| ().eq_radices(ctx, a, b))
   }
+  fn eq_attrs<'a>(&'a self, lc: &'a LocalContext, a: &Type, b: &Type) -> bool {
+    self.with_eq(lc, |ctx| ().eq_attrs(ctx, a, b))
+  }
 }
 trait WithGlobalLocal {
   fn global(&self) -> &Global;
@@ -1001,7 +1003,7 @@ pub struct Subst<'a> {
   // subst_ty: Vec<Option<Box<Term>>>,
   /// gSubstTrm
   /// `IdxVec<LocusId, Option<Box<Term>>>` but fixed length
-  subst_term: Box<[Option<CowBox<'a, Term>>]>,
+  subst_term: Box<[Option<CowBox<'a, TermQua>>]>,
 }
 
 macro_rules! mk_visit {
@@ -1173,21 +1175,24 @@ impl<F: FnMut(&mut u32)> VisitMut for OnVarMut<F> {
   }
 }
 
-pub struct CheckBound(bool, u32);
+pub struct CheckBound {
+  range: Range<u32>,
+  found: bool,
+}
 impl CheckBound {
-  pub fn get(base: u32, f: impl FnOnce(&mut Self)) -> bool {
-    let mut cb = Self(false, base);
+  pub fn get(range: Range<u32>, f: impl FnOnce(&mut Self)) -> bool {
+    let mut cb = Self { range, found: false };
     f(&mut cb);
-    cb.0
+    cb.found
   }
 }
 impl Visit for CheckBound {
-  fn abort(&self) -> bool { self.0 }
+  fn abort(&self) -> bool { self.found }
   fn visit_term(&mut self, tm: &Term) {
     self.super_visit_term(tm);
     match *tm {
-      Term::Bound(BoundId(nr)) => self.0 |= nr < self.1,
-      Term::Locus(_) => self.0 = true,
+      Term::Bound(BoundId(nr)) => self.found |= self.range.contains(&nr),
+      Term::Locus(_) => self.found = true,
       _ => (),
     }
   }
@@ -1406,11 +1411,15 @@ struct TermCollection {
 
 impl TermCollection {
   /// MarkTermsInTTColl
-  fn open_scope(&mut self) { self.scope += 1 }
+  fn open_scope(&mut self) {
+    // vprintln!("[{}] open scope", self.scope);
+    self.scope += 1
+  }
 
   /// RemoveTermsFromTTColl
   fn close_scope(&mut self) {
     self.scope -= 1;
+    // vprintln!("[{}] close scope", self.scope);
     self.terms.retain(|a| a.2 <= self.scope);
   }
 
@@ -1419,9 +1428,10 @@ impl TermCollection {
     self.terms.binary_search_by(|a| a.0.cmp(ctx, None, tm, CmpStyle::Alt))
   }
 
-  fn insert_raw(&mut self, ctx: &Constructors, tm: Term, ty: Type) -> usize {
+  fn insert_raw(&mut self, ctx: &Constructors, base: u32, tm: Term, ty: Type) -> usize {
     let i = self.find(ctx, &tm).unwrap_err();
-    debug_assert!(self.scope != 0 || !CheckBound::get(u32::MAX, |cb| cb.visit_term(&tm)));
+    // vprintln!("[{}] insert {tm:?}", self.scope);
+    debug_assert!(self.scope != 0 || !CheckBound::get(0..base, |cb| cb.visit_term(&tm)));
     self.terms.insert(i, (tm, ty, self.scope));
     i
   }
@@ -1458,7 +1468,8 @@ impl TermCollection {
     let ty = tm.get_type_uncached(g, lc);
 
     // 1. Insert the term with its type provisionally into the cache
-    let i = lc.term_cache.borrow_mut().insert_raw(&g.constrs, tm.clone(), ty);
+    let base = lc.bound_var.len() as u32;
+    let i = lc.term_cache.borrow_mut().insert_raw(&g.constrs, base, tm.clone(), ty);
 
     // clone the type so that we don't hold on to the cache for the next bit
     let ty = Box::new(lc.term_cache.borrow().terms[i].1.clone());
@@ -1512,7 +1523,7 @@ impl<'a> Subst<'a> {
     self.subst_term.into_vec().into_iter().map(|t| *t.unwrap().to_owned()).collect()
   }
 
-  fn trim_to(self, len: usize) -> Box<[Term]> {
+  fn trim_to(self, len: usize) -> Box<[TermQua]> {
     let n = self.subst_term.len().checked_sub(len).unwrap();
     self.subst_term.into_vec().into_iter().skip(n).map(|t| *t.unwrap().to_owned()).collect()
   }
@@ -1715,7 +1726,7 @@ impl Equate for Subst<'_> {
           *x = Some(CowBox::Owned(Box::new(t2.clone())));
           true
         },
-      Some(tm) => ().eq_term(ctx, t2, tm),
+      Some(tm) => ().eq_term(ctx, t2, tm.unqua()),
     }
   }
 
@@ -2035,6 +2046,7 @@ impl ConditionalCluster {
     {
       return None
     }
+    // vprintln!("try rounding: {self:?} in {ty:?}");
     let ty = self.ty.widening_of(g, lc, ty)?;
     if subst.eq_radices(&mut subst.eq_ctx(g, lc), &self.ty, &ty)
       && self.ty.attrs.0.is_subset_of(&ty.attrs.1, |a1, a2| subst.eq(g, lc, a1, a2))
@@ -2098,6 +2110,7 @@ impl FunctorCluster {
       let subst = subst.finish();
       let mut inst = Inst::new(&g.constrs, lc, &subst, 0);
       attrs.visit_enlarge_by(&g.constrs, lc, &self.consequent.1, &mut inst);
+      // vprintln!("enlarged -> {attrs:?}");
     }
     eq
   }
@@ -2286,6 +2299,7 @@ impl<'a> InternConst<'a> {
         Err(i) => {
           drop(ic);
           let mut ty = *tm.round_up_type(self.g, self.lc, false).to_owned();
+          // vprintln!("collect_infer_const {tm:?} : {ty:?}");
           ty.round_up_with_self(self.g, self.lc, false);
           let def = std::mem::take(tm);
           let number = def.try_to_number(self.g, self.lc);
@@ -2424,7 +2438,7 @@ impl VisitMut for InternConst<'_> {
         self.visit_term(scope);
         self.visit_formula(compr);
         self.pop_bound(args.len() as u32);
-        self.only_constants = !CheckBound::get(self.depth, |cb| cb.visit_term(tm));
+        self.only_constants = !CheckBound::get(0..self.depth, |cb| cb.visit_term(tm));
         if self.only_constants {
           OnVarMut(|n| *n -= self.depth).visit_term(tm);
           self.collect_infer_const(tm)
@@ -2947,24 +2961,26 @@ pub struct Config {
 }
 
 const DEBUG: bool = cfg!(debug_assertions);
-const EXPECTED_ERRORS: &[(&str, usize)] =
+const EXPECTED_ANALYZER_ERRORS: &[(&str, usize)] = &[("eulrpart", 153)];
+const EXPECTED_CHECKER_ERRORS: &[(&str, usize)] =
   // These failures are caused by a bug in the statement of FLEXARY1:def 9
   // which requires a patch to Mizar, at least as long as we are using the Mizar analyzer
   &[("eulrpart", 153), ("eulrpart", 154), ("eulrpart", 628)];
 
-const DEFAULT_FORMATTER_CONFIG: FormatterConfig = FormatterConfig {
-  dump_formatter: false, // overwritten by Config
-  enable_formatter: true,
-  show_infer: true,
-  show_only_infer: false,
-  show_priv: false,
-  show_marks: false,
-  show_invisible: true,
-  show_orig: true,
-  upper_clusters: false,
-  both_clusters: true,
-  negation_sugar: true,
-};
+impl FormatterConfig {
+  const DEFAULT: Self = Self {
+    enable_formatter: true,
+    show_infer: true,
+    show_only_infer: false,
+    show_priv: false,
+    show_marks: true,
+    show_invisible: true,
+    show_orig: true,
+    upper_clusters: false,
+    both_clusters: true,
+    negation_sugar: true,
+  };
+}
 
 fn main() {
   let mut cfg = Config {
@@ -3010,6 +3026,9 @@ fn main() {
   // print_stats_and_exit(cfg.parallelism);
   if std::env::var("CHECKER_ONLY").is_ok() {
     cfg.analyzer_enabled = false;
+  }
+  if std::env::var("ANALYZER_ONLY").is_ok() {
+    cfg.checker_enabled = false;
   }
   if std::env::var("ONE_ITEM").is_ok() {
     cfg.one_item = true;
@@ -3073,7 +3092,8 @@ fn main() {
               path.with_reader(cfg, |v| v.run_checker(&path));
             }
           }) {
-            eprintln!("error: {i}: {s} panicked");
+            println!("error: {i}: {s} panicked");
+            stat("panic");
             if cfg.panic_on_fail {
               std::process::abort()
             }

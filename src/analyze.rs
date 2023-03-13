@@ -163,8 +163,10 @@ impl Analyzer<'_> {
         self.lc.term_cache.get_mut().close_scope();
       }
       &ast::ItemKind::Pragma(Pragma::Canceled(k, n)) => self.elab_canceled(k, n),
-      ast::ItemKind::Pragma(Pragma::ThmDesc(_)) => {}
-      // ast::ItemKind::Pragma(Pragma::Other(_)) => {}
+      ast::ItemKind::Pragma(Pragma::ThmDesc(_)) => self.items -= 1,
+      // This is intentionally stricter than necessary to ensure that MML has no weird
+      // pragmas. The line below should be uncommented to allow pragmas for general use.
+      // ast::ItemKind::Pragma(Pragma::Other(_)) => self.items -= 1,
       _ => self.elab_stmt_item(it),
     }
   }
@@ -429,7 +431,7 @@ impl Analyzer<'_> {
     }
   }
 
-  fn elab_canceled(&mut self, _k: CancelKind, _n: u32) {}
+  fn elab_canceled(&mut self, _k: CancelKind, n: u32) { self.items += n as usize - 1; }
 
   fn elab_functor_term(&mut self, fmt: FormatFunc, args: &[ast::Term]) -> Term {
     let args = self.elab_terms_qua(args);
@@ -641,7 +643,7 @@ impl Analyzer<'_> {
               let args = (subst.subst_term.into_vec().into_iter())
                 .take(c.primary.len() - 1)
                 .skip(c.superfluous as _)
-                .map(|t| *t.unwrap().to_owned())
+                .map(|t| t.unwrap().to_owned().strip_qua())
                 .collect::<Box<[_]>>();
               *ty = self.r.lc.bound_var.0.pop().unwrap();
               pos = pat.pos == pos;
@@ -729,7 +731,7 @@ impl Analyzer<'_> {
         });
         for cl in self.g.clusters.registered.iter().rev() {
           let mut subst = Subst::new(cl.primary.len());
-          if self.g.with_eq(&self.lc, |ctx| subst.eq_radices(ctx, &cl.ty, &ty))
+          if subst.eq_radices(&mut subst.eq_ctx(&self.g, &self.lc), &cl.ty, &ty)
             && (ty2.attrs.0)
               .is_subset_of(&cl.consequent.1, |a2, a1| subst.eq(&self.g, &self.lc, a1, a2))
             && subst.check_loci_types::<false>(&self.g, &self.lc, &cl.primary, false)
@@ -820,11 +822,8 @@ impl Analyzer<'_> {
           | (Constant(ConstId(n1)), Constant(ConstId(n2)))
           | (Numeral(n1), Numeral(n2)) => Self::bool(n1 == n2),
           (Infer(InferId(n1)), Infer(InferId(n2))) if n1 == n2 => Self::bool(true),
-          (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) => {
-            let (n1, args1) = Term::adjust(*n1, args1, &ctx.g.constrs);
-            let (n2, args2) = Term::adjust(*n2, args2, &ctx.g.constrs);
-            Self::then(n1 == n2, || Self::eq_terms(ctx, ic, args1, args2))
-          }
+          (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) =>
+            Self::then(n1 == n2, || Self::eq_terms(ctx, ic, args1, args2)),
           (
             SchFunc { nr: SchFuncId(n1), args: args1 },
             SchFunc { nr: SchFuncId(n2), args: args2 },
@@ -933,6 +932,7 @@ impl Analyzer<'_> {
     }
 
     impl<'a> Apply<'a> {
+      fn fail() -> ! { panic!("flex-and construction failed") }
       fn term(&mut self, ctx: &mut EqCtx<'a>, t1: &Term, t2: &Term) -> Term {
         use Term::*;
         if ().eq_term(ctx, t1, t2) {
@@ -943,7 +943,7 @@ impl Analyzer<'_> {
           }))
         }
         if ().eq_term(ctx, self.t1, t1) && ().eq_term(ctx, self.t2, t2) {
-          return Term::Bound(BoundId(ctx.lift1 + ctx.depth1))
+          return Term::Bound(BoundId(self.base))
         }
         match (t1, t2) {
           (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) if n1 == n2 =>
@@ -986,7 +986,7 @@ impl Analyzer<'_> {
           (FreeVar(_), _) | (_, FreeVar(_)) => unreachable!(),
           (PrivFunc { .. }, _) | (_, PrivFunc { .. }) =>
             self.term(ctx, t1.skip_priv_func(None), t2.skip_priv_func(None)),
-          _ => panic!("flex-and construction failed"),
+          _ => Self::fail(),
         }
       }
 
@@ -1045,7 +1045,7 @@ impl Analyzer<'_> {
             let scope = ctx.enter(1, |ctx| Box::new(self.formula(ctx, sc1, sc2)));
             FlexAnd { terms, scope }
           }
-          _ => panic!("flex-and construction failed"),
+          _ => Self::fail(),
         }
       }
     }
@@ -1062,7 +1062,7 @@ impl Analyzer<'_> {
       (t1.clone(), t2.clone())
     });
     let base = self.lc.bound_var.len() as u32;
-    let only_constant = !CheckBound::get(base, |cb| {
+    let only_constant = !CheckBound::get(base..u32::MAX, |cb| {
       cb.visit_term(&t1);
       cb.visit_term(&t2);
     });
@@ -1375,7 +1375,7 @@ impl Analyzer<'_> {
       std::mem::take(scope)
     } else {
       assert!(ty.is_wider_than(&self.g, &self.lc, dom));
-      assert!(self.g.eq(&self.lc, &ty, dom));
+      assert!(self.g.eq_attrs(&self.lc, &ty, dom));
       Formula::mk_and_with(|conds| {
         loop {
           conds.push(Formula::Is { term: Box::new(term.clone()), ty: dom.clone() });
@@ -1425,6 +1425,11 @@ impl Analyzer<'_> {
           continue 'ok
         }
         match (&mut f1.1, &mut *f2.1) {
+          (Formula::True, _) if f1.0 =>
+            f1.1 = match iter1.next() {
+              Some(f1) => f1,
+              None => break 'ok,
+            },
           (Formula::And { args }, _) if f1.0 => {
             let mut iter = std::mem::take(args).into_iter();
             f1.1 = iter.next().unwrap();
@@ -1457,6 +1462,8 @@ impl Analyzer<'_> {
           },
           (Formula::PrivPred { value, .. }, _) => f1.1 = std::mem::take(value),
           (_, Formula::PrivPred { value, .. }) => f2.1 = std::mem::take(value),
+          (_, Formula::True) if f2.0 && !iter2.is_empty() =>
+            *f2.1 = iter2.next().unwrap_or(Formula::True),
           _ => {
             vprintln!("compare: {f1:?} <> {f2:?}");
             if self.whnf(up, 1, &mut f2) != 0 {
@@ -1521,6 +1528,7 @@ impl UnfoldConjIter {
   fn into_vec(self) -> Vec<Formula> {
     self.iter.chain(self.stack.into_iter().rev().flatten()).collect()
   }
+  fn is_empty(&self) -> bool { self.iter.as_slice().is_empty() && self.stack.is_empty() }
 }
 impl Iterator for UnfoldConjIter {
   type Item = Formula;
@@ -1722,7 +1730,7 @@ impl<'a> PropertiesBuilder<'a> {
         }
         (PropertyKind::Sethood, PropertyDeclKind::Mode(value)) => {
           let it_ty = lc.it_type.as_deref().unwrap();
-          let f = value.by_cases(|case| {
+          let f = value.by_cases(0, |case| {
             let f = Formula::mk_and_with(|conj| {
               case.visit_cloned(&mut AbstractIt(1, 2)).append_conjuncts_to(conj);
               let f = Formula::Pred {
@@ -1822,7 +1830,7 @@ trait ReadProof {
       ast::ItemKind::PerCases { .. } => elab.item_header(it, "PerCases"),
       _ => {}
     }
-    // vprintln!("thesis = {:?}", elab.thesis);
+    // eprintln!("[{:?}] thesis = {:?}", it.pos, elab.thesis);
     match &it.kind {
       ast::ItemKind::Let { var } => {
         let n = elab.lc.fixed_var.len();
@@ -1996,18 +2004,22 @@ impl<T: BodyKind> DefBody<T> {
     }))
   }
 
-  fn by_cases(&self, neg_f: impl Fn(&T) -> Formula) -> Box<Formula> {
+  fn by_cases(&self, lift: u32, neg_f: impl Fn(&T) -> Formula) -> Box<Formula> {
     let mut els = self.otherwise.as_ref().map(|_| vec![]);
     Box::new(Formula::mk_and_with(|conjs| {
       for def in &*self.cases {
         let f = Formula::mk_and_with(|disj| {
-          def.guard.clone().append_conjuncts_to(disj);
+          let mut guard = def.guard.clone();
+          if lift != 0 {
+            OnVarMut(|n| *n += lift).visit_formula(&mut guard);
+          }
+          if let Some(els) = &mut els {
+            guard.clone().mk_neg().append_conjuncts_to(els)
+          }
+          guard.append_conjuncts_to(disj);
           neg_f(&def.case).append_conjuncts_to(disj);
         });
         f.mk_neg().append_conjuncts_to(conjs);
-        if let Some(els) = &mut els {
-          def.guard.clone().mk_neg().append_conjuncts_to(els)
-        }
       }
       if let (Some(mut els), Some(ow)) = (els, &self.otherwise) {
         neg_f(ow).append_conjuncts_to(&mut els);
@@ -2017,11 +2029,11 @@ impl<T: BodyKind> DefBody<T> {
   }
 
   fn iffthm_for(&self, g: &Global, defines: &Formula) -> Box<Formula> {
-    self.by_cases(|case| defines.clone().mk_iff(case.it_eq(g)).mk_neg())
+    self.by_cases(0, |case| defines.clone().mk_iff(case.it_eq(g)).mk_neg())
   }
 
   fn defthm_for(&self, g: &Global, defines: &T) -> Box<Formula> {
-    self.by_cases(|case| defines.mk_eq(g, case).mk_neg())
+    self.by_cases(0, |case| defines.mk_eq(g, case).mk_neg())
   }
 
   fn mk_compatibility(
@@ -2037,11 +2049,11 @@ impl<T: BodyKind> DefBody<T> {
 
 impl DefBody<Formula> {
   fn mk_existence(&self, it_type: &Type) -> Box<Formula> {
-    self.by_cases(|case| AbstractIt::forall(it_type, case.clone(), false))
+    self.by_cases(0, |case| AbstractIt::forall(it_type, case.clone(), false))
   }
 
   fn mk_uniqueness(&self, g: &Global, it_type: &Type) -> Box<Formula> {
-    let scope = self.by_cases(|case| {
+    let scope = self.by_cases(2, |case| {
       Formula::mk_and_with(|conjs| {
         case.visit_cloned(&mut AbstractIt(0, 2)).append_conjuncts_to(conjs);
         case.visit_cloned(&mut AbstractIt(1, 2)).append_conjuncts_to(conjs);
@@ -2055,7 +2067,7 @@ impl DefBody<Formula> {
 
 impl DefBody<Term> {
   fn mk_coherence(&self, it_type: &Type) -> Box<Formula> {
-    self.by_cases(|case| {
+    self.by_cases(0, |case| {
       Formula::Is { term: Box::new(case.clone()), ty: Box::new(it_type.clone()) }.mk_neg()
     })
   }
@@ -2100,8 +2112,8 @@ impl DefValue {
 
   fn as_formula(&self, g: &Global) -> Box<Formula> {
     match self {
-      DefValue::Term(value) => value.by_cases(|case| case.it_eq(g).mk_neg()),
-      DefValue::Formula(value) => value.by_cases(|case| case.it_eq(g).mk_neg()),
+      DefValue::Term(value) => value.by_cases(0, |case| case.it_eq(g).mk_neg()),
+      DefValue::Formula(value) => value.by_cases(0, |case| case.it_eq(g).mk_neg()),
     }
   }
 }
@@ -2379,7 +2391,7 @@ impl VisitMut for ToLocus<'_> {
 
 struct MakeSelector<'a> {
   base: u8,
-  to_locus: &'a IdxVec<ConstId, Option<LocusId>>,
+  fixed_vars: u32,
   to_const: &'a IdxVec<LocusId, ConstId>,
   terms: Vec<Result<Box<Term>, SelId>>,
 }
@@ -2387,8 +2399,7 @@ struct MakeSelector<'a> {
 impl VisitMut for MakeSelector<'_> {
   fn visit_term(&mut self, tm: &mut Term) {
     if let Term::Constant(c) = tm {
-      let n = self.to_locus.get(*c).and_then(|l| *l).expect("local constant in exported item");
-      if let Some(i) = n.0.checked_sub(self.base) {
+      if let Some(i) = c.0.checked_sub(self.fixed_vars) {
         *tm = match self.terms[i as usize] {
           Ok(ref t) => (**t).clone(),
           Err(nr) => Term::Selector {
@@ -2583,7 +2594,9 @@ impl BlockReader {
     if self.assums.is_empty() {
       properties.load_args(&elab.g, &elab.lc, &self.to_const, |args| {
         PropertyDeclKind::Func(
-          redefines.filter(|_| it.redef).map(|t| (t, &self.to_const.0[superfluous as usize..])),
+          redefines
+            .filter(|_| value.is_none())
+            .map(|t| (t, &self.to_const.0[superfluous as usize..])),
           args,
         )
       });
@@ -2597,10 +2610,12 @@ impl BlockReader {
       n = redefines.unwrap()
     } else {
       let primary = primary.clone();
-      n = elab.g.constrs.functor.push(TyConstructor {
+      let mut c = TyConstructor {
         c: Constructor { primary, redefines, superfluous, properties: properties.props },
         ty: (*it_type).clone(),
-      });
+      };
+      c.visit(&mut elab.intern_const());
+      n = elab.g.constrs.functor.push(c);
       elab.push_constr(ConstrKind::Func(n));
     }
     if let Some(mut value) = value {
@@ -2693,7 +2708,8 @@ impl BlockReader {
       n = redefines.unwrap()
     } else {
       let p = primary.clone();
-      let c = Constructor { primary: p, redefines, superfluous, properties: properties.props };
+      let mut c = Constructor { primary: p, redefines, superfluous, properties: properties.props };
+      c.visit(&mut elab.intern_const());
       n = elab.g.constrs.predicate.push(c);
       elab.push_constr(ConstrKind::Pred(n));
     }
@@ -2807,10 +2823,12 @@ impl BlockReader {
           n = redefines.unwrap()
         } else {
           let primary = primary.clone();
-          n = elab.g.constrs.mode.push(TyConstructor {
+          let mut c = TyConstructor {
             c: Constructor { primary, redefines, superfluous, properties: properties.props },
             ty: (*it_type).clone(),
-          });
+          };
+          c.visit(&mut elab.intern_const());
+          n = elab.g.constrs.mode.push(c);
           elab.push_constr(ConstrKind::Mode(n));
         }
         if let Some(value) = value {
@@ -2888,10 +2906,12 @@ impl BlockReader {
       n = redefines.unwrap()
     } else {
       let p = primary.clone();
-      n = elab.g.constrs.attribute.push(TyConstructor {
+      let mut c = TyConstructor {
         c: Constructor { primary: p, redefines, superfluous, properties: properties.props },
         ty: self.primary.0.last().unwrap().clone(),
-      });
+      };
+      c.visit(&mut elab.intern_const());
+      n = elab.g.constrs.attribute.push(c);
       elab.push_constr(ConstrKind::Attr(n));
     }
     if let Some(value) = value {
@@ -2960,6 +2980,7 @@ impl BlockReader {
       pos: true,
     };
     aggr_pat.check_access();
+    self.to_locus.0.truncate(fixed_vars);
 
     let mut prefixes = vec![];
     for ty in &*parents {
@@ -2979,8 +3000,9 @@ impl BlockReader {
     elab.r.lc.formatter.push(&elab.r.g.constrs, &subaggr_pat);
     elab.r.notations.sub_aggr.push(subaggr_pat);
 
+    self.to_locus.push(Some(self.to_const.push(ConstId::from_usize(fixed_vars))));
     let mut mk_sel =
-      MakeSelector { base, to_locus: &self.to_locus, to_const: &self.to_const, terms: vec![] };
+      MakeSelector { base, fixed_vars: fixed_vars as u32, to_const: &self.to_const, terms: vec![] };
     let mut fields = vec![];
     let mut field_fmt = vec![];
     let mut new_fields = vec![];
@@ -3015,7 +3037,8 @@ impl BlockReader {
         fields.push(sel_id);
       } else {
         self.to_locus(elab, |l| ty.visit(l));
-        let sel = TyConstructor { c: Constructor::new(sel_primary_it.clone().collect()), ty };
+        let mut sel = TyConstructor { c: Constructor::new(sel_primary_it.clone().collect()), ty };
+        sel.visit(&mut elab.intern_const());
         let sel_id = elab.g.constrs.selector.push(sel);
         let sel_pat = Pattern {
           kind: PatternKind::Sel(sel_id),
@@ -3032,14 +3055,20 @@ impl BlockReader {
         fields.push(sel_id);
       }
     }
+    self.to_locus.0.pop();
+    self.to_const.0.pop();
 
     assert!(prefixes.iter().all(|prefix| prefix.is_empty()), "structure does not extend parent");
     self.to_locus(elab, |l| parents.visit(l));
 
-    let mut c = Constructor::new(sel_primary_it.clone().collect());
-    c.properties.set(PropertyKind::Abstractness);
+    let mut c = TyConstructor {
+      c: Constructor::new(sel_primary_it.clone().collect()),
+      ty: struct_ty.clone(),
+    };
+    c.c.properties.set(PropertyKind::Abstractness);
+    c.visit(&mut elab.intern_const());
+    let attr_id = elab.g.constrs.attribute.push(c);
     let attr_primary = sel_primary_it.collect();
-    let attr_id = elab.g.constrs.attribute.push(TyConstructor { c, ty: struct_ty.clone() });
     let attr_pat = Pattern {
       kind: PatternKind::Attr(attr_id),
       fmt: FormatId::STRICT,
@@ -3062,23 +3091,27 @@ impl BlockReader {
 
     let mut sorted_fields: Box<[_]> = fields.clone().into();
     sorted_fields.sort_unstable();
-    let struct_id2 = elab.g.constrs.struct_mode.push(StructMode {
+    let mut c = StructMode {
       c: Constructor::new(struct_primary),
       parents,
       aggr: aggr_id,
       fields: sorted_fields,
-    });
+    };
+    c.visit(&mut elab.intern_const());
+    let struct_id2 = elab.g.constrs.struct_mode.push(c);
     assert!(struct_id == struct_id2);
     elab.r.lc.formatter.push(&elab.r.g.constrs, &struct_pat);
     elab.r.notations.struct_mode.push(struct_pat);
 
     let mut aggr_ty = struct_ty;
     aggr_ty.attrs = (attrs.clone(), attrs);
-    let aggr_id2 = elab.g.constrs.aggregate.push(Aggregate {
+    let mut c = Aggregate {
       c: TyConstructor { c: Constructor::new(aggr_primary), ty: aggr_ty },
       base,
       fields: fields.into(),
-    });
+    };
+    c.visit(&mut elab.intern_const());
+    let aggr_id2 = elab.g.constrs.aggregate.push(c);
     assert!(aggr_id == aggr_id2);
     elab.r.lc.formatter.push(&elab.r.g.constrs, &aggr_pat);
     elab.r.notations.aggregate.push(aggr_pat);
@@ -3237,14 +3270,15 @@ impl BlockReader {
       ty.visit(l);
     });
     CheckAccess::with(&primary, |occ| occ.visit_term(&term2));
-    attrs1.visit(&mut elab.intern_const());
     elab.read_functor_cluster(FunctorCluster {
       cl: Cluster { primary, consequent: (attrs1, attrs) },
       ty: oty.map(|_| Box::new(ty)),
       term: Box::new(term2),
     });
     self.needs_round_up = true;
+    std::mem::swap(&mut self.primary, &mut elab.lc.locus_ty);
     elab.r.g.round_up_term_cache(&mut elab.r.lc);
+    std::mem::swap(&mut self.primary, &mut elab.lc.locus_ty);
   }
 
   fn elab_identify_pattern_func(
@@ -3613,6 +3647,10 @@ impl ReadProof for BlockReader {
         self.elab_sethood_registration(elab, ty, just),
       (BlockKind::Definition, &ast::ItemKind::Pragma(Pragma::Canceled(CancelKind::Def, n))) =>
         elab.elab_canceled(CancelKind::Def, n),
+      (
+        BlockKind::Registration | BlockKind::Definition,
+        ast::ItemKind::Pragma(Pragma::ThmDesc(_)),
+      ) => elab.items -= 1,
       _ => return self.super_elab_item(elab, it),
     }
     true

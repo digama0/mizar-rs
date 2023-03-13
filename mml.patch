@@ -98,6 +98,11 @@
 @@ -29 +29 @@
 - requirements NUMERALS, REAL, SUBSET, ARITHM;
 + requirements BOOLE, NUMERALS, REAL, SUBSET, ARITHM;
+--- gtarski3.miz
++++ gtarski3.miz
+@@ -3164 +3164 @@
+-::$ 7.25 Satz
++::$N 7.25 Satz
 --- hilb10_4.miz
 +++ hilb10_4.miz
 @@ -35 +35 @@
@@ -158,6 +163,14 @@
 @@ -30 +30 @@
 - requirements SUBSET, NUMERALS, ARITHM;
 + requirements BOOLE, SUBSET, NUMERALS, ARITHM;
+--- number02.miz
++++ number02.miz
+@@ -421 +421 @@
+-  ex k st n = z*k+0 or ... or n = z*k+(z-1)
++  ex k st n = z*k+(0 qua Nat) or ... or n = z*k+(z-1)
+@@ -446 +446 @@
+-      take 0;
++      take 0,n;
 --- pdiff_3.miz
 +++ pdiff_3.miz
 @@ -29 +29 @@
@@ -228,6 +241,10 @@
 @@ -31 +31 @@
 - requirements SUBSET, NUMERALS, ARITHM, REAL;
 + requirements BOOLE, SUBSET, NUMERALS, ARITHM, REAL;
+--- stacks_1.miz
++++ stacks_1.miz
+@@ -502 +501,0 @@
+-::$H-
 --- tops_4.miz
 +++ tops_4.miz
 @@ -28 +28 @@

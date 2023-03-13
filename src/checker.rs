@@ -107,8 +107,12 @@ impl<'a> Checker<'a> {
         }
       } else {
         err = true;
-        let expected = !self.g.cfg.analyzer_enabled
-          && crate::EXPECTED_ERRORS.contains(&(self.article.as_str(), self.idx));
+        let expected = if self.g.cfg.analyzer_enabled {
+          crate::EXPECTED_ANALYZER_ERRORS
+        } else {
+          crate::EXPECTED_CHECKER_ERRORS
+        }
+        .contains(&(self.article.as_str(), self.idx));
         if !expected && self.g.cfg.checker_result {
           eprintln!(
             "FAILED TO JUSTIFY {}.{i} @ {:?}:{:?}: {:#?}",
@@ -976,7 +980,7 @@ impl<'a> SchemeCtx<'a> {
       (SchFunc { nr: n1, args: args1 }, _) =>
         if args1.is_empty() {
           let depth = self.lc.bound_var.len() as u32;
-          if CheckBound::get(depth, |cb| cb.visit_term(t2)) {
+          if CheckBound::get(0..depth, |cb| cb.visit_term(t2)) {
             return false
           }
           let t2 = t2.visit_cloned(&mut OnVarMut(|n| *n -= depth));

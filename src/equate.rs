@@ -289,7 +289,7 @@ impl<'a> Equalizer<'a> {
   fn prep_binder(
     &mut self, tm: &mut Term, depth: u32, coll: fn(&mut ConstrMaps) -> &mut Vec<EqMarkId>,
   ) -> Option<Result<EqTermId, usize>> {
-    if CheckBound::get(depth, |cb| cb.visit_term(tm)) {
+    if CheckBound::get(0..depth, |cb| cb.visit_term(tm)) {
       return None
     }
     OnVarMut(|n| *n -= depth).visit_term(tm);
@@ -466,7 +466,7 @@ impl VisitMut for Y<'_, '_> {
       | Term::FreeVar(_)
       | Term::Numeral(_)
       | Term::Qua { .. }
-      | Term::It => unreachable!(),
+      | Term::It => unreachable!("{tm:?}"),
     };
     let ty = tm.get_type_uncached(self.g, self.lc);
     y_try!(self, self.insert_type(ty, et));

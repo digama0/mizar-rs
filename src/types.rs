@@ -638,6 +638,12 @@ impl Term {
       _ => self,
     }
   }
+  pub fn unqua<'a>(self: &'a TermQua) -> &'a Term {
+    match self {
+      Term::Qua { value, .. } => value,
+      _ => self,
+    }
+  }
 }
 
 impl<V: VisitMut> Visitable<V> for Term {
