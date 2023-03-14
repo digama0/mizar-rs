@@ -32,26 +32,37 @@ After "unpacking" the MML grows to 12.7G, so beware if you are short on space.
 You can then test the checker on the MML. You should get a result like this:
 ```shell
 $ time cargo run --release
-0: tarski
-1: xboole_0
-2: boole
+   6: xfamily  in 0.002s
+   0: tarski   in 0.005s
+   2: boole    in 0.008s
+  10: subset   in 0.002s
 ...
-1411: integr25
-expected failure: 3
+1411: integr25 in 6.015s
+1406: integr24 in 17.168s
+1410: glib_015 in 12.777s
+1367: wallace1 in 78.498s
+1408: field_9  in 28.644s
+expected failure: 1
 flex expansion bug: 6
-success: 1215271
+success: 1215273
 ________________________________________________________
-Executed in  710.71 secs    fish           external
-   usr time   76.82 mins    0.00 micros   76.82 mins
-   sys time    0.25 mins  301.00 micros    0.25 mins
+Executed in  702.38 secs    fish           external
+   usr time   81.93 mins  830.00 micros   81.93 mins
+   sys time    0.24 mins    0.00 micros    0.24 mins
 ```
 
-Here is a performance comparison of running the original Mizar checker vs the new `mizar-rs` checker on the entire MML:
+Here is a performance comparison of running the original Mizar checker vs the new `mizar-rs` checker on the entire MML, on 8 cores:
 
-|           | `mizar-rs` | `verifier -c` | speedup |
-|-----------|------------|---------------|---------|
-| real time | 11.84 min  | 57.37 min     | 4.84x   |
-| CPU time  | 76.82 min  | 417.57 min    | 5.49x   |
+|                               | `mizar-rs` | `verifier` | speedup |
+|-------------------------------|------------|------------|---------|
+| real time, analyzer           | 2.42 min   | 18.28 min  | 7.56x   |
+| CPU time, analyzer            | 13.14 min  | 66.25 min  | 5.04x   |
+| real time, checker            | 11.33 min  | 57.37 min  | 5.06x   |
+| CPU time, checker             | 73.70 min  | 417.57 min | 5.67x   |
+| real time, analyzer + checker | 11.71 min  | 71.38 min  | 6.10x   |
+| CPU time, analyzer + checker  | 81.93 min  | 490.55 min | 5.99x   |
+
+Note that, compared to `verifier`, `mizar-rs` benefits more from running both parts together rather than separately (the `analyzer + checker` row is less than `analyzer` plus `checker`), because `mizar-rs` does not do two passes.
 
 ## Configuration
 

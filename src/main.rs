@@ -3015,7 +3015,6 @@ fn main() {
     skip_to_verbose: DEBUG,
     parallelism: if DEBUG || ONE_FILE { 1 } else { 8 },
   };
-  const ORIG_MIZAR: bool = false;
 
   const FIRST_FILE: usize = 0;
   const ONE_FILE: bool = DEBUG;
@@ -3033,6 +3032,7 @@ fn main() {
   if std::env::var("ONE_ITEM").is_ok() {
     cfg.one_item = true;
   }
+  let orig_mizar = std::env::var("ORIG_MIZAR").is_ok();
   let mut args = std::env::args().skip(1);
   let first_file = args.next().and_then(|s| s.parse().ok()).unwrap_or(FIRST_FILE);
   if let Some(n) = args.next().and_then(|s| s.parse().ok()) {
@@ -3061,15 +3061,17 @@ fn main() {
   std::thread::scope(|s| {
     for thread in running {
       s.spawn(move || {
+        let mut line = String::new();
         while let Some((i, s)) = {
           let mut lock = jobs.lock().unwrap();
           lock.next()
         } {
           let path = MizPath::new(s);
           *thread.write().unwrap() = Some(path.0);
-          refresh_status_line(format!("{:w$}\r{i}: {s}\n", "", w = cfg.parallelism * 11));
+          refresh_status_line(line);
+          let start = std::time::Instant::now();
           if let Err(_payload) = std::panic::catch_unwind(|| {
-            if ORIG_MIZAR {
+            if orig_mizar {
               let mut cmd = std::process::Command::new("miz/mizbin/verifier");
               let cmd = match (cfg.analyzer_enabled, cfg.checker_enabled) {
                 (true, false) => cmd.arg("-a"),
@@ -3098,6 +3100,12 @@ fn main() {
               std::process::abort()
             }
           }
+          line = format!(
+            "{:w$}\r{i:4}: {s:8} in {:.3}s\n",
+            "",
+            start.elapsed().as_secs_f32(),
+            w = cfg.parallelism * 11,
+          );
 
           // let items = path.open_wsx().unwrap().parse_items();
           // println!("parsed {s}, {} wsx items", items.len());
@@ -3109,7 +3117,7 @@ fn main() {
           }
         }
         *thread.write().unwrap() = None;
-        refresh_status_line(String::new());
+        refresh_status_line(line);
       });
     }
   });
