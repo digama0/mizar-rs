@@ -63,6 +63,7 @@ Here is a performance comparison of running the original Mizar checker vs the ne
 | CPU time, analyzer + checker  | 81.93 min  | 490.55 min | 5.99x   |
 
 Note that, compared to `verifier`, `mizar-rs` benefits more from running both parts together rather than separately (the `analyzer + checker` row is less than `analyzer` plus `checker`), because `mizar-rs` does not do two passes.
+See [#2](https://github.com/digama0/mizar-rs/issues/2#issuecomment-1467281905) for more detailed plots and per-file measurements.
 
 ## Configuration
 
