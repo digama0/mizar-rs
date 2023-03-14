@@ -65,6 +65,17 @@ Here is a performance comparison of running the original Mizar checker vs the ne
 Note that, compared to `verifier`, `mizar-rs` benefits more from running both parts together rather than separately (the `analyzer + checker` row is less than `analyzer` plus `checker`), because `mizar-rs` does not do two passes.
 See [#2](https://github.com/digama0/mizar-rs/issues/2#issuecomment-1467281905) for more detailed plots and per-file measurements.
 
+Here some additional mizar-rs modes:
+
+|                    | command         | real time | CPU time   |
+|--------------------|-----------------|-----------|------------|
+| analyzer (quick)   | `EXPORT`        | 35.03 sec | 3.62 min   |
+| analyzer           | `ANALYZER_ONLY` | 2.42 min  | 13.14 min  |
+| checker            | `CHECKER_ONLY`  | 11.33 min | 73.70 min  |
+| analyzer + checker | (default)       | 11.71 min | 81.93 min  |
+
+The "analyzer (quick)" mode performs just enough analysis to construct theorem statements. This is mostly useful for constructing data for dependent articles, and represents the not-trivially-parallelizable part of MML processing when generating data files from scratch. (In the tests above we assume that all the auxiliary files have already been created, so we are not actually working from scratch.)
+
 ## Configuration
 
 Currently all configuration is stored in the code itself. Most flags are in

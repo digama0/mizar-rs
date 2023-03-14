@@ -2930,7 +2930,9 @@ pub struct Config {
   pub dump_libraries: bool,
   pub dump_formatter: bool,
 
+  pub exporter_enabled: bool,
   pub analyzer_enabled: bool,
+  pub analyzer_full: bool,
   pub checker_enabled: bool,
 
   // Unsound flags //
@@ -3000,8 +3002,10 @@ fn main() {
     dump_libraries: false,
     dump_formatter: false,
 
-    analyzer_enabled: true,
-    checker_enabled: true,
+    exporter_enabled: false,
+    analyzer_enabled: false,
+    analyzer_full: false,
+    checker_enabled: false,
 
     legacy_flex_handling: true,
     flex_expansion_bug: true,
@@ -3023,12 +3027,18 @@ fn main() {
   // let path = MizPath(Article::from_bytes(b"TEST"), "../test/text/test".into());
   // path.with_reader(&cfg, |v| v.run_checker(&path));
   // print_stats_and_exit(cfg.parallelism);
-  if std::env::var("CHECKER_ONLY").is_ok() {
-    cfg.analyzer_enabled = false;
-  }
-  if std::env::var("ANALYZER_ONLY").is_ok() {
-    cfg.checker_enabled = false;
-  }
+  let analyzer_only = std::env::var("ANALYZER_ONLY").is_ok();
+  let checker_only = std::env::var("CHECKER_ONLY").is_ok();
+  cfg.exporter_enabled = std::env::var("EXPORT").is_ok();
+  (cfg.analyzer_enabled, cfg.analyzer_full, cfg.checker_enabled) =
+    match (analyzer_only, checker_only, cfg.exporter_enabled) {
+      (true, true, _) => panic!("CHECKER_ONLY and ANALYZER_ONLY are mutually exclusive"),
+      (_, true, true) => panic!("CHECKER_ONLY and EXPORT are mutually exclusive"),
+      (false, true, false) => (false, false, true),
+      (true, false, _) => (true, true, false),
+      (false, false, true) => (true, false, false),
+      (false, false, false) => (true, true, true),
+    };
   if std::env::var("ONE_ITEM").is_ok() {
     cfg.one_item = true;
   }

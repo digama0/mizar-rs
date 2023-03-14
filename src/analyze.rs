@@ -145,9 +145,16 @@ impl Analyzer<'_> {
       ast::ItemKind::Theorem { prop, just } => {
         let f = self.elab_intern_formula(&prop.f, true);
         Exportable.visit_formula(&f);
-        let label = prop.label.as_ref().map(|l| l.id.0);
-        self.elab_justification(label, &f, just);
-        self.push_prop(label, f);
+        if self.g.cfg.exporter_enabled {
+          // TODO
+        }
+        if self.g.cfg.analyzer_full {
+          let label = prop.label.as_ref().map(|l| l.id.0);
+          self.elab_justification(label, &f, just);
+          self.push_prop(label, f);
+        } else {
+          self.skip_justification(just)
+        }
       }
       ast::ItemKind::Reservation(it) => {
         self.lc.term_cache.get_mut().open_scope();
@@ -202,7 +209,9 @@ impl Analyzer<'_> {
     }
     let prems = prems.iter().map(|prop| self.elab_proposition(prop, true)).collect::<Box<[_]>>();
     let thesis = self.elab_intern_formula(concl, true);
-    self.elab_proof(None, &thesis, items, *end);
+    if self.g.cfg.analyzer_full {
+      self.elab_proof(None, &thesis, items, *end);
+    }
     let primary: Box<[_]> = self.lc.sch_func_ty.0.drain(..).collect();
     let mut sch = Scheme { sch_funcs: primary, prems, thesis };
     self.lc.expand_consts(&self.g.constrs, |c| sch.visit(c));
@@ -250,15 +259,24 @@ impl Analyzer<'_> {
       }
       ast::ItemKind::Reconsider { vars, ty, just } => {
         let ty = self.elab_intern_type(ty);
-        let f = Formula::mk_and_with(|conjs| {
+        if self.g.cfg.analyzer_full {
+          let f = Formula::mk_and_with(|conjs| {
+            for var in vars {
+              let ast::ReconsiderVar::Equality { tm, .. } = var else { unreachable!() };
+              let tm = Box::new(self.elab_intern_term(tm));
+              conjs.push(Formula::Is { term: tm.clone(), ty: Box::new(ty.clone()) });
+              self.lc.fixed_var.push(FixedVar { ty: ty.clone(), def: Some((tm, false)) });
+            }
+          });
+          self.elab_justification(None, &f, just)
+        } else {
           for var in vars {
             let ast::ReconsiderVar::Equality { tm, .. } = var else { unreachable!() };
             let tm = Box::new(self.elab_intern_term(tm));
-            conjs.push(Formula::Is { term: tm.clone(), ty: Box::new(ty.clone()) });
             self.lc.fixed_var.push(FixedVar { ty: ty.clone(), def: Some((tm, false)) });
           }
-        });
-        self.elab_justification(None, &f, just)
+          self.skip_justification(just)
+        }
       }
       ast::ItemKind::Consider { vars, conds, just } => {
         let start = self.lc.fixed_var.len();
@@ -266,33 +284,63 @@ impl Analyzer<'_> {
         for var in vars {
           self.elab_fixed_vars(var);
         }
-        let mut to_push = vec![];
-        let mut f = Formula::mk_and_with(|conjs| {
-          for prop in conds {
-            let f = self.elab_formula(&prop.f, true);
-            f.clone().append_conjuncts_to(conjs);
-            to_push.push((prop.label.as_ref().map(|l| l.id.0), f))
-          }
-        })
-        .mk_neg();
-        let end = self.lc.fixed_var.len();
-        self.lc.mk_forall(start..end, istart, false, &mut f);
-        f.visit(&mut self.intern_const());
-        self.elab_justification(None, &f.mk_neg(), just);
-        for (label, mut f) in to_push {
+        if self.g.cfg.analyzer_full {
+          let mut to_push = vec![];
+          let mut f = Formula::mk_and_with(|conjs| {
+            for prop in conds {
+              let f = self.elab_formula(&prop.f, true);
+              f.clone().append_conjuncts_to(conjs);
+              to_push.push((prop.label.as_ref().map(|l| l.id.0), f))
+            }
+          })
+          .mk_neg();
+          let end = self.lc.fixed_var.len();
+          self.lc.mk_forall(start..end, istart, false, &mut f);
           f.visit(&mut self.intern_const());
-          self.push_prop(label, f);
+          self.elab_justification(None, &f.mk_neg(), just);
+          for (label, mut f) in to_push {
+            f.visit(&mut self.intern_const());
+            self.push_prop(label, f);
+          }
+        } else {
+          self.skip_justification(just);
         }
       }
-      ast::ItemKind::Statement(stmt) => {
-        self.elab_stmt(stmt);
-      }
+      ast::ItemKind::Statement(stmt) =>
+        if self.g.cfg.analyzer_full {
+          self.elab_stmt(stmt);
+        } else {
+          self.skip_stmt(stmt);
+        },
       _ => unreachable!("unexpected item: {it:?}"),
+    }
+  }
+
+  fn skip_item(&mut self, it: &ast::Item) {
+    self.items += 1;
+    match &it.kind {
+      ast::ItemKind::Let { .. }
+      | ast::ItemKind::Assume { .. }
+      | ast::ItemKind::Given { .. }
+      | ast::ItemKind::Take { .. }
+      | ast::ItemKind::Thus { .. }
+      | ast::ItemKind::Set { .. }
+      | ast::ItemKind::DefFunc { .. }
+      | ast::ItemKind::DefPred { .. } => {}
+      ast::ItemKind::PerCases { just, blocks, .. } => {
+        blocks.iter().for_each(|bl| self.skip_items(&bl.items));
+        self.skip_justification(just)
+      }
+      ast::ItemKind::Reconsider { just, .. } | ast::ItemKind::Consider { just, .. } =>
+        self.skip_justification(just),
+      ast::ItemKind::Statement(stmt) => self.skip_stmt(stmt),
+      _ => panic!("unexpected item: {it:?}"),
     }
   }
 
   fn elab_stmt(&mut self, stmt: &ast::Statement) -> Formula {
     // vprintln!("elab_stmt (thesis = {:?}) {stmt:?}", self.thesis);
+    debug_assert!(self.g.cfg.analyzer_full);
     match stmt {
       ast::Statement::Proposition { prop, just } => {
         let f = self.elab_intern_formula(&prop.f, true);
@@ -331,6 +379,17 @@ impl Analyzer<'_> {
     }
   }
 
+  fn skip_stmt(&mut self, stmt: &ast::Statement) {
+    match stmt {
+      ast::Statement::Proposition { just, .. } => self.skip_justification(just),
+      ast::Statement::IterEquality { just, steps, .. } => {
+        self.skip_justification(just);
+        steps.iter().for_each(|ast::IterStep { just, .. }| self.skip_justification(just));
+      }
+      ast::Statement::Now { items, .. } => self.skip_items(items),
+    }
+  }
+
   fn elab_proof(
     &mut self, label: Option<LabelId>, thesis: &Formula, items: &[ast::Item], end: Position,
   ) {
@@ -338,6 +397,12 @@ impl Analyzer<'_> {
       this.thesis = Some(Box::new(thesis.clone()));
       WithThesis.elab_proof(this, items, end)
     })
+  }
+
+  fn skip_items(&mut self, items: &[ast::Item]) {
+    for item in items {
+      self.skip_item(item)
+    }
   }
 
   fn elab_fixed_vars(&mut self, var: &ast::BinderGroup) {
@@ -354,7 +419,7 @@ impl Analyzer<'_> {
 
   fn elab_proposition(&mut self, prop: &ast::Proposition, quotable: bool) -> Formula {
     let f = self.elab_intern_formula(&prop.f, true);
-    if quotable {
+    if quotable && self.g.cfg.analyzer_full {
       self.push_prop(prop.label.as_ref().map(|l| l.id.0), f.clone());
     }
     f
@@ -363,6 +428,7 @@ impl Analyzer<'_> {
   fn elab_justification(
     &mut self, label: Option<LabelId>, thesis: &Formula, just: &ast::Justification,
   ) {
+    debug_assert!(self.g.cfg.analyzer_full);
     match just {
       &ast::Justification::Inference { pos, ref kind, ref refs } => {
         let it = Inference {
@@ -379,24 +445,32 @@ impl Analyzer<'_> {
     }
   }
 
+  fn skip_justification(&mut self, just: &ast::Justification) {
+    if let ast::Justification::Block { items, .. } = just {
+      self.skip_items(items)
+    }
+  }
+
   fn elab_corr_conds(
     &mut self, mut cc: CorrConds, conds: &[ast::CorrCond], corr: &Option<ast::Correctness>,
   ) {
-    for cond in conds {
-      let mut thesis = cc.0[cond.kind].take().unwrap();
-      thesis.visit(&mut self.intern_const());
-      self.elab_justification(None, &thesis, &cond.just);
+    if self.g.cfg.analyzer_full {
+      for cond in conds {
+        let mut thesis = cc.0[cond.kind].take().unwrap();
+        thesis.visit(&mut self.intern_const());
+        self.elab_justification(None, &thesis, &cond.just);
+      }
+      if let Some(corr) = corr {
+        let mut thesis = Formula::mk_and_with(|conjs| {
+          for &kind in &corr.conds {
+            cc.0[kind].take().unwrap().append_conjuncts_to(conjs);
+          }
+        });
+        thesis.visit(&mut self.intern_const());
+        self.elab_justification(None, &thesis, &corr.just);
+      }
+      assert!(cc.0.iter().all(|p| p.1.is_none()));
     }
-    if let Some(corr) = corr {
-      let mut thesis = Formula::mk_and_with(|conjs| {
-        for &kind in &corr.conds {
-          cc.0[kind].take().unwrap().append_conjuncts_to(conjs);
-        }
-      });
-      thesis.visit(&mut self.intern_const());
-      self.elab_justification(None, &thesis, &corr.just);
-    }
-    assert!(cc.0.iter().all(|p| p.1.is_none()));
   }
 
   fn elab_def_case<T, U>(
@@ -1667,90 +1741,95 @@ impl<'a> PropertiesBuilder<'a> {
   fn elab_properties(&mut self, elab: &mut Analyzer<'_>, props: &[ast::Property]) {
     for prop in props {
       let (g, lc) = (&elab.g, &elab.lc);
-      let thesis = match (prop.kind, &self.kind) {
-        (PropertyKind::Symmetry, &PropertyDeclKind::Pred(Args::Binary(args), pos)) =>
-          self.asymmetry(lc, args, pos, !pos),
-        (PropertyKind::Reflexivity, &PropertyDeclKind::Pred(Args::Binary(args), pos)) =>
-          self.reflexivity(lc, args, pos),
-        (PropertyKind::Irreflexivity, &PropertyDeclKind::Pred(Args::Binary(args), pos)) =>
-          self.reflexivity(lc, args, !pos),
-        (PropertyKind::Connectedness, &PropertyDeclKind::Pred(Args::Binary(args), pos)) =>
-          self.asymmetry(lc, args, !pos, !pos),
-        (PropertyKind::Asymmetry, &PropertyDeclKind::Pred(Args::Binary(args), pos)) =>
-          self.asymmetry(lc, args, pos, pos),
-        (PropertyKind::Commutativity, &PropertyDeclKind::Func(t, Args::Binary(args))) => {
-          let ty = &lc.fixed_var[args[0]].ty;
-          if let Some((nr, args2)) = t {
-            let term = |tgt| {
-              let inst = &mut InstN::new(args, 2, 0, tgt);
-              let args = args2.iter().map(|&c| Term::Constant(c).visit_cloned(inst)).collect();
-              Term::Functor { nr, args }
-            };
-            Formula::forall(
-              ty.clone(),
-              Formula::forall(ty.clone(), g.reqs.mk_eq(term([0, 1]), term([1, 0]))),
-            )
-          } else {
-            let f = Formula::mk_and_with(|conj| {
-              self.the_formula(args, 3, 0, [1, 2]).append_conjuncts_to(conj);
-              self.the_formula(args, 3, 0, [2, 1]).mk_neg().append_conjuncts_to(conj);
-            });
-            Formula::forall(
-              lc.it_type.as_deref().unwrap().clone(),
-              Formula::forall(ty.clone(), Formula::forall(ty.clone(), f.mk_neg())),
-            )
-          }
-        }
-        (PropertyKind::Idempotence, &PropertyDeclKind::Func(_, Args::Binary(args))) => {
-          let ty = &lc.fixed_var[args[0]].ty;
-          assert!(lc.it_type.as_ref().unwrap().is_wider_than(g, lc, ty));
-          Formula::forall(ty.clone(), self.the_formula(args, 1, 0, [0, 0]))
-        }
-        (PropertyKind::Involutiveness, &PropertyDeclKind::Func(_, Args::Unary(args))) => {
-          let ty = &lc.fixed_var[args[0]].ty;
-          let it_ty = lc.it_type.as_deref().unwrap();
-          assert!(g.eq(lc, it_ty, ty));
-          let f = Formula::mk_and_with(|conj| {
-            self.the_formula(args, 2, 0, [1]).append_conjuncts_to(conj);
-            self.the_formula(args, 2, 1, [0]).mk_neg().append_conjuncts_to(conj);
-          });
-          Formula::forall(it_ty.clone(), Formula::forall(it_ty.clone(), f.mk_neg()))
-        }
-        (PropertyKind::Projectivity, &PropertyDeclKind::Func(_, Args::Unary(args))) => {
-          let ty = &lc.fixed_var[args[0]].ty;
-          let it_ty = lc.it_type.as_deref().unwrap();
-          let wty = &*ty.widening_of(g, lc, it_ty).unwrap();
-          assert!(g.eq_radices(lc, wty, ty));
-          assert!(ty.attrs.0.is_subset_of(&wty.attrs.1, |a1, a2| g.eq(lc, a1, a2)));
-          let f = Formula::mk_and_with(|conj| {
-            self.the_formula(args, 2, 0, [1]).append_conjuncts_to(conj);
-            self.the_formula(args, 2, 0, [0]).mk_neg().append_conjuncts_to(conj);
-          });
-          Formula::forall(it_ty.clone(), Formula::forall(ty.clone(), f.mk_neg()))
-        }
-        (PropertyKind::Sethood, PropertyDeclKind::Mode(value)) => {
-          let it_ty = lc.it_type.as_deref().unwrap();
-          let f = value.by_cases(0, |case| {
-            let f = Formula::mk_and_with(|conj| {
-              case.visit_cloned(&mut AbstractIt(1, 2)).append_conjuncts_to(conj);
-              let f = Formula::Pred {
-                nr: g.reqs.belongs_to().unwrap(),
-                args: Box::new([Term::Bound(BoundId(1)), Term::Bound(BoundId(0))]),
+      if g.cfg.analyzer_full {
+        let thesis = match (prop.kind, &self.kind) {
+          (PropertyKind::Symmetry, &PropertyDeclKind::Pred(Args::Binary(args), pos)) =>
+            self.asymmetry(lc, args, pos, !pos),
+          (PropertyKind::Reflexivity, &PropertyDeclKind::Pred(Args::Binary(args), pos)) =>
+            self.reflexivity(lc, args, pos),
+          (PropertyKind::Irreflexivity, &PropertyDeclKind::Pred(Args::Binary(args), pos)) =>
+            self.reflexivity(lc, args, !pos),
+          (PropertyKind::Connectedness, &PropertyDeclKind::Pred(Args::Binary(args), pos)) =>
+            self.asymmetry(lc, args, !pos, !pos),
+          (PropertyKind::Asymmetry, &PropertyDeclKind::Pred(Args::Binary(args), pos)) =>
+            self.asymmetry(lc, args, pos, pos),
+          (PropertyKind::Commutativity, &PropertyDeclKind::Func(t, Args::Binary(args))) => {
+            let ty = &lc.fixed_var[args[0]].ty;
+            if let Some((nr, args2)) = t {
+              let term = |tgt| {
+                let inst = &mut InstN::new(args, 2, 0, tgt);
+                let args = args2.iter().map(|&c| Term::Constant(c).visit_cloned(inst)).collect();
+                Term::Functor { nr, args }
               };
-              conj.push(f.mk_neg())
+              Formula::forall(
+                ty.clone(),
+                Formula::forall(ty.clone(), g.reqs.mk_eq(term([0, 1]), term([1, 0]))),
+              )
+            } else {
+              let f = Formula::mk_and_with(|conj| {
+                self.the_formula(args, 3, 0, [1, 2]).append_conjuncts_to(conj);
+                self.the_formula(args, 3, 0, [2, 1]).mk_neg().append_conjuncts_to(conj);
+              });
+              Formula::forall(
+                lc.it_type.as_deref().unwrap().clone(),
+                Formula::forall(ty.clone(), Formula::forall(ty.clone(), f.mk_neg())),
+              )
+            }
+          }
+          (PropertyKind::Idempotence, &PropertyDeclKind::Func(_, Args::Binary(args))) => {
+            let ty = &lc.fixed_var[args[0]].ty;
+            assert!(lc.it_type.as_ref().unwrap().is_wider_than(g, lc, ty));
+            Formula::forall(ty.clone(), self.the_formula(args, 1, 0, [0, 0]))
+          }
+          (PropertyKind::Involutiveness, &PropertyDeclKind::Func(_, Args::Unary(args))) => {
+            let ty = &lc.fixed_var[args[0]].ty;
+            let it_ty = lc.it_type.as_deref().unwrap();
+            assert!(g.eq(lc, it_ty, ty));
+            let f = Formula::mk_and_with(|conj| {
+              self.the_formula(args, 2, 0, [1]).append_conjuncts_to(conj);
+              self.the_formula(args, 2, 1, [0]).mk_neg().append_conjuncts_to(conj);
             });
-            Formula::forall(Type::SET, Formula::forall(it_ty.clone(), f.mk_neg()).mk_neg()).mk_neg()
-          });
-          f.mk_neg()
-        }
-        (PropertyKind::Associativity, PropertyDeclKind::Func(_, Args::Binary(_))) =>
-          panic!("associativity declarations are not supported"),
-        (PropertyKind::Transitivity, &PropertyDeclKind::Pred(Args::Binary(_), _)) =>
-          panic!("transitivity declarations are not supported"),
-        (PropertyKind::Abstractness, _) => unreachable!(),
-        (k, tgt) => panic!("property {k:?} is not applicable to {tgt:?}"),
-      };
-      elab.elab_justification(None, &thesis, &prop.just);
+            Formula::forall(it_ty.clone(), Formula::forall(it_ty.clone(), f.mk_neg()))
+          }
+          (PropertyKind::Projectivity, &PropertyDeclKind::Func(_, Args::Unary(args))) => {
+            let ty = &lc.fixed_var[args[0]].ty;
+            let it_ty = lc.it_type.as_deref().unwrap();
+            let wty = &*ty.widening_of(g, lc, it_ty).unwrap();
+            assert!(g.eq_radices(lc, wty, ty));
+            assert!(ty.attrs.0.is_subset_of(&wty.attrs.1, |a1, a2| g.eq(lc, a1, a2)));
+            let f = Formula::mk_and_with(|conj| {
+              self.the_formula(args, 2, 0, [1]).append_conjuncts_to(conj);
+              self.the_formula(args, 2, 0, [0]).mk_neg().append_conjuncts_to(conj);
+            });
+            Formula::forall(it_ty.clone(), Formula::forall(ty.clone(), f.mk_neg()))
+          }
+          (PropertyKind::Sethood, PropertyDeclKind::Mode(value)) => {
+            let it_ty = lc.it_type.as_deref().unwrap();
+            let f = value.by_cases(0, |case| {
+              let f = Formula::mk_and_with(|conj| {
+                case.visit_cloned(&mut AbstractIt(1, 2)).append_conjuncts_to(conj);
+                let f = Formula::Pred {
+                  nr: g.reqs.belongs_to().unwrap(),
+                  args: Box::new([Term::Bound(BoundId(1)), Term::Bound(BoundId(0))]),
+                };
+                conj.push(f.mk_neg())
+              });
+              Formula::forall(Type::SET, Formula::forall(it_ty.clone(), f.mk_neg()).mk_neg())
+                .mk_neg()
+            });
+            f.mk_neg()
+          }
+          (PropertyKind::Associativity, PropertyDeclKind::Func(_, Args::Binary(_))) =>
+            panic!("associativity declarations are not supported"),
+          (PropertyKind::Transitivity, &PropertyDeclKind::Pred(Args::Binary(_), _)) =>
+            panic!("transitivity declarations are not supported"),
+          (PropertyKind::Abstractness, _) => unreachable!(),
+          (k, tgt) => panic!("property {k:?} is not applicable to {tgt:?}"),
+        };
+        elab.elab_justification(None, &thesis, &prop.just);
+      } else {
+        elab.skip_justification(&prop.just);
+      }
       self.props.set(prop.kind);
     }
   }
@@ -1866,10 +1945,13 @@ trait ReadProof {
         let v = elab.lc.fixed_var.push(FixedVar { ty, def: Some((Box::new(term), false)) });
         self.take_as_var(elab, v)
       }
-      ast::ItemKind::Thus(stmt) => {
-        let f = elab.elab_stmt(stmt);
-        self.thus(elab, f.into_conjuncts())
-      }
+      ast::ItemKind::Thus(stmt) =>
+        if elab.g.cfg.analyzer_full {
+          let f = elab.elab_stmt(stmt);
+          self.thus(elab, f.into_conjuncts())
+        } else {
+          elab.skip_stmt(stmt)
+        },
       ast::ItemKind::PerCases { just, kind: CaseKind::Case, blocks } => {
         let mut iter = self.new_cases(elab);
         let f = Formula::mk_and_with(|disjs| {
@@ -2493,8 +2575,10 @@ impl BlockReader {
   fn after_scope(self, elab: &mut Analyzer) {
     for (df, label, mut thm) in self.defs {
       elab.r.read_definiens(&df);
-      thm.visit(&mut elab.intern_const());
-      elab.push_prop(label, *thm)
+      if elab.g.cfg.analyzer_full {
+        thm.visit(&mut elab.intern_const());
+        elab.push_prop(label, *thm)
+      }
     }
   }
 
@@ -3409,20 +3493,22 @@ impl BlockReader {
   ) {
     let mut ty = elab.elab_type(ty);
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
-    let mut property = Formula::mk_neg(Formula::forall(
-      Type::SET,
-      Formula::mk_neg(Formula::forall(
-        ty.clone(),
-        Formula::Pred {
-          nr: elab.g.reqs.belongs_to().unwrap(),
-          args: Box::new([Term::Bound(BoundId(1)), Term::Bound(BoundId(0))]),
-        },
-      )),
-    ));
+    if elab.g.cfg.analyzer_full {
+      let mut property = Formula::mk_neg(Formula::forall(
+        Type::SET,
+        Formula::mk_neg(Formula::forall(
+          ty.clone(),
+          Formula::Pred {
+            nr: elab.g.reqs.belongs_to().unwrap(),
+            args: Box::new([Term::Bound(BoundId(1)), Term::Bound(BoundId(0))]),
+          },
+        )),
+      ));
+      property.visit(&mut elab.intern_const());
+      elab.elab_justification(None, &property, just);
+    }
     self.to_locus(elab, |l| ty.visit(l));
     CheckAccess::with(&primary, |occ| occ.visit_type(&ty));
-    property.visit(&mut elab.intern_const());
-    elab.elab_justification(None, &property, just);
     elab.properties.push(Property { primary, ty, kind: PropertyKind::Sethood })
   }
 
