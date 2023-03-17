@@ -2,18 +2,6 @@ use crate::checker::Checker;
 use crate::types::*;
 use crate::*;
 
-#[derive(Default)]
-pub struct Notations {
-  pub mode: Vec<Pattern>,
-  pub struct_mode: Vec<Pattern>,
-  pub attribute: Vec<Pattern>,
-  pub predicate: Vec<Pattern>,
-  pub functor: Vec<Pattern>,
-  pub selector: Vec<Pattern>,
-  pub aggregate: Vec<Pattern>,
-  pub sub_aggr: Vec<Pattern>,
-}
-
 enum PendingDef {
   Constr(ConstrKind),
   Cluster(ClusterKind, usize),
@@ -28,7 +16,7 @@ pub struct Reader {
   /// gFormatsColl
   pub formats: BTreeMap<Format, FormatId>,
   /// Notat
-  pub notations: Notations,
+  pub notations: EnumMap<PatternKindClass, Vec<Pattern>>,
   /// Definientia
   pub definitions: Vec<Definiens>,
   /// EqDefinientia
@@ -84,7 +72,7 @@ impl MizPath {
       let mut f = Default::default();
       self.read_formats("frx", &mut f).unwrap();
       v.formats.extend(f.formats.enum_iter().map(|(id, f)| (*f, id)));
-      formats = Some(f.formats)
+      formats = Some(f)
     }
     v.lc.formatter.init(self, formats);
     let mut notations = Default::default();
@@ -121,28 +109,18 @@ impl MizPath {
     if cfg.analyzer_enabled {
       // LoadSGN
       for mut pat in notations {
-        match pat.kind {
-          PatternKind::Mode(_) => v.notations.mode.push(pat),
-          PatternKind::ExpandableMode { ref mut expansion } => {
-            v.lc.load_locus_tys(&pat.primary);
-            expansion.round_up_with_self(&v.g, &v.lc, false);
-            v.lc.unload_locus_tys();
-            v.notations.mode.push(pat)
-          }
-          PatternKind::Struct(_) => v.notations.struct_mode.push(pat),
-          PatternKind::Attr(_) => v.notations.attribute.push(pat),
-          PatternKind::Pred(_) => v.notations.predicate.push(pat),
-          PatternKind::Func(_) => v.notations.functor.push(pat),
-          PatternKind::Sel(_) => v.notations.selector.push(pat),
-          PatternKind::Aggr(_) => v.notations.aggregate.push(pat),
-          PatternKind::SubAggr(_) => v.notations.sub_aggr.push(pat),
+        if let PatternKind::ExpandableMode { expansion } = &mut pat.kind {
+          v.lc.load_locus_tys(&pat.primary);
+          expansion.round_up_with_self(&v.g, &v.lc, false);
+          v.lc.unload_locus_tys();
         }
+        v.notations[pat.kind.class()].push(pat)
       }
     }
 
     // LoadDefinitions
     if cfg.analyzer_enabled {
-      self.read_definitions(&v.g.constrs, "dfs", &mut v.definitions).unwrap();
+      self.read_definitions(&v.g.constrs, "dfs", None, &mut v.definitions).unwrap();
       if cfg.dump_definitions {
         for d in &v.definitions {
           eprintln!("definition: {d:?}");
@@ -152,7 +130,7 @@ impl MizPath {
 
     // LoadEqualities
     if cfg.checker_enabled {
-      self.read_definitions(&v.g.constrs, "dfe", &mut v.equalities).unwrap();
+      self.read_definitions(&v.g.constrs, "dfe", None, &mut v.equalities).unwrap();
       if cfg.dump_definitions {
         for d in &v.equalities {
           eprintln!("equality: {d:?}");
@@ -162,7 +140,7 @@ impl MizPath {
 
     // LoadExpansions
     if cfg.checker_enabled {
-      self.read_definitions(&v.g.constrs, "dfx", &mut v.expansions).unwrap();
+      self.read_definitions(&v.g.constrs, "dfx", None, &mut v.expansions).unwrap();
       if cfg.dump_definitions {
         for d in &v.expansions {
           eprintln!("expansion: {d:?}");
@@ -171,16 +149,16 @@ impl MizPath {
     }
 
     // LoadPropertiesReg
-    self.read_epr(&v.g.constrs, &mut v.properties).unwrap();
+    self.read_properties(&v.g.constrs, "epr", None, &mut v.properties).unwrap();
 
     // LoadIdentify
     if cfg.checker_enabled {
-      self.read_eid(&v.g.constrs, &mut v.identify).unwrap();
+      self.read_identify_regs(&v.g.constrs, "eid", None, &mut v.identify).unwrap();
     }
 
     // LoadReductions
     if cfg.checker_enabled {
-      self.read_erd(&v.g.constrs, &mut v.reductions).unwrap();
+      self.read_reduction_regs(&v.g.constrs, "erd", None, &mut v.reductions).unwrap();
     }
 
     // in mizar this was done inside the parser

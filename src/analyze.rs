@@ -1,13 +1,15 @@
 use crate::ast::{CaseKind, FormulaBinder, FormulaBinop, Pragma, ReservedId, VarKind};
+use crate::export::Exporter;
 use crate::reader::Reader;
-use crate::types::*;
+use crate::types::{PatternKindClass as PKC, *};
 use crate::*;
 use std::ops::Range;
 
 const MAX_EXPANSIONS: usize = 20;
 
-struct Analyzer<'a> {
+pub struct Analyzer<'a> {
   r: &'a mut Reader,
+  pub path: &'a MizPath,
   sch_func_args: IdxVec<SchFuncId, Box<[Type]>>,
   priv_func_args: IdxVec<PrivPredId, Box<[Type]>>,
   priv_pred: IdxVec<PrivPredId, (Box<[Type]>, Box<Formula>)>,
@@ -15,6 +17,7 @@ struct Analyzer<'a> {
   thesis: Option<Box<Formula>>,
   thesis_stack: Vec<Option<Box<Formula>>>,
   reserved: IdxVec<ReservedId, Type>,
+  pub export: Exporter,
 }
 impl<'a> std::ops::Deref for Analyzer<'a> {
   type Target = &'a mut Reader;
@@ -29,8 +32,9 @@ impl Reader {
     if !self.g.cfg.analyzer_enabled {
       panic!("analyzer is not enabled")
     }
-    let mut analyzer = Analyzer {
+    let mut elab = Analyzer {
       r: self,
+      path,
       sch_func_args: Default::default(),
       priv_func_args: Default::default(),
       priv_pred: Default::default(),
@@ -38,17 +42,32 @@ impl Reader {
       thesis: None,
       thesis_stack: vec![],
       reserved: Default::default(),
+      export: Default::default(),
     };
+    if elab.g.cfg.exporter_enabled {
+      for (i, pats) in &elab.r.notations {
+        elab.export.notations_base[i] = pats.len() as u32
+      }
+      elab.export.constrs_base = elab.g.constrs.base();
+      elab.export.clusters_base = elab.g.clusters.base();
+      elab.export.definitions_base = elab.definitions.len() as u32;
+      elab.export.identify_base = elab.identify.len() as u32;
+      elab.export.reductions_base = elab.reductions.len() as u32;
+      elab.export.properties_base = elab.properties.len() as u32;
+    }
     let r = path.open_msx().unwrap().parse_items();
     // println!("parsed {:?}, {} items", path.0, r.len());
     for (i, it) in r.iter().enumerate() {
-      if let Some(n) = analyzer.g.cfg.first_verbose_top_item {
+      if let Some(n) = elab.g.cfg.first_verbose_top_item {
         set_verbose(i >= n);
       }
-      if analyzer.g.cfg.top_item_header {
+      if elab.g.cfg.top_item_header {
         eprintln!("item {i}: {it:?}");
       }
-      analyzer.elab_top_item(it);
+      elab.elab_top_item(it);
+    }
+    if elab.g.cfg.exporter_enabled {
+      elab.export()
     }
   }
 }
@@ -145,15 +164,15 @@ impl Analyzer<'_> {
       ast::ItemKind::Theorem { prop, just } => {
         let f = self.elab_intern_formula(&prop.f, true);
         Exportable.visit_formula(&f);
-        if self.g.cfg.exporter_enabled {
-          // TODO
-        }
         if self.g.cfg.analyzer_full {
           let label = prop.label.as_ref().map(|l| l.id.0);
           self.elab_justification(label, &f, just);
-          self.push_prop(label, f);
+          self.push_prop(label, f.clone());
         } else {
           self.skip_justification(just)
+        }
+        if self.g.cfg.exporter_enabled {
+          self.export.theorems.push(Theorem { kind: TheoremKind::Thm, stmt: f })
         }
       }
       ast::ItemKind::Reservation(it) => {
@@ -222,6 +241,9 @@ impl Analyzer<'_> {
     self.sch_func_args.0.clear();
     self.sch_pred_args.0.clear();
     self.libs.sch.insert((ArticleId::SELF, *nr), sch);
+    if self.g.cfg.exporter_enabled {
+      self.export.schemes.push(Some(*nr))
+    }
   }
 
   fn elab_stmt_item(&mut self, it: &ast::Item) {
@@ -505,12 +527,23 @@ impl Analyzer<'_> {
     }
   }
 
-  fn elab_canceled(&mut self, _k: CancelKind, n: u32) { self.items += n as usize - 1; }
+  fn elab_canceled(&mut self, kind: CancelKind, n: u32) {
+    self.items += n as usize - 1;
+    if self.g.cfg.exporter_enabled {
+      match kind {
+        CancelKind::Def => (self.export.theorems)
+          .extend((0..n).map(|_| Theorem { kind: TheoremKind::CanceledDef, stmt: Formula::True })),
+        CancelKind::Thm => (self.export.theorems)
+          .extend((0..n).map(|_| Theorem { kind: TheoremKind::CanceledThm, stmt: Formula::True })),
+        CancelKind::Sch => self.export.schemes.extend((0..n).map(|_| None)),
+      }
+    }
+  }
 
   fn elab_functor_term(&mut self, fmt: FormatFunc, args: &[ast::Term]) -> Term {
     let args = self.elab_terms_qua(args);
     let fmt = self.formats[&Format::Func(fmt)];
-    for pat in self.notations.functor.iter().rev() {
+    for pat in self.notations[PKC::Func].iter().rev() {
       if pat.fmt == fmt {
         if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
           let PatternKind::Func(nr) = pat.kind else { unreachable!() };
@@ -527,7 +560,7 @@ impl Analyzer<'_> {
 
   fn elab_pred(&mut self, fmt: FormatPred, args: Vec<TermQua>, pos: bool) -> Formula {
     let fmt = self.formats[&Format::Pred(fmt)];
-    for pat in self.notations.predicate.iter().rev() {
+    for pat in self.notations[PKC::Pred].iter().rev() {
       if pat.fmt == fmt {
         if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
           let PatternKind::Pred(nr) = pat.kind else { unreachable!() };
@@ -590,7 +623,7 @@ impl Analyzer<'_> {
       ast::Term::Aggregate { ref sym, ref args, .. } => {
         let args = self.elab_terms_qua(args);
         let fmt = self.formats[&Format::Aggr(FormatAggr { sym: sym.0, args: args.len() as u8 })];
-        for pat in self.notations.aggregate.iter().rev() {
+        for pat in self.notations[PKC::Aggr].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
               let PatternKind::Aggr(nr) = pat.kind else { unreachable!() };
@@ -607,7 +640,7 @@ impl Analyzer<'_> {
       ast::Term::SubAggr { ref sym, ref arg, .. } => {
         let arg = self.elab_term_qua(arg);
         let fmt = self.formats[&Format::SubAggr(sym.0)];
-        for pat in self.notations.sub_aggr.iter().rev() {
+        for pat in self.notations[PKC::SubAggr].iter().rev() {
           if pat.fmt == fmt
             && pat.check_types(&self.g, &self.lc, std::slice::from_ref(&arg)).is_some()
           {
@@ -621,7 +654,7 @@ impl Analyzer<'_> {
       ast::Term::Selector { ref sym, ref arg, .. } => {
         let arg = self.elab_term_qua(arg);
         let fmt = self.formats[&Format::Sel(sym.0)];
-        for pat in self.notations.selector.iter().rev() {
+        for pat in self.notations[PKC::Sel].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, std::slice::from_ref(&arg)) {
               let PatternKind::Sel(nr) = pat.kind else { unreachable!() };
@@ -681,7 +714,7 @@ impl Analyzer<'_> {
           .chain(std::iter::once(tm.clone()))
           .collect_vec();
         let fmt = self.formats[&Format::Attr(FormatAttr { sym: sym.0, args: args.len() as u8 })];
-        for pat in self.notations.attribute.iter().rev() {
+        for pat in self.notations[PKC::Attr].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
               let PatternKind::Attr(nr) = pat.kind else { unreachable!() };
@@ -708,7 +741,7 @@ impl Analyzer<'_> {
           .chain(std::iter::once(Term::Bound(v)))
           .collect_vec();
         let fmt = self.formats[&Format::Attr(FormatAttr { sym: sym.0, args: args.len() as u8 })];
-        for pat in self.r.notations.attribute.iter().rev() {
+        for pat in self.r.notations[PKC::Attr].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
               let PatternKind::Attr(nr) = pat.kind else { unreachable!() };
@@ -739,7 +772,7 @@ impl Analyzer<'_> {
       ast::Type::Mode { sym, args, .. } => {
         let args = self.elab_terms_qua(args);
         let fmt = self.formats[&Format::Mode(FormatMode { sym: sym.0, args: args.len() as u8 })];
-        for pat in self.notations.mode.iter().rev() {
+        for pat in self.notations[PKC::Mode].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
               let mut ty;
@@ -781,7 +814,7 @@ impl Analyzer<'_> {
         let args = self.elab_terms_qua(args);
         let fmt =
           self.formats[&Format::Struct(FormatStruct { sym: sym.0, args: args.len() as u8 })];
-        for pat in self.notations.struct_mode.iter().rev() {
+        for pat in self.notations[PKC::Struct].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
               let PatternKind::Struct(nr) = pat.kind else { unreachable!() };
@@ -2573,11 +2606,14 @@ impl BlockReader {
   }
 
   fn after_scope(self, elab: &mut Analyzer) {
-    for (df, label, mut thm) in self.defs {
+    for (df, label, thm) in self.defs {
       elab.r.read_definiens(&df);
       if elab.g.cfg.analyzer_full {
-        thm.visit(&mut elab.intern_const());
-        elab.push_prop(label, *thm)
+        let thm2 = (*thm).visit_cloned(&mut elab.intern_const());
+        elab.push_prop(label, thm2);
+        if elab.g.cfg.exporter_enabled {
+          elab.export.theorems.push(Theorem { kind: TheoremKind::Def(df.constr), stmt: *thm })
+        }
       }
     }
   }
@@ -2628,7 +2664,7 @@ impl BlockReader {
     let (redefines, superfluous, it_type);
     if it.redef {
       let args: Box<[_]> = pat.args().iter().map(|v| Term::Constant(v.var())).collect();
-      let pat = elab.notations.functor.iter().rev().find(|pat| {
+      let pat = elab.notations[PKC::Func].iter().rev().find(|pat| {
         pat.fmt == fmt
           && !matches!(pat.kind, PatternKind::Func(nr)
             if elab.g.constrs.functor[nr].redefines.is_some())
@@ -2735,7 +2771,7 @@ impl BlockReader {
     let pat = Pattern { kind: PatternKind::Func(n), fmt, primary, visible, pos: true };
     pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
-    elab.r.notations.functor.push(pat)
+    elab.r.notations[PKC::Func].push(pat)
   }
 
   fn elab_pred_def(
@@ -2750,7 +2786,7 @@ impl BlockReader {
     let (redefines, superfluous, pos);
     if it.redef {
       let args: Box<[_]> = pat.args.iter().map(|v| Term::Constant(v.var())).collect();
-      let pat = elab.notations.predicate.iter().rev().find(|pat| {
+      let pat = elab.notations[PKC::Pred].iter().rev().find(|pat| {
         pat.fmt == fmt
           && !matches!(pat.kind, PatternKind::Pred(nr)
             if elab.g.constrs.predicate[nr].redefines.is_some())
@@ -2815,7 +2851,7 @@ impl BlockReader {
     let pat = Pattern { kind: PatternKind::Pred(n), fmt, primary, visible, pos };
     pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
-    elab.r.notations.predicate.push(pat)
+    elab.r.notations[PKC::Pred].push(pat)
   }
 
   fn elab_mode_def(
@@ -2837,13 +2873,13 @@ impl BlockReader {
         let pat = Pattern { kind, fmt, primary, visible, pos: true };
         pat.check_access();
         elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
-        elab.r.notations.mode.push(pat)
+        elab.r.notations[PKC::Mode].push(pat)
       }
       ast::DefModeKind::Standard { spec, def } => {
         let (redefines, superfluous, it_type);
         if it.redef {
           let args: Box<[_]> = pat.args.iter().map(|v| Term::Constant(v.var())).collect();
-          let pat = elab.notations.mode.iter().rev().find(|pat| {
+          let pat = elab.notations[PKC::Mode].iter().rev().find(|pat| {
             pat.fmt == fmt
               && !matches!(pat.kind, PatternKind::Mode(nr)
               if elab.g.constrs.mode[nr].redefines.is_some())
@@ -2943,7 +2979,7 @@ impl BlockReader {
         let pat = Pattern { kind: PatternKind::Mode(n), fmt, primary, visible, pos: true };
         pat.check_access();
         elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
-        elab.r.notations.mode.push(pat)
+        elab.r.notations[PKC::Mode].push(pat)
       }
     }
   }
@@ -2958,7 +2994,7 @@ impl BlockReader {
     let visible: Box<[_]> = pat.args.iter().map(|v| self.locus(v.var())).collect();
     let (redefines, superfluous, pos) = if it.redef {
       let args: Box<[_]> = pat.args.iter().map(|v| Term::Constant(v.var())).collect();
-      let pat = elab.notations.attribute.iter().rev().find(|pat| {
+      let pat = elab.notations[PKC::Attr].iter().rev().find(|pat| {
         pat.fmt == fmt
           && !matches!(pat.kind, PatternKind::Attr(nr)
               if elab.g.constrs.attribute[nr].redefines.is_some())
@@ -3017,7 +3053,7 @@ impl BlockReader {
     let pat = Pattern { kind: PatternKind::Attr(n), fmt, primary, visible, pos };
     pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
-    elab.r.notations.attribute.push(pat)
+    elab.r.notations[PKC::Attr].push(pat)
   }
 
   fn elab_struct_def(&mut self, elab: &mut Analyzer, it: &ast::DefStruct) {
@@ -3082,7 +3118,7 @@ impl BlockReader {
       pos: true,
     };
     elab.r.lc.formatter.push(&elab.r.g.constrs, &subaggr_pat);
-    elab.r.notations.sub_aggr.push(subaggr_pat);
+    elab.r.notations[PKC::SubAggr].push(subaggr_pat);
 
     self.to_locus.push(Some(self.to_const.push(ConstId::from_usize(fixed_vars))));
     let mut mk_sel =
@@ -3098,7 +3134,7 @@ impl BlockReader {
       let mut iter = parents.iter().zip(&mut prefixes).filter_map(|(parent, fields)| {
         let arg =
           Term::Constant(elab.lc.fixed_var.push(FixedVar { ty: parent.clone(), def: None }));
-        for pat in elab.notations.selector.iter().rev() {
+        for pat in elab.notations[PKC::Sel].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&elab.g, &elab.lc, std::slice::from_ref(&arg)) {
               let PatternKind::Sel(nr) = pat.kind else { unreachable!() };
@@ -3133,7 +3169,7 @@ impl BlockReader {
         };
         sel_pat.check_access();
         elab.r.lc.formatter.push(&elab.r.g.constrs, &sel_pat);
-        elab.r.notations.selector.push(sel_pat);
+        elab.r.notations[PKC::Sel].push(sel_pat);
         new_fields.push(sel_id);
         mk_sel.terms.push(Err(sel_id));
         fields.push(sel_id);
@@ -3161,7 +3197,7 @@ impl BlockReader {
       pos: true,
     };
     elab.r.lc.formatter.push(&elab.r.g.constrs, &attr_pat);
-    elab.r.notations.attribute.push(attr_pat);
+    elab.r.notations[PKC::Attr].push(attr_pat);
 
     elab.push_constr(ConstrKind::Attr(attr_id));
     elab.push_constr(ConstrKind::Struct(struct_id));
@@ -3185,7 +3221,7 @@ impl BlockReader {
     let struct_id2 = elab.g.constrs.struct_mode.push(c);
     assert!(struct_id == struct_id2);
     elab.r.lc.formatter.push(&elab.r.g.constrs, &struct_pat);
-    elab.r.notations.struct_mode.push(struct_pat);
+    elab.r.notations[PKC::Struct].push(struct_pat);
 
     let mut aggr_ty = struct_ty;
     aggr_ty.attrs = (attrs.clone(), attrs);
@@ -3198,7 +3234,7 @@ impl BlockReader {
     let aggr_id2 = elab.g.constrs.aggregate.push(c);
     assert!(aggr_id == aggr_id2);
     elab.r.lc.formatter.push(&elab.r.g.constrs, &aggr_pat);
-    elab.r.notations.aggregate.push(aggr_pat);
+    elab.r.notations[PKC::Aggr].push(aggr_pat);
   }
 
   fn elab_exist_reg(
@@ -3371,7 +3407,7 @@ impl BlockReader {
     let fmt = elab.formats[&Format::Func(pat.to_format())];
     let visible: Box<[_]> = pat.args().iter().map(|v| self.locus(v.var())).collect();
     let args: Box<[_]> = pat.args().iter().map(|v| Term::Constant(v.var())).collect();
-    for pat in elab.notations.functor.iter().rev() {
+    for pat in elab.notations[PKC::Func].iter().rev() {
       if pat.fmt == fmt {
         if let Some(subst) = pat.check_types(&elab.g, &elab.lc, &args) {
           let PatternKind::Func(nr) = pat.kind else { unreachable!() };
@@ -3519,7 +3555,7 @@ impl BlockReader {
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     CheckAccess::with(&primary, |occ| orig.args.iter().for_each(|v| occ.set(self.locus(v.var()))));
     let args: Box<[_]> = orig.args.iter().map(|v| Term::Constant(v.var())).collect();
-    let pat = elab.notations.predicate.iter().rev().find(|pat| {
+    let pat = elab.notations[PKC::Pred].iter().rev().find(|pat| {
       pat.fmt == fmt_orig
         && !matches!(pat.kind, PatternKind::Pred(nr)
             if elab.g.constrs.predicate[nr].redefines.is_some())
@@ -3538,7 +3574,7 @@ impl BlockReader {
     };
     pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
-    elab.r.notations.predicate.push(pat)
+    elab.r.notations[PKC::Pred].push(pat)
   }
 
   fn elab_func_notation(
@@ -3550,7 +3586,7 @@ impl BlockReader {
       orig.args().iter().for_each(|v| occ.set(self.locus(v.var())))
     });
     let args: Box<[_]> = orig.args().iter().map(|v| Term::Constant(v.var())).collect();
-    let pat = elab.notations.functor.iter().rev().find(|pat| {
+    let pat = elab.notations[PKC::Func].iter().rev().find(|pat| {
       pat.fmt == fmt_orig
         && !matches!(pat.kind, PatternKind::Func(nr)
             if elab.g.constrs.functor[nr].redefines.is_some())
@@ -3569,7 +3605,7 @@ impl BlockReader {
     };
     pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
-    elab.r.notations.functor.push(pat)
+    elab.r.notations[PKC::Func].push(pat)
   }
 
   fn elab_mode_notation(
@@ -3579,7 +3615,7 @@ impl BlockReader {
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     CheckAccess::with(&primary, |occ| orig.args.iter().for_each(|v| occ.set(self.locus(v.var()))));
     let args: Box<[_]> = orig.args.iter().map(|v| Term::Constant(v.var())).collect();
-    let pat = elab.notations.mode.iter().rev().find(|pat| {
+    let pat = elab.notations[PKC::Mode].iter().rev().find(|pat| {
       pat.fmt == fmt_orig
         && !matches!(pat.kind, PatternKind::Mode(nr)
             if elab.g.constrs.mode[nr].redefines.is_some())
@@ -3598,7 +3634,7 @@ impl BlockReader {
     };
     pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
-    elab.r.notations.mode.push(pat)
+    elab.r.notations[PKC::Mode].push(pat)
   }
 
   fn elab_attr_notation(
@@ -3608,7 +3644,7 @@ impl BlockReader {
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     CheckAccess::with(&primary, |occ| orig.args.iter().for_each(|v| occ.set(self.locus(v.var()))));
     let args: Box<[_]> = orig.args.iter().map(|v| Term::Constant(v.var())).collect();
-    let pat = elab.notations.attribute.iter().rev().find(|pat| {
+    let pat = elab.notations[PKC::Attr].iter().rev().find(|pat| {
       pat.fmt == fmt_orig
         && !matches!(pat.kind, PatternKind::Attr(nr)
             if elab.g.constrs.attribute[nr].redefines.is_some())
@@ -3627,7 +3663,7 @@ impl BlockReader {
     };
     pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
-    elab.r.notations.attribute.push(pat)
+    elab.r.notations[PKC::Attr].push(pat)
   }
 }
 

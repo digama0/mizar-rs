@@ -19,6 +19,7 @@ mod ast;
 mod bignum;
 mod checker;
 mod equate;
+mod export;
 mod format;
 mod parser;
 mod reader;

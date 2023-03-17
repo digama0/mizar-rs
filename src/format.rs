@@ -28,7 +28,7 @@ pub struct Formatter {
   pub dump: bool,
   cfg: FormatterConfig,
   symbols: HashMap<SymbolKind, String>,
-  formats: IdxVec<FormatId, Format>,
+  pub formats: Formats,
   mode: HashMap<ModeId, (u8, Box<[LocusId]>, FormatMode)>,
   struct_mode: HashMap<StructId, (u8, Box<[LocusId]>, FormatStruct)>,
   attr: HashMap<AttrId, (u8, Box<[LocusId]>, FormatAttr)>,
@@ -59,7 +59,7 @@ impl Formatter {
         map.entry(i).or_insert((c.primary.len() as u8, visible, f));
       }
     }
-    match (&pat.kind, self.formats[pat.fmt]) {
+    match (&pat.kind, self.formats.formats[pat.fmt]) {
       (&PatternKind::Mode(n), Format::Mode(f)) => ins(&ctx.mode[n], &mut self.mode, pat, n, f),
       (&PatternKind::Struct(n), Format::Struct(f)) =>
         ins(&ctx.struct_mode[n], &mut self.struct_mode, pat, n, f),
@@ -78,7 +78,7 @@ impl Formatter {
     pats.iter().for_each(|pat| self.push(ctx, pat))
   }
 
-  pub fn init(&mut self, path: &MizPath, formats: Option<IdxVec<FormatId, Format>>) {
+  pub fn init(&mut self, path: &MizPath, formats: Option<Formats>) {
     if !self.cfg.enable_formatter {
       return
     }
@@ -88,9 +88,9 @@ impl Formatter {
     self.formats = formats.unwrap_or_else(|| {
       let mut formats = Default::default();
       path.read_formats("frx", &mut formats).unwrap();
-      formats.formats
+      formats
     });
-    for f in &self.formats.0 {
+    for f in &self.formats.formats.0 {
       match f {
         Format::Aggr(f) => assert!(self.symbols.contains_key(&f.sym.into())),
         &Format::SubAggr(sym) => assert!(self.symbols.contains_key(&sym.into())),

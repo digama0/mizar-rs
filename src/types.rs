@@ -71,6 +71,11 @@ impl<I, T: Clone> Clone for IdxVec<I, T> {
   fn clone(&self) -> Self { Self(self.0.clone(), PhantomData) }
 }
 
+impl<I, T: PartialEq> PartialEq for IdxVec<I, T> {
+  fn eq(&self, other: &Self) -> bool { self.0 == other.0 }
+}
+impl<I, T: Eq> Eq for IdxVec<I, T> {}
+
 impl<I, T> IdxVec<I, T> {
   /// Construct a new empty [`IdxVec`].
   #[must_use]
@@ -551,7 +556,7 @@ impl<V, A: Visitable<V>, B: Visitable<V>> Visitable<V> for (A, B) {
 /// This type alias is used to indicate that the term might have a Qua at the top level.
 pub type TermQua = Term;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Term {
   /// Invariant: nr != 0. Zero is not a numeral (!),
   /// it is a `Functor` using Requirement::ZeroNumber
@@ -674,7 +679,7 @@ impl Term {
   }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct Type {
   /// The kind of type (either Mode or Struct), and the id
   pub kind: TypeKind,
@@ -741,7 +746,7 @@ impl TypeKind {
   }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Formula {
   SchPred {
     nr: SchPredId,
@@ -908,7 +913,7 @@ impl Formula {
   }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Attrs {
   Inconsistent,
   Consistent(Vec<Attr>),
@@ -932,7 +937,7 @@ impl<V: VisitMut> Visitable<V> for Attrs {
   fn visit(&mut self, v: &mut V) { v.visit_attrs(self) }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Attr {
   pub nr: AttrId,
   pub pos: bool,
@@ -965,12 +970,11 @@ impl Article {
     arr[..s.len()].copy_from_slice(s);
     Article(arr)
   }
-  pub fn as_str(&self) -> &str {
-    std::str::from_utf8(&self.0[..self.0.iter().position(|&x| x == 0).unwrap_or(8)]).unwrap()
-  }
+  pub fn as_bytes(&self) -> &[u8] { &self.0[..self.0.iter().position(|&x| x == 0).unwrap_or(8)] }
+  pub fn as_str(&self) -> &str { std::str::from_utf8(self.as_bytes()).unwrap() }
 }
 
-#[derive(Copy, Clone, Debug, Enum)]
+#[derive(Copy, Clone, Debug, Enum, PartialEq, Eq)]
 pub enum PropertyKind {
   /// Applicable to PredId. Means: `∀ x y, P[x, y] -> P[y, x]`
   Symmetry,
@@ -1024,7 +1028,7 @@ impl TryFrom<&[u8]> for PropertyKind {
   }
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, PartialEq, Eq)]
 pub struct PropertySet(u16);
 
 impl PropertySet {
@@ -1044,7 +1048,7 @@ impl PropertySet {
   pub fn set(&mut self, prop: PropertyKind) { self.0 |= 1 << prop as u16 }
 }
 
-#[derive(Clone, Copy, Default, Debug)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct Properties {
   pub properties: PropertySet,
   pub arg1: u8,
@@ -1065,7 +1069,7 @@ impl Properties {
   }
 }
 
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct Constructor<I> {
   // pub article: Article,
   // /// number of constructor in article
@@ -1085,7 +1089,7 @@ impl<I, V: VisitMut> Visitable<V> for Constructor<I> {
   fn visit(&mut self, v: &mut V) { v.with_locus_tys(&mut self.primary, |_| {}) }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TyConstructor<I> {
   pub c: Constructor<I>,
   pub ty: Type,
@@ -1099,7 +1103,7 @@ impl<I, V: VisitMut> Visitable<V> for TyConstructor<I> {
   fn visit(&mut self, v: &mut V) { v.with_locus_tys(&mut self.c.primary, |v| self.ty.visit(v)) }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StructMode {
   pub c: Constructor<StructId>,
   /// These are guaranteed to be struct types
@@ -1119,7 +1123,7 @@ impl<V: VisitMut> Visitable<V> for StructMode {
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Aggregate {
   pub c: TyConstructor<AggrId>,
   pub base: u8,
@@ -1138,7 +1142,7 @@ impl std::ops::DerefMut for Aggregate {
   fn deref_mut(&mut self) -> &mut Self::Target { &mut self.c }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Constructors {
   pub mode: IdxVec<ModeId, TyConstructor<ModeId>>,
   pub struct_mode: IdxVec<StructId, StructMode>,
@@ -1161,11 +1165,33 @@ impl<V: VisitMut> Visitable<V> for Constructors {
   }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ConstructorsBase {
+  pub mode: u32,
+  pub struct_mode: u32,
+  pub attribute: u32,
+  pub predicate: u32,
+  pub functor: u32,
+  pub selector: u32,
+  pub aggregate: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConstructorsRef<'a> {
+  pub mode: &'a [TyConstructor<ModeId>],
+  pub struct_mode: &'a [StructMode],
+  pub attribute: &'a [TyConstructor<AttrId>],
+  pub predicate: &'a [Constructor<PredId>],
+  pub functor: &'a [TyConstructor<FuncId>],
+  pub selector: &'a [TyConstructor<SelId>],
+  pub aggregate: &'a [Aggregate],
+}
+
 impl Constructors {
   pub fn push(&mut self, c: ConstructorDef) -> ConstrKind {
     match c {
       ConstructorDef::Mode(c) => ConstrKind::Mode(self.mode.push(c)),
-      ConstructorDef::StructMode(c) => ConstrKind::Struct(self.struct_mode.push(c)),
+      ConstructorDef::Struct(c) => ConstrKind::Struct(self.struct_mode.push(c)),
       ConstructorDef::Attr(c) => ConstrKind::Attr(self.attribute.push(c)),
       ConstructorDef::Pred(c) => ConstrKind::Pred(self.predicate.push(c)),
       ConstructorDef::Func(c) => ConstrKind::Func(self.functor.push(c)),
@@ -1185,6 +1211,42 @@ impl Constructors {
       ConstrKind::Aggr(k) => self.aggregate[k].visit(v),
     }
   }
+
+  pub fn base(&self) -> ConstructorsBase {
+    ConstructorsBase {
+      mode: self.mode.len() as u32,
+      struct_mode: self.struct_mode.len() as u32,
+      attribute: self.attribute.len() as u32,
+      predicate: self.predicate.len() as u32,
+      functor: self.functor.len() as u32,
+      selector: self.selector.len() as u32,
+      aggregate: self.aggregate.len() as u32,
+    }
+  }
+
+  pub fn since(&self, base: &ConstructorsBase) -> ConstructorsRef<'_> {
+    ConstructorsRef {
+      mode: &self.mode.0[base.mode as usize..],
+      struct_mode: &self.struct_mode.0[base.struct_mode as usize..],
+      attribute: &self.attribute.0[base.attribute as usize..],
+      predicate: &self.predicate.0[base.predicate as usize..],
+      functor: &self.functor.0[base.functor as usize..],
+      selector: &self.selector.0[base.selector as usize..],
+      aggregate: &self.aggregate.0[base.aggregate as usize..],
+    }
+  }
+}
+
+impl ConstructorsRef<'_> {
+  pub fn is_empty(&self) -> bool {
+    self.mode.is_empty()
+      && self.struct_mode.is_empty()
+      && self.attribute.is_empty()
+      && self.predicate.is_empty()
+      && self.functor.is_empty()
+      && self.selector.is_empty()
+      && self.aggregate.is_empty()
+  }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1195,7 +1257,45 @@ pub struct Clusters {
   pub conditional: ConditionalClusters,
 }
 
-#[derive(Clone)]
+impl Clusters {
+  pub fn base(&self) -> ClustersBase {
+    ClustersBase {
+      registered: self.registered.len() as u32,
+      functor: self.functor.len() as u32,
+      conditional: self.conditional.len() as u32,
+    }
+  }
+
+  pub fn since(&self, base: &ClustersBase) -> ClustersRef<'_> {
+    ClustersRef {
+      registered: &self.registered[base.registered as usize..],
+      functor: &self.functor.0[base.functor as usize..],
+      conditional: &self.conditional.vec[base.conditional as usize..],
+    }
+  }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ClustersBase {
+  pub registered: u32,
+  pub functor: u32,
+  pub conditional: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClustersRef<'a> {
+  pub registered: &'a [RegisteredCluster],
+  pub functor: &'a [FunctorCluster],
+  pub conditional: &'a [ConditionalCluster],
+}
+
+impl ClustersRef<'_> {
+  pub fn is_empty(&self) -> bool {
+    self.registered.is_empty() && self.functor.is_empty() && self.conditional.is_empty()
+  }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub struct Cluster {
   /// nPrimaryList
   pub primary: Box<[Type]>,
@@ -1224,7 +1324,7 @@ impl std::fmt::Debug for Cluster {
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegisteredCluster {
   pub cl: Cluster,
   pub ty: Box<Type>,
@@ -1246,7 +1346,7 @@ impl<V: VisitMut> Visitable<V> for RegisteredCluster {
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConditionalCluster {
   pub cl: Cluster,
   pub ty: Box<Type>,
@@ -1269,7 +1369,7 @@ impl<V: VisitMut> Visitable<V> for ConditionalCluster {
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FunctorCluster {
   pub cl: Cluster,
   pub ty: Option<Box<Type>>,
@@ -1363,7 +1463,7 @@ impl ConstrKind {
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConstrDef {
   // pub def_nr: u32,
   // pub article: Article,
@@ -1374,7 +1474,7 @@ impl<V: VisitMut> Visitable<V> for ConstrDef {
   fn visit(&mut self, v: &mut V) { v.with_locus_tys(&mut self.primary, |_| {}) }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DefCase<T> {
   pub case: T,
   pub guard: Formula,
@@ -1386,7 +1486,7 @@ impl<V: VisitMut, T: Visitable<V>> Visitable<V> for DefCase<T> {
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DefBody<T> {
   /// nPartialDefinientia
   pub cases: Box<[DefCase<T>]>,
@@ -1399,7 +1499,7 @@ impl<V: VisitMut, T: Visitable<V>> Visitable<V> for DefBody<T> {
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DefValue {
   Term(DefBody<Term>),
   Formula(DefBody<Formula>),
@@ -1425,7 +1525,7 @@ impl DefValue {
 #[derive(Clone, Debug)]
 pub enum ConstructorDef {
   Mode(TyConstructor<ModeId>),
-  StructMode(StructMode),
+  Struct(StructMode),
   Attr(TyConstructor<AttrId>),
   Pred(Constructor<PredId>),
   Func(TyConstructor<FuncId>),
@@ -1436,7 +1536,7 @@ impl<V: VisitMut> Visitable<V> for ConstructorDef {
   fn visit(&mut self, v: &mut V) {
     match self {
       ConstructorDef::Mode(c) => c.visit(v),
-      ConstructorDef::StructMode(c) => c.visit(v),
+      ConstructorDef::Struct(c) => c.visit(v),
       ConstructorDef::Attr(c) => c.visit(v),
       ConstructorDef::Pred(c) => c.visit(v),
       ConstructorDef::Func(c) => c.visit(v),
@@ -1446,7 +1546,7 @@ impl<V: VisitMut> Visitable<V> for ConstructorDef {
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Definiens {
   pub c: ConstrDef,
   // pub lab_id: Option<LabelId>,
@@ -1469,7 +1569,7 @@ impl<V: VisitMut> Visitable<V> for Definiens {
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Property {
   // pub article: Article,
   // pub abs_nr: u32,
@@ -1481,7 +1581,7 @@ impl<V: VisitMut> Visitable<V> for Property {
   fn visit(&mut self, v: &mut V) { v.with_locus_tys(&mut self.primary, |v| self.ty.visit(v)) }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdentifyFunc {
   // pub article: Article,
   // pub abs_nr: u32,
@@ -1500,7 +1600,7 @@ impl<V: VisitMut> Visitable<V> for IdentifyFunc {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reduction {
   // pub article: Article,
   // pub abs_nr: u32,
@@ -1540,7 +1640,7 @@ pub struct References {
   pub sch: HashMap<SchRef, u32>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Scheme {
   pub sch_funcs: Box<[Type]>,
   pub prems: Box<[Formula]>,
@@ -1931,6 +2031,33 @@ pub enum Item {
   },
 }
 
+#[derive(Clone, Copy, Debug, Enum)]
+pub enum SymbolKindClass {
+  Struct,
+  LeftBrk,
+  RightBrk,
+  Mode,
+  Functor,
+  Pred,
+  Selector,
+  Attr,
+}
+
+impl SymbolKindClass {
+  pub fn discr(&self) -> u8 {
+    match self {
+      SymbolKindClass::Struct => b'G',
+      SymbolKindClass::LeftBrk => b'K',
+      SymbolKindClass::RightBrk => b'L',
+      SymbolKindClass::Mode => b'M',
+      SymbolKindClass::Functor => b'O',
+      SymbolKindClass::Pred => b'R',
+      SymbolKindClass::Selector => b'U',
+      SymbolKindClass::Attr => b'V',
+    }
+  }
+}
+
 mk_id! {
   FuncSymId(u32),
   LeftBrkSymId(u32),
@@ -1979,16 +2106,16 @@ impl From<SelSymId> for SymbolKind {
 }
 
 impl SymbolKind {
-  fn _discr(&self) -> u8 {
+  fn _class(&self) -> SymbolKindClass {
     match self {
-      SymbolKind::Functor(_) => b'O',
-      SymbolKind::LeftBrk(_) => b'K',
-      SymbolKind::RightBrk(_) => b'L',
-      SymbolKind::Pred(_) => b'R',
-      SymbolKind::Mode(_) => b'M',
-      SymbolKind::Attr(_) => b'V',
-      SymbolKind::Struct(_) => b'G',
-      SymbolKind::Selector(_) => b'U',
+      SymbolKind::Functor(_) => SymbolKindClass::Functor,
+      SymbolKind::LeftBrk(_) => SymbolKindClass::LeftBrk,
+      SymbolKind::RightBrk(_) => SymbolKindClass::RightBrk,
+      SymbolKind::Pred(_) => SymbolKindClass::Pred,
+      SymbolKind::Mode(_) => SymbolKindClass::Mode,
+      SymbolKind::Attr(_) => SymbolKindClass::Attr,
+      SymbolKind::Struct(_) => SymbolKindClass::Struct,
+      SymbolKind::Selector(_) => SymbolKindClass::Selector,
     }
   }
 }
@@ -2080,7 +2207,34 @@ pub struct Formats {
   pub priority: Vec<(PriorityKind, u32)>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Enum)]
+pub enum PatternKindClass {
+  Mode,
+  Struct,
+  Attr,
+  Pred,
+  Func,
+  Sel,
+  Aggr,
+  SubAggr,
+}
+
+impl PatternKindClass {
+  fn _discr(&self) -> u8 {
+    match self {
+      PatternKindClass::Mode => b'M',
+      PatternKindClass::Struct => b'L',
+      PatternKindClass::Attr => b'V',
+      PatternKindClass::Pred => b'R',
+      PatternKindClass::Func => b'K',
+      PatternKindClass::Sel => b'U',
+      PatternKindClass::Aggr => b'G',
+      PatternKindClass::SubAggr => b'J',
+    }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PatternKind {
   Mode(ModeId),
   ExpandableMode { expansion: Box<Type> },
@@ -2094,21 +2248,21 @@ pub enum PatternKind {
 }
 
 impl PatternKind {
-  fn _discr(&self) -> u8 {
+  pub fn class(&self) -> PatternKindClass {
     match self {
-      PatternKind::Mode(_) | PatternKind::ExpandableMode { .. } => b'M',
-      PatternKind::Struct(_) => b'L',
-      PatternKind::Attr(_) => b'V',
-      PatternKind::Pred(_) => b'R',
-      PatternKind::Func(_) => b'K',
-      PatternKind::Sel(_) => b'U',
-      PatternKind::Aggr(_) => b'G',
-      PatternKind::SubAggr(_) => b'J',
+      PatternKind::Mode(_) | PatternKind::ExpandableMode { .. } => PatternKindClass::Mode,
+      PatternKind::Struct(_) => PatternKindClass::Struct,
+      PatternKind::Attr(_) => PatternKindClass::Attr,
+      PatternKind::Pred(_) => PatternKindClass::Pred,
+      PatternKind::Func(_) => PatternKindClass::Func,
+      PatternKind::Sel(_) => PatternKindClass::Sel,
+      PatternKind::Aggr(_) => PatternKindClass::Aggr,
+      PatternKind::SubAggr(_) => PatternKindClass::SubAggr,
     }
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Pattern {
   pub kind: PatternKind,
   // pub pid: u32,
@@ -2123,3 +2277,77 @@ pub struct Pattern {
 
 #[derive(Debug, Default)]
 pub struct Notations(pub Vec<Pattern>);
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Vocabularies(pub Vec<(Article, EnumMap<SymbolKindClass, u32>)>);
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct DepNotation {
+  pub sig: Vec<Article>,
+  pub vocs: Vocabularies,
+  pub pats: Vec<(Format, Pattern)>,
+}
+
+#[derive(Default, PartialEq, Eq)]
+pub struct DepConstructors {
+  pub sig: Vec<Article>,
+  pub counts: ConstructorsBase,
+  // The indexes here are offset by `counts`
+  pub constrs: Constructors,
+}
+
+#[derive(Default, PartialEq, Eq)]
+pub struct DepClusters {
+  pub sig: Vec<Article>,
+  pub registered: Vec<RegisteredCluster>,
+  pub functor: Vec<FunctorCluster>,
+  pub conditional: Vec<ConditionalCluster>,
+}
+
+impl DepClusters {
+  pub fn as_ref(&self) -> ClustersRef<'_> {
+    ClustersRef {
+      registered: &self.registered,
+      functor: &self.functor,
+      conditional: &self.conditional,
+    }
+  }
+}
+
+#[derive(Default, PartialEq, Eq)]
+pub struct DepIdentify {
+  pub sig: Vec<Article>,
+  pub defs: Vec<Definiens>,
+}
+
+#[derive(Default, PartialEq, Eq)]
+pub struct DepReductions {
+  pub sig: Vec<Article>,
+  pub defs: Vec<Definiens>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum TheoremKind {
+  CanceledThm,
+  CanceledDef,
+  Def(ConstrKind),
+  Thm,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Theorem {
+  pub kind: TheoremKind,
+  pub stmt: Formula,
+}
+
+#[derive(Default, PartialEq, Eq)]
+pub struct DepTheorems {
+  pub sig: Vec<Article>,
+  pub thm: Vec<Theorem>,
+}
+
+#[derive(Default, PartialEq, Eq)]
+pub struct DepSchemes {
+  pub sig: Vec<Article>,
+  pub sch: Vec<Option<Scheme>>,
+}
