@@ -624,7 +624,10 @@ impl MizPath {
     r.parse_signature(buf, &mut schs.sig);
     while let Event::Start(e) = r.read_event(buf) {
       match e.local_name() {
-        b"Canceled" => schs.sch.push(None),
+        b"Canceled" => {
+          r.end_tag(buf);
+          schs.sch.push(None)
+        }
         b"Scheme" => {
           let sch_funcs = r.parse_arg_types(buf);
           let thesis = r.parse_formula(buf).unwrap();

@@ -225,22 +225,16 @@ impl Analyzer<'_> {
       assert_eq_iter("theorems", self.export.theorems.iter(), thms2.thm.iter());
     }
 
-    if true {
-      return // TODO
-    }
-
     // validating .sch
     {
       let mut schs2 = Default::default();
-      if self.path.read_sch(MML, &mut schs2).unwrap()
-        // tarski.sch has a manual override
-        && self.article.as_str() != "tarski"
-      {
+      if self.path.read_sch(MML, &mut schs2).unwrap() {
         assert_eq!(arts2, schs2.sig);
       }
-      let sch1 =
-        self.export.schemes.iter().map(|i| i.map(|i| &self.libs.sch[&(ArticleId::SELF, i)]));
-      assert_eq_iter("schemes", sch1, schs2.sch.iter().map(Option::as_ref));
+      let sch1 = (self.export.schemes.iter())
+        .map(|i| i.map(|i| self.libs.sch[&(ArticleId::SELF, i)].visit_cloned(ep)))
+        .collect_vec();
+      assert_eq_iter("schemes", sch1.iter(), schs2.sch.iter());
     }
   }
 }
