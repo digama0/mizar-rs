@@ -69,11 +69,12 @@ impl Analyzer<'_> {
 
     // self.r.g.clusters.visit(&mut ExportPrep { ctx: &self.r.g.constrs, lc: &self.r.lc });
     let ep = &mut ExportPrep {
-      ctx: &self.g.constrs,
-      lc: &self.lc,
-      ic: &self.lc.infer_const.borrow().vec,
+      ctx: &self.r.g.constrs,
+      lc: &self.r.lc,
+      ic: &self.r.lc.infer_const.borrow().vec,
       depth: 0,
     };
+    self.export.theorems.visit(ep);
 
     // loading .sgl
     let mut arts2 = vec![];
@@ -162,10 +163,6 @@ impl Analyzer<'_> {
       process!(registered, functor, conditional);
     }
 
-    if true {
-      return // TODO
-    }
-
     // validating .def
     {
       let (mut sig, mut def2) = Default::default();
@@ -173,8 +170,13 @@ impl Analyzer<'_> {
       {
         assert_eq!(arts2, sig);
       }
-      let since1 = &self.definitions[self.export.definitions_base as usize..];
-      assert_eq!(since1, def2);
+      let def1 = &self.definitions[self.export.definitions_base as usize..];
+      let def1 = def1.iter().map(|c| c.visit_cloned(ep)).collect_vec();
+      assert_eq_iter("definitions", def1.iter(), def2.iter());
+    }
+
+    if true {
+      return // TODO
     }
 
     // validating .did
@@ -187,8 +189,9 @@ impl Analyzer<'_> {
       {
         assert_eq!(arts2, sig);
       }
-      let since1 = &self.identify[self.export.identify_base as usize..];
-      assert_eq!(since1, did2);
+      let did1 = &self.identify[self.export.identify_base as usize..];
+      let did1 = did1.iter().map(|c| c.visit_cloned(ep)).collect_vec();
+      assert_eq_iter("identities", did1.iter(), did2.iter());
     }
 
     // validating .drd
@@ -201,8 +204,9 @@ impl Analyzer<'_> {
       {
         assert_eq!(arts2, sig);
       }
-      let since1 = &self.reductions[self.export.reductions_base as usize..];
-      assert_eq!(since1, drd2);
+      let drd1 = &self.reductions[self.export.reductions_base as usize..];
+      let drd1 = drd1.iter().map(|c| c.visit_cloned(ep)).collect_vec();
+      assert_eq_iter("reductions", drd1.iter(), drd2.iter());
     }
 
     // validating .dpr
@@ -211,8 +215,9 @@ impl Analyzer<'_> {
       if self.path.read_properties(MaybeMut::None, MML, "dpr", Some(&mut sig), &mut dpr2).unwrap() {
         assert_eq!(arts2, sig);
       }
-      let since1 = &self.properties[self.export.properties_base as usize..];
-      assert_eq!(since1, dpr2);
+      let dpr1 = &self.properties[self.export.properties_base as usize..];
+      let dpr1 = dpr1.iter().map(|c| c.visit_cloned(ep)).collect_vec();
+      assert_eq_iter("properties", dpr1.iter(), dpr2.iter());
     }
 
     // validating .the

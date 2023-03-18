@@ -2444,6 +2444,9 @@ pub struct Theorem {
   pub kind: TheoremKind,
   pub stmt: Formula,
 }
+impl<V: VisitMut> Visitable<V> for Theorem {
+  fn visit(&mut self, v: &mut V) { self.stmt.visit(v) }
+}
 
 #[derive(Default, PartialEq, Eq)]
 pub struct DepTheorems {

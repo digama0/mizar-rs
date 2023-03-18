@@ -2747,7 +2747,9 @@ impl BlockReader {
     if let Some(mut value) = value {
       self.to_locus(elab, |l| value.visit(l));
       let formals: Box<[_]> = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect();
-      let primary: Box<[_]> = self.primary.0.iter().chain([&*it_type]).cloned().collect();
+      let mut it_type2 = (*it_type).clone();
+      it_type2.adjust_mut(&elab.g.constrs);
+      let primary: Box<[_]> = self.primary.0.iter().cloned().chain([it_type2]).collect();
       it_type.visit(&mut Inst::new(&elab.g.constrs, &elab.lc, &formals, 0));
       let defined = Term::Functor { nr: n, args: formals };
       let depth = self.primary.len() as u32;
@@ -2961,7 +2963,9 @@ impl BlockReader {
           let DefValue::Formula(mut value) = value else { unreachable!() };
           self.to_locus(elab, |l| value.visit(l));
           let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect_vec();
-          let primary: Box<[_]> = self.primary.0.iter().chain([&*it_type]).cloned().collect();
+          let mut it_type2 = (*it_type).clone();
+          it_type2.adjust_mut(&elab.g.constrs);
+          let primary: Box<[_]> = self.primary.0.iter().cloned().chain([it_type2]).collect();
           it_type.visit(&mut Inst::new(&elab.g.constrs, &elab.lc, &formals, 0));
           let ty = Box::new(Type {
             kind: TypeKind::Mode(n),
