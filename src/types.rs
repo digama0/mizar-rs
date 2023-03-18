@@ -965,9 +965,15 @@ impl std::fmt::Display for Article {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.as_str().fmt(f) }
 }
 impl Article {
-  pub fn from_bytes(s: &[u8]) -> Article {
+  pub fn from_lower(s: &[u8]) -> Article {
     let mut arr = [0; 8];
     arr[..s.len()].copy_from_slice(s);
+    Article(arr)
+  }
+  pub fn from_upper(s: &[u8]) -> Article {
+    let mut arr = [0; 8];
+    arr[..s.len()].copy_from_slice(s);
+    std::str::from_utf8_mut(&mut arr[..s.len()]).unwrap().make_ascii_lowercase();
     Article(arr)
   }
   pub fn as_bytes(&self) -> &[u8] { &self.0[..self.0.iter().position(|&x| x == 0).unwrap_or(8)] }
@@ -1033,6 +1039,22 @@ pub struct PropertySet(u16);
 
 impl PropertySet {
   pub const EMPTY: Self = Self(0);
+  pub const USES_ARG2: Self = Self(
+    1 << PropertyKind::Symmetry as u16
+      | 1 << PropertyKind::Reflexivity as u16
+      | 1 << PropertyKind::Irreflexivity as u16
+      | 1 << PropertyKind::Connectedness as u16
+      | 1 << PropertyKind::Asymmetry as u16
+      | 1 << PropertyKind::Commutativity as u16
+      | 1 << PropertyKind::Idempotence as u16
+      | 1 << PropertyKind::Associativity as u16
+      | 1 << PropertyKind::Transitivity as u16,
+  );
+  pub const USES_ARG1: Self = Self(
+    Self::USES_ARG2.0
+      | 1 << PropertyKind::Involutiveness as u16
+      | 1 << PropertyKind::Projectivity as u16,
+  );
 }
 
 impl std::fmt::Debug for PropertySet {
@@ -1048,7 +1070,7 @@ impl PropertySet {
   pub fn set(&mut self, prop: PropertyKind) { self.0 |= 1 << prop as u16 }
 }
 
-#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, Debug, Eq)]
 pub struct Properties {
   pub properties: PropertySet,
   pub arg1: u8,
@@ -1062,6 +1084,15 @@ impl std::ops::Deref for Properties {
 
   fn deref(&self) -> &Self::Target { &self.properties }
 }
+
+impl PartialEq for Properties {
+  fn eq(&self, other: &Self) -> bool {
+    self.properties == other.properties
+      && (self.properties.0 & PropertySet::USES_ARG1.0 == 0 || self.arg1 == other.arg1)
+      && (self.properties.0 & PropertySet::USES_ARG2.0 == 0 || self.arg2 == other.arg2)
+  }
+}
+
 impl Properties {
   pub const EMPTY: Self = Self { properties: PropertySet::EMPTY, arg1: 0, arg2: 0 };
   pub const fn offset(self, n: u8) -> Self {
@@ -1212,18 +1243,6 @@ impl Constructors {
     }
   }
 
-  pub fn base(&self) -> ConstructorsBase {
-    ConstructorsBase {
-      mode: self.mode.len() as u32,
-      struct_mode: self.struct_mode.len() as u32,
-      attribute: self.attribute.len() as u32,
-      predicate: self.predicate.len() as u32,
-      functor: self.functor.len() as u32,
-      selector: self.selector.len() as u32,
-      aggregate: self.aggregate.len() as u32,
-    }
-  }
-
   pub fn since(&self, base: &ConstructorsBase) -> ConstructorsRef<'_> {
     ConstructorsRef {
       mode: &self.mode.0[base.mode as usize..],
@@ -1235,6 +1254,10 @@ impl Constructors {
       aggregate: &self.aggregate.0[base.aggregate as usize..],
     }
   }
+
+  pub fn len(&self) -> ConstructorsBase { self.as_ref().len() }
+
+  pub fn as_ref(&self) -> ConstructorsRef<'_> { self.since(&Default::default()) }
 }
 
 impl ConstructorsRef<'_> {
@@ -1247,6 +1270,18 @@ impl ConstructorsRef<'_> {
       && self.selector.is_empty()
       && self.aggregate.is_empty()
   }
+
+  pub fn len(&self) -> ConstructorsBase {
+    ConstructorsBase {
+      mode: self.mode.len() as u32,
+      struct_mode: self.struct_mode.len() as u32,
+      attribute: self.attribute.len() as u32,
+      predicate: self.predicate.len() as u32,
+      functor: self.functor.len() as u32,
+      selector: self.selector.len() as u32,
+      aggregate: self.aggregate.len() as u32,
+    }
+  }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1258,7 +1293,7 @@ pub struct Clusters {
 }
 
 impl Clusters {
-  pub fn base(&self) -> ClustersBase {
+  pub fn len(&self) -> ClustersBase {
     ClustersBase {
       registered: self.registered.len() as u32,
       functor: self.functor.len() as u32,

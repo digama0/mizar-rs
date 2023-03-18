@@ -1,7 +1,10 @@
 use crate::analyze::Analyzer;
 use crate::parser::MaybeMut;
-use crate::types::{ArticleId, ClustersBase, ConstructorsBase, PatternKindClass, SchId, Theorem};
+use crate::types::{
+  ArticleId, ClustersBase, ConstructorsBase, Format, Pattern, PatternKindClass, SchId, Theorem,
+};
 use enum_map::EnumMap;
+use std::fmt::Debug;
 
 #[derive(Default)]
 pub struct Exporter {
@@ -14,6 +17,35 @@ pub struct Exporter {
   pub properties_base: u32,
   pub theorems: Vec<Theorem>,
   pub schemes: Vec<Option<SchId>>,
+}
+
+fn assert_eq_iter<T: Debug + PartialEq<U>, U: Debug>(
+  mut it1: impl Iterator<Item = T> + Clone, mut it2: impl Iterator<Item = U> + Clone,
+) {
+  if !it1.clone().eq(it2.clone()) {
+    loop {
+      match (it1.next(), it2.next()) {
+        (None, None) => unreachable!(),
+        (Some(x1), Some(x2)) if x1 == x2 => println!("both: {x1:?}"),
+        (a, b) => panic!("mismatch:\n{a:?}\n{b:?}\n"),
+      }
+    }
+  }
+}
+
+#[derive(Debug)]
+struct FormatPattern<'a> {
+  fmt: &'a Format,
+  pat: &'a Pattern,
+}
+impl<'a> PartialEq<&'a (Format, Pattern)> for FormatPattern<'a> {
+  fn eq(&self, (fmt, pat): &&'a (Format, Pattern)) -> bool {
+    self.fmt == fmt
+      && self.pat.kind == pat.kind
+      && self.pat.primary == pat.primary
+      && self.pat.visible == pat.visible
+      && self.pat.pos == pat.pos
+  }
 }
 
 impl Analyzer<'_> {
@@ -57,19 +89,19 @@ impl Analyzer<'_> {
       }
       let pats1 = (self.notations.iter())
         .flat_map(|(i, nota)| &nota[self.export.notations_base[i] as usize..])
-        .map(|no| (&self.lc.formatter.formats.formats[no.fmt], no));
-      assert!(pats1.eq(dno2.pats.iter().map(|(f, no)| (f, no))));
+        .map(|pat| FormatPattern { fmt: &self.lc.formatter.formats.formats[pat.fmt], pat });
+      assert_eq_iter(pats1, dno2.pats.iter());
     }
 
     // validating .dco
     {
       let mut dco2 = Default::default();
+      let since1 = self.g.constrs.since(&self.export.constrs_base);
       if self.path.read_dco(&mut dco2).unwrap() {
         assert_eq!(arts1, dco2.sig);
-        assert_eq!(self.export.constrs_base, dco2.counts);
+        assert_eq!(since1.len(), dco2.counts);
       }
-      let since1 = self.g.constrs.since(&self.export.constrs_base);
-      let since2 = dco2.constrs.since(&Default::default());
+      let since2 = dco2.constrs.as_ref();
       assert_eq!(since1, since2);
     }
 
@@ -135,12 +167,15 @@ impl Analyzer<'_> {
     // validating .sch
     {
       let mut schs2 = Default::default();
-      if self.path.read_sch(&mut schs2).unwrap() {
+      if self.path.read_sch(&mut schs2).unwrap()
+        // tarski.sch has a manual override
+        && self.article.as_str() != "tarski"
+      {
         assert_eq!(arts2, schs2.sig);
       }
       let sch1 =
         self.export.schemes.iter().map(|i| i.map(|i| &self.libs.sch[&(ArticleId::SELF, i)]));
-      assert!(sch1.eq(schs2.sch.iter().map(Option::as_ref)));
+      assert_eq_iter(sch1, schs2.sch.iter().map(Option::as_ref));
     }
   }
 }

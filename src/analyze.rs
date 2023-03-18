@@ -48,8 +48,8 @@ impl Reader {
       for (i, pats) in &elab.r.notations {
         elab.export.notations_base[i] = pats.len() as u32
       }
-      elab.export.constrs_base = elab.g.constrs.base();
-      elab.export.clusters_base = elab.g.clusters.base();
+      elab.export.constrs_base = elab.g.constrs.len();
+      elab.export.clusters_base = elab.g.clusters.len();
       elab.export.definitions_base = elab.definitions.len() as u32;
       elab.export.identify_base = elab.identify.len() as u32;
       elab.export.reductions_base = elab.reductions.len() as u32;
@@ -2611,9 +2611,9 @@ impl BlockReader {
       if elab.g.cfg.analyzer_full {
         let thm2 = (*thm).visit_cloned(&mut elab.intern_const());
         elab.push_prop(label, thm2);
-        if elab.g.cfg.exporter_enabled {
-          elab.export.theorems.push(Theorem { kind: TheoremKind::Def(df.constr), stmt: *thm })
-        }
+      }
+      if elab.g.cfg.exporter_enabled {
+        elab.export.theorems.push(Theorem { kind: TheoremKind::Def(df.constr), stmt: *thm })
       }
     }
   }

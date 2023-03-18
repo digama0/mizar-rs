@@ -22,9 +22,13 @@ pub struct MsmParser {
 }
 
 impl MizPath {
-  pub fn open_msx(&self) -> io::Result<MsmParser> { Ok(MsmParser::new(self.open("msx")?, true)) }
+  pub fn open_msx(&self) -> io::Result<MsmParser> {
+    Ok(MsmParser::new(self.open(true, "msx")?, true))
+  }
 
-  pub fn open_wsx(&self) -> io::Result<MsmParser> { Ok(MsmParser::new(self.open("wsx")?, false)) }
+  pub fn open_wsx(&self) -> io::Result<MsmParser> {
+    Ok(MsmParser::new(self.open(true, "wsx")?, false))
+  }
 }
 
 impl std::str::FromStr for VarKind {

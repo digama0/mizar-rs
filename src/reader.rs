@@ -62,7 +62,7 @@ impl MizPath {
     } else {
       Type::SET
     };
-    let mut v = Reader::new(cfg, reqs, numeral_type, self.0);
+    let mut v = Reader::new(cfg, reqs, numeral_type, self.art);
     v.lc.attr_sort_bug = cfg.attr_sort_bug;
     v.lc.formatter.dump = cfg.dump_formatter;
     self.read_atr(&mut v.g.constrs).unwrap();

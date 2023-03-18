@@ -2849,7 +2849,11 @@ impl RequirementIndexes {
 // });
 // static PREL: Lazy<PathBuf> = Lazy::new(|| MIZFILES.join("prel"));
 
-pub struct MizPath(Article, PathBuf);
+pub struct MizPath {
+  art: Article,
+  mml: PathBuf,
+  prel: PathBuf,
+}
 
 // fn get_mml_article(article: &str) -> MizPath {
 //   let mut path = PREL.join(&article[..1]);
@@ -2859,11 +2863,15 @@ pub struct MizPath(Article, PathBuf);
 
 impl MizPath {
   fn new(s: &str) -> Self {
-    Self(Article::from_bytes(s.as_bytes()), format!("miz/mizshare/mml/{s}").into())
+    Self {
+      art: Article::from_lower(s.as_bytes()),
+      mml: format!("miz/mizshare/mml/{s}").into(),
+      prel: format!("miz/mizshare/prel/{}/{s}", &s[..1]).into(),
+    }
   }
 
-  fn open(&self, ext: &str) -> io::Result<File> {
-    let mut path = self.1.clone();
+  fn open(&self, mml: bool, ext: &str) -> io::Result<File> {
+    let mut path = if mml { self.mml.clone() } else { self.prel.clone() };
     path.set_extension(ext);
     File::open(path)
   }
@@ -3078,7 +3086,7 @@ fn main() {
           lock.next()
         } {
           let path = MizPath::new(s);
-          *thread.write().unwrap() = Some(path.0);
+          *thread.write().unwrap() = Some(path.art);
           refresh_status_line(line);
           let start = std::time::Instant::now();
           if let Err(_payload) = std::panic::catch_unwind(|| {
@@ -3090,9 +3098,9 @@ fn main() {
                 (true, true) => &mut cmd,
                 (false, false) => panic!("unsupported"),
               };
-              let output = cmd.arg(format!("{}.miz", path.1.display())).output().unwrap();
+              let output = cmd.arg(format!("{}.miz", path.mml.display())).output().unwrap();
               if !output.status.success() {
-                eprintln!("\nfile {} failed. Output:", path.0);
+                eprintln!("\nfile {} failed. Output:", path.art);
                 std::io::stderr().write_all(&output.stderr).unwrap();
                 std::io::stdout().write_all(&output.stdout).unwrap();
                 std::io::stdout().flush().unwrap();

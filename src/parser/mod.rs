@@ -14,7 +14,7 @@ mod msm;
 
 impl MizPath {
   pub fn read_ere(&self, idx: &mut RequirementIndexes) -> io::Result<()> {
-    let mut r = BufReader::new(self.open("ere")?);
+    let mut r = BufReader::new(self.open(true, "ere")?);
     let mut buf = String::new();
     r.read_line(&mut buf).unwrap();
     assert!(buf.trim_end() == "0");
@@ -29,7 +29,7 @@ impl MizPath {
   }
 
   pub fn read_ref(&self, refs: &mut References) -> io::Result<()> {
-    let mut r = BufReader::new(self.open("ref")?);
+    let mut r = BufReader::new(self.open(true, "ref")?);
     fn parse_one<T: Idx>(
       r: &mut impl BufRead, buf: &mut String, map: &mut HashMap<(ArticleId, T), u32>,
     ) -> io::Result<()> {
@@ -54,14 +54,14 @@ impl MizPath {
   }
 
   pub fn read_sgl(&self, arts: &mut Vec<Article>) -> io::Result<()> {
-    let mut r = BufReader::new(self.open("sgl")?);
+    let mut r = BufReader::new(self.open(true, "sgl")?);
     let mut buf = String::new();
     r.read_line(&mut buf).unwrap();
     let n = buf.trim_end().parse().unwrap();
     for _ in 0..n {
       buf.clear();
       r.read_line(&mut buf).unwrap();
-      arts.push(Article::from_bytes(buf.trim_end().as_bytes()));
+      arts.push(Article::from_upper(buf.trim_end().as_bytes()));
     }
     // Note: this is not the end of the file (constructor data follows),
     // but the remainder is never parsed by Mizar
@@ -211,26 +211,24 @@ impl std::ops::DerefMut for MizReader<'_> {
   fn deref_mut(&mut self) -> &mut Self::Target { &mut self.r }
 }
 
-impl MizPath {
-  fn open_xml_no_pi<'a>(
-    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, two_clusters: bool,
-  ) -> io::Result<(MizReader<'a>, Vec<u8>)> {
-    let mut buf = vec![];
-    let r = XmlReader::new(self.open(ext)?, &mut buf);
-    Ok((MizReader { r, two_clusters, ctx: ctx.into(), depth: 0, suppress_bvar_errors: false }, buf))
-  }
-
+impl<'a> MizReader<'a> {
   /// two_clusters: false = InMMLFileObj or InEnvFileObj, true = InVRFFileObj
-  fn open_xml<'a>(
-    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, two_clusters: bool,
-  ) -> io::Result<(MizReader<'a>, Vec<u8>)> {
-    let mut r = self.open_xml_no_pi(ctx, ext, two_clusters)?;
-    assert!(matches!(r.0.r.read_event(&mut r.1), Event::PI(_)));
-    Ok(r)
+  fn new(
+    file: File, ctx: impl Into<MaybeMut<'a, Constructors>>, two_clusters: bool,
+  ) -> (MizReader<'a>, Vec<u8>) {
+    let mut buf = vec![];
+    let r = XmlReader::new(file, &mut buf);
+    (MizReader { r, two_clusters, ctx: ctx.into(), depth: 0, suppress_bvar_errors: false }, buf)
   }
 
+  fn read_pi(&mut self, buf: &mut Vec<u8>) {
+    assert!(matches!(self.r.read_event(buf), Event::PI(_)));
+  }
+}
+
+impl MizPath {
   pub fn read_dcx(&self, syms: &mut Symbols) -> io::Result<()> {
-    let (mut r, mut buf) = self.open_xml_no_pi(MaybeMut::None, "dcx", false)?;
+    let (mut r, mut buf) = MizReader::new(self.open(true, "dcx")?, MaybeMut::None, false);
     let buf = &mut buf;
     r.read_start(buf, Some(b"Symbols"));
     while let Ok(e) = r.try_read_start(buf, Some(b"Symbol")) {
@@ -262,14 +260,14 @@ impl MizPath {
   }
 
   pub fn read_vcl(&self, vocs: &mut Vocabularies) -> io::Result<()> {
-    let (mut r, mut buf) = self.open_xml_no_pi(MaybeMut::None, "vcl", false)?;
+    let (mut r, mut buf) = MizReader::new(self.open(true, "vcl")?, MaybeMut::None, false);
     r.parse_vocabularies(&mut buf, vocs);
     assert!(matches!(r.read_event(&mut buf), Event::Eof));
     Ok(())
   }
 
   pub fn read_formats(&self, ext: &str, formats: &mut Formats) -> io::Result<()> {
-    let (mut r, mut buf) = self.open_xml_no_pi(MaybeMut::None, ext, false)?;
+    let (mut r, mut buf) = MizReader::new(self.open(true, ext)?, MaybeMut::None, false);
     let buf = &mut buf;
     r.read_start(buf, Some(b"Formats"));
     r.parse_formats_body(buf, &mut formats.formats, Some(&mut formats.priority));
@@ -284,9 +282,9 @@ impl MizPath {
   pub fn read_dfr(
     &self, vocs: &mut Vocabularies, formats: &mut IdxVec<FormatId, Format>,
   ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open_xml_no_pi(MaybeMut::None, "dfr", false) {
+    let (mut r, mut buf) = match self.open(false, "dfr") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-      r => r?,
+      file => MizReader::new(file?, MaybeMut::None, false),
     };
     r.read_start(&mut buf, Some(b"Formats"));
     r.parse_vocabularies(&mut buf, vocs);
@@ -296,8 +294,9 @@ impl MizPath {
   }
 
   pub fn read_eno(&self, notas: &mut Vec<Pattern>) -> io::Result<()> {
-    let (mut r, mut buf) = self.open_xml(MaybeMut::None, "eno", false)?;
+    let (mut r, mut buf) = MizReader::new(self.open(true, "eno")?, MaybeMut::None, false);
     let buf = &mut buf;
+    r.read_pi(buf);
     r.read_start(buf, Some(b"Notations"));
     while let Ok(e) = r.try_read_start(buf, Some(b"Pattern")) {
       let attrs = r.parse_pattern_attrs(&e);
@@ -308,9 +307,9 @@ impl MizPath {
   }
 
   pub fn read_dno(&self, dno: &mut DepNotation) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open_xml_no_pi(MaybeMut::None, "dno", false) {
+    let (mut r, mut buf) = match self.open(false, "dno") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-      r => r?,
+      file => MizReader::new(file?, MaybeMut::None, false),
     };
     let buf = &mut buf;
     r.read_start(buf, Some(b"Notations"));
@@ -326,8 +325,9 @@ impl MizPath {
   }
 
   pub fn read_atr(&self, constrs: &mut Constructors) -> io::Result<()> {
-    let (mut r, mut buf) = self.open_xml(constrs, "atr", false)?;
+    let (mut r, mut buf) = MizReader::new(self.open(true, "atr")?, constrs, false);
     let buf = &mut buf;
+    r.read_pi(buf);
     r.read_start(buf, Some(b"Constructors"));
     while let Ok(e) = r.try_read_start(buf, Some(b"Constructor")) {
       let attrs = r.parse_constructor_attrs(&e);
@@ -340,9 +340,9 @@ impl MizPath {
   }
 
   pub fn read_dco(&self, dco: &mut DepConstructors) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open_xml_no_pi(MaybeMut::None, "dco", false) {
+    let (mut r, mut buf) = match self.open(false, "dco") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-      r => r?,
+      file => MizReader::new(file?, MaybeMut::None, false),
     };
     let buf = &mut buf;
     r.read_start(buf, Some(b"Constructors"));
@@ -356,17 +356,18 @@ impl MizPath {
           b"nr" => nr = r.get_attr::<u32>(&attr.value),
           _ => {}
         }
-        match kind {
-          b'M' => dco.counts.mode += nr,
-          b'L' => dco.counts.struct_mode += nr,
-          b'V' => dco.counts.attribute += nr,
-          b'R' => dco.counts.predicate += nr,
-          b'K' => dco.counts.functor += nr,
-          b'U' => dco.counts.selector += nr,
-          b'G' => dco.counts.aggregate += nr,
-          _ => panic!("bad kind"),
-        }
       }
+      match kind {
+        b'M' => dco.counts.mode += nr,
+        b'L' => dco.counts.struct_mode += nr,
+        b'V' => dco.counts.attribute += nr,
+        b'R' => dco.counts.predicate += nr,
+        b'K' => dco.counts.functor += nr,
+        b'U' => dco.counts.selector += nr,
+        b'G' => dco.counts.aggregate += nr,
+        _ => panic!("bad kind"),
+      }
+      r.end_tag(buf)
     }
     while let Ok(e) = r.try_read_start(buf, Some(b"Constructor")) {
       let attrs = r.parse_constructor_attrs(&e);
@@ -378,7 +379,8 @@ impl MizPath {
   }
 
   pub fn read_ecl(&self, ctx: &Constructors, clusters: &mut Clusters) -> io::Result<()> {
-    let (mut r, mut buf) = self.open_xml(ctx, "ecl", false)?;
+    let (mut r, mut buf) = MizReader::new(self.open(true, "ecl")?, ctx, false);
+    r.read_pi(&mut buf);
     r.read_start(&mut buf, Some(b"Registrations"));
     while let Event::Start(e) = r.read_event(&mut buf) {
       match r.parse_cluster_attrs(&e) {
@@ -393,9 +395,9 @@ impl MizPath {
   }
 
   pub fn read_dcl(&self, dcl: &mut DepClusters) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open_xml_no_pi(MaybeMut::None, "dcl", false) {
+    let (mut r, mut buf) = match self.open(false, "dcl") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-      r => r?,
+      file => MizReader::new(file?, MaybeMut::None, false),
     };
     let buf = &mut buf;
     r.read_start(buf, Some(b"Registrations"));
@@ -415,11 +417,14 @@ impl MizPath {
     &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, sig: Option<&mut Vec<Article>>,
     defs: &mut Vec<Definiens>,
   ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open_xml(ctx, ext, false) {
+    let (mut r, mut buf) = match self.open(sig.is_none(), ext) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-      r => r?,
+      file => MizReader::new(file?, ctx, false),
     };
     let buf = &mut buf;
+    if sig.is_none() {
+      r.read_pi(buf);
+    }
     r.read_start(buf, Some(b"Definientia"));
     if let Some(sig) = sig {
       r.parse_signature(buf, sig);
@@ -436,11 +441,12 @@ impl MizPath {
     &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, sig: Option<&mut Vec<Article>>,
     props: &mut Vec<Property>,
   ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open_xml(ctx, ext, false) {
+    let (mut r, mut buf) = match self.open(sig.is_none(), ext) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-      r => r?,
+      file => MizReader::new(file?, ctx, false),
     };
     let buf = &mut buf;
+    r.read_pi(buf);
     r.read_start(buf, Some(b"PropertyRegistration"));
     if let Some(sig) = sig {
       r.parse_signature(buf, sig);
@@ -457,11 +463,12 @@ impl MizPath {
     &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, sig: Option<&mut Vec<Article>>,
     ids: &mut Vec<IdentifyFunc>,
   ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open_xml(ctx, ext, false) {
+    let (mut r, mut buf) = match self.open(sig.is_none(), ext) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-      r => r?,
+      file => MizReader::new(file?, ctx, false),
     };
     let buf = &mut buf;
+    r.read_pi(buf);
     r.read_start(buf, Some(b"IdentifyRegistrations"));
     if let Some(sig) = sig {
       r.parse_signature(buf, sig);
@@ -478,11 +485,12 @@ impl MizPath {
     &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, sig: Option<&mut Vec<Article>>,
     reds: &mut Vec<Reduction>,
   ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open_xml(ctx, ext, false) {
+    let (mut r, mut buf) = match self.open(sig.is_none(), ext) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-      r => r?,
+      file => MizReader::new(file?, ctx, false),
     };
     let buf = &mut buf;
+    r.read_pi(buf);
     r.read_start(buf, Some(b"ReductionRegistrations"));
     if let Some(sig) = sig {
       r.parse_signature(buf, sig);
@@ -498,11 +506,12 @@ impl MizPath {
   pub fn read_eth(
     &self, ctx: &Constructors, refs: &References, libs: &mut Libraries,
   ) -> io::Result<()> {
-    let (mut r, mut buf) = match self.open_xml(ctx, "eth", false) {
+    let (mut r, mut buf) = match self.open(true, "eth") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
-      r => r?,
+      file => MizReader::new(file?, ctx, false),
     };
     let buf = &mut buf;
+    r.read_pi(buf);
     r.read_start(buf, Some(b"Theorems"));
     while let Ok(e) = r.try_read_start(buf, Some(b"Theorem")) {
       let (mut lib_nr, mut thm_nr, mut kind) = Default::default();
@@ -534,9 +543,9 @@ impl MizPath {
   }
 
   pub fn read_the(&self, thms: &mut DepTheorems) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open_xml(MaybeMut::None, "the", false) {
+    let (mut r, mut buf) = match self.open(false, "the") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-      r => r?,
+      file => MizReader::new(file?, MaybeMut::None, false),
     };
     let buf = &mut buf;
     r.read_start(buf, Some(b"Theorems"));
@@ -566,11 +575,12 @@ impl MizPath {
   pub fn read_esh(
     &self, ctx: &Constructors, refs: &References, libs: &mut Libraries,
   ) -> io::Result<()> {
-    let (mut r, mut buf) = match self.open_xml(ctx, "esh", false) {
+    let (mut r, mut buf) = match self.open(true, "esh") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
-      r => r?,
+      file => MizReader::new(file?, ctx, false),
     };
     let buf = &mut buf;
+    r.read_pi(buf);
     r.read_start(buf, Some(b"Schemes"));
     while let Ok(e) = r.try_read_start(buf, Some(b"Scheme")) {
       let (mut lib_nr, mut sch_nr) = Default::default();
@@ -599,9 +609,9 @@ impl MizPath {
   }
 
   pub fn read_sch(&self, schs: &mut DepSchemes) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open_xml(MaybeMut::None, "sch", false) {
+    let (mut r, mut buf) = match self.open(false, "sch") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-      r => r?,
+      file => MizReader::new(file?, MaybeMut::None, false),
     };
     let buf = &mut buf;
     r.read_start(buf, Some(b"Schemes"));
@@ -626,7 +636,8 @@ impl MizPath {
   }
 
   pub fn read_xml(&self) -> io::Result<Vec<Item>> {
-    let (mut r, mut buf) = self.open_xml(MaybeMut::None, "xml", true)?;
+    let (mut r, mut buf) = MizReader::new(self.open(true, "xml")?, MaybeMut::None, true);
+    r.read_pi(&mut buf);
     r.read_start(&mut buf, Some(b"Article"));
     let mut p = ArticleParser { r, buf };
     let items = p.parse_items();
@@ -654,7 +665,7 @@ struct PatternAttrs {
   fmt: FormatId,
   constr: u32,
   redefines: Option<u32>,
-  pid: u32,
+  pid: Option<u32>,
   pos: bool,
 }
 
@@ -730,7 +741,7 @@ impl MizReader<'_> {
   fn parse_signature(&mut self, buf: &mut Vec<u8>, sig: &mut Vec<Article>) {
     self.read_start(buf, Some(b"Signature"));
     while let Ok(e) = self.try_read_start(buf, Some(b"ArticleID")) {
-      sig.push(Article::from_bytes(&e.try_get_attribute(b"name").unwrap().unwrap().value));
+      sig.push(Article::from_upper(&e.try_get_attribute(b"name").unwrap().unwrap().value));
       self.end_tag(buf);
     }
   }
@@ -739,7 +750,7 @@ impl MizReader<'_> {
     self.read_start(buf, Some(b"Vocabularies"));
     while self.try_read_start(buf, Some(b"Vocabulary")).is_ok() {
       let e = self.read_start(buf, Some(b"ArticleID"));
-      let aid = Article::from_bytes(&e.try_get_attribute(b"name").unwrap().unwrap().value);
+      let aid = Article::from_upper(&e.try_get_attribute(b"name").unwrap().unwrap().value);
       self.end_tag(buf);
       let mut symbols = EnumMap::default();
       while let Ok(e) = self.try_read_start(buf, Some(b"SymbolCount")) {
@@ -794,7 +805,7 @@ impl MizReader<'_> {
     let mut abs_nr = 0;
     for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
-        b"aid" => article = Article::from_bytes(&attr.value),
+        b"aid" => article = Article::from_upper(&attr.value),
         b"nr" => abs_nr = self.get_attr(&attr.value),
         _ => {}
       }
@@ -874,17 +885,16 @@ impl MizReader<'_> {
     for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
         b"nr" => attrs._abs_nr = self.get_attr(&attr.value),
-        b"aid" => attrs._article = Article::from_bytes(&attr.value),
+        b"aid" => attrs._article = Article::from_upper(&attr.value),
         b"kind" => attrs.kind = attr.value[0],
         b"formatnr" => attrs.fmt = FormatId(self.get_attr::<u32>(&attr.value) - 1),
         b"constrnr" => attrs.constr = self.get_attr(&attr.value),
         b"antonymic" => attrs.pos = &*attr.value != b"true",
-        b"relnr" => attrs.pid = self.get_attr::<u32>(&attr.value),
+        b"relnr" => attrs.pid = self.get_attr::<u32>(&attr.value).checked_sub(1),
         b"redefnr" => attrs.redefines = self.get_attr::<u32>(&attr.value).checked_sub(1),
         _ => {}
       }
     }
-    attrs.pid = attrs.pid.checked_sub(1).unwrap();
     attrs
   }
 
@@ -921,7 +931,7 @@ impl MizReader<'_> {
       match attr.key {
         b"kind" => attrs.kind = attr.value[0],
         b"nr" => attrs._abs_nr = self.get_attr(&attr.value),
-        b"aid" => attrs._article = Article::from_bytes(&attr.value),
+        b"aid" => attrs._article = Article::from_upper(&attr.value),
         b"redefnr" => attrs.redefines = self.get_attr(&attr.value),
         b"superfluous" => attrs.superfluous = self.get_attr(&attr.value),
         b"structmodeaggrnr" => attrs.aggr = self.get_attr(&attr.value),
@@ -1021,7 +1031,7 @@ impl MizReader<'_> {
     let (mut article, mut def_nr) = Default::default();
     for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
-        b"aid" => article = Article::from_bytes(&attr.value),
+        b"aid" => article = Article::from_upper(&attr.value),
         b"defnr" => def_nr = self.get_attr(&attr.value),
         _ => {}
       }
@@ -1057,7 +1067,7 @@ impl MizReader<'_> {
     let mut attrs = IdentifyAttrs::default();
     for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
-        b"aid" => attrs._article = Article::from_bytes(&attr.value),
+        b"aid" => attrs._article = Article::from_upper(&attr.value),
         b"nr" => attrs._abs_nr = self.get_attr(&attr.value),
         b"constrkind" => attrs.kind = attr.value[0],
         _ => {}
@@ -1090,7 +1100,7 @@ impl MizReader<'_> {
     let mut attrs = ReductionAttrs::default();
     for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
-        b"aid" => attrs._article = Article::from_bytes(&attr.value),
+        b"aid" => attrs._article = Article::from_upper(&attr.value),
         b"nr" => attrs._abs_nr = self.get_attr(&attr.value),
         _ => {}
       }
@@ -1117,7 +1127,7 @@ impl MizReader<'_> {
     let (mut _abs_nr, mut _article, mut kind) = Default::default();
     for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
-        b"aid" => _article = Article::from_bytes(&attr.value),
+        b"aid" => _article = Article::from_upper(&attr.value),
         b"nr" => _abs_nr = self.get_attr(&attr.value),
         b"x" => kind = self.get_attr::<usize>(&attr.value),
         _ => {}
