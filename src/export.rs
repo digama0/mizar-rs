@@ -216,10 +216,6 @@ impl Analyzer<'_> {
       assert_eq_iter("properties", dpr1.iter(), dpr2.iter());
     }
 
-    if true {
-      return // TODO
-    }
-
     // validating .the
     {
       let mut thms2 = Default::default();
@@ -227,6 +223,10 @@ impl Analyzer<'_> {
         assert_eq!(arts2, thms2.sig);
       }
       assert_eq_iter("theorems", self.export.theorems.iter(), thms2.thm.iter());
+    }
+
+    if true {
+      return // TODO
     }
 
     // validating .sch
