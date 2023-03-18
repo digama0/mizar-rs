@@ -456,6 +456,14 @@ impl Type {
     }
   }
 
+  fn adjust_mut(&mut self, ctx: &Constructors) {
+    if let TypeKind::Mode(n) = &mut self.kind {
+      let (n2, args) = Type::adjust(*n, &self.args, ctx);
+      *n = n2;
+      self.args = args.to_vec()
+    }
+  }
+
   fn cmp(
     &self, ctx: &Constructors, lc: Option<&LocalContext>, other: &Type, style: CmpStyle,
   ) -> Ordering {
@@ -1065,8 +1073,7 @@ macro_rules! mk_visit {
 
       fn visit_type(&mut self, ty: &$($mutbl)? Type) {
         if self.abort() { return }
-        self.visit_attrs(&$($mutbl)? ty.attrs.0);
-        self.visit_attrs(&$($mutbl)? ty.attrs.1);
+        self.visit_attr_pair(&$($mutbl)? ty.attrs);
         self.visit_terms(&$($mutbl)? ty.args);
       }
 
@@ -1084,6 +1091,11 @@ macro_rules! mk_visit {
             self.visit_terms(&$($mutbl)? attr.args)
           }
         }
+      }
+
+      fn visit_attr_pair(&mut self, attrs: &$($mutbl)? (Attrs, Attrs)) {
+        self.visit_attrs(&$($mutbl)? attrs.0);
+        self.visit_attrs(&$($mutbl)? attrs.1);
       }
 
       fn visit_flex_and(
@@ -2988,7 +3000,7 @@ impl FormatterConfig {
     show_invisible: true,
     show_orig: true,
     upper_clusters: false,
-    both_clusters: true,
+    both_clusters: false,
     negation_sugar: true,
   };
 }

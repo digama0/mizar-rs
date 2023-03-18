@@ -1012,6 +1012,18 @@ pub enum PropertyKind {
   Abstractness,
 }
 
+impl PropertyKind {
+  pub fn flip(self) -> Self {
+    match self {
+      Self::Reflexivity => Self::Irreflexivity,
+      Self::Irreflexivity => Self::Reflexivity,
+      Self::Connectedness => Self::Asymmetry,
+      Self::Asymmetry => Self::Connectedness,
+      _ => self,
+    }
+  }
+}
+
 impl TryFrom<&[u8]> for PropertyKind {
   type Error = ();
   fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
@@ -1055,6 +1067,8 @@ impl PropertySet {
       | 1 << PropertyKind::Involutiveness as u16
       | 1 << PropertyKind::Projectivity as u16,
   );
+  const fn uses_arg1(self) -> bool { self.0 & Self::USES_ARG1.0 != 0 }
+  const fn uses_arg2(self) -> bool { self.0 & Self::USES_ARG2.0 != 0 }
 }
 
 impl std::fmt::Debug for PropertySet {
@@ -1070,7 +1084,7 @@ impl PropertySet {
   pub fn set(&mut self, prop: PropertyKind) { self.0 |= 1 << prop as u16 }
 }
 
-#[derive(Clone, Copy, Default, Debug, Eq)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct Properties {
   pub properties: PropertySet,
   pub arg1: u8,
@@ -1085,18 +1099,24 @@ impl std::ops::Deref for Properties {
   fn deref(&self) -> &Self::Target { &self.properties }
 }
 
-impl PartialEq for Properties {
-  fn eq(&self, other: &Self) -> bool {
-    self.properties == other.properties
-      && (self.properties.0 & PropertySet::USES_ARG1.0 == 0 || self.arg1 == other.arg1)
-      && (self.properties.0 & PropertySet::USES_ARG2.0 == 0 || self.arg2 == other.arg2)
-  }
-}
-
 impl Properties {
   pub const EMPTY: Self = Self { properties: PropertySet::EMPTY, arg1: 0, arg2: 0 };
-  pub const fn offset(self, n: u8) -> Self {
-    Self { properties: self.properties, arg1: self.arg1 + n, arg2: self.arg2 + n }
+  pub const fn offset(mut self, n: u8) -> Self {
+    if self.properties.uses_arg1() {
+      self.arg1 += n
+    }
+    if self.properties.uses_arg2() {
+      self.arg2 += n
+    }
+    self
+  }
+  pub fn trim(&mut self) {
+    if !self.properties.uses_arg1() {
+      self.arg1 = 0
+    }
+    if !self.properties.uses_arg2() {
+      self.arg2 = 0
+    }
   }
 }
 
@@ -1291,6 +1311,13 @@ pub struct Clusters {
   pub functor: SortedIdxVec<usize, FunctorCluster>,
   pub conditional: ConditionalClusters,
 }
+impl<V: VisitMut> Visitable<V> for Clusters {
+  fn visit(&mut self, v: &mut V) {
+    self.registered.visit(v);
+    self.functor.visit(v);
+    self.conditional.vec.visit(v);
+  }
+}
 
 impl Clusters {
   pub fn len(&self) -> ClustersBase {
@@ -1343,7 +1370,7 @@ pub struct Cluster {
 }
 impl<V: VisitMut> Visitable<V> for Cluster {
   fn visit(&mut self, v: &mut V) {
-    v.with_locus_tys(&mut self.primary, |v| self.consequent.visit(v));
+    v.with_locus_tys(&mut self.primary, |v| v.visit_attr_pair(&mut self.consequent));
   }
 }
 
@@ -1375,7 +1402,7 @@ impl std::ops::DerefMut for RegisteredCluster {
 impl<V: VisitMut> Visitable<V> for RegisteredCluster {
   fn visit(&mut self, v: &mut V) {
     v.with_locus_tys(&mut self.cl.primary, |v| {
-      self.cl.consequent.visit(v);
+      v.visit_attr_pair(&mut self.cl.consequent);
       self.ty.visit(v);
     });
   }
@@ -1397,7 +1424,7 @@ impl std::ops::DerefMut for ConditionalCluster {
 impl<V: VisitMut> Visitable<V> for ConditionalCluster {
   fn visit(&mut self, v: &mut V) {
     v.with_locus_tys(&mut self.cl.primary, |v| {
-      self.cl.consequent.visit(v);
+      v.visit_attr_pair(&mut self.cl.consequent);
       self.ty.visit(v);
       self.antecedent.visit(v);
     });
@@ -1421,7 +1448,7 @@ impl std::ops::DerefMut for FunctorCluster {
 impl<V: VisitMut> Visitable<V> for FunctorCluster {
   fn visit(&mut self, v: &mut V) {
     v.with_locus_tys(&mut self.cl.primary, |v| {
-      self.cl.consequent.visit(v);
+      v.visit_attr_pair(&mut self.cl.consequent);
       self.ty.visit(v);
       self.term.visit(v);
     });
@@ -2281,6 +2308,13 @@ pub enum PatternKind {
   Aggr(AggrId),
   SubAggr(StructId),
 }
+impl<V: VisitMut> Visitable<V> for PatternKind {
+  fn visit(&mut self, v: &mut V) {
+    if let Self::ExpandableMode { expansion } = self {
+      expansion.visit(v);
+    }
+  }
+}
 
 impl PatternKind {
   pub fn class(&self) -> PatternKindClass {
@@ -2297,7 +2331,7 @@ impl PatternKind {
   }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pattern {
   pub kind: PatternKind,
   // pub pid: u32,
@@ -2308,6 +2342,12 @@ pub struct Pattern {
   pub primary: Box<[Type]>,
   pub visible: Box<[LocusId]>,
   pub pos: bool,
+}
+impl<V: VisitMut> Visitable<V> for Pattern {
+  fn visit(&mut self, v: &mut V) {
+    self.kind.visit(v);
+    self.primary.visit(v);
+  }
 }
 
 #[derive(Debug, Default)]

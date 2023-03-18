@@ -7,6 +7,29 @@ enum PendingDef {
   Cluster(ClusterKind, usize),
 }
 
+pub struct ExtVec<T> {
+  vec: Vec<T>,
+  limit: usize,
+}
+impl<T> Default for ExtVec<T> {
+  fn default() -> Self { Self { vec: vec![], limit: 0 } }
+}
+impl<T> std::ops::Deref for ExtVec<T> {
+  type Target = [T];
+  fn deref(&self) -> &Self::Target { &self.vec[..self.limit] }
+}
+impl<T> ExtVec<T> {
+  pub fn push(&mut self, t: T) {
+    assert!(self.vec.len() == self.limit);
+    self.vec.push(t);
+    self.up();
+  }
+  pub fn push_ext(&mut self, t: T) { self.vec.push(t) }
+  pub fn up(&mut self) { self.limit = self.vec.len() }
+  pub fn len(&self) -> usize { self.limit }
+  pub fn ext_len(&self) -> usize { self.vec.len() }
+}
+
 pub struct Reader {
   pub g: Global,
   pub lc: LocalContext,
@@ -16,7 +39,7 @@ pub struct Reader {
   /// gFormatsColl
   pub formats: BTreeMap<Format, FormatId>,
   /// Notat
-  pub notations: EnumMap<PatternKindClass, Vec<Pattern>>,
+  pub notations: EnumMap<PatternKindClass, ExtVec<Pattern>>,
   /// Definientia
   pub definitions: Vec<Definiens>,
   /// EqDefinientia
@@ -120,7 +143,7 @@ impl MizPath {
 
     // LoadDefinitions
     if cfg.analyzer_enabled {
-      self.read_definitions(&v.g.constrs, "dfs", None, &mut v.definitions).unwrap();
+      self.read_definitions(&v.g.constrs, true, "dfs", None, &mut v.definitions).unwrap();
       if cfg.dump_definitions {
         for d in &v.definitions {
           eprintln!("definition: {d:?}");
@@ -130,7 +153,7 @@ impl MizPath {
 
     // LoadEqualities
     if cfg.checker_enabled {
-      self.read_definitions(&v.g.constrs, "dfe", None, &mut v.equalities).unwrap();
+      self.read_definitions(&v.g.constrs, true, "dfe", None, &mut v.equalities).unwrap();
       if cfg.dump_definitions {
         for d in &v.equalities {
           eprintln!("equality: {d:?}");
@@ -140,7 +163,7 @@ impl MizPath {
 
     // LoadExpansions
     if cfg.checker_enabled {
-      self.read_definitions(&v.g.constrs, "dfx", None, &mut v.expansions).unwrap();
+      self.read_definitions(&v.g.constrs, true, "dfx", None, &mut v.expansions).unwrap();
       if cfg.dump_definitions {
         for d in &v.expansions {
           eprintln!("expansion: {d:?}");
@@ -149,16 +172,16 @@ impl MizPath {
     }
 
     // LoadPropertiesReg
-    self.read_properties(&v.g.constrs, "epr", None, &mut v.properties).unwrap();
+    self.read_properties(&v.g.constrs, true, "epr", None, &mut v.properties).unwrap();
 
     // LoadIdentify
     if cfg.checker_enabled {
-      self.read_identify_regs(&v.g.constrs, "eid", None, &mut v.identify).unwrap();
+      self.read_identify_regs(&v.g.constrs, true, "eid", None, &mut v.identify).unwrap();
     }
 
     // LoadReductions
     if cfg.checker_enabled {
-      self.read_reduction_regs(&v.g.constrs, "erd", None, &mut v.reductions).unwrap();
+      self.read_reduction_regs(&v.g.constrs, true, "erd", None, &mut v.reductions).unwrap();
     }
 
     // in mizar this was done inside the parser

@@ -280,9 +280,9 @@ impl MizPath {
   }
 
   pub fn read_dfr(
-    &self, vocs: &mut Vocabularies, formats: &mut IdxVec<FormatId, Format>,
+    &self, mml: bool, vocs: &mut Vocabularies, formats: &mut IdxVec<FormatId, Format>,
   ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(false, "dfr") {
+    let (mut r, mut buf) = match self.open(mml, "dfr") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
     };
@@ -306,8 +306,8 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_dno(&self, dno: &mut DepNotation) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(false, "dno") {
+  pub fn read_dno(&self, mml: bool, dno: &mut DepNotation) -> io::Result<bool> {
+    let (mut r, mut buf) = match self.open(mml, "dno") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
     };
@@ -339,8 +339,8 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_dco(&self, dco: &mut DepConstructors) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(false, "dco") {
+  pub fn read_dco(&self, mml: bool, dco: &mut DepConstructors) -> io::Result<bool> {
+    let (mut r, mut buf) = match self.open(mml, "dco") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
     };
@@ -394,8 +394,8 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_dcl(&self, dcl: &mut DepClusters) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(false, "dcl") {
+  pub fn read_dcl(&self, mml: bool, dcl: &mut DepClusters) -> io::Result<bool> {
+    let (mut r, mut buf) = match self.open(mml, "dcl") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
     };
@@ -414,10 +414,10 @@ impl MizPath {
   }
 
   pub fn read_definitions<'a>(
-    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, sig: Option<&mut Vec<Article>>,
-    defs: &mut Vec<Definiens>,
+    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, mml: bool, ext: &str,
+    sig: Option<&mut Vec<Article>>, defs: &mut Vec<Definiens>,
   ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(sig.is_none(), ext) {
+    let (mut r, mut buf) = match self.open(mml, ext) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, ctx, false),
     };
@@ -438,10 +438,10 @@ impl MizPath {
   }
 
   pub fn read_properties<'a>(
-    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, sig: Option<&mut Vec<Article>>,
-    props: &mut Vec<Property>,
+    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, mml: bool, ext: &str,
+    sig: Option<&mut Vec<Article>>, props: &mut Vec<Property>,
   ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(sig.is_none(), ext) {
+    let (mut r, mut buf) = match self.open(mml, ext) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, ctx, false),
     };
@@ -460,15 +460,17 @@ impl MizPath {
   }
 
   pub fn read_identify_regs<'a>(
-    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, sig: Option<&mut Vec<Article>>,
-    ids: &mut Vec<IdentifyFunc>,
+    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, mml: bool, ext: &str,
+    sig: Option<&mut Vec<Article>>, ids: &mut Vec<IdentifyFunc>,
   ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(sig.is_none(), ext) {
+    let (mut r, mut buf) = match self.open(mml, ext) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, ctx, false),
     };
     let buf = &mut buf;
-    r.read_pi(buf);
+    if sig.is_none() {
+      r.read_pi(buf)
+    }
     r.read_start(buf, Some(b"IdentifyRegistrations"));
     if let Some(sig) = sig {
       r.parse_signature(buf, sig);
@@ -482,15 +484,17 @@ impl MizPath {
   }
 
   pub fn read_reduction_regs<'a>(
-    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, sig: Option<&mut Vec<Article>>,
-    reds: &mut Vec<Reduction>,
+    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, mml: bool, ext: &str,
+    sig: Option<&mut Vec<Article>>, reds: &mut Vec<Reduction>,
   ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(sig.is_none(), ext) {
+    let (mut r, mut buf) = match self.open(mml, ext) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, ctx, false),
     };
     let buf = &mut buf;
-    r.read_pi(buf);
+    if sig.is_none() {
+      r.read_pi(buf)
+    }
     r.read_start(buf, Some(b"ReductionRegistrations"));
     if let Some(sig) = sig {
       r.parse_signature(buf, sig);
@@ -542,8 +546,8 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_the(&self, thms: &mut DepTheorems) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(false, "the") {
+  pub fn read_the(&self, mml: bool, thms: &mut DepTheorems) -> io::Result<bool> {
+    let (mut r, mut buf) = match self.open(mml, "the") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
     };
@@ -608,8 +612,8 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_sch(&self, schs: &mut DepSchemes) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(false, "sch") {
+  pub fn read_sch(&self, mml: bool, schs: &mut DepSchemes) -> io::Result<bool> {
+    let (mut r, mut buf) = match self.open(mml, "sch") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
     };
@@ -1192,6 +1196,7 @@ impl MizReader<'_> {
             props.set(e.local_name().try_into().expect("unexpected property"));
             self.end_tag(buf);
           }
+          props.trim();
           Elem::Properties(props)
         }
         b"ArgTypes" => {

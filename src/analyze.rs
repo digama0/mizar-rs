@@ -8,7 +8,7 @@ use std::ops::Range;
 const MAX_EXPANSIONS: usize = 20;
 
 pub struct Analyzer<'a> {
-  r: &'a mut Reader,
+  pub r: &'a mut Reader,
   pub path: &'a MizPath,
   sch_func_args: IdxVec<SchFuncId, Box<[Type]>>,
   priv_func_args: IdxVec<PrivPredId, Box<[Type]>>,
@@ -162,12 +162,13 @@ impl Analyzer<'_> {
       }
       ast::ItemKind::SchemeBlock(it) => self.scope(None, false, false, |this| this.elab_scheme(it)),
       ast::ItemKind::Theorem { prop, just } => {
-        let f = self.elab_intern_formula(&prop.f, true);
+        let f = self.elab_formula(&prop.f, true);
         Exportable.visit_formula(&f);
         if self.g.cfg.analyzer_full {
+          let f = f.visit_cloned(&mut self.r.intern_const());
           let label = prop.label.as_ref().map(|l| l.id.0);
           self.elab_justification(label, &f, just);
-          self.push_prop(label, f.clone());
+          self.push_prop(label, f)
         } else {
           self.skip_justification(just)
         }
@@ -1863,8 +1864,12 @@ impl<'a> PropertiesBuilder<'a> {
       } else {
         elab.skip_justification(&prop.just);
       }
-      self.props.set(prop.kind);
+      self.props.set(match self.kind {
+        PropertyDeclKind::Pred(_, false) => prop.kind.flip(),
+        _ => prop.kind,
+      });
     }
+    self.props.trim()
   }
 }
 
@@ -2606,6 +2611,7 @@ impl BlockReader {
   }
 
   fn after_scope(self, elab: &mut Analyzer) {
+    elab.notations.iter_mut().for_each(|nota| nota.1.up());
     for (df, label, thm) in self.defs {
       elab.r.read_definiens(&df);
       if elab.g.cfg.analyzer_full {
@@ -2771,7 +2777,7 @@ impl BlockReader {
     let pat = Pattern { kind: PatternKind::Func(n), fmt, primary, visible, pos: true };
     pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
-    elab.r.notations[PKC::Func].push(pat)
+    elab.r.notations[PKC::Func].push_ext(pat)
   }
 
   fn elab_pred_def(
@@ -2851,7 +2857,7 @@ impl BlockReader {
     let pat = Pattern { kind: PatternKind::Pred(n), fmt, primary, visible, pos };
     pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
-    elab.r.notations[PKC::Pred].push(pat)
+    elab.r.notations[PKC::Pred].push_ext(pat)
   }
 
   fn elab_mode_def(
@@ -2873,7 +2879,7 @@ impl BlockReader {
         let pat = Pattern { kind, fmt, primary, visible, pos: true };
         pat.check_access();
         elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
-        elab.r.notations[PKC::Mode].push(pat)
+        elab.r.notations[PKC::Mode].push_ext(pat)
       }
       ast::DefModeKind::Standard { spec, def } => {
         let (redefines, superfluous, it_type);
@@ -2979,7 +2985,7 @@ impl BlockReader {
         let pat = Pattern { kind: PatternKind::Mode(n), fmt, primary, visible, pos: true };
         pat.check_access();
         elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
-        elab.r.notations[PKC::Mode].push(pat)
+        elab.r.notations[PKC::Mode].push_ext(pat)
       }
     }
   }
@@ -3053,7 +3059,7 @@ impl BlockReader {
     let pat = Pattern { kind: PatternKind::Attr(n), fmt, primary, visible, pos };
     pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
-    elab.r.notations[PKC::Attr].push(pat)
+    elab.r.notations[PKC::Attr].push_ext(pat)
   }
 
   fn elab_struct_def(&mut self, elab: &mut Analyzer, it: &ast::DefStruct) {
@@ -3089,7 +3095,13 @@ impl BlockReader {
     }
     let field_tys = elab.lc.fixed_var.0.drain(fixed_vars..).map(|v| v.ty).collect_vec();
     let aggr_primary: Box<[_]> = self.to_locus(elab, |l| {
-      self.primary.0.iter().cloned().chain(field_tys.iter().map(|ty| ty.visit_cloned(l))).collect()
+      let field_tys2 = field_tys.iter().map(|ty| {
+        let mut ty = ty.clone();
+        ty.adjust_mut(&elab.g.constrs);
+        ty.visit(l);
+        ty
+      });
+      self.primary.0.iter().cloned().chain(field_tys2).collect()
     });
     let aggr_id = AggrId::from_usize(elab.g.constrs.aggregate.len());
     let aggr_pat = Pattern {
@@ -3118,7 +3130,7 @@ impl BlockReader {
       pos: true,
     };
     elab.r.lc.formatter.push(&elab.r.g.constrs, &subaggr_pat);
-    elab.r.notations[PKC::SubAggr].push(subaggr_pat);
+    elab.r.notations[PKC::SubAggr].push_ext(subaggr_pat);
 
     self.to_locus.push(Some(self.to_const.push(ConstId::from_usize(fixed_vars))));
     let mut mk_sel =
@@ -3169,7 +3181,7 @@ impl BlockReader {
         };
         sel_pat.check_access();
         elab.r.lc.formatter.push(&elab.r.g.constrs, &sel_pat);
-        elab.r.notations[PKC::Sel].push(sel_pat);
+        elab.r.notations[PKC::Sel].push_ext(sel_pat);
         new_fields.push(sel_id);
         mk_sel.terms.push(Err(sel_id));
         fields.push(sel_id);
@@ -3197,7 +3209,7 @@ impl BlockReader {
       pos: true,
     };
     elab.r.lc.formatter.push(&elab.r.g.constrs, &attr_pat);
-    elab.r.notations[PKC::Attr].push(attr_pat);
+    elab.r.notations[PKC::Attr].push_ext(attr_pat);
 
     elab.push_constr(ConstrKind::Attr(attr_id));
     elab.push_constr(ConstrKind::Struct(struct_id));
@@ -3221,7 +3233,7 @@ impl BlockReader {
     let struct_id2 = elab.g.constrs.struct_mode.push(c);
     assert!(struct_id == struct_id2);
     elab.r.lc.formatter.push(&elab.r.g.constrs, &struct_pat);
-    elab.r.notations[PKC::Struct].push(struct_pat);
+    elab.r.notations[PKC::Struct].push_ext(struct_pat);
 
     let mut aggr_ty = struct_ty;
     aggr_ty.attrs = (attrs.clone(), attrs);
@@ -3234,7 +3246,7 @@ impl BlockReader {
     let aggr_id2 = elab.g.constrs.aggregate.push(c);
     assert!(aggr_id == aggr_id2);
     elab.r.lc.formatter.push(&elab.r.g.constrs, &aggr_pat);
-    elab.r.notations[PKC::Aggr].push(aggr_pat);
+    elab.r.notations[PKC::Aggr].push_ext(aggr_pat);
   }
 
   fn elab_exist_reg(
@@ -3574,7 +3586,7 @@ impl BlockReader {
     };
     pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
-    elab.r.notations[PKC::Pred].push(pat)
+    elab.r.notations[PKC::Pred].push_ext(pat)
   }
 
   fn elab_func_notation(
@@ -3605,7 +3617,7 @@ impl BlockReader {
     };
     pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
-    elab.r.notations[PKC::Func].push(pat)
+    elab.r.notations[PKC::Func].push_ext(pat)
   }
 
   fn elab_mode_notation(
@@ -3634,7 +3646,7 @@ impl BlockReader {
     };
     pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
-    elab.r.notations[PKC::Mode].push(pat)
+    elab.r.notations[PKC::Mode].push_ext(pat)
   }
 
   fn elab_attr_notation(
@@ -3663,7 +3675,7 @@ impl BlockReader {
     };
     pat.check_access();
     elab.r.lc.formatter.push(&elab.r.g.constrs, &pat);
-    elab.r.notations[PKC::Attr].push(pat)
+    elab.r.notations[PKC::Attr].push_ext(pat)
   }
 }
 
@@ -3675,12 +3687,8 @@ impl ReadProof for BlockReader {
   fn intro(&mut self, elab: &mut Analyzer, start: usize, _: u32) {
     self.to_locus.0.resize(start, None);
     for fv in &elab.r.lc.fixed_var.0[start..] {
-      let mut ty = if let TypeKind::Mode(n) = fv.ty.kind {
-        let (n, args) = Type::adjust(n, &fv.ty.args, &elab.g.constrs);
-        Type { kind: n.into(), attrs: fv.ty.attrs.clone(), args: args.to_vec() }
-      } else {
-        fv.ty.clone()
-      };
+      let mut ty = fv.ty.clone();
+      ty.adjust_mut(&elab.g.constrs);
       self.to_locus(elab, |l| ty.visit(l));
       Exportable.visit_type(&ty);
       let i = self.primary.push(ty);
