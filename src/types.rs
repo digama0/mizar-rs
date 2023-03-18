@@ -285,6 +285,33 @@ impl<I: Idx, T> SortedIdxVec<I, T> {
   }
 }
 
+#[derive(Clone, Debug)]
+pub struct ExtVec<T> {
+  pub vec: Vec<T>,
+  pub limit: usize,
+}
+impl<T> Default for ExtVec<T> {
+  fn default() -> Self { Self { vec: vec![], limit: 0 } }
+}
+impl<T> std::ops::Deref for ExtVec<T> {
+  type Target = [T];
+  fn deref(&self) -> &Self::Target { &self.vec[..self.limit] }
+}
+impl<T> std::ops::DerefMut for ExtVec<T> {
+  fn deref_mut(&mut self) -> &mut Self::Target { &mut self.vec[..self.limit] }
+}
+impl<T> ExtVec<T> {
+  pub fn push(&mut self, t: T) {
+    assert!(self.vec.len() == self.limit);
+    self.vec.push(t);
+    self.up();
+  }
+  pub fn push_ext(&mut self, t: T) { self.vec.push(t) }
+  pub fn up(&mut self) { self.limit = self.vec.len() }
+  pub fn len(&self) -> usize { self.limit }
+  pub fn ext_len(&self) -> usize { self.vec.len() }
+}
+
 mk_id! {
   ModeId(u32),
   StructId(u32),
@@ -542,6 +569,9 @@ impl<V, T: Visitable<V>> Visitable<V> for Option<T> {
 }
 impl<V, T: Visitable<V>> Visitable<V> for Vec<T> {
   fn visit(&mut self, v: &mut V) { self.iter_mut().for_each(|t| t.visit(v)) }
+}
+impl<V, T: Visitable<V>> Visitable<V> for ExtVec<T> {
+  fn visit(&mut self, v: &mut V) { self.vec.visit(v) }
 }
 impl<I, V, T: Visitable<V>> Visitable<V> for IdxVec<I, T> {
   fn visit(&mut self, v: &mut V) { self.0.visit(v) }
@@ -1476,7 +1506,7 @@ pub struct ConditionalClusters {
   pub attr_clusters: EnumMap<bool, BTreeMap<AttrId, BTreeSet<u32>>>,
 }
 impl std::ops::Deref for ConditionalClusters {
-  type Target = Vec<ConditionalCluster>;
+  type Target = [ConditionalCluster];
   fn deref(&self) -> &Self::Target { &self.vec }
 }
 impl std::ops::DerefMut for ConditionalClusters {

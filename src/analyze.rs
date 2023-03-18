@@ -1600,7 +1600,7 @@ impl Analyzer<'_> {
   /// RClusterObj.RegisterCluster
   fn register_cluster(&mut self, mut attrs: Attrs, primary: Box<[Type]>, mut ty: Type) {
     let mut attrs1 = attrs.clone();
-    attrs1.enlarge_by(&self.g.constrs, &self.lc, &ty.attrs.0);
+    attrs1.enlarge_by(&self.g.constrs, &self.lc, &ty.attrs.1); // lower cluster? [from original]
     attrs.enlarge_by(&self.g.constrs, &self.lc, &ty.attrs.1);
     attrs.round_up_with(&self.g, &self.lc, &ty, false);
     let Attrs::Consistent(_) = attrs else { panic!("inconsistent existential cluster") };

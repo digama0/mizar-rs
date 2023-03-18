@@ -144,10 +144,6 @@ impl Analyzer<'_> {
       process!(mode, struct_mode, attribute, predicate, functor, selector, aggregate);
     }
 
-    if true {
-      return // TODO
-    }
-
     // validating .dcl
     {
       let mut dcl2 = Default::default();
@@ -155,7 +151,19 @@ impl Analyzer<'_> {
         assert_eq!(arts2, dcl2.sig);
       }
       let since1 = self.g.clusters.since(&self.export.clusters_base);
-      assert_eq!(since1, dcl2.as_ref());
+      macro_rules! process {
+        ($($field:ident),*) => {$({
+          dcl2.$field.visit(ep);
+          let cs = since1.$field.iter().map(|c| c.visit_cloned(ep)).collect_vec();
+          assert_eq_iter(concat!("clusters.", stringify!($field)),
+            cs.iter(), dcl2.$field.iter());
+        })*};
+      }
+      process!(registered, functor, conditional);
+    }
+
+    if true {
+      return // TODO
     }
 
     // validating .def
