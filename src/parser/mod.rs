@@ -446,7 +446,9 @@ impl MizPath {
       file => MizReader::new(file?, ctx, false),
     };
     let buf = &mut buf;
-    r.read_pi(buf);
+    if sig.is_none() {
+      r.read_pi(buf)
+    }
     r.read_start(buf, Some(b"PropertyRegistration"));
     if let Some(sig) = sig {
       r.parse_signature(buf, sig);

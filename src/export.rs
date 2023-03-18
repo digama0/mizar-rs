@@ -175,10 +175,6 @@ impl Analyzer<'_> {
       assert_eq_iter("definitions", def1.iter(), def2.iter());
     }
 
-    if true {
-      return // TODO
-    }
-
     // validating .did
     {
       let (mut sig, mut did2) = Default::default();
@@ -218,6 +214,10 @@ impl Analyzer<'_> {
       let dpr1 = &self.properties[self.export.properties_base as usize..];
       let dpr1 = dpr1.iter().map(|c| c.visit_cloned(ep)).collect_vec();
       assert_eq_iter("properties", dpr1.iter(), dpr2.iter());
+    }
+
+    if true {
+      return // TODO
     }
 
     // validating .the
