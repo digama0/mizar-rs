@@ -1,257 +1,257 @@
---- binari_2.miz
-+++ binari_2.miz
+--- mml/binari_2.miz
++++ mml/binari_2.miz
 @@ -28 +28 @@
 - requirements REAL, NUMERALS, SUBSET, ARITHM;
 + requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
---- complex1.miz
-+++ complex1.miz
+--- mml/complex1.miz
++++ mml/complex1.miz
 @@ -25 +25 @@
 - requirements REAL, NUMERALS, SUBSET, ARITHM;
 + requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
---- complex2.miz
-+++ complex2.miz
+--- mml/complex2.miz
++++ mml/complex2.miz
 @@ -27 +27 @@
 - requirements SUBSET, REAL, NUMERALS, ARITHM;
 + requirements BOOLE, SUBSET, REAL, NUMERALS, ARITHM;
---- complsp1.miz
-+++ complsp1.miz
+--- mml/complsp1.miz
++++ mml/complsp1.miz
 @@ -26 +26 @@
 - requirements NUMERALS, SUBSET, ARITHM;
 + requirements BOOLE, NUMERALS, SUBSET, ARITHM;
---- comptrig.miz
-+++ comptrig.miz
+--- mml/comptrig.miz
++++ mml/comptrig.miz
 @@ -30 +30 @@
 - requirements NUMERALS, SUBSET, REAL, ARITHM;
 + requirements BOOLE, NUMERALS, SUBSET, REAL, ARITHM;
---- decomp_1.miz
-+++ decomp_1.miz
+--- mml/decomp_1.miz
++++ mml/decomp_1.miz
 @@ -22 +22 @@
 - requirements SUBSET;
 + requirements BOOLE, SUBSET;
---- diophan2.miz
-+++ diophan2.miz
+--- mml/diophan2.miz
++++ mml/diophan2.miz
 @@ -31 +31 @@
 - requirements REAL, NUMERALS, SUBSET, ARITHM;
 + requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
---- euclid_8.miz
-+++ euclid_8.miz
+--- mml/euclid_8.miz
++++ mml/euclid_8.miz
 @@ -31 +31 @@
 - requirements SUBSET, NUMERALS, ARITHM;
 + requirements BOOLE, SUBSET, NUMERALS, ARITHM;
---- fdiff_10.miz
-+++ fdiff_10.miz
+--- mml/fdiff_10.miz
++++ mml/fdiff_10.miz
 @@ -28 +28 @@
 - requirements SUBSET, NUMERALS, ARITHM;
 + requirements BOOLE, SUBSET, NUMERALS, ARITHM;
---- fdiff_11.miz
-+++ fdiff_11.miz
+--- mml/fdiff_11.miz
++++ mml/fdiff_11.miz
 @@ -29 +29 @@
 - requirements SUBSET, NUMERALS, ARITHM, REAL;
 + requirements BOOLE, SUBSET, NUMERALS, ARITHM, REAL;
---- fdiff_4.miz
-+++ fdiff_4.miz
+--- mml/fdiff_4.miz
++++ mml/fdiff_4.miz
 @@ -29 +29 @@
 - requirements SUBSET, REAL, NUMERALS, ARITHM;
 + requirements BOOLE, SUBSET, REAL, NUMERALS, ARITHM;
---- fdiff_6.miz
-+++ fdiff_6.miz
+--- mml/fdiff_6.miz
++++ mml/fdiff_6.miz
 @@ -30 +30 @@
 - requirements SUBSET, REAL, NUMERALS, ARITHM;
 + requirements BOOLE, SUBSET, REAL, NUMERALS, ARITHM;
---- fdiff_7.miz
-+++ fdiff_7.miz
+--- mml/fdiff_7.miz
++++ mml/fdiff_7.miz
 @@ -30 +30 @@
 - requirements SUBSET, NUMERALS, ARITHM;
 + requirements BOOLE, SUBSET, NUMERALS, ARITHM;
---- fdiff_8.miz
-+++ fdiff_8.miz
+--- mml/fdiff_8.miz
++++ mml/fdiff_8.miz
 @@ -30 +30 @@
 - requirements SUBSET, REAL, NUMERALS, ARITHM;
 + requirements BOOLE, SUBSET, REAL, NUMERALS, ARITHM;
---- fdiff_9.miz
-+++ fdiff_9.miz
+--- mml/fdiff_9.miz
++++ mml/fdiff_9.miz
 @@ -30 +30 @@
 - requirements SUBSET, REAL, NUMERALS, ARITHM;
 + requirements BOOLE, SUBSET, REAL, NUMERALS, ARITHM;
---- field_4.miz
-+++ field_4.miz
+--- mml/field_4.miz
++++ mml/field_4.miz
 @@ -48 +48 @@
 -      REALSET1, FIELD_2, FIELD_3;
 +      REALSET1, FIELD_1, FIELD_2, FIELD_3;
---- funct_9.miz
-+++ funct_9.miz
+--- mml/funct_9.miz
++++ mml/funct_9.miz
 @@ -27 +27 @@
 - requirements NUMERALS, SUBSET, ARITHM;
 + requirements BOOLE, NUMERALS, SUBSET, ARITHM;
---- fuzzy_5.miz
-+++ fuzzy_5.miz
+--- mml/fuzzy_5.miz
++++ mml/fuzzy_5.miz
 @@ -32 +32 @@
 - requirements NUMERALS, REAL, SUBSET, ARITHM;
 + requirements BOOLE, NUMERALS, REAL, SUBSET, ARITHM;
---- gobrd12.miz
-+++ gobrd12.miz
+--- mml/gobrd12.miz
++++ mml/gobrd12.miz
 @@ -31 +31 @@
 - requirements NUMERALS, REAL, SUBSET, ARITHM;
 + requirements BOOLE, NUMERALS, REAL, SUBSET, ARITHM;
---- gobrd13.miz
-+++ gobrd13.miz
+--- mml/gobrd13.miz
++++ mml/gobrd13.miz
 @@ -29 +29 @@
 - requirements NUMERALS, REAL, SUBSET, ARITHM;
 + requirements BOOLE, NUMERALS, REAL, SUBSET, ARITHM;
---- gtarski3.miz
-+++ gtarski3.miz
+--- mml/gtarski3.miz
++++ mml/gtarski3.miz
 @@ -3164 +3164 @@
 -::$ 7.25 Satz
 +::$N 7.25 Satz
---- hilb10_4.miz
-+++ hilb10_4.miz
+--- mml/hilb10_4.miz
++++ mml/hilb10_4.miz
 @@ -35 +35 @@
 - requirements NUMERALS, SUBSET, ARITHM, REAL;
 + requirements BOOLE, NUMERALS, SUBSET, ARITHM, REAL;
---- hilb10_5.miz
-+++ hilb10_5.miz
+--- mml/hilb10_5.miz
++++ mml/hilb10_5.miz
 @@ -44 +44 @@
 - requirements NUMERALS, SUBSET, ARITHM, REAL;
 + requirements BOOLE, NUMERALS, SUBSET, ARITHM, REAL;
---- integr12.miz
-+++ integr12.miz
+--- mml/integr12.miz
++++ mml/integr12.miz
 @@ -35 +35 @@
 - requirements NUMERALS, SUBSET, ARITHM, REAL;
 + requirements BOOLE, NUMERALS, SUBSET, ARITHM, REAL;
---- integr13.miz
-+++ integr13.miz
+--- mml/integr13.miz
++++ mml/integr13.miz
 @@ -30 +30 @@
 - requirements NUMERALS, SUBSET, ARITHM;
 + requirements BOOLE, NUMERALS, SUBSET, ARITHM;
---- integr14.miz
-+++ integr14.miz
+--- mml/integr14.miz
++++ mml/integr14.miz
 @@ -30 +30 @@
 - requirements NUMERALS, SUBSET, ARITHM;
 + requirements BOOLE, NUMERALS, SUBSET, ARITHM;
---- jordan1d.miz
-+++ jordan1d.miz
+--- mml/jordan1d.miz
++++ mml/jordan1d.miz
 @@ -31 +31 @@
 - requirements NUMERALS, SUBSET, REAL, ARITHM;
 + requirements BOOLE, NUMERALS, SUBSET, REAL, ARITHM;
---- lagra4sq.miz
-+++ lagra4sq.miz
+--- mml/lagra4sq.miz
++++ mml/lagra4sq.miz
 @@ -31 +31 @@
 - requirements REAL, NUMERALS, SUBSET, ARITHM;
 + requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
---- l_hospit.miz
-+++ l_hospit.miz
+--- mml/l_hospit.miz
++++ mml/l_hospit.miz
 @@ -30 +30 @@
 - requirements SUBSET, ARITHM, NUMERALS;
 + requirements BOOLE, SUBSET, ARITHM, NUMERALS;
---- limfunc4.miz
-+++ limfunc4.miz
+--- mml/limfunc4.miz
++++ mml/limfunc4.miz
 @@ -27 +27 @@
 - requirements SUBSET, ARITHM, NUMERALS;
 + requirements BOOLE, SUBSET, ARITHM, NUMERALS;
---- ltlaxio2.miz
-+++ ltlaxio2.miz
+--- mml/ltlaxio2.miz
++++ mml/ltlaxio2.miz
 @@ -34 +34 @@
 - requirements NUMERALS, SUBSET, ARITHM, REAL;
 + requirements BOOLE, NUMERALS, SUBSET, ARITHM, REAL;
---- matrixc1.miz
-+++ matrixc1.miz
+--- mml/matrixc1.miz
++++ mml/matrixc1.miz
 @@ -32 +32 @@
 - requirements NUMERALS, SUBSET, REAL, ARITHM;
 + requirements BOOLE, NUMERALS, SUBSET, REAL, ARITHM;
---- menelaus.miz
-+++ menelaus.miz
+--- mml/menelaus.miz
++++ mml/menelaus.miz
 @@ -30 +30 @@
 - requirements SUBSET, NUMERALS, ARITHM;
 + requirements BOOLE, SUBSET, NUMERALS, ARITHM;
---- number02.miz
-+++ number02.miz
+--- mml/number02.miz
++++ mml/number02.miz
 @@ -421 +421 @@
 -  ex k st n = z*k+0 or ... or n = z*k+(z-1)
 +  ex k st n = z*k+(0 qua Nat) or ... or n = z*k+(z-1)
 @@ -446 +446 @@
 -      take 0;
 +      take 0,n;
---- pdiff_3.miz
-+++ pdiff_3.miz
+--- mml/pdiff_3.miz
++++ mml/pdiff_3.miz
 @@ -29 +29 @@
 - requirements SUBSET, REAL, NUMERALS, ARITHM;
 + requirements BOOLE, SUBSET, REAL, NUMERALS, ARITHM;
---- pdiff_5.miz
-+++ pdiff_5.miz
+--- mml/pdiff_5.miz
++++ mml/pdiff_5.miz
 @@ -29 +29 @@
 - requirements SUBSET, REAL, NUMERALS, ARITHM;
 + requirements BOOLE, SUBSET, REAL, NUMERALS, ARITHM;
---- prgcor_1.miz
-+++ prgcor_1.miz
+--- mml/prgcor_1.miz
++++ mml/prgcor_1.miz
 @@ -25 +25 @@
 - requirements REAL, NUMERALS, SUBSET, ARITHM;
 + requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
---- realset1.miz
-+++ realset1.miz
+--- mml/realset1.miz
++++ mml/realset1.miz
 @@ -23 +23 @@
 - requirements SUBSET;
 + requirements BOOLE, SUBSET;
---- scmfsa8b.miz
-+++ scmfsa8b.miz
+--- mml/scmfsa8b.miz
++++ mml/scmfsa8b.miz
 @@ -36 +36 @@
 - requirements NUMERALS, REAL, SUBSET, ARITHM;
 + requirements BOOLE, NUMERALS, REAL, SUBSET, ARITHM;
---- scmfsa8c.miz
-+++ scmfsa8c.miz
+--- mml/scmfsa8c.miz
++++ mml/scmfsa8c.miz
 @@ -37 +37 @@
 - requirements REAL, NUMERALS, SUBSET, ARITHM;
 + requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
---- scmfsa_9.miz
-+++ scmfsa_9.miz
+--- mml/scmfsa_9.miz
++++ mml/scmfsa_9.miz
 @@ -33 +33 @@
 - requirements REAL, NUMERALS, SUBSET, ARITHM;
 + requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
---- scmfsa_x.miz
-+++ scmfsa_x.miz
+--- mml/scmfsa_x.miz
++++ mml/scmfsa_x.miz
 @@ -35 +35 @@
 - requirements NUMERALS, SUBSET, ARITHM, REAL;
 + requirements BOOLE, NUMERALS, SUBSET, ARITHM, REAL;
---- scmpds_6.miz
-+++ scmpds_6.miz
+--- mml/scmpds_6.miz
++++ mml/scmpds_6.miz
 @@ -32 +32 @@
 - requirements NUMERALS, REAL, SUBSET, ARITHM;
 + requirements BOOLE, NUMERALS, REAL, SUBSET, ARITHM;
---- scmpds_7.miz
-+++ scmpds_7.miz
+--- mml/scmpds_7.miz
++++ mml/scmpds_7.miz
 @@ -33 +33 @@
 - requirements REAL, NUMERALS, SUBSET, ARITHM;
 + requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
---- seqfunc.miz
-+++ seqfunc.miz
+--- mml/seqfunc.miz
++++ mml/seqfunc.miz
 @@ -28 +28 @@
 - requirements NUMERALS, SUBSET, ARITHM;
 + requirements BOOLE, NUMERALS, SUBSET, ARITHM;
---- sfmastr3.miz
-+++ sfmastr3.miz
+--- mml/sfmastr3.miz
++++ mml/sfmastr3.miz
 @@ -39 +39 @@
 - requirements REAL, NUMERALS, SUBSET, ARITHM;
 + requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
---- sin_cos6.miz
-+++ sin_cos6.miz
+--- mml/sin_cos6.miz
++++ mml/sin_cos6.miz
 @@ -27 +27 @@
 - requirements SUBSET, NUMERALS, ARITHM, REAL;
 + requirements BOOLE, SUBSET, NUMERALS, ARITHM, REAL;
---- sin_cos9.miz
-+++ sin_cos9.miz
+--- mml/sin_cos9.miz
++++ mml/sin_cos9.miz
 @@ -31 +31 @@
 - requirements SUBSET, NUMERALS, ARITHM, REAL;
 + requirements BOOLE, SUBSET, NUMERALS, ARITHM, REAL;
---- stacks_1.miz
-+++ stacks_1.miz
+--- mml/stacks_1.miz
++++ mml/stacks_1.miz
 @@ -502 +501,0 @@
 -::$H-
---- tops_4.miz
-+++ tops_4.miz
+--- mml/tops_4.miz
++++ mml/tops_4.miz
 @@ -28 +28 @@
 - requirements SUBSET, REAL;
 + requirements BOOLE, SUBSET, REAL;
---- valued_0.miz
-+++ valued_0.miz
+--- mml/valued_0.miz
++++ mml/valued_0.miz
 @@ -1050 +1050 @@
 -    rng(X --> x) c= INT by MEMBERED:5;
 +    rng(X --> x qua Function of X,{x}) c= INT by MEMBERED:5;
@@ -264,3 +264,178 @@
 @@ -1236 +1236 @@
 -    thus rng R c= NAT by MEMBERED:6;
 +    thus rng (R qua Relation of X,Y) c= NAT by MEMBERED:6;
+--- prel/c/comput_1.dcl
++++ prel/c/comput_1.dcl
+@@ -395,0 +396 @@
++<Adjective nr="92"/>
+--- prel/e/eulrpart.the
++++ prel/e/eulrpart.the
+@@ -523,2 +523,2 @@
+-<Var nr="4"/>
+-<Var nr="5"/>
++<Var nr="2"/>
++<Var nr="3"/>
+@@ -543,2 +543,2 @@
+-<Var nr="4"/>
+-<Var nr="5"/>
++<Var nr="2"/>
++<Var nr="3"/>
+@@ -2492 +2492 @@
+-<Var nr="10"/>
++<Var nr="7"/>
+@@ -2512 +2512 @@
+-<Var nr="10"/>
++<Var nr="7"/>
+@@ -2565 +2565 @@
+-<Var nr="10"/>
++<Var nr="7"/>
+@@ -2585 +2585 @@
+-<Var nr="10"/>
++<Var nr="7"/>
+@@ -2638 +2638 @@
+-<Var nr="10"/>
++<Var nr="7"/>
+@@ -2658 +2658 @@
+-<Var nr="10"/>
++<Var nr="7"/>
+@@ -2729,2 +2729,2 @@
+-<Var nr="10"/>
+-<Var nr="11"/>
++<Var nr="7"/>
++<Var nr="8"/>
+@@ -2749,2 +2749,2 @@
+-<Var nr="10"/>
+-<Var nr="11"/>
++<Var nr="7"/>
++<Var nr="8"/>
+--- prel/f/finseq_9.dcl
++++ prel/f/finseq_9.dcl
+@@ -80,3 +80 @@
+-<Func kind="K" nr="33">
+-<Func kind="K" nr="14"/>
+-</Func>
++<Func kind="K" nr="40"/>
+@@ -85 +82,0 @@
+-<Adjective nr="8"/>
+@@ -90,3 +87,4 @@
+-<Adjective nr="74"/>
+-<Adjective nr="75"/>
+-<Adjective nr="95"/>
++<Adjective nr="53"/>
++<Adjective nr="54"/>
++<Adjective nr="55"/>
++<Adjective nr="56"/>
+--- prel/f/flexary1.the
++++ prel/f/flexary1.the
+@@ -1039,2 +1039,2 @@
+-<Var nr="7"/>
+-<Var nr="6"/>
++<Var nr="2"/>
++<Var nr="1"/>
+@@ -1057,2 +1057,2 @@
+-<Var nr="7"/>
+-<Var nr="6"/>
++<Var nr="2"/>
++<Var nr="1"/>
+@@ -4377,2 +4377,2 @@
+-<Var nr="4"/>
+-<Var nr="5"/>
++<Var nr="2"/>
++<Var nr="3"/>
+@@ -4397,2 +4397,2 @@
+-<Var nr="4"/>
+-<Var nr="5"/>
++<Var nr="2"/>
++<Var nr="3"/>
+--- prel/g/glib_009.dcl
++++ prel/g/glib_009.dcl
+@@ -631,0 +632 @@
++<Adjective nr="49"/>
+@@ -663,0 +665,5 @@
++<Adjective nr="51"/>
++<Adjective nr="52"/>
++<Adjective nr="55">
++<LocusVar nr="1"/>
++</Adjective>
+@@ -692,0 +699,4 @@
++<Adjective nr="52"/>
++<Adjective nr="55">
++<LocusVar nr="1"/>
++</Adjective>
+@@ -721,0 +732,8 @@
++<Adjective nr="49"/>
++<Adjective nr="51"/>
++<Adjective nr="52"/>
++<Adjective nr="53"/>
++<Adjective nr="54"/>
++<Adjective nr="55">
++<LocusVar nr="1"/>
++</Adjective>
+@@ -750,0 +769,6 @@
++<Adjective nr="49"/>
++<Adjective nr="52"/>
++<Adjective nr="54"/>
++<Adjective nr="55">
++<LocusVar nr="1"/>
++</Adjective>
+--- prel/l/liouvil2.dcl
++++ prel/l/liouvil2.dcl
+@@ -106,0 +107 @@
++<Adjective nr="54" value="false"/>
+--- prel/m/mycielsk.dcl
++++ prel/m/mycielsk.dcl
+@@ -132,0 +133 @@
++<Adjective nr="57"/>
+@@ -134,0 +136,4 @@
++<Adjective nr="99"/>
++<Adjective nr="100"/>
++<Adjective nr="104"/>
++<Adjective nr="105"/>
+--- prel/n/number02.the
++++ prel/n/number02.the
+@@ -764 +764 @@
+-<Func kind="K" nr="117">
++<Func kind="K" nr="58">
+@@ -788,5 +787,0 @@
+-<Func kind="K" nr="117">
+-<Func kind="K" nr="59">
+-<Var nr="2"/>
+-<Var nr="3"/>
+-</Func>
+@@ -794,6 +788,0 @@
+-</Func>
+-<Func kind="K" nr="58">
+-<Func kind="K" nr="59">
+-<Var nr="2"/>
+-<Var nr="3"/>
+-</Func>
+@@ -804 +792,0 @@
+-</Func>
+@@ -814,5 +801,0 @@
+-<Func kind="K" nr="117">
+-<Func kind="K" nr="59">
+-<Var nr="2"/>
+-<Var nr="3"/>
+-</Func>
+@@ -820 +802,0 @@
+-</Func>
+@@ -825,5 +806,0 @@
+-<Func kind="K" nr="58">
+-<Func kind="K" nr="59">
+-<Var nr="2"/>
+-<Var nr="3"/>
+-</Func>
+@@ -834 +810,0 @@
+-</Func>
+@@ -837,0 +814,5 @@
++<Func kind="K" nr="58">
++<Func kind="K" nr="59">
++<Var nr="2"/>
++<Var nr="3"/>
++</Func>
+@@ -838,0 +820 @@
++</Func>
+--- prel/r/rvsum_4.dcl
++++ prel/r/rvsum_4.dcl
+@@ -165,0 +166 @@
++<Adjective nr="13"/>

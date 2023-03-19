@@ -8,8 +8,8 @@ for i in mizbin mizdoc mizshare; do
   cd $i && tar -xzf ../$i.tar.gz && cd ..
   rm $i.tar.gz
 done
-cd mizshare/mml
-patch < ../../../mml.patch
+cd mizshare
+patch < ../../mml.patch
 # for i in \
 #   realset1 seqfunc limfunc4 sin_cos6 fdiff_4 fdiff_6 fdiff_7 fdiff_8 \
 #   fdiff_9 fdiff_10 sin_cos9 integr12 integr13 integr14 complsp1 decomp_1 \

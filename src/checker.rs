@@ -107,13 +107,7 @@ impl<'a> Checker<'a> {
         }
       } else {
         err = true;
-        let expected = if self.g.cfg.analyzer_enabled {
-          crate::EXPECTED_ANALYZER_ERRORS
-        } else {
-          crate::EXPECTED_CHECKER_ERRORS
-        }
-        .contains(&(self.article.as_str(), self.idx));
-        if !expected && self.g.cfg.checker_result {
+        if self.g.cfg.checker_result {
           eprintln!(
             "FAILED TO JUSTIFY {}.{i} @ {:?}:{:?}: {:#?}",
             self.idx,
@@ -122,24 +116,16 @@ impl<'a> Checker<'a> {
             f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
           );
         }
-        if expected {
-          stat("expected failure");
-          println!(
-            "[{}] failed to justify {}.{i} @ {:?}:{:?} (expected)",
-            self.item_idx, self.idx, self.article, self.pos
-          );
-        } else {
-          stat("failure");
-          println!(
+        stat("failure");
+        println!(
+          "[{}] failed to justify {}.{i} @ {:?}:{:?}",
+          self.item_idx, self.idx, self.article, self.pos
+        );
+        if self.g.cfg.panic_on_fail {
+          panic!(
             "[{}] failed to justify {}.{i} @ {:?}:{:?}",
             self.item_idx, self.idx, self.article, self.pos
           );
-          if self.g.cfg.panic_on_fail {
-            panic!(
-              "[{}] failed to justify {}.{i} @ {:?}:{:?}",
-              self.item_idx, self.idx, self.article, self.pos
-            );
-          }
         }
         break
       }

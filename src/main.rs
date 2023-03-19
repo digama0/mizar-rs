@@ -2984,11 +2984,6 @@ pub struct Config {
 }
 
 const DEBUG: bool = cfg!(debug_assertions);
-const EXPECTED_ANALYZER_ERRORS: &[(&str, usize)] = &[("eulrpart", 153)];
-const EXPECTED_CHECKER_ERRORS: &[(&str, usize)] =
-  // These failures are caused by a bug in the statement of FLEXARY1:def 9
-  // which requires a patch to Mizar, at least as long as we are using the Mizar analyzer
-  &[("eulrpart", 153), ("eulrpart", 154), ("eulrpart", 628)];
 
 impl FormatterConfig {
   const DEFAULT: Self = Self {
