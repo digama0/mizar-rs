@@ -116,9 +116,7 @@ impl Analyzer<'_> {
             counts.iter().for_each(|(i, &count)| hi[i] += count);
             let used = dfr1.iter().any(|fmt| {
               let mut used = false;
-              fmt.visit::<{ crate::SYMBOL_KIND_BUG }>(|k, sym| {
-                used |= (lo[k]..hi[k]).contains(&sym)
-              });
+              fmt.visit(|k, sym| used |= (lo[k]..hi[k]).contains(&sym));
               used
             });
             if used {
@@ -135,7 +133,7 @@ impl Analyzer<'_> {
           }
           marked_dfr.extend_from_slice(dfr1);
           for fmt in &mut marked_dfr {
-            fmt.visit_mut::<false>(|k, sym| *sym = trans[k][*sym as usize].unwrap());
+            fmt.visit_mut(|k, sym| *sym = trans[k][*sym as usize].unwrap());
           }
         }
         if nonempty {

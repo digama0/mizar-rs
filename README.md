@@ -11,6 +11,9 @@ directory and apply the patch.
 ./download-mml.sh
 ```
 Alternatively you can symlink `miz/` to your local mizar installation.
+(In order to replicate the changes to `prel/`, you also need a patched version of
+Mizar itself; this version has been tested on commit
+[`5d83403`](https://github.com/digama0/mizar-system/commit/5d83403) of the Mizar system.)
 
 For testing the new checker on the MML, you need the `.xml` files for each mizar file,
 which is not distributed by default. The following command will run the (original)

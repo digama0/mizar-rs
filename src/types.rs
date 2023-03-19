@@ -2264,16 +2264,9 @@ pub enum Format {
 
 macro_rules! impl_format_visit {
   ($visit:ident$(, $mutbl:tt)?) => {
-    pub fn $visit<const BUG: bool>(
-      &$($mutbl)? self, mut f: impl FnMut(SymbolKindClass, $(&$mutbl)? u32)
-    ) {
+    pub fn $visit(&$($mutbl)? self, mut f: impl FnMut(SymbolKindClass, $(&$mutbl)? u32)) {
       match self {
         Format::Mode(fmt) => f(SymbolKindClass::Mode, $(&$mutbl)? fmt.sym.0),
-        // Mizar has a bug here which causes struct formats to be treated as right bracket
-        // symbols and subaggr formats to be ignored
-        Format::Struct(FormatStruct { sym, .. }) if BUG =>
-          f(SymbolKindClass::RightBrk, $(&$mutbl)? sym.0),
-        Format::SubAggr(_) if BUG => {}
         Format::Struct(FormatStruct { sym, .. })
         | Format::Aggr(FormatAggr { sym, .. })
         | Format::SubAggr(sym) => f(SymbolKindClass::Struct, $(&$mutbl)? sym.0),

@@ -264,6 +264,337 @@
 @@ -1236 +1236 @@
 -    thus rng R c= NAT by MEMBERED:6;
 +    thus rng (R qua Relation of X,Y) c= NAT by MEMBERED:6;
+--- prel/a/absred_0.dfr
++++ prel/a/absred_0.dfr
+@@ -5,11 +4,0 @@
+-<ArticleID name="HIDDEN"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="3"/>
+-<SymbolCount kind="L" nr="3"/>
+-<SymbolCount kind="M" nr="2"/>
+-<SymbolCount kind="O" nr="0"/>
+-<SymbolCount kind="R" nr="3"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -85,0 +75,3 @@
++<Format kind="R" symbolnr="14" argnr="2" leftargnr="1"/>
++<Format kind="R" symbolnr="15" argnr="2" leftargnr="1"/>
++<Format kind="R" symbolnr="16" argnr="2" leftargnr="1"/>
+@@ -90,0 +83 @@
++<Format kind="R" symbolnr="30" argnr="2" leftargnr="1"/>
+@@ -94,4 +86,0 @@
+-<Format kind="R" symbolnr="33" argnr="2" leftargnr="1"/>
+-<Format kind="R" symbolnr="25" argnr="2" leftargnr="1"/>
+-<Format kind="R" symbolnr="26" argnr="2" leftargnr="1"/>
+-<Format kind="R" symbolnr="27" argnr="2" leftargnr="1"/>
+@@ -99,0 +89,2 @@
++<Format kind="V" symbolnr="13" argnr="1"/>
++<Format kind="R" symbolnr="29" argnr="2" leftargnr="1"/>
+@@ -101 +91,0 @@
+-<Format kind="R" symbolnr="32" argnr="2" leftargnr="1"/>
+@@ -103,0 +94 @@
++<Format kind="V" symbolnr="18" argnr="1"/>
+@@ -106,2 +96,0 @@
+-<Format kind="V" symbolnr="18" argnr="1"/>
+-<Format kind="V" symbolnr="20" argnr="1"/>
+@@ -108,0 +98,3 @@
++<Format kind="R" symbolnr="25" argnr="2" leftargnr="1"/>
++<Format kind="R" symbolnr="26" argnr="2" leftargnr="1"/>
++<Format kind="R" symbolnr="27" argnr="2" leftargnr="1"/>
+@@ -110,3 +102 @@
+-<Format kind="R" symbolnr="29" argnr="2" leftargnr="1"/>
+-<Format kind="R" symbolnr="30" argnr="2" leftargnr="1"/>
+-<Format kind="R" symbolnr="31" argnr="2" leftargnr="1"/>
++<Format kind="V" symbolnr="20" argnr="1"/>
+@@ -117 +106,0 @@
+-<Format kind="V" symbolnr="25" argnr="1"/>
+@@ -121,2 +110 @@
+-<Format kind="V" symbolnr="42" argnr="1"/>
+-<Format kind="V" symbolnr="47" argnr="1"/>
++<Format kind="V" symbolnr="41" argnr="1"/>
+@@ -123,0 +112 @@
++<Format kind="V" symbolnr="45" argnr="1"/>
+@@ -124,0 +114 @@
++<Format kind="V" symbolnr="25" argnr="1"/>
+@@ -139 +128,0 @@
+-<Format kind="V" symbolnr="40" argnr="1"/>
+--- prel/a/aofa_a00.dfr
++++ prel/a/aofa_a00.dfr
+@@ -5,11 +4,0 @@
+-<ArticleID name="HIDDEN"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="3"/>
+-<SymbolCount kind="L" nr="3"/>
+-<SymbolCount kind="M" nr="2"/>
+-<SymbolCount kind="O" nr="0"/>
+-<SymbolCount kind="R" nr="3"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -38,11 +26,0 @@
+-<ArticleID name="PBOOLE"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="5"/>
+-<SymbolCount kind="O" nr="7"/>
+-<SymbolCount kind="R" nr="2"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -60,11 +37,0 @@
+-<ArticleID name="ZFMISC_1"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="0"/>
+-<SymbolCount kind="O" nr="1"/>
+-<SymbolCount kind="R" nr="1"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -82,11 +48,0 @@
+-<ArticleID name="PARTFUN1"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="1"/>
+-<SymbolCount kind="O" nr="3"/>
+-<SymbolCount kind="R" nr="1"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -149,6 +105,6 @@
+-<Format kind="O" symbolnr="77" argnr="4" leftargnr="1"/>
+-<Format kind="K" symbolnr="7" argnr="6" rightsymbolnr="7"/>
+-<Format kind="K" symbolnr="7" argnr="7" rightsymbolnr="7"/>
+-<Format kind="K" symbolnr="7" argnr="8" rightsymbolnr="7"/>
+-<Format kind="M" symbolnr="3" argnr="2"/>
+-<Format kind="R" symbolnr="4" argnr="3" leftargnr="1"/>
++<Format kind="O" symbolnr="66" argnr="4" leftargnr="1"/>
++<Format kind="K" symbolnr="1" argnr="6" rightsymbolnr="1"/>
++<Format kind="K" symbolnr="1" argnr="7" rightsymbolnr="1"/>
++<Format kind="K" symbolnr="1" argnr="8" rightsymbolnr="1"/>
++<Format kind="M" symbolnr="1" argnr="2"/>
++<Format kind="R" symbolnr="1" argnr="3" leftargnr="1"/>
+@@ -159,0 +116 @@
++<Format kind="V" symbolnr="1" argnr="1"/>
+@@ -161,2 +118 @@
+-<Format kind="V" symbolnr="3" argnr="1"/>
+-<Format kind="M" symbolnr="4" argnr="1"/>
++<Format kind="M" symbolnr="2" argnr="1"/>
+@@ -166,0 +123 @@
++<Format kind="V" symbolnr="3" argnr="1"/>
+@@ -168,2 +125 @@
+-<Format kind="V" symbolnr="5" argnr="1"/>
+-<Format kind="V" symbolnr="6" argnr="2"/>
++<Format kind="V" symbolnr="5" argnr="2"/>
+@@ -173,0 +130 @@
++<Format kind="M" symbolnr="4" argnr="1"/>
+@@ -175,2 +132 @@
+-<Format kind="M" symbolnr="8" argnr="1"/>
+-<Format kind="O" symbolnr="51" argnr="3" leftargnr="1"/>
++<Format kind="O" symbolnr="43" argnr="3" leftargnr="1"/>
+@@ -188,2 +144,2 @@
+-<Format kind="V" symbolnr="7" argnr="2"/>
+-<Format kind="O" symbolnr="79" argnr="3" leftargnr="0"/>
++<Format kind="V" symbolnr="6" argnr="2"/>
++<Format kind="O" symbolnr="68" argnr="3" leftargnr="0"/>
+@@ -195,2 +151,2 @@
+-<Format kind="V" symbolnr="9" argnr="1"/>
+-<Format kind="V" symbolnr="8" argnr="2"/>
++<Format kind="V" symbolnr="8" argnr="1"/>
++<Format kind="V" symbolnr="7" argnr="2"/>
+@@ -201 +157 @@
+-<Format kind="V" symbolnr="10" argnr="1"/>
++<Format kind="V" symbolnr="9" argnr="1"/>
+@@ -208 +164 @@
+-<Format kind="V" symbolnr="28" argnr="3"/>
++<Format kind="V" symbolnr="24" argnr="3"/>
+@@ -211,3 +167,3 @@
+-<Format kind="O" symbolnr="37" argnr="2" leftargnr="0"/>
+-<Format kind="V" symbolnr="11" argnr="4"/>
+-<Format kind="V" symbolnr="12" argnr="2"/>
++<Format kind="O" symbolnr="30" argnr="2" leftargnr="0"/>
++<Format kind="V" symbolnr="10" argnr="4"/>
++<Format kind="V" symbolnr="11" argnr="2"/>
+@@ -215 +171 @@
+-<Format kind="O" symbolnr="93" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="82" argnr="2" leftargnr="0"/>
+--- prel/a/armstrng.dfr
++++ prel/a/armstrng.dfr
+@@ -5,11 +4,0 @@
+-<ArticleID name="PBOOLE"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="5"/>
+-<SymbolCount kind="O" nr="7"/>
+-<SymbolCount kind="R" nr="2"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -27,4 +16,5 @@
+-<Format kind="O" symbolnr="8" argnr="2" leftargnr="1"/>
+-<Format kind="R" symbolnr="3" argnr="2" leftargnr="1"/>
+-<Format kind="R" symbolnr="4" argnr="2" leftargnr="1"/>
+-<Format kind="O" symbolnr="9" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="1" argnr="2" leftargnr="1"/>
++<Format kind="R" symbolnr="1" argnr="2" leftargnr="1"/>
++<Format kind="R" symbolnr="2" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="2" argnr="1" leftargnr="0"/>
++<Format kind="V" symbolnr="1" argnr="1"/>
+@@ -32 +21,0 @@
+-<Format kind="V" symbolnr="3" argnr="1"/>
+@@ -39,9 +28,10 @@
+-<Format kind="M" symbolnr="6" argnr="1"/>
+-<Format kind="M" symbolnr="7" argnr="1"/>
+-<Format kind="O" symbolnr="10" argnr="1" leftargnr="0"/>
+-<Format kind="M" symbolnr="8" argnr="1"/>
+-<Format kind="R" symbolnr="5" argnr="3" leftargnr="1"/>
+-<Format kind="R" symbolnr="6" argnr="3" leftargnr="2"/>
+-<Format kind="O" symbolnr="11" argnr="1" leftargnr="0"/>
+-<Format kind="R" symbolnr="7" argnr="2" leftargnr="1"/>
+-<Format kind="O" symbolnr="12" argnr="1" leftargnr="0"/>
++<Format kind="M" symbolnr="1" argnr="1"/>
++<Format kind="M" symbolnr="2" argnr="1"/>
++<Format kind="O" symbolnr="3" argnr="1" leftargnr="0"/>
++<Format kind="M" symbolnr="3" argnr="1"/>
++<Format kind="R" symbolnr="3" argnr="3" leftargnr="1"/>
++<Format kind="R" symbolnr="4" argnr="3" leftargnr="2"/>
++<Format kind="O" symbolnr="4" argnr="1" leftargnr="0"/>
++<Format kind="R" symbolnr="5" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="5" argnr="1" leftargnr="0"/>
++<Format kind="V" symbolnr="3" argnr="1"/>
+@@ -53,0 +44 @@
++<Format kind="M" symbolnr="4" argnr="1"/>
+@@ -55 +46,2 @@
+-<Format kind="M" symbolnr="9" argnr="1"/>
++<Format kind="O" symbolnr="6" argnr="1" leftargnr="0"/>
++<Format kind="R" symbolnr="6" argnr="3" leftargnr="1"/>
+@@ -57,2 +48,0 @@
+-<Format kind="O" symbolnr="13" argnr="1" leftargnr="0"/>
+-<Format kind="R" symbolnr="8" argnr="3" leftargnr="1"/>
+@@ -60,0 +51,7 @@
++<Format kind="O" symbolnr="7" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="8" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="9" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="10" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="11" argnr="1" leftargnr="0"/>
++<Format kind="R" symbolnr="7" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="12" argnr="1" leftargnr="0"/>
+@@ -62,7 +58,0 @@
+-<Format kind="O" symbolnr="14" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="15" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="16" argnr="2" leftargnr="1"/>
+-<Format kind="O" symbolnr="17" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="18" argnr="1" leftargnr="0"/>
+-<Format kind="R" symbolnr="9" argnr="2" leftargnr="1"/>
+-<Format kind="O" symbolnr="19" argnr="1" leftargnr="0"/>
+@@ -74,3 +64,2 @@
+-<Format kind="V" symbolnr="20" argnr="1"/>
+-<Format kind="O" symbolnr="20" argnr="1" leftargnr="0"/>
+-<Format kind="R" symbolnr="10" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="13" argnr="1" leftargnr="0"/>
++<Format kind="R" symbolnr="8" argnr="2" leftargnr="1"/>
+--- prel/c/cgames_1.dfr
++++ prel/c/cgames_1.dfr
+@@ -5,11 +4,0 @@
+-<ArticleID name="HIDDEN"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="3"/>
+-<SymbolCount kind="L" nr="3"/>
+-<SymbolCount kind="M" nr="2"/>
+-<SymbolCount kind="O" nr="0"/>
+-<SymbolCount kind="R" nr="3"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -56,2 +45,2 @@
+-<Format kind="V" symbolnr="2" argnr="1"/>
+-<Format kind="M" symbolnr="3" argnr="0"/>
++<Format kind="V" symbolnr="1" argnr="1"/>
++<Format kind="M" symbolnr="1" argnr="0"/>
+@@ -63,0 +53 @@
++<Format kind="V" symbolnr="2" argnr="1"/>
+@@ -65,2 +55 @@
+-<Format kind="V" symbolnr="4" argnr="1"/>
+-<Format kind="M" symbolnr="4" argnr="0"/>
++<Format kind="M" symbolnr="2" argnr="0"/>
+@@ -69,2 +57,0 @@
+-<Format kind="V" symbolnr="6" argnr="1"/>
+-<Format kind="V" symbolnr="7" argnr="1"/>
+@@ -71,0 +59,2 @@
++<Format kind="V" symbolnr="6" argnr="1"/>
++<Format kind="V" symbolnr="4" argnr="1"/>
+--- prel/c/combgras.dfr
++++ prel/c/combgras.dfr
+@@ -5,11 +4,0 @@
+-<ArticleID name="HIDDEN"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="3"/>
+-<SymbolCount kind="L" nr="3"/>
+-<SymbolCount kind="M" nr="2"/>
+-<SymbolCount kind="O" nr="0"/>
+-<SymbolCount kind="R" nr="3"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -49 +38 @@
+-<Format kind="M" symbolnr="6" argnr="0"/>
++<Format kind="M" symbolnr="4" argnr="0"/>
+@@ -50,0 +40 @@
++<Format kind="V" symbolnr="15" argnr="1"/>
+@@ -54 +43,0 @@
+-<Format kind="V" symbolnr="19" argnr="1"/>
+@@ -60,2 +49,2 @@
+-<Format kind="V" symbolnr="20" argnr="1"/>
+-<Format kind="V" symbolnr="12" argnr="1"/>
++<Format kind="V" symbolnr="19" argnr="1"/>
++<Format kind="V" symbolnr="11" argnr="1"/>
+--- prel/c/compos_1.dfr
++++ prel/c/compos_1.dfr
+@@ -5,11 +4,0 @@
+-<ArticleID name="HIDDEN"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="3"/>
+-<SymbolCount kind="L" nr="3"/>
+-<SymbolCount kind="M" nr="2"/>
+-<SymbolCount kind="O" nr="0"/>
+-<SymbolCount kind="R" nr="3"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -131,5 +120,2 @@
+-<Format kind="M" symbolnr="6" argnr="1"/>
+-<Format kind="V" symbolnr="19" argnr="1"/>
+-<Format kind="M" symbolnr="13" argnr="1"/>
+-<Format kind="R" symbolnr="6" argnr="2" leftargnr="1"/>
+-<Format kind="O" symbolnr="59" argnr="1" leftargnr="0"/>
++<Format kind="M" symbolnr="4" argnr="1"/>
++<Format kind="V" symbolnr="18" argnr="1"/>
+@@ -137,2 +123,2 @@
+-<Format kind="V" symbolnr="6" argnr="1"/>
+-<Format kind="V" symbolnr="7" argnr="1"/>
++<Format kind="R" symbolnr="3" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="59" argnr="1" leftargnr="0"/>
+@@ -139,0 +126,3 @@
++<Format kind="V" symbolnr="5" argnr="1"/>
++<Format kind="V" symbolnr="6" argnr="1"/>
++<Format kind="M" symbolnr="7" argnr="1"/>
+@@ -141 +130 @@
+-<Format kind="M" symbolnr="14" argnr="1"/>
++<Format kind="M" symbolnr="12" argnr="1"/>
 --- prel/c/comput_1.dcl
 +++ prel/c/comput_1.dcl
 @@ -395,0 +396 @@
@@ -347,6 +678,86 @@
 -<Var nr="5"/>
 +<Var nr="2"/>
 +<Var nr="3"/>
+--- prel/f/fomodel1.dfr
++++ prel/f/fomodel1.dfr
+@@ -5,11 +4,0 @@
+-<ArticleID name="INT_1"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="2"/>
+-<SymbolCount kind="L" nr="2"/>
+-<SymbolCount kind="M" nr="1"/>
+-<SymbolCount kind="O" nr="3"/>
+-<SymbolCount kind="R" nr="1"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="2"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -30,0 +20 @@
++<Format kind="O" symbolnr="6" argnr="1" leftargnr="0"/>
+@@ -31,0 +22,2 @@
++<Format kind="O" symbolnr="13" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="7" argnr="1" leftargnr="0"/>
+@@ -33 +24,0 @@
+-<Format kind="O" symbolnr="16" argnr="1" leftargnr="0"/>
+@@ -35,6 +26,2 @@
+-<Format kind="O" symbolnr="15" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="13" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="22" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="24" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="14" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="25" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="19" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="21" argnr="1" leftargnr="0"/>
+@@ -41,0 +29,4 @@
++<Format kind="O" symbolnr="22" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="8" argnr="1" leftargnr="0"/>
++<Format kind="V" symbolnr="1" argnr="1"/>
++<Format kind="V" symbolnr="2" argnr="1"/>
+@@ -44,4 +34,0 @@
+-<Format kind="V" symbolnr="5" argnr="1"/>
+-<Format kind="V" symbolnr="6" argnr="1"/>
+-<Format kind="V" symbolnr="9" argnr="1"/>
+-<Format kind="V" symbolnr="8" argnr="1"/>
+@@ -49,11 +36,4 @@
+-<Format kind="O" symbolnr="26" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="26" argnr="1" leftargnr="1"/>
+-<Format kind="V" symbolnr="14" argnr="1"/>
+-<Format kind="M" symbolnr="2" argnr="0"/>
+-<Format kind="O" symbolnr="21" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="6" argnr="1" leftargnr="1"/>
+-<Format kind="M" symbolnr="3" argnr="1"/>
+-<Format kind="O" symbolnr="17" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="18" argnr="1" leftargnr="1"/>
+-<Format kind="O" symbolnr="19" argnr="1" leftargnr="0"/>
+-<Format kind="V" symbolnr="10" argnr="2"/>
++<Format kind="V" symbolnr="6" argnr="1"/>
++<Format kind="V" symbolnr="5" argnr="1"/>
++<Format kind="O" symbolnr="23" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="23" argnr="1" leftargnr="1"/>
+@@ -61,7 +41,16 @@
+-<Format kind="O" symbolnr="20" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="4" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="5" argnr="1" leftargnr="1"/>
+-<Format kind="O" symbolnr="27" argnr="1" leftargnr="0"/>
+-<Format kind="V" symbolnr="15" argnr="2"/>
+-<Format kind="O" symbolnr="28" argnr="2" leftargnr="1"/>
+-<Format kind="O" symbolnr="29" argnr="2" leftargnr="1"/>
++<Format kind="M" symbolnr="1" argnr="0"/>
++<Format kind="O" symbolnr="18" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="3" argnr="1" leftargnr="1"/>
++<Format kind="M" symbolnr="2" argnr="1"/>
++<Format kind="O" symbolnr="14" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="15" argnr="1" leftargnr="1"/>
++<Format kind="O" symbolnr="16" argnr="1" leftargnr="0"/>
++<Format kind="V" symbolnr="8" argnr="2"/>
++<Format kind="V" symbolnr="10" argnr="1"/>
++<Format kind="O" symbolnr="17" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="1" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="2" argnr="1" leftargnr="1"/>
++<Format kind="O" symbolnr="24" argnr="1" leftargnr="0"/>
++<Format kind="V" symbolnr="13" argnr="2"/>
++<Format kind="O" symbolnr="25" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="26" argnr="2" leftargnr="1"/>
 --- prel/g/glib_009.dcl
 +++ prel/g/glib_009.dcl
 @@ -631,0 +632 @@
@@ -378,10 +789,472 @@
 +<Adjective nr="55">
 +<LocusVar nr="1"/>
 +</Adjective>
+--- prel/g/graph_1.dfr
++++ prel/g/graph_1.dfr
+@@ -38,11 +37,0 @@
+-<ArticleID name="ZFMISC_1"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="0"/>
+-<SymbolCount kind="O" nr="1"/>
+-<SymbolCount kind="R" nr="1"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -68,3 +57,3 @@
+-<Format kind="O" symbolnr="35" argnr="1" leftargnr="0"/>
+-<Format kind="R" symbolnr="16" argnr="3" leftargnr="1"/>
+-<Format kind="V" symbolnr="27" argnr="1"/>
++<Format kind="O" symbolnr="34" argnr="1" leftargnr="0"/>
++<Format kind="R" symbolnr="15" argnr="3" leftargnr="1"/>
++<Format kind="V" symbolnr="26" argnr="1"/>
+@@ -74,2 +63,2 @@
+-<Format kind="R" symbolnr="17" argnr="3" leftargnr="1"/>
+-<Format kind="R" symbolnr="18" argnr="2" leftargnr="2"/>
++<Format kind="R" symbolnr="16" argnr="3" leftargnr="1"/>
++<Format kind="R" symbolnr="17" argnr="2" leftargnr="2"/>
+@@ -79 +68 @@
+-<Format kind="V" symbolnr="28" argnr="1"/>
++<Format kind="V" symbolnr="27" argnr="1"/>
+@@ -82,0 +72 @@
++<Format kind="O" symbolnr="35" argnr="1" leftargnr="0"/>
+@@ -87 +76,0 @@
+-<Format kind="O" symbolnr="40" argnr="1" leftargnr="0"/>
+--- prel/g/gtarski1.dfr
++++ prel/g/gtarski1.dfr
+@@ -5,11 +4,0 @@
+-<ArticleID name="HIDDEN"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="3"/>
+-<SymbolCount kind="L" nr="3"/>
+-<SymbolCount kind="M" nr="2"/>
+-<SymbolCount kind="O" nr="0"/>
+-<SymbolCount kind="R" nr="3"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -54,5 +43,6 @@
+-<Format kind="M" symbolnr="4" argnr="1"/>
+-<Format kind="R" symbolnr="4" argnr="3" leftargnr="0"/>
+-<Format kind="R" symbolnr="5" argnr="4" leftargnr="2"/>
+-<Format kind="R" symbolnr="6" argnr="6" leftargnr="3"/>
+-<Format kind="R" symbolnr="7" argnr="4" leftargnr="4"/>
++<Format kind="M" symbolnr="2" argnr="1"/>
++<Format kind="R" symbolnr="1" argnr="3" leftargnr="0"/>
++<Format kind="R" symbolnr="2" argnr="4" leftargnr="2"/>
++<Format kind="R" symbolnr="3" argnr="6" leftargnr="3"/>
++<Format kind="R" symbolnr="4" argnr="4" leftargnr="4"/>
++<Format kind="V" symbolnr="1" argnr="1"/>
+@@ -66 +55,0 @@
+-<Format kind="V" symbolnr="9" argnr="1"/>
+@@ -70,3 +59,3 @@
+-<Format kind="M" symbolnr="3" argnr="1"/>
+-<Format kind="R" symbolnr="11" argnr="3" leftargnr="1"/>
+-<Format kind="V" symbolnr="41" argnr="1"/>
++<Format kind="M" symbolnr="1" argnr="1"/>
++<Format kind="R" symbolnr="8" argnr="3" leftargnr="1"/>
++<Format kind="V" symbolnr="40" argnr="1"/>
+@@ -74,3 +63,3 @@
+-<Format kind="R" symbolnr="8" argnr="3" leftargnr="0"/>
+-<Format kind="R" symbolnr="9" argnr="3" leftargnr="1"/>
+-<Format kind="R" symbolnr="10" argnr="4" leftargnr="2"/>
++<Format kind="R" symbolnr="5" argnr="3" leftargnr="0"/>
++<Format kind="R" symbolnr="6" argnr="3" leftargnr="1"/>
++<Format kind="R" symbolnr="7" argnr="4" leftargnr="2"/>
+@@ -78 +67 @@
+-<Format kind="V" symbolnr="10" argnr="1"/>
++<Format kind="V" symbolnr="9" argnr="1"/>
+--- prel/i/incsp_1.dfr
++++ prel/i/incsp_1.dfr
+@@ -5,11 +4,0 @@
+-<ArticleID name="HIDDEN"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="3"/>
+-<SymbolCount kind="L" nr="3"/>
+-<SymbolCount kind="M" nr="2"/>
+-<SymbolCount kind="O" nr="0"/>
+-<SymbolCount kind="R" nr="3"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -49,0 +39,2 @@
++<Format kind="M" symbolnr="3" argnr="1"/>
++<Format kind="M" symbolnr="4" argnr="1"/>
+@@ -51,4 +42,3 @@
+-<Format kind="M" symbolnr="6" argnr="1"/>
+-<Format kind="M" symbolnr="7" argnr="1"/>
+-<Format kind="R" symbolnr="6" argnr="2" leftargnr="1"/>
+-<Format kind="V" symbolnr="4" argnr="1"/>
++<Format kind="R" symbolnr="3" argnr="2" leftargnr="1"/>
++<Format kind="V" symbolnr="3" argnr="1"/>
++<Format kind="V" symbolnr="5" argnr="1"/>
+@@ -64,2 +54 @@
+-<Format kind="V" symbolnr="15" argnr="1"/>
+-<Format kind="M" symbolnr="8" argnr="0"/>
++<Format kind="M" symbolnr="6" argnr="0"/>
+--- prel/l/lattba_1.dfr
++++ prel/l/lattba_1.dfr
+@@ -5,11 +4,0 @@
+-<ArticleID name="HIDDEN"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="3"/>
+-<SymbolCount kind="L" nr="3"/>
+-<SymbolCount kind="M" nr="2"/>
+-<SymbolCount kind="O" nr="0"/>
+-<SymbolCount kind="R" nr="3"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -46,0 +36 @@
++<Format kind="V" symbolnr="1" argnr="1"/>
+@@ -51,2 +41 @@
+-<Format kind="V" symbolnr="6" argnr="1"/>
+-<Format kind="M" symbolnr="3" argnr="0"/>
++<Format kind="M" symbolnr="1" argnr="0"/>
+@@ -60,2 +49,2 @@
+-<Format kind="V" symbolnr="7" argnr="1"/>
+-<Format kind="V" symbolnr="11" argnr="1"/>
++<Format kind="V" symbolnr="6" argnr="1"/>
++<Format kind="V" symbolnr="10" argnr="1"/>
 --- prel/l/liouvil2.dcl
 +++ prel/l/liouvil2.dcl
 @@ -106,0 +107 @@
 +<Adjective nr="54" value="false"/>
+--- prel/m/metric_1.dfr
++++ prel/m/metric_1.dfr
+@@ -16,11 +15,0 @@
+-<ArticleID name="COMPLEX1"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="0"/>
+-<SymbolCount kind="O" nr="4"/>
+-<SymbolCount kind="R" nr="0"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="0"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -42,2 +31,2 @@
+-<Format kind="O" symbolnr="5" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="6" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="1" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="2" argnr="0" leftargnr="0"/>
+@@ -49,7 +38,7 @@
+-<Format kind="O" symbolnr="7" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="8" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="9" argnr="0" leftargnr="0"/>
+-<Format kind="O" symbolnr="10" argnr="0" leftargnr="0"/>
+-<Format kind="O" symbolnr="11" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="12" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="13" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="3" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="4" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="5" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="6" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="7" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="8" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="9" argnr="2" leftargnr="0"/>
+@@ -62,2 +51,2 @@
+-<Format kind="O" symbolnr="14" argnr="0" leftargnr="0"/>
+-<Format kind="O" symbolnr="15" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="10" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="11" argnr="0" leftargnr="0"/>
+@@ -65,2 +54,2 @@
+-<Format kind="O" symbolnr="16" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="17" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="12" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="13" argnr="2" leftargnr="0"/>
+--- prel/m/modelc_1.dfr
++++ prel/m/modelc_1.dfr
+@@ -5,11 +4,0 @@
+-<ArticleID name="HIDDEN"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="3"/>
+-<SymbolCount kind="L" nr="3"/>
+-<SymbolCount kind="M" nr="2"/>
+-<SymbolCount kind="O" nr="0"/>
+-<SymbolCount kind="R" nr="3"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -70,3 +59,2 @@
+-<Format kind="V" symbolnr="13" argnr="1"/>
+-<Format kind="M" symbolnr="5" argnr="0"/>
+-<Format kind="V" symbolnr="7" argnr="1"/>
++<Format kind="V" symbolnr="12" argnr="1"/>
++<Format kind="M" symbolnr="3" argnr="0"/>
+@@ -73,0 +62,2 @@
++<Format kind="V" symbolnr="5" argnr="1"/>
++<Format kind="V" symbolnr="13" argnr="1"/>
+@@ -76 +65,0 @@
+-<Format kind="V" symbolnr="16" argnr="1"/>
+@@ -94 +83 @@
+-<Format kind="M" symbolnr="6" argnr="1"/>
++<Format kind="M" symbolnr="4" argnr="1"/>
+@@ -96,2 +85,2 @@
+-<Format kind="R" symbolnr="8" argnr="2" leftargnr="1"/>
+-<Format kind="R" symbolnr="9" argnr="3" leftargnr="1"/>
++<Format kind="R" symbolnr="5" argnr="2" leftargnr="1"/>
++<Format kind="R" symbolnr="6" argnr="3" leftargnr="1"/>
+@@ -99 +88 @@
+-<Format kind="V" symbolnr="17" argnr="1"/>
++<Format kind="V" symbolnr="16" argnr="1"/>
+@@ -101 +90 @@
+-<Format kind="M" symbolnr="8" argnr="0"/>
++<Format kind="M" symbolnr="6" argnr="0"/>
+@@ -107 +96 @@
+-<Format kind="M" symbolnr="7" argnr="1"/>
++<Format kind="M" symbolnr="5" argnr="1"/>
+@@ -126,0 +116 @@
++<Format kind="R" symbolnr="4" argnr="2" leftargnr="1"/>
+@@ -128 +118 @@
+-<Format kind="R" symbolnr="10" argnr="2" leftargnr="1"/>
++<Format kind="R" symbolnr="4" argnr="3" leftargnr="2"/>
+@@ -130 +119,0 @@
+-<Format kind="R" symbolnr="10" argnr="3" leftargnr="2"/>
+--- prel/m/modelc_2.dfr
++++ prel/m/modelc_2.dfr
+@@ -5,11 +4,0 @@
+-<ArticleID name="HIDDEN"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="3"/>
+-<SymbolCount kind="L" nr="3"/>
+-<SymbolCount kind="M" nr="2"/>
+-<SymbolCount kind="O" nr="0"/>
+-<SymbolCount kind="R" nr="3"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -53,0 +43,3 @@
++<Format kind="V" symbolnr="10" argnr="1"/>
++<Format kind="M" symbolnr="3" argnr="0"/>
++<Format kind="V" symbolnr="6" argnr="1"/>
+@@ -55,2 +46,0 @@
+-<Format kind="M" symbolnr="5" argnr="0"/>
+-<Format kind="V" symbolnr="7" argnr="1"/>
+@@ -59,4 +49,3 @@
+-<Format kind="V" symbolnr="14" argnr="1"/>
+-<Format kind="R" symbolnr="4" argnr="2" leftargnr="1"/>
+-<Format kind="R" symbolnr="5" argnr="2" leftargnr="1"/>
+-<Format kind="R" symbolnr="6" argnr="2" leftargnr="1"/>
++<Format kind="R" symbolnr="1" argnr="2" leftargnr="1"/>
++<Format kind="R" symbolnr="2" argnr="2" leftargnr="1"/>
++<Format kind="R" symbolnr="3" argnr="2" leftargnr="1"/>
+@@ -73 +62 @@
+-<Format kind="M" symbolnr="6" argnr="0"/>
++<Format kind="M" symbolnr="4" argnr="0"/>
+--- prel/m/msualg_1.dfr
++++ prel/m/msualg_1.dfr
+@@ -5,11 +4,0 @@
+-<ArticleID name="ZFMISC_1"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="0"/>
+-<SymbolCount kind="O" nr="1"/>
+-<SymbolCount kind="R" nr="1"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -34 +23 @@
+-<Format kind="O" symbolnr="2" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="1" argnr="1" leftargnr="0"/>
+@@ -42,0 +32 @@
++<Format kind="O" symbolnr="2" argnr="2" leftargnr="0"/>
+@@ -45,2 +35,2 @@
+-<Format kind="O" symbolnr="5" argnr="2" leftargnr="0"/>
+-<Format kind="V" symbolnr="2" argnr="1"/>
++<Format kind="V" symbolnr="1" argnr="1"/>
++<Format kind="O" symbolnr="5" argnr="1" leftargnr="0"/>
+@@ -53 +42,0 @@
+-<Format kind="O" symbolnr="12" argnr="1" leftargnr="0"/>
+--- prel/m/music_s1.dfr
++++ prel/m/music_s1.dfr
+@@ -5,11 +4,0 @@
+-<ArticleID name="FINSEQ_1"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="2"/>
+-<SymbolCount kind="O" nr="6"/>
+-<SymbolCount kind="R" nr="0"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="4"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -60,2 +49,2 @@
+-<Format kind="O" symbolnr="9" argnr="0" leftargnr="0"/>
+-<Format kind="O" symbolnr="10" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="3" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="4" argnr="0" leftargnr="0"/>
+@@ -68,8 +57,10 @@
+-<Format kind="O" symbolnr="13" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="13" argnr="0" leftargnr="0"/>
+-<Format kind="O" symbolnr="15" argnr="0" leftargnr="0"/>
+-<Format kind="O" symbolnr="11" argnr="0" leftargnr="0"/>
+-<Format kind="O" symbolnr="14" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="14" argnr="0" leftargnr="0"/>
+-<Format kind="O" symbolnr="16" argnr="0" leftargnr="0"/>
+-<Format kind="O" symbolnr="12" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="7" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="7" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="9" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="5" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="8" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="8" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="10" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="6" argnr="0" leftargnr="0"/>
++<Format kind="V" symbolnr="8" argnr="1"/>
++<Format kind="V" symbolnr="11" argnr="1"/>
+@@ -77,4 +67,0 @@
+-<Format kind="V" symbolnr="15" argnr="1"/>
+-<Format kind="V" symbolnr="16" argnr="1"/>
+-<Format kind="V" symbolnr="17" argnr="1"/>
+-<Format kind="V" symbolnr="18" argnr="1"/>
+@@ -83,5 +70,11 @@
+-<Format kind="O" symbolnr="41" argnr="3" leftargnr="1"/>
+-<Format kind="V" symbolnr="19" argnr="1"/>
+-<Format kind="V" symbolnr="20" argnr="1"/>
+-<Format kind="O" symbolnr="25" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="26" argnr="2" leftargnr="0"/>
++<Format kind="V" symbolnr="9" argnr="1"/>
++<Format kind="V" symbolnr="10" argnr="1"/>
++<Format kind="O" symbolnr="35" argnr="3" leftargnr="1"/>
++<Format kind="V" symbolnr="15" argnr="1"/>
++<Format kind="V" symbolnr="16" argnr="1"/>
++<Format kind="O" symbolnr="19" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="20" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="23" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="27" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="30" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="28" argnr="2" leftargnr="0"/>
+@@ -88,0 +82,2 @@
++<Format kind="O" symbolnr="31" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="32" argnr="2" leftargnr="0"/>
+@@ -90,8 +85,6 @@
+-<Format kind="O" symbolnr="36" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="34" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="35" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="37" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="38" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="39" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="25" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="26" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="19" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="20" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="23" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="27" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="30" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="28" argnr="1" leftargnr="0"/>
+@@ -98,0 +92,2 @@
++<Format kind="O" symbolnr="31" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="32" argnr="1" leftargnr="0"/>
+@@ -100,6 +95,2 @@
+-<Format kind="O" symbolnr="36" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="34" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="35" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="37" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="38" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="39" argnr="1" leftargnr="0"/>
++<Format kind="V" symbolnr="17" argnr="1"/>
++<Format kind="O" symbolnr="24" argnr="2" leftargnr="0"/>
+@@ -107,2 +97,0 @@
+-<Format kind="O" symbolnr="30" argnr="2" leftargnr="0"/>
+-<Format kind="V" symbolnr="25" argnr="1"/>
+@@ -110,9 +99,13 @@
+-<Format kind="V" symbolnr="23" argnr="1"/>
+-<Format kind="O" symbolnr="27" argnr="2" leftargnr="0"/>
+-<Format kind="V" symbolnr="26" argnr="1"/>
+-<Format kind="V" symbolnr="24" argnr="1"/>
+-<Format kind="O" symbolnr="28" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="31" argnr="3" leftargnr="0"/>
+-<Format kind="M" symbolnr="3" argnr="0"/>
+-<Format kind="O" symbolnr="40" argnr="3" leftargnr="0"/>
+-<Format kind="V" symbolnr="45" argnr="1"/>
++<Format kind="V" symbolnr="19" argnr="1"/>
++<Format kind="O" symbolnr="21" argnr="2" leftargnr="0"/>
++<Format kind="V" symbolnr="22" argnr="1"/>
++<Format kind="V" symbolnr="20" argnr="1"/>
++<Format kind="O" symbolnr="22" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="25" argnr="3" leftargnr="0"/>
++<Format kind="M" symbolnr="1" argnr="0"/>
++<Format kind="O" symbolnr="34" argnr="3" leftargnr="0"/>
++<Format kind="V" symbolnr="41" argnr="1"/>
++<Format kind="V" symbolnr="1" argnr="1"/>
++<Format kind="V" symbolnr="2" argnr="1"/>
++<Format kind="V" symbolnr="3" argnr="1"/>
++<Format kind="V" symbolnr="4" argnr="1"/>
+@@ -122,7 +115,19 @@
+-<Format kind="V" symbolnr="8" argnr="1"/>
+-<Format kind="V" symbolnr="9" argnr="1"/>
+-<Format kind="V" symbolnr="10" argnr="1"/>
+-<Format kind="V" symbolnr="11" argnr="1"/>
+-<Format kind="O" symbolnr="7" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="56" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="18" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="1" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="50" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="12" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="11" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="13" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="14" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="15" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="36" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="37" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="38" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="39" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="40" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="41" argnr="2" leftargnr="0"/>
++<Format kind="V" symbolnr="18" argnr="1"/>
++<Format kind="O" symbolnr="26" argnr="2" leftargnr="0"/>
++<Format kind="V" symbolnr="23" argnr="1"/>
++<Format kind="V" symbolnr="25" argnr="1"/>
++<Format kind="M" symbolnr="2" argnr="0"/>
++<Format kind="O" symbolnr="2" argnr="2" leftargnr="0"/>
+@@ -130,3 +135,2 @@
+-<Format kind="O" symbolnr="19" argnr="0" leftargnr="0"/>
+-<Format kind="O" symbolnr="20" argnr="0" leftargnr="0"/>
+-<Format kind="O" symbolnr="21" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="18" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="16" argnr="0" leftargnr="0"/>
+@@ -139,9 +142,0 @@
+-<Format kind="V" symbolnr="22" argnr="1"/>
+-<Format kind="O" symbolnr="32" argnr="2" leftargnr="0"/>
+-<Format kind="V" symbolnr="27" argnr="1"/>
+-<Format kind="V" symbolnr="29" argnr="1"/>
+-<Format kind="M" symbolnr="4" argnr="0"/>
+-<Format kind="O" symbolnr="8" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="23" argnr="0" leftargnr="0"/>
+-<Format kind="O" symbolnr="24" argnr="0" leftargnr="0"/>
+-<Format kind="O" symbolnr="22" argnr="0" leftargnr="0"/>
+@@ -150 +145 @@
+-<Format kind="O" symbolnr="50" argnr="2" leftargnr="0"/>
++<Format kind="V" symbolnr="24" argnr="1"/>
+@@ -152,4 +147,3 @@
+-<Format kind="O" symbolnr="52" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="53" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="54" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="55" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="63" argnr="2" leftargnr="0"/>
++<Format kind="V" symbolnr="26" argnr="1"/>
++<Format kind="V" symbolnr="27" argnr="1"/>
+@@ -157,2 +151 @@
+-<Format kind="O" symbolnr="57" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="69" argnr="2" leftargnr="0"/>
++<Format kind="V" symbolnr="29" argnr="1"/>
+@@ -167,4 +159,0 @@
+-<Format kind="V" symbolnr="38" argnr="1"/>
+-<Format kind="V" symbolnr="39" argnr="1"/>
+-<Format kind="V" symbolnr="40" argnr="1"/>
+-<Format kind="V" symbolnr="41" argnr="1"/>
 --- prel/m/mycielsk.dcl
 +++ prel/m/mycielsk.dcl
 @@ -132,0 +133 @@
@@ -435,7 +1308,353 @@
 +</Func>
 @@ -838,0 +820 @@
 +</Func>
+--- prel/p/pcs_0.dfr
++++ prel/p/pcs_0.dfr
+@@ -5,22 +4,0 @@
+-<ArticleID name="ZFMISC_1"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="0"/>
+-<SymbolCount kind="O" nr="1"/>
+-<SymbolCount kind="R" nr="1"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+-<ArticleID name="YELLOW_3"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="0"/>
+-<SymbolCount kind="O" nr="0"/>
+-<SymbolCount kind="R" nr="0"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="0"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -38,3 +16,3 @@
+-<Format kind="K" symbolnr="3" argnr="2" rightsymbolnr="3"/>
+-<Format kind="V" symbolnr="2" argnr="1"/>
+-<Format kind="O" symbolnr="2" argnr="1" leftargnr="0"/>
++<Format kind="K" symbolnr="1" argnr="2" rightsymbolnr="1"/>
++<Format kind="V" symbolnr="1" argnr="1"/>
++<Format kind="O" symbolnr="1" argnr="1" leftargnr="0"/>
+@@ -45 +23,2 @@
+-<Format kind="R" symbolnr="2" argnr="2" leftargnr="1"/>
++<Format kind="R" symbolnr="1" argnr="2" leftargnr="1"/>
++<Format kind="V" symbolnr="2" argnr="1"/>
+@@ -48,0 +28 @@
++<Format kind="O" symbolnr="2" argnr="0" leftargnr="0"/>
+@@ -50 +29,0 @@
+-<Format kind="O" symbolnr="3" argnr="0" leftargnr="0"/>
+@@ -54,2 +33,2 @@
+-<Format kind="V" symbolnr="10" argnr="1"/>
+-<Format kind="O" symbolnr="4" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="3" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="4" argnr="1" leftargnr="1"/>
+@@ -57 +35,0 @@
+-<Format kind="O" symbolnr="6" argnr="1" leftargnr="1"/>
+@@ -60,0 +39 @@
++<Format kind="V" symbolnr="10" argnr="1"/>
+@@ -63,2 +42 @@
+-<Format kind="V" symbolnr="13" argnr="1"/>
+-<Format kind="O" symbolnr="7" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="6" argnr="1" leftargnr="0"/>
+@@ -67,2 +45,3 @@
+-<Format kind="O" symbolnr="8" argnr="0" leftargnr="0"/>
+-<Format kind="O" symbolnr="9" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="7" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="8" argnr="1" leftargnr="0"/>
++<Format kind="V" symbolnr="13" argnr="1"/>
+@@ -71 +49,0 @@
+-<Format kind="V" symbolnr="16" argnr="1"/>
+@@ -73 +51,2 @@
+-<Format kind="O" symbolnr="10" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="9" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="11" argnr="2" leftargnr="0"/>
+@@ -75,3 +54,3 @@
+-<Format kind="O" symbolnr="13" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="14" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="15" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="13" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="14" argnr="2" leftargnr="1"/>
++<Format kind="V" symbolnr="16" argnr="1"/>
+@@ -79 +58 @@
+-<Format kind="V" symbolnr="18" argnr="1"/>
++<Format kind="O" symbolnr="15" argnr="2" leftargnr="0"/>
+@@ -82 +61 @@
+-<Format kind="O" symbolnr="18" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="17" argnr="1" leftargnr="0"/>
+@@ -85 +63,0 @@
+-<Format kind="O" symbolnr="20" argnr="1" leftargnr="0"/>
+--- prel/p/petri_2.dfr
++++ prel/p/petri_2.dfr
+@@ -5,11 +4,0 @@
+-<ArticleID name="HIDDEN"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="3"/>
+-<SymbolCount kind="L" nr="3"/>
+-<SymbolCount kind="M" nr="2"/>
+-<SymbolCount kind="O" nr="0"/>
+-<SymbolCount kind="R" nr="3"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -28 +17 @@
+-<Format kind="M" symbolnr="3" argnr="2"/>
++<Format kind="M" symbolnr="1" argnr="2"/>
+@@ -40,2 +29,2 @@
+-<Format kind="M" symbolnr="7" argnr="0"/>
+-<Format kind="V" symbolnr="2" argnr="1"/>
++<Format kind="M" symbolnr="5" argnr="0"/>
++<Format kind="V" symbolnr="1" argnr="1"/>
+@@ -43,4 +32,4 @@
+-<Format kind="V" symbolnr="3" argnr="1"/>
+-<Format kind="M" symbolnr="4" argnr="0"/>
+-<Format kind="M" symbolnr="5" argnr="2"/>
+-<Format kind="M" symbolnr="6" argnr="3"/>
++<Format kind="V" symbolnr="2" argnr="1"/>
++<Format kind="M" symbolnr="2" argnr="0"/>
++<Format kind="M" symbolnr="3" argnr="2"/>
++<Format kind="M" symbolnr="4" argnr="3"/>
+--- prel/p/petri.dfr
++++ prel/p/petri.dfr
+@@ -5,11 +4,0 @@
+-<ArticleID name="HIDDEN"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="3"/>
+-<SymbolCount kind="L" nr="3"/>
+-<SymbolCount kind="M" nr="2"/>
+-<SymbolCount kind="O" nr="0"/>
+-<SymbolCount kind="R" nr="3"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -64,0 +54 @@
++<Format kind="V" symbolnr="10" argnr="1"/>
+@@ -66 +55,0 @@
+-<Format kind="V" symbolnr="12" argnr="1"/>
+@@ -68 +57,3 @@
+-<Format kind="M" symbolnr="11" argnr="0"/>
++<Format kind="M" symbolnr="9" argnr="0"/>
++<Format kind="M" symbolnr="2" argnr="1"/>
++<Format kind="M" symbolnr="3" argnr="1"/>
+@@ -73,2 +63,0 @@
+-<Format kind="M" symbolnr="8" argnr="1"/>
+-<Format kind="M" symbolnr="9" argnr="1"/>
+@@ -76,0 +66 @@
++<Format kind="V" symbolnr="6" argnr="1"/>
+@@ -80 +69,0 @@
+-<Format kind="V" symbolnr="10" argnr="1"/>
+--- prel/p/polyform.dfr
++++ prel/p/polyform.dfr
+@@ -5,11 +4,0 @@
+-<ArticleID name="ZFMISC_1"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="0"/>
+-<SymbolCount kind="O" nr="1"/>
+-<SymbolCount kind="R" nr="1"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -32,0 +22 @@
++<Format kind="V" symbolnr="1" argnr="1"/>
+@@ -35 +24,0 @@
+-<Format kind="V" symbolnr="4" argnr="1"/>
+@@ -37,4 +26,5 @@
+-<Format kind="O" symbolnr="2" argnr="2" leftargnr="1"/>
+-<Format kind="O" symbolnr="3" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="4" argnr="2" leftargnr="1"/>
+-<Format kind="O" symbolnr="5" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="1" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="2" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="3" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="4" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="5" argnr="1" leftargnr="0"/>
+@@ -43,3 +33,3 @@
+-<Format kind="O" symbolnr="8" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="9" argnr="3" leftargnr="1"/>
+-<Format kind="O" symbolnr="10" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="8" argnr="3" leftargnr="1"/>
++<Format kind="O" symbolnr="9" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="10" argnr="2" leftargnr="1"/>
+@@ -47,3 +37,3 @@
+-<Format kind="O" symbolnr="12" argnr="2" leftargnr="1"/>
+-<Format kind="O" symbolnr="13" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="14" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="12" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="13" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="14" argnr="2" leftargnr="1"/>
+@@ -56,2 +46,2 @@
+-<Format kind="O" symbolnr="21" argnr="2" leftargnr="1"/>
+-<Format kind="V" symbolnr="5" argnr="1"/>
++<Format kind="V" symbolnr="4" argnr="1"/>
++<Format kind="O" symbolnr="21" argnr="1" leftargnr="0"/>
+@@ -60,2 +50 @@
+-<Format kind="O" symbolnr="24" argnr="1" leftargnr="0"/>
+-<Format kind="V" symbolnr="6" argnr="1"/>
++<Format kind="V" symbolnr="5" argnr="1"/>
+--- prel/p/prefer_1.dfr
++++ prel/p/prefer_1.dfr
+@@ -5,11 +4,0 @@
+-<ArticleID name="HIDDEN"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="3"/>
+-<SymbolCount kind="L" nr="3"/>
+-<SymbolCount kind="M" nr="2"/>
+-<SymbolCount kind="O" nr="0"/>
+-<SymbolCount kind="R" nr="3"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -38 +27 @@
+-<Format kind="R" symbolnr="4" argnr="3" leftargnr="3"/>
++<Format kind="R" symbolnr="1" argnr="3" leftargnr="3"/>
+@@ -50 +39 @@
+-<Format kind="V" symbolnr="2" argnr="1"/>
++<Format kind="V" symbolnr="1" argnr="1"/>
+@@ -52 +41 @@
+-<Format kind="M" symbolnr="3" argnr="0"/>
++<Format kind="M" symbolnr="1" argnr="0"/>
+@@ -57 +46 @@
+-<Format kind="V" symbolnr="5" argnr="1"/>
++<Format kind="V" symbolnr="4" argnr="1"/>
+@@ -60 +48,0 @@
+-<Format kind="V" symbolnr="4" argnr="1"/>
+@@ -61,0 +50 @@
++<Format kind="V" symbolnr="2" argnr="1"/>
 --- prel/r/rvsum_4.dcl
 +++ prel/r/rvsum_4.dcl
 @@ -165,0 +166 @@
 +<Adjective nr="13"/>
+--- prel/s/sgraph1.dfr
++++ prel/s/sgraph1.dfr
+@@ -16,11 +15,0 @@
+-<ArticleID name="SETWISEO"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="0"/>
+-<SymbolCount kind="O" nr="4"/>
+-<SymbolCount kind="R" nr="0"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -38 +27 @@
+-<Format kind="O" symbolnr="11" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="7" argnr="2" leftargnr="0"/>
+@@ -40 +29 @@
+-<Format kind="O" symbolnr="12" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="8" argnr="1" leftargnr="0"/>
+@@ -45 +34 @@
+-<Format kind="O" symbolnr="13" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="9" argnr="1" leftargnr="0"/>
+@@ -50 +39 @@
+-<Format kind="O" symbolnr="14" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="10" argnr="2" leftargnr="0"/>
+@@ -52 +41 @@
+-<Format kind="O" symbolnr="15" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="11" argnr="2" leftargnr="0"/>
+@@ -54,3 +43,3 @@
+-<Format kind="O" symbolnr="16" argnr="2" leftargnr="0"/>
+-<Format kind="O" symbolnr="16" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="17" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="12" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="12" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="13" argnr="0" leftargnr="0"/>
+--- prel/s/stacks_1.dfr
++++ prel/s/stacks_1.dfr
+@@ -5,11 +4,0 @@
+-<ArticleID name="HIDDEN"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="3"/>
+-<SymbolCount kind="L" nr="3"/>
+-<SymbolCount kind="M" nr="2"/>
+-<SymbolCount kind="O" nr="0"/>
+-<SymbolCount kind="R" nr="3"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -60 +49 @@
+-<Format kind="M" symbolnr="16" argnr="3"/>
++<Format kind="M" symbolnr="14" argnr="3"/>
+@@ -68,2 +57,2 @@
+-<Format kind="M" symbolnr="3" argnr="1"/>
+-<Format kind="R" symbolnr="4" argnr="1" leftargnr="0"/>
++<Format kind="M" symbolnr="1" argnr="1"/>
++<Format kind="R" symbolnr="1" argnr="1" leftargnr="0"/>
+@@ -73,0 +63 @@
++<Format kind="V" symbolnr="1" argnr="1"/>
+@@ -77,0 +68,3 @@
++<Format kind="M" symbolnr="2" argnr="0"/>
++<Format kind="K" symbolnr="1" argnr="1" rightsymbolnr="1"/>
++<Format kind="R" symbolnr="7" argnr="2" leftargnr="1"/>
+@@ -79,4 +71,0 @@
+-<Format kind="M" symbolnr="4" argnr="0"/>
+-<Format kind="K" symbolnr="4" argnr="1" rightsymbolnr="4"/>
+-<Format kind="R" symbolnr="10" argnr="2" leftargnr="1"/>
+-<Format kind="V" symbolnr="7" argnr="1"/>
+@@ -88 +77 @@
+-<Format kind="R" symbolnr="5" argnr="4" leftargnr="2"/>
++<Format kind="R" symbolnr="2" argnr="4" leftargnr="2"/>
+--- prel/s/struct_0.dfr
++++ prel/s/struct_0.dfr
+@@ -5,33 +4,0 @@
+-<ArticleID name="HIDDEN"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="3"/>
+-<SymbolCount kind="L" nr="3"/>
+-<SymbolCount kind="M" nr="2"/>
+-<SymbolCount kind="O" nr="0"/>
+-<SymbolCount kind="R" nr="3"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+-<ArticleID name="FINSEQ_1"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="2"/>
+-<SymbolCount kind="O" nr="6"/>
+-<SymbolCount kind="R" nr="0"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="4"/>
+-</Vocabulary>
+-<Vocabulary>
+-<ArticleID name="PBOOLE"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="5"/>
+-<SymbolCount kind="O" nr="7"/>
+-<SymbolCount kind="R" nr="2"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -97,3 +64,3 @@
+-<Format kind="O" symbolnr="14" argnr="1" leftargnr="0"/>
+-<Format kind="O" symbolnr="19" argnr="1" leftargnr="0"/>
+-<Format kind="V" symbolnr="9" argnr="1"/>
++<Format kind="O" symbolnr="1" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="6" argnr="1" leftargnr="0"/>
++<Format kind="V" symbolnr="3" argnr="1"/>
+@@ -104,4 +71,4 @@
+-<Format kind="V" symbolnr="10" argnr="1"/>
+-<Format kind="O" symbolnr="25" argnr="1" leftargnr="0"/>
+-<Format kind="V" symbolnr="12" argnr="1"/>
+-<Format kind="V" symbolnr="11" argnr="1"/>
++<Format kind="V" symbolnr="4" argnr="1"/>
++<Format kind="O" symbolnr="12" argnr="1" leftargnr="0"/>
++<Format kind="V" symbolnr="6" argnr="1"/>
++<Format kind="V" symbolnr="5" argnr="1"/>
