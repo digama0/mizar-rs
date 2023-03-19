@@ -2984,6 +2984,7 @@ pub struct Config {
 }
 
 const DEBUG: bool = cfg!(debug_assertions);
+const SYMBOL_KIND_BUG: bool = true;
 
 impl FormatterConfig {
   const DEFAULT: Self = Self {

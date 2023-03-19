@@ -2,7 +2,7 @@ use crate::analyze::Analyzer;
 use crate::parser::MaybeMut;
 use crate::types::{
   ArticleId, Attrs, ClustersBase, Constructors, ConstructorsBase, IdxVec, InferId,
-  PatternKindClass, SchId, Term, Theorem, Type, Visitable,
+  PatternKindClass, SchId, Term, Theorem, Type, Visitable, Vocabularies,
 };
 use crate::{Assignment, LocalContext, OnVarMut, VisitMut};
 use enum_map::EnumMap;
@@ -64,8 +64,7 @@ impl VisitMut for ExportPrep<'_> {
 
 impl Analyzer<'_> {
   pub fn export(&mut self) {
-    // TODO: use prel/ instead of mml/ (this requires `transfer` in addition to `exporter`)
-    const MML: bool = true;
+    const MML: bool = false;
 
     // self.r.g.clusters.visit(&mut ExportPrep { ctx: &self.r.g.constrs, lc: &self.r.lc });
     let ep = &mut ExportPrep {
@@ -100,10 +99,54 @@ impl Analyzer<'_> {
       };
       let dfr1 = &self.lc.formatter.formats.formats.0[format_base..];
       let (mut vocs2, mut dfr2) = Default::default();
-      if self.path.read_dfr(MML, &mut vocs2, &mut dfr2).unwrap() {
-        assert_eq!(vocs1, vocs2);
+      let nonempty = self.path.read_dfr(MML, &mut vocs2, &mut dfr2).unwrap();
+      if MML {
+        if nonempty {
+          assert_eq!(vocs1, vocs2);
+        }
+        assert_eq!(dfr1, dfr2.0);
+      } else {
+        let mut marked_vocs = Vocabularies::default();
+        let mut marked_dfr = vec![];
+        if !dfr1.is_empty() {
+          let mut trans = EnumMap::<_, Vec<_>>::default();
+          let (mut hi, mut new): (EnumMap<_, u32>, EnumMap<_, u32>) = Default::default();
+          for (_, (art, counts)) in vocs1.0.iter().enumerate() {
+            let lo = hi;
+            counts.iter().for_each(|(i, &count)| hi[i] += count);
+            let used = dfr1.iter().any(|fmt| {
+              let mut used = false;
+              fmt.visit::<{ crate::SYMBOL_KIND_BUG }>(|k, sym| {
+                used |= (lo[k]..hi[k]).contains(&sym)
+              });
+              used
+            });
+            if used {
+              marked_vocs.0.push((*art, *counts));
+              for (kind, &count) in counts {
+                trans[kind].extend((0..count).map(|i| Some(i + new[kind])));
+                new[kind] += count
+              }
+            } else {
+              for (kind, &count) in counts {
+                trans[kind].extend((0..count).map(|_| None))
+              }
+            }
+          }
+          marked_dfr.extend_from_slice(dfr1);
+          for fmt in &mut marked_dfr {
+            fmt.visit_mut::<false>(|k, sym| *sym = trans[k][*sym as usize].unwrap());
+          }
+        }
+        if nonempty {
+          assert_eq!(marked_vocs, vocs2);
+        }
+        assert_eq!(marked_dfr, dfr2.0);
       }
-      assert_eq!(dfr1, dfr2.0);
+    }
+
+    if true {
+      return
     }
 
     // validating .dno

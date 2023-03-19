@@ -2129,9 +2129,9 @@ pub enum SymbolKindClass {
   LeftBrk,
   RightBrk,
   Mode,
-  Functor,
+  Func,
   Pred,
-  Selector,
+  Sel,
   Attr,
 }
 
@@ -2142,9 +2142,9 @@ impl SymbolKindClass {
       SymbolKindClass::LeftBrk => b'K',
       SymbolKindClass::RightBrk => b'L',
       SymbolKindClass::Mode => b'M',
-      SymbolKindClass::Functor => b'O',
+      SymbolKindClass::Func => b'O',
       SymbolKindClass::Pred => b'R',
-      SymbolKindClass::Selector => b'U',
+      SymbolKindClass::Sel => b'U',
       SymbolKindClass::Attr => b'V',
     }
   }
@@ -2163,17 +2163,17 @@ mk_id! {
 
 #[derive(Hash, PartialEq, Eq, Debug)]
 pub enum SymbolKind {
-  Functor(FuncSymId),
+  Func(FuncSymId),
   LeftBrk(LeftBrkSymId),
   RightBrk(RightBrkSymId),
   Pred(PredSymId),
   Mode(ModeSymId),
   Attr(AttrSymId),
   Struct(StructSymId),
-  Selector(SelSymId),
+  Sel(SelSymId),
 }
 impl From<FuncSymId> for SymbolKind {
-  fn from(v: FuncSymId) -> Self { Self::Functor(v) }
+  fn from(v: FuncSymId) -> Self { Self::Func(v) }
 }
 impl From<LeftBrkSymId> for SymbolKind {
   fn from(v: LeftBrkSymId) -> Self { Self::LeftBrk(v) }
@@ -2194,20 +2194,20 @@ impl From<StructSymId> for SymbolKind {
   fn from(v: StructSymId) -> Self { Self::Struct(v) }
 }
 impl From<SelSymId> for SymbolKind {
-  fn from(v: SelSymId) -> Self { Self::Selector(v) }
+  fn from(v: SelSymId) -> Self { Self::Sel(v) }
 }
 
 impl SymbolKind {
   fn _class(&self) -> SymbolKindClass {
     match self {
-      SymbolKind::Functor(_) => SymbolKindClass::Functor,
+      SymbolKind::Func(_) => SymbolKindClass::Func,
       SymbolKind::LeftBrk(_) => SymbolKindClass::LeftBrk,
       SymbolKind::RightBrk(_) => SymbolKindClass::RightBrk,
       SymbolKind::Pred(_) => SymbolKindClass::Pred,
       SymbolKind::Mode(_) => SymbolKindClass::Mode,
       SymbolKind::Attr(_) => SymbolKindClass::Attr,
       SymbolKind::Struct(_) => SymbolKindClass::Struct,
-      SymbolKind::Selector(_) => SymbolKindClass::Selector,
+      SymbolKind::Sel(_) => SymbolKindClass::Sel,
     }
   }
 }
@@ -2262,7 +2262,38 @@ pub enum Format {
   Pred(FormatPred),
 }
 
+macro_rules! impl_format_visit {
+  ($visit:ident$(, $mutbl:tt)?) => {
+    pub fn $visit<const BUG: bool>(
+      &$($mutbl)? self, mut f: impl FnMut(SymbolKindClass, $(&$mutbl)? u32)
+    ) {
+      match self {
+        Format::Mode(fmt) => f(SymbolKindClass::Mode, $(&$mutbl)? fmt.sym.0),
+        // Mizar has a bug here which causes struct formats to be treated as right bracket
+        // symbols and subaggr formats to be ignored
+        Format::Struct(FormatStruct { sym, .. }) if BUG =>
+          f(SymbolKindClass::RightBrk, $(&$mutbl)? sym.0),
+        Format::SubAggr(_) if BUG => {}
+        Format::Struct(FormatStruct { sym, .. })
+        | Format::Aggr(FormatAggr { sym, .. })
+        | Format::SubAggr(sym) => f(SymbolKindClass::Struct, $(&$mutbl)? sym.0),
+        Format::Sel(sym) => f(SymbolKindClass::Sel, $(&$mutbl)? sym.0),
+        Format::Attr(fmt) => f(SymbolKindClass::Attr, $(&$mutbl)? fmt.sym.0),
+        Format::Func(FormatFunc::Func { sym, .. }) => f(SymbolKindClass::Func, $(&$mutbl)? sym.0),
+        Format::Func(FormatFunc::Bracket { lsym, rsym, .. }) => {
+          f(SymbolKindClass::LeftBrk, $(&$mutbl)? lsym.0);
+          f(SymbolKindClass::RightBrk, $(&$mutbl)? rsym.0)
+        }
+        Format::Pred(fmt) => f(SymbolKindClass::Pred, $(&$mutbl)? fmt.sym.0),
+      }
+    }
+  }
+}
+
 impl Format {
+  impl_format_visit!(visit);
+  impl_format_visit!(visit_mut, mut);
+
   pub fn discr(&self) -> u8 {
     match self {
       Format::Aggr(_) => b'G',

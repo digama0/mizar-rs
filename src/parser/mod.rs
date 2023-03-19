@@ -243,14 +243,14 @@ impl MizPath {
       }
       r.end_tag(buf);
       let kind = match kind {
-        b'O' => SymbolKind::Functor(FuncSymId(nr - 1)),
+        b'O' => SymbolKind::Func(FuncSymId(nr - 1)),
         b'K' | b'[' | b'{' => SymbolKind::LeftBrk(LeftBrkSymId(nr - 1)),
         b'L' | b']' | b'}' => SymbolKind::RightBrk(RightBrkSymId(nr - 1)),
         b'R' | b'=' => SymbolKind::Pred(PredSymId(nr - 1)), // '=' is its own token
         b'M' | 0xE0 => SymbolKind::Mode(ModeSymId(nr - 1)), // 0xE0 = "set", which is in its own token class
         b'V' => SymbolKind::Attr(AttrSymId(nr - 1)),
         b'G' => SymbolKind::Struct(StructSymId(nr - 1)),
-        b'U' => SymbolKind::Selector(SelSymId(nr - 1)),
+        b'U' => SymbolKind::Sel(SelSymId(nr - 1)),
         _ => continue, // the dcx file has a bunch of other crap too
       };
       syms.0.push((kind, name));
@@ -777,9 +777,9 @@ impl MizReader<'_> {
           b'K' => SymbolKindClass::LeftBrk,
           b'L' => SymbolKindClass::RightBrk,
           b'M' => SymbolKindClass::Mode,
-          b'O' => SymbolKindClass::Functor,
+          b'O' => SymbolKindClass::Func,
           b'R' => SymbolKindClass::Pred,
-          b'U' => SymbolKindClass::Selector,
+          b'U' => SymbolKindClass::Sel,
           b'V' => SymbolKindClass::Attr,
           _ => panic!("unexpected symbol kind {:?}", kind as char),
         };
