@@ -74,7 +74,7 @@ impl MizPath {
       v.formats.extend(f.formats.enum_iter().map(|(id, f)| (*f, id)));
       formats = Some(f)
     }
-    v.lc.formatter.init(self, formats);
+    v.lc.formatter.init(self, cfg.exporter_enabled, formats);
     let mut notations = Default::default();
     self.read_eno(&mut notations).unwrap();
     v.lc.formatter.extend(&v.g.constrs, &notations);

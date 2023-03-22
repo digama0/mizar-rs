@@ -338,21 +338,30 @@ impl Analyzer<'_> {
       process!(registered, functor, conditional);
     }
 
-    if true {
-      return
-    }
-
     // validating .def
     {
       let (mut sig, mut def2) = Default::default();
       let nonempty =
         self.path.read_definitions(MaybeMut::None, MML, "def", Some(&mut sig), &mut def2).unwrap();
-      if nonempty {
+      let mut def1 = self.definitions[self.export.definitions_base as usize..].to_owned();
+      def1.visit(ep);
+      assert_eq!(!def1.is_empty(), nonempty);
+      if !nonempty {
+        // nothing
+      } else if MML {
         assert_eq!(arts2, sig);
+      } else {
+        let mut marks = MarkConstr::new(&aco.accum, arts1.len());
+        def1.visit(&mut marks);
+        marks.closure(&mut aco.constrs);
+        marks.apply_with(|v| def1.visit(v));
+        assert_eq!(marks.filtered(&arts2), sig);
       }
-      let def1 = &self.definitions[self.export.definitions_base as usize..];
-      let def1 = def1.iter().map(|c| c.visit_cloned(ep)).collect_vec();
       assert_eq_iter("definitions", def1.iter(), def2.iter());
+    }
+
+    if true {
+      return
     }
 
     // validating .did

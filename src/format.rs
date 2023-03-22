@@ -78,18 +78,20 @@ impl Formatter {
     pats.iter().for_each(|pat| self.push(ctx, pat))
   }
 
-  pub fn init(&mut self, path: &MizPath, formats: Option<Formats>) {
+  pub fn init(&mut self, path: &MizPath, must_init_formats: bool, formats: Option<Formats>) {
+    if self.cfg.enable_formatter || must_init_formats {
+      self.formats = formats.unwrap_or_else(|| {
+        let mut formats = Default::default();
+        path.read_formats("frx", &mut formats).unwrap();
+        formats
+      });
+    }
     if !self.cfg.enable_formatter {
       return
     }
     let mut symbols = Default::default();
     path.read_dcx(&mut symbols).unwrap();
     self.symbols = symbols.0.into_iter().collect();
-    self.formats = formats.unwrap_or_else(|| {
-      let mut formats = Default::default();
-      path.read_formats("frx", &mut formats).unwrap();
-      formats
-    });
     for f in &self.formats.formats.0 {
       match f {
         Format::Aggr(f) => assert!(self.symbols.contains_key(&f.sym.into())),
