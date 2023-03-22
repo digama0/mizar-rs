@@ -413,6 +413,113 @@
 @@ -215 +171 @@
 -<Format kind="O" symbolnr="93" argnr="2" leftargnr="0"/>
 +<Format kind="O" symbolnr="82" argnr="2" leftargnr="0"/>
+--- prel/a/aofa_a00.dno
++++ prel/a/aofa_a00.dno
+@@ -149,11 +148,0 @@
+-<ArticleID name="PBOOLE"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="5"/>
+-<SymbolCount kind="O" nr="7"/>
+-<SymbolCount kind="R" nr="2"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -171,11 +159,0 @@
+-<ArticleID name="ZFMISC_1"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="0"/>
+-<SymbolCount kind="O" nr="1"/>
+-<SymbolCount kind="R" nr="1"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -193,11 +170,0 @@
+-<ArticleID name="PARTFUN1"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="1"/>
+-<SymbolCount kind="O" nr="3"/>
+-<SymbolCount kind="R" nr="1"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -1089 +1056 @@
+-<Format kind="V" symbolnr="40" argnr="3"/>
++<Format kind="V" symbolnr="37" argnr="3"/>
+@@ -1110 +1077 @@
+-<Format kind="V" symbolnr="40" argnr="1"/>
++<Format kind="V" symbolnr="37" argnr="1"/>
+@@ -1130 +1097 @@
+-<Format kind="V" symbolnr="40" argnr="3"/>
++<Format kind="V" symbolnr="37" argnr="3"/>
+@@ -1262 +1229 @@
+-<Format kind="O" symbolnr="112" argnr="3" leftargnr="1"/>
++<Format kind="O" symbolnr="101" argnr="3" leftargnr="1"/>
+@@ -1312 +1279 @@
+-<Format kind="O" symbolnr="112" argnr="4" leftargnr="1"/>
++<Format kind="O" symbolnr="101" argnr="4" leftargnr="1"/>
+@@ -1365 +1332 @@
+-<Format kind="K" symbolnr="7" argnr="6" rightsymbolnr="7"/>
++<Format kind="K" symbolnr="4" argnr="6" rightsymbolnr="4"/>
+@@ -1396 +1363 @@
+-<Format kind="K" symbolnr="7" argnr="6" rightsymbolnr="7"/>
++<Format kind="K" symbolnr="4" argnr="6" rightsymbolnr="4"/>
+@@ -1438 +1405 @@
+-<Format kind="K" symbolnr="7" argnr="7" rightsymbolnr="7"/>
++<Format kind="K" symbolnr="4" argnr="7" rightsymbolnr="4"/>
+@@ -1473 +1440 @@
+-<Format kind="K" symbolnr="7" argnr="7" rightsymbolnr="7"/>
++<Format kind="K" symbolnr="4" argnr="7" rightsymbolnr="4"/>
+@@ -1520 +1487 @@
+-<Format kind="K" symbolnr="7" argnr="8" rightsymbolnr="7"/>
++<Format kind="K" symbolnr="4" argnr="8" rightsymbolnr="4"/>
+@@ -1559 +1526 @@
+-<Format kind="K" symbolnr="7" argnr="8" rightsymbolnr="7"/>
++<Format kind="K" symbolnr="4" argnr="8" rightsymbolnr="4"/>
+@@ -1649 +1616 @@
+-<Format kind="O" symbolnr="73" argnr="3" leftargnr="1"/>
++<Format kind="O" symbolnr="65" argnr="3" leftargnr="1"/>
+@@ -2106 +2073 @@
+-<Format kind="O" symbolnr="114" argnr="3" leftargnr="0"/>
++<Format kind="O" symbolnr="103" argnr="3" leftargnr="0"/>
+@@ -2672 +2639 @@
+-<Format kind="O" symbolnr="100" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="89" argnr="1" leftargnr="0"/>
+@@ -2721 +2688 @@
+-<Format kind="O" symbolnr="110" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="99" argnr="2" leftargnr="1"/>
+@@ -2847 +2814 @@
+-<Format kind="O" symbolnr="97" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="86" argnr="2" leftargnr="1"/>
+@@ -2910 +2877 @@
+-<Format kind="O" symbolnr="59" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="52" argnr="2" leftargnr="0"/>
+@@ -2973 +2940 @@
+-<Format kind="O" symbolnr="100" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="89" argnr="2" leftargnr="1"/>
+@@ -3030 +2997 @@
+-<Format kind="O" symbolnr="98" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="87" argnr="2" leftargnr="1"/>
+@@ -3087 +3054 @@
+-<Format kind="O" symbolnr="112" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="101" argnr="2" leftargnr="1"/>
+@@ -3125 +3092 @@
+-<Format kind="O" symbolnr="132" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="121" argnr="2" leftargnr="0"/>
+@@ -3252 +3219 @@
+-<Format kind="O" symbolnr="118" argnr="3" leftargnr="2"/>
++<Format kind="O" symbolnr="107" argnr="3" leftargnr="2"/>
+@@ -3404 +3371 @@
+-<Format kind="O" symbolnr="112" argnr="3" leftargnr="2"/>
++<Format kind="O" symbolnr="101" argnr="3" leftargnr="2"/>
 --- prel/a/armstrng.dfr
 +++ prel/a/armstrng.dfr
 @@ -5,11 +4,0 @@
@@ -490,6 +597,152 @@
 -<Format kind="R" symbolnr="10" argnr="2" leftargnr="1"/>
 +<Format kind="O" symbolnr="13" argnr="1" leftargnr="0"/>
 +<Format kind="R" symbolnr="8" argnr="2" leftargnr="1"/>
+--- prel/a/armstrng.dno
++++ prel/a/armstrng.dno
+@@ -85,11 +84,0 @@
+-<ArticleID name="PBOOLE"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="5"/>
+-<SymbolCount kind="O" nr="7"/>
+-<SymbolCount kind="R" nr="2"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -108 +97 @@
+-<Format kind="M" symbolnr="14" argnr="1"/>
++<Format kind="M" symbolnr="9" argnr="1"/>
+@@ -134 +123 @@
+-<Format kind="M" symbolnr="15" argnr="1"/>
++<Format kind="M" symbolnr="10" argnr="1"/>
+@@ -160 +149 @@
+-<Format kind="M" symbolnr="16" argnr="1"/>
++<Format kind="M" symbolnr="11" argnr="1"/>
+@@ -205 +194 @@
+-<Format kind="M" symbolnr="17" argnr="1"/>
++<Format kind="M" symbolnr="12" argnr="1"/>
+@@ -268 +257 @@
+-<Format kind="V" symbolnr="8" argnr="1"/>
++<Format kind="V" symbolnr="7" argnr="1"/>
+@@ -287 +276 @@
+-<Format kind="V" symbolnr="9" argnr="1"/>
++<Format kind="V" symbolnr="8" argnr="1"/>
+@@ -309 +298 @@
+-<Format kind="V" symbolnr="10" argnr="1"/>
++<Format kind="V" symbolnr="9" argnr="1"/>
+@@ -333 +322 @@
+-<Format kind="V" symbolnr="11" argnr="1"/>
++<Format kind="V" symbolnr="10" argnr="1"/>
+@@ -357 +346 @@
+-<Format kind="V" symbolnr="12" argnr="1"/>
++<Format kind="V" symbolnr="11" argnr="1"/>
+@@ -381 +370 @@
+-<Format kind="V" symbolnr="13" argnr="1"/>
++<Format kind="V" symbolnr="12" argnr="1"/>
+@@ -405 +394 @@
+-<Format kind="V" symbolnr="14" argnr="1"/>
++<Format kind="V" symbolnr="13" argnr="1"/>
+@@ -429 +418 @@
+-<Format kind="V" symbolnr="15" argnr="1"/>
++<Format kind="V" symbolnr="14" argnr="1"/>
+@@ -453 +442 @@
+-<Format kind="V" symbolnr="16" argnr="1"/>
++<Format kind="V" symbolnr="15" argnr="1"/>
+@@ -477 +466 @@
+-<Format kind="V" symbolnr="17" argnr="1"/>
++<Format kind="V" symbolnr="16" argnr="1"/>
+@@ -501 +490 @@
+-<Format kind="V" symbolnr="18" argnr="1"/>
++<Format kind="V" symbolnr="17" argnr="1"/>
+@@ -525 +514 @@
+-<Format kind="V" symbolnr="19" argnr="1"/>
++<Format kind="V" symbolnr="18" argnr="1"/>
+@@ -549 +538 @@
+-<Format kind="V" symbolnr="20" argnr="1"/>
++<Format kind="V" symbolnr="19" argnr="1"/>
+@@ -573 +562 @@
+-<Format kind="V" symbolnr="21" argnr="1"/>
++<Format kind="V" symbolnr="20" argnr="1"/>
+@@ -584 +573 @@
+-<Format kind="V" symbolnr="22" argnr="1"/>
++<Format kind="V" symbolnr="21" argnr="1"/>
+@@ -595 +584 @@
+-<Format kind="V" symbolnr="23" argnr="1"/>
++<Format kind="V" symbolnr="22" argnr="1"/>
+@@ -606 +595 @@
+-<Format kind="V" symbolnr="24" argnr="1"/>
++<Format kind="V" symbolnr="23" argnr="1"/>
+@@ -630 +619 @@
+-<Format kind="V" symbolnr="25" argnr="1"/>
++<Format kind="V" symbolnr="24" argnr="1"/>
+@@ -654 +643 @@
+-<Format kind="V" symbolnr="26" argnr="1"/>
++<Format kind="V" symbolnr="25" argnr="1"/>
+@@ -678 +667 @@
+-<Format kind="R" symbolnr="9" argnr="2" leftargnr="1"/>
++<Format kind="R" symbolnr="7" argnr="2" leftargnr="1"/>
+@@ -693 +682 @@
+-<Format kind="R" symbolnr="10" argnr="2" leftargnr="1"/>
++<Format kind="R" symbolnr="8" argnr="2" leftargnr="1"/>
+@@ -708 +697 @@
+-<Format kind="R" symbolnr="11" argnr="3" leftargnr="1"/>
++<Format kind="R" symbolnr="9" argnr="3" leftargnr="1"/>
+@@ -737 +726 @@
+-<Format kind="R" symbolnr="12" argnr="3" leftargnr="2"/>
++<Format kind="R" symbolnr="10" argnr="3" leftargnr="2"/>
+@@ -814 +803 @@
+-<Format kind="R" symbolnr="13" argnr="2" leftargnr="1"/>
++<Format kind="R" symbolnr="11" argnr="2" leftargnr="1"/>
+@@ -838 +827 @@
+-<Format kind="R" symbolnr="14" argnr="3" leftargnr="1"/>
++<Format kind="R" symbolnr="12" argnr="3" leftargnr="1"/>
+@@ -870 +859 @@
+-<Format kind="R" symbolnr="15" argnr="2" leftargnr="1"/>
++<Format kind="R" symbolnr="13" argnr="2" leftargnr="1"/>
+@@ -893 +882 @@
+-<Format kind="R" symbolnr="16" argnr="2" leftargnr="1"/>
++<Format kind="R" symbolnr="14" argnr="2" leftargnr="1"/>
+@@ -921 +910 @@
+-<Format kind="O" symbolnr="30" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="23" argnr="2" leftargnr="1"/>
+@@ -938 +927 @@
+-<Format kind="O" symbolnr="31" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="24" argnr="1" leftargnr="0"/>
+@@ -980 +969 @@
+-<Format kind="O" symbolnr="32" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="25" argnr="1" leftargnr="0"/>
+@@ -991 +980 @@
+-<Format kind="O" symbolnr="33" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="26" argnr="1" leftargnr="0"/>
+@@ -1026 +1015 @@
+-<Format kind="O" symbolnr="34" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="27" argnr="1" leftargnr="0"/>
+@@ -1037 +1026 @@
+-<Format kind="O" symbolnr="35" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="28" argnr="1" leftargnr="0"/>
+@@ -1061 +1050 @@
+-<Format kind="O" symbolnr="36" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="29" argnr="1" leftargnr="0"/>
+@@ -1085 +1074 @@
+-<Format kind="O" symbolnr="37" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="30" argnr="1" leftargnr="0"/>
+@@ -1109 +1098 @@
+-<Format kind="O" symbolnr="38" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="31" argnr="2" leftargnr="1"/>
+@@ -1124 +1113 @@
+-<Format kind="O" symbolnr="39" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="32" argnr="1" leftargnr="0"/>
+@@ -1148 +1137 @@
+-<Format kind="O" symbolnr="40" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="33" argnr="1" leftargnr="0"/>
+@@ -1175 +1164 @@
+-<Format kind="O" symbolnr="41" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="34" argnr="1" leftargnr="0"/>
+@@ -1199 +1188 @@
+-<Format kind="O" symbolnr="42" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="35" argnr="1" leftargnr="0"/>
 --- prel/c/cgames_1.dfr
 +++ prel/c/cgames_1.dfr
 @@ -5,11 +4,0 @@
@@ -744,6 +997,203 @@
 +<Format kind="V" symbolnr="13" argnr="2"/>
 +<Format kind="O" symbolnr="25" argnr="2" leftargnr="1"/>
 +<Format kind="O" symbolnr="26" argnr="2" leftargnr="1"/>
+--- prel/f/fomodel1.dno
++++ prel/f/fomodel1.dno
+@@ -62,11 +61,0 @@
+-<ArticleID name="INT_1"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="2"/>
+-<SymbolCount kind="L" nr="2"/>
+-<SymbolCount kind="M" nr="1"/>
+-<SymbolCount kind="O" nr="3"/>
+-<SymbolCount kind="R" nr="1"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="2"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -148 +137 @@
+-<Format kind="M" symbolnr="8" argnr="0"/>
++<Format kind="M" symbolnr="7" argnr="0"/>
+@@ -161 +150 @@
+-<Format kind="M" symbolnr="9" argnr="1"/>
++<Format kind="M" symbolnr="8" argnr="1"/>
+@@ -211 +200 @@
+-<Format kind="V" symbolnr="17" argnr="1"/>
++<Format kind="V" symbolnr="15" argnr="1"/>
+@@ -222 +211 @@
+-<Format kind="V" symbolnr="18" argnr="1"/>
++<Format kind="V" symbolnr="16" argnr="1"/>
+@@ -233 +222 @@
+-<Format kind="V" symbolnr="19" argnr="1"/>
++<Format kind="V" symbolnr="17" argnr="1"/>
+@@ -250 +239 @@
+-<Format kind="V" symbolnr="20" argnr="1"/>
++<Format kind="V" symbolnr="18" argnr="1"/>
+@@ -267 +256 @@
+-<Format kind="V" symbolnr="17" argnr="1"/>
++<Format kind="V" symbolnr="15" argnr="1"/>
+@@ -284 +273 @@
+-<Format kind="V" symbolnr="18" argnr="1"/>
++<Format kind="V" symbolnr="16" argnr="1"/>
+@@ -301 +290 @@
+-<Format kind="V" symbolnr="23" argnr="1"/>
++<Format kind="V" symbolnr="21" argnr="1"/>
+@@ -318 +307 @@
+-<Format kind="V" symbolnr="22" argnr="1"/>
++<Format kind="V" symbolnr="20" argnr="1"/>
+@@ -335 +324 @@
+-<Format kind="V" symbolnr="21" argnr="1"/>
++<Format kind="V" symbolnr="19" argnr="1"/>
+@@ -352 +341 @@
+-<Format kind="V" symbolnr="28" argnr="1"/>
++<Format kind="V" symbolnr="26" argnr="1"/>
+@@ -363 +352 @@
+-<Format kind="V" symbolnr="14" argnr="2"/>
++<Format kind="V" symbolnr="12" argnr="2"/>
+@@ -381 +370 @@
+-<Format kind="V" symbolnr="23" argnr="1"/>
++<Format kind="V" symbolnr="21" argnr="1"/>
+@@ -408 +397 @@
+-<Format kind="V" symbolnr="24" argnr="2"/>
++<Format kind="V" symbolnr="22" argnr="2"/>
+@@ -441 +430 @@
+-<Format kind="V" symbolnr="26" argnr="1"/>
++<Format kind="V" symbolnr="24" argnr="1"/>
+@@ -468 +457 @@
+-<Format kind="V" symbolnr="29" argnr="2"/>
++<Format kind="V" symbolnr="27" argnr="2"/>
+@@ -483 +472 @@
+-<Format kind="V" symbolnr="9" argnr="1"/>
++<Format kind="V" symbolnr="7" argnr="1"/>
+@@ -494 +483 @@
+-<Format kind="O" symbolnr="49" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="46" argnr="1" leftargnr="0"/>
+@@ -505 +494 @@
+-<Format kind="O" symbolnr="52" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="49" argnr="1" leftargnr="0"/>
+@@ -516 +505 @@
+-<Format kind="O" symbolnr="56" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="53" argnr="1" leftargnr="0"/>
+@@ -527 +516 @@
+-<Format kind="O" symbolnr="50" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="47" argnr="1" leftargnr="0"/>
+@@ -538 +527 @@
+-<Format kind="O" symbolnr="55" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="52" argnr="1" leftargnr="0"/>
+@@ -549 +538 @@
+-<Format kind="O" symbolnr="53" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="50" argnr="1" leftargnr="0"/>
+@@ -560 +549 @@
+-<Format kind="O" symbolnr="62" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="59" argnr="1" leftargnr="0"/>
+@@ -571 +560 @@
+-<Format kind="O" symbolnr="64" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="61" argnr="1" leftargnr="0"/>
+@@ -582 +571 @@
+-<Format kind="O" symbolnr="54" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="51" argnr="1" leftargnr="0"/>
+@@ -593 +582 @@
+-<Format kind="O" symbolnr="65" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="62" argnr="1" leftargnr="0"/>
+@@ -604 +593 @@
+-<Format kind="O" symbolnr="51" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="48" argnr="1" leftargnr="0"/>
+@@ -615 +604 @@
+-<Format kind="O" symbolnr="66" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="63" argnr="1" leftargnr="0"/>
+@@ -639 +628 @@
+-<Format kind="O" symbolnr="66" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="63" argnr="1" leftargnr="0"/>
+@@ -663 +652 @@
+-<Format kind="O" symbolnr="66" argnr="1" leftargnr="1"/>
++<Format kind="O" symbolnr="63" argnr="1" leftargnr="1"/>
+@@ -676 +665 @@
+-<Format kind="O" symbolnr="49" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="46" argnr="1" leftargnr="0"/>
+@@ -689 +678 @@
+-<Format kind="O" symbolnr="52" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="49" argnr="1" leftargnr="0"/>
+@@ -703 +692 @@
+-<Format kind="O" symbolnr="65" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="62" argnr="1" leftargnr="0"/>
+@@ -716 +705 @@
+-<Format kind="O" symbolnr="62" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="59" argnr="1" leftargnr="0"/>
+@@ -730 +719 @@
+-<Format kind="O" symbolnr="61" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="58" argnr="1" leftargnr="0"/>
+@@ -754 +743 @@
+-<Format kind="O" symbolnr="46" argnr="1" leftargnr="1"/>
++<Format kind="O" symbolnr="43" argnr="1" leftargnr="1"/>
+@@ -768 +757 @@
+-<Format kind="O" symbolnr="30" argnr="1" leftargnr="1"/>
++<Format kind="O" symbolnr="27" argnr="1" leftargnr="1"/>
+@@ -782 +771 @@
+-<Format kind="O" symbolnr="32" argnr="1" leftargnr="1"/>
++<Format kind="O" symbolnr="29" argnr="1" leftargnr="1"/>
+@@ -796 +785 @@
+-<Format kind="O" symbolnr="57" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="54" argnr="2" leftargnr="0"/>
+@@ -824 +813 @@
+-<Format kind="O" symbolnr="57" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="54" argnr="2" leftargnr="0"/>
+@@ -852 +841 @@
+-<Format kind="O" symbolnr="58" argnr="1" leftargnr="1"/>
++<Format kind="O" symbolnr="55" argnr="1" leftargnr="1"/>
+@@ -866 +855 @@
+-<Format kind="O" symbolnr="51" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="48" argnr="1" leftargnr="0"/>
+@@ -880 +869 @@
+-<Format kind="O" symbolnr="59" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="56" argnr="1" leftargnr="0"/>
+@@ -894 +883 @@
+-<Format kind="O" symbolnr="58" argnr="1" leftargnr="1"/>
++<Format kind="O" symbolnr="55" argnr="1" leftargnr="1"/>
+@@ -908 +897 @@
+-<Format kind="O" symbolnr="59" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="56" argnr="1" leftargnr="0"/>
+@@ -922 +911 @@
+-<Format kind="O" symbolnr="61" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="58" argnr="1" leftargnr="0"/>
+@@ -953 +942 @@
+-<Format kind="O" symbolnr="60" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="57" argnr="1" leftargnr="0"/>
+@@ -967 +956 @@
+-<Format kind="O" symbolnr="60" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="57" argnr="1" leftargnr="0"/>
+@@ -981 +970 @@
+-<Format kind="O" symbolnr="44" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="41" argnr="1" leftargnr="0"/>
+@@ -1012 +1001 @@
+-<Format kind="O" symbolnr="44" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="41" argnr="1" leftargnr="0"/>
+@@ -1043 +1032 @@
+-<Format kind="O" symbolnr="59" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="56" argnr="1" leftargnr="0"/>
+@@ -1057 +1046 @@
+-<Format kind="O" symbolnr="45" argnr="1" leftargnr="1"/>
++<Format kind="O" symbolnr="42" argnr="1" leftargnr="1"/>
+@@ -1071 +1060 @@
+-<Format kind="O" symbolnr="54" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="51" argnr="1" leftargnr="0"/>
+@@ -1085 +1074 @@
+-<Format kind="O" symbolnr="67" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="64" argnr="1" leftargnr="0"/>
+@@ -1116 +1105 @@
+-<Format kind="O" symbolnr="58" argnr="1" leftargnr="1"/>
++<Format kind="O" symbolnr="55" argnr="1" leftargnr="1"/>
+@@ -1130 +1119 @@
+-<Format kind="O" symbolnr="68" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="65" argnr="2" leftargnr="1"/>
+@@ -1153 +1142 @@
+-<Format kind="O" symbolnr="69" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="66" argnr="2" leftargnr="1"/>
+@@ -1173 +1162 @@
+-<Format kind="O" symbolnr="14" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="11" argnr="2" leftargnr="1"/>
+@@ -1214 +1203 @@
+-<Format kind="K" symbolnr="6" argnr="1" rightsymbolnr="6"/>
++<Format kind="K" symbolnr="4" argnr="1" rightsymbolnr="4"/>
 --- prel/g/glib_009.dcl
 +++ prel/g/glib_009.dcl
 @@ -631,0 +632 @@
@@ -955,6 +1405,65 @@
 -<Format kind="O" symbolnr="17" argnr="2" leftargnr="0"/>
 +<Format kind="O" symbolnr="12" argnr="2" leftargnr="0"/>
 +<Format kind="O" symbolnr="13" argnr="2" leftargnr="0"/>
+--- prel/m/metric_1.dno
++++ prel/m/metric_1.dno
+@@ -48,11 +47,0 @@
+-<ArticleID name="COMPLEX1"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="0"/>
+-<SymbolCount kind="O" nr="4"/>
+-<SymbolCount kind="R" nr="0"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="0"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -398 +387 @@
+-<Format kind="O" symbolnr="5" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="1" argnr="2" leftargnr="0"/>
+@@ -422 +411 @@
+-<Format kind="O" symbolnr="6" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="2" argnr="0" leftargnr="0"/>
+@@ -427 +416 @@
+-<Format kind="O" symbolnr="6" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="2" argnr="0" leftargnr="0"/>
+@@ -432 +421 @@
+-<Format kind="O" symbolnr="5" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="1" argnr="2" leftargnr="0"/>
+@@ -458 +447 @@
+-<Format kind="O" symbolnr="7" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="3" argnr="1" leftargnr="0"/>
+@@ -469 +458 @@
+-<Format kind="O" symbolnr="8" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="4" argnr="1" leftargnr="0"/>
+@@ -480 +469 @@
+-<Format kind="O" symbolnr="9" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="5" argnr="0" leftargnr="0"/>
+@@ -485 +474 @@
+-<Format kind="O" symbolnr="10" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="6" argnr="0" leftargnr="0"/>
+@@ -490 +479 @@
+-<Format kind="O" symbolnr="11" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="7" argnr="2" leftargnr="0"/>
+@@ -513 +502 @@
+-<Format kind="O" symbolnr="12" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="8" argnr="2" leftargnr="0"/>
+@@ -536 +525 @@
+-<Format kind="O" symbolnr="13" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="9" argnr="2" leftargnr="0"/>
+@@ -559 +548 @@
+-<Format kind="O" symbolnr="14" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="10" argnr="0" leftargnr="0"/>
+@@ -564 +553 @@
+-<Format kind="O" symbolnr="15" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="11" argnr="0" leftargnr="0"/>
+@@ -569 +558 @@
+-<Format kind="O" symbolnr="16" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="12" argnr="2" leftargnr="0"/>
+@@ -595 +584 @@
+-<Format kind="O" symbolnr="17" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="13" argnr="2" leftargnr="0"/>
 --- prel/m/modelc_1.dfr
 +++ prel/m/modelc_1.dfr
 @@ -5,11 +4,0 @@
@@ -1062,6 +1571,56 @@
 +<Format kind="O" symbolnr="5" argnr="1" leftargnr="0"/>
 @@ -53 +42,0 @@
 -<Format kind="O" symbolnr="12" argnr="1" leftargnr="0"/>
+--- prel/m/msualg_1.dno
++++ prel/m/msualg_1.dno
+@@ -61,11 +60,0 @@
+-<ArticleID name="ZFMISC_1"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="0"/>
+-<SymbolCount kind="O" nr="1"/>
+-<SymbolCount kind="R" nr="1"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -213 +202 @@
+-<Format kind="V" symbolnr="9" argnr="1"/>
++<Format kind="V" symbolnr="8" argnr="1"/>
+@@ -244 +233 @@
+-<Format kind="O" symbolnr="21" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="20" argnr="1" leftargnr="0"/>
+@@ -264 +253 @@
+-<Format kind="O" symbolnr="22" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="21" argnr="2" leftargnr="0"/>
+@@ -289 +278 @@
+-<Format kind="O" symbolnr="23" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="22" argnr="2" leftargnr="0"/>
+@@ -314 +303 @@
+-<Format kind="O" symbolnr="24" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="23" argnr="2" leftargnr="0"/>
+@@ -339 +328 @@
+-<Format kind="O" symbolnr="25" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="24" argnr="1" leftargnr="0"/>
+@@ -355 +344 @@
+-<Format kind="O" symbolnr="26" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="25" argnr="1" leftargnr="0"/>
+@@ -371 +360 @@
+-<Format kind="O" symbolnr="27" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="26" argnr="1" leftargnr="0"/>
+@@ -387 +376 @@
+-<Format kind="O" symbolnr="28" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="27" argnr="1" leftargnr="0"/>
+@@ -403 +392 @@
+-<Format kind="O" symbolnr="29" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="28" argnr="1" leftargnr="0"/>
+@@ -422 +411 @@
+-<Format kind="O" symbolnr="30" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="29" argnr="1" leftargnr="0"/>
+@@ -447 +436 @@
+-<Format kind="O" symbolnr="31" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="30" argnr="1" leftargnr="0"/>
 --- prel/m/music_s1.dfr
 +++ prel/m/music_s1.dfr
 @@ -5,11 +4,0 @@
@@ -1241,6 +1800,383 @@
 -<Format kind="V" symbolnr="39" argnr="1"/>
 -<Format kind="V" symbolnr="40" argnr="1"/>
 -<Format kind="V" symbolnr="41" argnr="1"/>
+--- prel/m/music_s1.dno
++++ prel/m/music_s1.dno
+@@ -40,11 +39,0 @@
+-<ArticleID name="FINSEQ_1"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="2"/>
+-<SymbolCount kind="O" nr="6"/>
+-<SymbolCount kind="R" nr="0"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="4"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -107 +96 @@
+-<Format kind="M" symbolnr="14" argnr="0"/>
++<Format kind="M" symbolnr="12" argnr="0"/>
+@@ -133 +122 @@
+-<Format kind="M" symbolnr="15" argnr="0"/>
++<Format kind="M" symbolnr="13" argnr="0"/>
+@@ -177 +166 @@
+-<Format kind="V" symbolnr="14" argnr="1"/>
++<Format kind="V" symbolnr="10" argnr="1"/>
+@@ -188 +177 @@
+-<Format kind="V" symbolnr="17" argnr="1"/>
++<Format kind="V" symbolnr="13" argnr="1"/>
+@@ -199 +188 @@
+-<Format kind="V" symbolnr="18" argnr="1"/>
++<Format kind="V" symbolnr="14" argnr="1"/>
+@@ -210 +199 @@
+-<Format kind="V" symbolnr="19" argnr="1"/>
++<Format kind="V" symbolnr="15" argnr="1"/>
+@@ -221 +210 @@
+-<Format kind="V" symbolnr="20" argnr="1"/>
++<Format kind="V" symbolnr="16" argnr="1"/>
+@@ -232 +221 @@
+-<Format kind="V" symbolnr="15" argnr="1"/>
++<Format kind="V" symbolnr="11" argnr="1"/>
+@@ -243 +232 @@
+-<Format kind="V" symbolnr="16" argnr="1"/>
++<Format kind="V" symbolnr="12" argnr="1"/>
+@@ -254 +243 @@
+-<Format kind="V" symbolnr="21" argnr="1"/>
++<Format kind="V" symbolnr="17" argnr="1"/>
+@@ -270 +259 @@
+-<Format kind="V" symbolnr="22" argnr="1"/>
++<Format kind="V" symbolnr="18" argnr="1"/>
+@@ -286 +275 @@
+-<Format kind="V" symbolnr="23" argnr="1"/>
++<Format kind="V" symbolnr="19" argnr="1"/>
+@@ -302 +291 @@
+-<Format kind="V" symbolnr="27" argnr="1"/>
++<Format kind="V" symbolnr="23" argnr="1"/>
+@@ -319 +308 @@
+-<Format kind="V" symbolnr="25" argnr="1"/>
++<Format kind="V" symbolnr="21" argnr="1"/>
+@@ -335 +324 @@
+-<Format kind="V" symbolnr="28" argnr="1"/>
++<Format kind="V" symbolnr="24" argnr="1"/>
+@@ -352 +341 @@
+-<Format kind="V" symbolnr="26" argnr="1"/>
++<Format kind="V" symbolnr="22" argnr="1"/>
+@@ -369 +358 @@
+-<Format kind="V" symbolnr="47" argnr="1"/>
++<Format kind="V" symbolnr="43" argnr="1"/>
+@@ -405 +394 @@
+-<Format kind="V" symbolnr="7" argnr="1"/>
++<Format kind="V" symbolnr="3" argnr="1"/>
+@@ -441 +430 @@
+-<Format kind="V" symbolnr="8" argnr="1"/>
++<Format kind="V" symbolnr="4" argnr="1"/>
+@@ -477 +466 @@
+-<Format kind="V" symbolnr="9" argnr="1"/>
++<Format kind="V" symbolnr="5" argnr="1"/>
+@@ -513 +502 @@
+-<Format kind="V" symbolnr="10" argnr="1"/>
++<Format kind="V" symbolnr="6" argnr="1"/>
+@@ -554 +543 @@
+-<Format kind="V" symbolnr="11" argnr="1"/>
++<Format kind="V" symbolnr="7" argnr="1"/>
+@@ -590 +579 @@
+-<Format kind="V" symbolnr="12" argnr="1"/>
++<Format kind="V" symbolnr="8" argnr="1"/>
+@@ -631 +620 @@
+-<Format kind="V" symbolnr="13" argnr="1"/>
++<Format kind="V" symbolnr="9" argnr="1"/>
+@@ -667 +656 @@
+-<Format kind="V" symbolnr="24" argnr="1"/>
++<Format kind="V" symbolnr="20" argnr="1"/>
+@@ -694 +683 @@
+-<Format kind="V" symbolnr="29" argnr="1"/>
++<Format kind="V" symbolnr="25" argnr="1"/>
+@@ -722 +711 @@
+-<Format kind="V" symbolnr="31" argnr="1"/>
++<Format kind="V" symbolnr="27" argnr="1"/>
+@@ -736 +725 @@
+-<Format kind="V" symbolnr="30" argnr="1"/>
++<Format kind="V" symbolnr="26" argnr="1"/>
+@@ -777 +766 @@
+-<Format kind="V" symbolnr="32" argnr="1"/>
++<Format kind="V" symbolnr="28" argnr="1"/>
+@@ -819 +808 @@
+-<Format kind="V" symbolnr="33" argnr="1"/>
++<Format kind="V" symbolnr="29" argnr="1"/>
+@@ -861 +850 @@
+-<Format kind="V" symbolnr="34" argnr="1"/>
++<Format kind="V" symbolnr="30" argnr="1"/>
+@@ -903 +892 @@
+-<Format kind="V" symbolnr="35" argnr="1"/>
++<Format kind="V" symbolnr="31" argnr="1"/>
+@@ -945 +934 @@
+-<Format kind="V" symbolnr="36" argnr="1"/>
++<Format kind="V" symbolnr="32" argnr="1"/>
+@@ -987 +976 @@
+-<Format kind="V" symbolnr="37" argnr="1"/>
++<Format kind="V" symbolnr="33" argnr="1"/>
+@@ -1029 +1018 @@
+-<Format kind="V" symbolnr="38" argnr="1"/>
++<Format kind="V" symbolnr="34" argnr="1"/>
+@@ -1071 +1060 @@
+-<Format kind="V" symbolnr="39" argnr="1"/>
++<Format kind="V" symbolnr="35" argnr="1"/>
+@@ -1113 +1102 @@
+-<Format kind="V" symbolnr="40" argnr="1"/>
++<Format kind="V" symbolnr="36" argnr="1"/>
+@@ -1155 +1144 @@
+-<Format kind="V" symbolnr="41" argnr="1"/>
++<Format kind="V" symbolnr="37" argnr="1"/>
+@@ -1197 +1186 @@
+-<Format kind="V" symbolnr="42" argnr="1"/>
++<Format kind="V" symbolnr="38" argnr="1"/>
+@@ -1239 +1228 @@
+-<Format kind="V" symbolnr="43" argnr="1"/>
++<Format kind="V" symbolnr="39" argnr="1"/>
+@@ -1350 +1339 @@
+-<Format kind="O" symbolnr="23" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="17" argnr="0" leftargnr="0"/>
+@@ -1355 +1344 @@
+-<Format kind="O" symbolnr="24" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="18" argnr="0" leftargnr="0"/>
+@@ -1360 +1349 @@
+-<Format kind="O" symbolnr="27" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="21" argnr="2" leftargnr="0"/>
+@@ -1377 +1366 @@
+-<Format kind="O" symbolnr="27" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="21" argnr="0" leftargnr="0"/>
+@@ -1382 +1371 @@
+-<Format kind="O" symbolnr="29" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="23" argnr="0" leftargnr="0"/>
+@@ -1387 +1376 @@
+-<Format kind="O" symbolnr="25" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="19" argnr="0" leftargnr="0"/>
+@@ -1392 +1381 @@
+-<Format kind="O" symbolnr="28" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="22" argnr="2" leftargnr="0"/>
+@@ -1409 +1398 @@
+-<Format kind="O" symbolnr="28" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="22" argnr="0" leftargnr="0"/>
+@@ -1414 +1403 @@
+-<Format kind="O" symbolnr="30" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="24" argnr="0" leftargnr="0"/>
+@@ -1419 +1408 @@
+-<Format kind="O" symbolnr="26" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="20" argnr="0" leftargnr="0"/>
+@@ -1424 +1413 @@
+-<Format kind="O" symbolnr="25" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="19" argnr="0" leftargnr="0"/>
+@@ -1429 +1418 @@
+-<Format kind="O" symbolnr="26" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="20" argnr="0" leftargnr="0"/>
+@@ -1434 +1423 @@
+-<Format kind="O" symbolnr="55" argnr="3" leftargnr="1"/>
++<Format kind="O" symbolnr="49" argnr="3" leftargnr="1"/>
+@@ -1464 +1453 @@
+-<Format kind="O" symbolnr="25" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="19" argnr="0" leftargnr="0"/>
+@@ -1469 +1458 @@
+-<Format kind="O" symbolnr="26" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="20" argnr="0" leftargnr="0"/>
+@@ -1474 +1463 @@
+-<Format kind="O" symbolnr="25" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="19" argnr="0" leftargnr="0"/>
+@@ -1479 +1468 @@
+-<Format kind="O" symbolnr="26" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="20" argnr="0" leftargnr="0"/>
+@@ -1484 +1473 @@
+-<Format kind="O" symbolnr="39" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="33" argnr="2" leftargnr="0"/>
+@@ -1507 +1496 @@
+-<Format kind="O" symbolnr="40" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="34" argnr="2" leftargnr="0"/>
+@@ -1530 +1519 @@
+-<Format kind="O" symbolnr="43" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="37" argnr="2" leftargnr="0"/>
+@@ -1553 +1542 @@
+-<Format kind="O" symbolnr="47" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="41" argnr="2" leftargnr="0"/>
+@@ -1576 +1565 @@
+-<Format kind="O" symbolnr="50" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="44" argnr="2" leftargnr="0"/>
+@@ -1599 +1588 @@
+-<Format kind="O" symbolnr="48" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="42" argnr="2" leftargnr="0"/>
+@@ -1622 +1611 @@
+-<Format kind="O" symbolnr="49" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="43" argnr="2" leftargnr="0"/>
+@@ -1645 +1634 @@
+-<Format kind="O" symbolnr="51" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="45" argnr="2" leftargnr="0"/>
+@@ -1668 +1657 @@
+-<Format kind="O" symbolnr="52" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="46" argnr="2" leftargnr="0"/>
+@@ -1691 +1680 @@
+-<Format kind="O" symbolnr="53" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="47" argnr="2" leftargnr="0"/>
+@@ -1714 +1703 @@
+-<Format kind="O" symbolnr="39" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="33" argnr="1" leftargnr="0"/>
+@@ -1730 +1719 @@
+-<Format kind="O" symbolnr="40" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="34" argnr="1" leftargnr="0"/>
+@@ -1746 +1735 @@
+-<Format kind="O" symbolnr="43" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="37" argnr="1" leftargnr="0"/>
+@@ -1762 +1751 @@
+-<Format kind="O" symbolnr="47" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="41" argnr="1" leftargnr="0"/>
+@@ -1778 +1767 @@
+-<Format kind="O" symbolnr="50" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="44" argnr="1" leftargnr="0"/>
+@@ -1794 +1783 @@
+-<Format kind="O" symbolnr="48" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="42" argnr="1" leftargnr="0"/>
+@@ -1810 +1799 @@
+-<Format kind="O" symbolnr="49" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="43" argnr="1" leftargnr="0"/>
+@@ -1826 +1815 @@
+-<Format kind="O" symbolnr="51" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="45" argnr="1" leftargnr="0"/>
+@@ -1842 +1831 @@
+-<Format kind="O" symbolnr="52" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="46" argnr="1" leftargnr="0"/>
+@@ -1858 +1847 @@
+-<Format kind="O" symbolnr="53" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="47" argnr="1" leftargnr="0"/>
+@@ -1874 +1863 @@
+-<Format kind="O" symbolnr="25" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="19" argnr="0" leftargnr="0"/>
+@@ -1879 +1868 @@
+-<Format kind="O" symbolnr="26" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="20" argnr="0" leftargnr="0"/>
+@@ -1884 +1873 @@
+-<Format kind="O" symbolnr="44" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="38" argnr="2" leftargnr="0"/>
+@@ -1908 +1897 @@
+-<Format kind="O" symbolnr="25" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="19" argnr="0" leftargnr="0"/>
+@@ -1913 +1902 @@
+-<Format kind="O" symbolnr="26" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="20" argnr="0" leftargnr="0"/>
+@@ -1918 +1907 @@
+-<Format kind="O" symbolnr="25" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="19" argnr="0" leftargnr="0"/>
+@@ -1923 +1912 @@
+-<Format kind="O" symbolnr="26" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="20" argnr="0" leftargnr="0"/>
+@@ -1928 +1917 @@
+-<Format kind="O" symbolnr="41" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="35" argnr="2" leftargnr="0"/>
+@@ -1952 +1941 @@
+-<Format kind="O" symbolnr="15" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="9" argnr="1" leftargnr="0"/>
+@@ -1972 +1961 @@
+-<Format kind="O" symbolnr="25" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="19" argnr="0" leftargnr="0"/>
+@@ -1977 +1966 @@
+-<Format kind="O" symbolnr="26" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="20" argnr="0" leftargnr="0"/>
+@@ -1982 +1971 @@
+-<Format kind="O" symbolnr="25" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="19" argnr="0" leftargnr="0"/>
+@@ -1987 +1976 @@
+-<Format kind="O" symbolnr="26" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="20" argnr="0" leftargnr="0"/>
+@@ -1992 +1981 @@
+-<Format kind="O" symbolnr="42" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="36" argnr="2" leftargnr="0"/>
+@@ -2019 +2008 @@
+-<Format kind="O" symbolnr="45" argnr="3" leftargnr="0"/>
++<Format kind="O" symbolnr="39" argnr="3" leftargnr="0"/>
+@@ -2053 +2042 @@
+-<Format kind="O" symbolnr="54" argnr="3" leftargnr="0"/>
++<Format kind="O" symbolnr="48" argnr="3" leftargnr="0"/>
+@@ -2088 +2077 @@
+-<Format kind="O" symbolnr="21" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="15" argnr="2" leftargnr="0"/>
+@@ -2122 +2111 @@
+-<Format kind="O" symbolnr="70" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="64" argnr="2" leftargnr="0"/>
+@@ -2162 +2151 @@
+-<Format kind="O" symbolnr="32" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="26" argnr="0" leftargnr="0"/>
+@@ -2167 +2156 @@
+-<Format kind="O" symbolnr="31" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="25" argnr="0" leftargnr="0"/>
+@@ -2172 +2161 @@
+-<Format kind="O" symbolnr="33" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="27" argnr="0" leftargnr="0"/>
+@@ -2177 +2166 @@
+-<Format kind="O" symbolnr="34" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="28" argnr="0" leftargnr="0"/>
+@@ -2182 +2171 @@
+-<Format kind="O" symbolnr="35" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="29" argnr="0" leftargnr="0"/>
+@@ -2187 +2176 @@
+-<Format kind="O" symbolnr="56" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="50" argnr="2" leftargnr="0"/>
+@@ -2221 +2210 @@
+-<Format kind="O" symbolnr="57" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="51" argnr="2" leftargnr="0"/>
+@@ -2255 +2244 @@
+-<Format kind="O" symbolnr="58" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="52" argnr="2" leftargnr="0"/>
+@@ -2289 +2278 @@
+-<Format kind="O" symbolnr="59" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="53" argnr="2" leftargnr="0"/>
+@@ -2323 +2312 @@
+-<Format kind="O" symbolnr="60" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="54" argnr="2" leftargnr="0"/>
+@@ -2357 +2346 @@
+-<Format kind="O" symbolnr="61" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="55" argnr="2" leftargnr="0"/>
+@@ -2391 +2380 @@
+-<Format kind="O" symbolnr="46" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="40" argnr="2" leftargnr="0"/>
+@@ -2426 +2415 @@
+-<Format kind="O" symbolnr="22" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="16" argnr="2" leftargnr="0"/>
+@@ -2462 +2451 @@
+-<Format kind="O" symbolnr="37" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="31" argnr="0" leftargnr="0"/>
+@@ -2467 +2456 @@
+-<Format kind="O" symbolnr="38" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="32" argnr="0" leftargnr="0"/>
+@@ -2472 +2461 @@
+-<Format kind="O" symbolnr="36" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="30" argnr="0" leftargnr="0"/>
+@@ -2477 +2466 @@
+-<Format kind="O" symbolnr="62" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="56" argnr="2" leftargnr="0"/>
+@@ -2513 +2502 @@
+-<Format kind="O" symbolnr="63" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="57" argnr="2" leftargnr="0"/>
+@@ -2549 +2538 @@
+-<Format kind="O" symbolnr="64" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="58" argnr="2" leftargnr="0"/>
+@@ -2585 +2574 @@
+-<Format kind="O" symbolnr="65" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="59" argnr="2" leftargnr="0"/>
+@@ -2621 +2610 @@
+-<Format kind="O" symbolnr="66" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="60" argnr="2" leftargnr="0"/>
+@@ -2657 +2646 @@
+-<Format kind="O" symbolnr="67" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="61" argnr="2" leftargnr="0"/>
+@@ -2693 +2682 @@
+-<Format kind="O" symbolnr="68" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="62" argnr="2" leftargnr="0"/>
+@@ -2729 +2718 @@
+-<Format kind="O" symbolnr="69" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="63" argnr="2" leftargnr="0"/>
+@@ -2765 +2754 @@
+-<Format kind="O" symbolnr="71" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="65" argnr="2" leftargnr="0"/>
+@@ -2801 +2790 @@
+-<Format kind="O" symbolnr="83" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="77" argnr="2" leftargnr="0"/>
 --- prel/m/mycielsk.dcl
 +++ prel/m/mycielsk.dcl
 @@ -132,0 +133 @@
@@ -1374,6 +2310,203 @@
 +<Format kind="O" symbolnr="17" argnr="1" leftargnr="0"/>
 @@ -85 +63,0 @@
 -<Format kind="O" symbolnr="20" argnr="1" leftargnr="0"/>
+--- prel/p/pcs_0.dno
++++ prel/p/pcs_0.dno
+@@ -95,11 +94,0 @@
+-<ArticleID name="ZFMISC_1"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="0"/>
+-<SymbolCount kind="O" nr="1"/>
+-<SymbolCount kind="R" nr="1"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -128,11 +116,0 @@
+-<ArticleID name="YELLOW_3"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="0"/>
+-<SymbolCount kind="O" nr="0"/>
+-<SymbolCount kind="R" nr="0"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="0"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -223 +201 @@
+-<Format kind="V" symbolnr="15" argnr="1"/>
++<Format kind="V" symbolnr="14" argnr="1"/>
+@@ -247 +225 @@
+-<Format kind="V" symbolnr="16" argnr="1"/>
++<Format kind="V" symbolnr="15" argnr="1"/>
+@@ -258 +236 @@
+-<Format kind="V" symbolnr="17" argnr="1"/>
++<Format kind="V" symbolnr="16" argnr="1"/>
+@@ -269 +247 @@
+-<Format kind="V" symbolnr="18" argnr="1"/>
++<Format kind="V" symbolnr="17" argnr="1"/>
+@@ -280 +258 @@
+-<Format kind="V" symbolnr="19" argnr="1"/>
++<Format kind="V" symbolnr="18" argnr="1"/>
+@@ -291 +269 @@
+-<Format kind="V" symbolnr="20" argnr="1"/>
++<Format kind="V" symbolnr="19" argnr="1"/>
+@@ -304 +282 @@
+-<Format kind="V" symbolnr="20" argnr="1"/>
++<Format kind="V" symbolnr="19" argnr="1"/>
+@@ -318 +296 @@
+-<Format kind="V" symbolnr="20" argnr="1"/>
++<Format kind="V" symbolnr="19" argnr="1"/>
+@@ -341 +319 @@
+-<Format kind="V" symbolnr="21" argnr="1"/>
++<Format kind="V" symbolnr="20" argnr="1"/>
+@@ -354 +332 @@
+-<Format kind="V" symbolnr="22" argnr="1"/>
++<Format kind="V" symbolnr="21" argnr="1"/>
+@@ -367 +345 @@
+-<Format kind="V" symbolnr="23" argnr="1"/>
++<Format kind="V" symbolnr="22" argnr="1"/>
+@@ -391 +369 @@
+-<Format kind="V" symbolnr="24" argnr="1"/>
++<Format kind="V" symbolnr="23" argnr="1"/>
+@@ -402 +380 @@
+-<Format kind="V" symbolnr="25" argnr="1"/>
++<Format kind="V" symbolnr="24" argnr="1"/>
+@@ -413 +391 @@
+-<Format kind="V" symbolnr="26" argnr="1"/>
++<Format kind="V" symbolnr="25" argnr="1"/>
+@@ -424 +402 @@
+-<Format kind="V" symbolnr="27" argnr="1"/>
++<Format kind="V" symbolnr="26" argnr="1"/>
+@@ -437 +415 @@
+-<Format kind="V" symbolnr="28" argnr="1"/>
++<Format kind="V" symbolnr="27" argnr="1"/>
+@@ -450 +428 @@
+-<Format kind="V" symbolnr="27" argnr="1"/>
++<Format kind="V" symbolnr="26" argnr="1"/>
+@@ -464 +442 @@
+-<Format kind="V" symbolnr="28" argnr="1"/>
++<Format kind="V" symbolnr="27" argnr="1"/>
+@@ -478 +456 @@
+-<Format kind="V" symbolnr="27" argnr="1"/>
++<Format kind="V" symbolnr="26" argnr="1"/>
+@@ -501 +479 @@
+-<Format kind="V" symbolnr="28" argnr="1"/>
++<Format kind="V" symbolnr="27" argnr="1"/>
+@@ -524 +502 @@
+-<Format kind="V" symbolnr="29" argnr="1"/>
++<Format kind="V" symbolnr="28" argnr="1"/>
+@@ -537 +515 @@
+-<Format kind="V" symbolnr="30" argnr="1"/>
++<Format kind="V" symbolnr="29" argnr="1"/>
+@@ -556 +534 @@
+-<Format kind="V" symbolnr="31" argnr="1"/>
++<Format kind="V" symbolnr="30" argnr="1"/>
+@@ -577 +555 @@
+-<Format kind="R" symbolnr="11" argnr="2" leftargnr="1"/>
++<Format kind="R" symbolnr="10" argnr="2" leftargnr="1"/>
+@@ -601 +579 @@
+-<Format kind="R" symbolnr="11" argnr="2" leftargnr="1"/>
++<Format kind="R" symbolnr="10" argnr="2" leftargnr="1"/>
+@@ -627 +605 @@
+-<Format kind="R" symbolnr="9" argnr="2" leftargnr="1"/>
++<Format kind="R" symbolnr="8" argnr="2" leftargnr="1"/>
+@@ -730 +708 @@
+-<Format kind="K" symbolnr="6" argnr="2" rightsymbolnr="6"/>
++<Format kind="K" symbolnr="4" argnr="2" rightsymbolnr="4"/>
+@@ -769 +747 @@
+-<Format kind="K" symbolnr="6" argnr="2" rightsymbolnr="6"/>
++<Format kind="K" symbolnr="4" argnr="2" rightsymbolnr="4"/>
+@@ -816 +794 @@
+-<Format kind="O" symbolnr="37" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="36" argnr="1" leftargnr="0"/>
+@@ -840 +818 @@
+-<Format kind="O" symbolnr="37" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="36" argnr="1" leftargnr="0"/>
+@@ -866 +844 @@
+-<Format kind="O" symbolnr="38" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="37" argnr="0" leftargnr="0"/>
+@@ -902 +880 @@
+-<Format kind="O" symbolnr="39" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="38" argnr="1" leftargnr="0"/>
+@@ -926 +904 @@
+-<Format kind="O" symbolnr="39" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="38" argnr="1" leftargnr="0"/>
+@@ -952 +930 @@
+-<Format kind="K" symbolnr="6" argnr="2" rightsymbolnr="6"/>
++<Format kind="K" symbolnr="4" argnr="2" rightsymbolnr="4"/>
+@@ -967 +945 @@
+-<Format kind="K" symbolnr="6" argnr="2" rightsymbolnr="6"/>
++<Format kind="K" symbolnr="4" argnr="2" rightsymbolnr="4"/>
+@@ -994 +972 @@
+-<Format kind="K" symbolnr="6" argnr="2" rightsymbolnr="6"/>
++<Format kind="K" symbolnr="4" argnr="2" rightsymbolnr="4"/>
+@@ -1025 +1003 @@
+-<Format kind="O" symbolnr="40" argnr="1" leftargnr="1"/>
++<Format kind="O" symbolnr="39" argnr="1" leftargnr="1"/>
+@@ -1048 +1026 @@
+-<Format kind="O" symbolnr="41" argnr="1" leftargnr="1"/>
++<Format kind="O" symbolnr="40" argnr="1" leftargnr="1"/>
+@@ -1071 +1049 @@
+-<Format kind="O" symbolnr="40" argnr="1" leftargnr="1"/>
++<Format kind="O" symbolnr="39" argnr="1" leftargnr="1"/>
+@@ -1098 +1076 @@
+-<Format kind="O" symbolnr="41" argnr="1" leftargnr="1"/>
++<Format kind="O" symbolnr="40" argnr="1" leftargnr="1"/>
+@@ -1125 +1103 @@
+-<Format kind="O" symbolnr="42" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="41" argnr="1" leftargnr="0"/>
+@@ -1136 +1114 @@
+-<Format kind="O" symbolnr="43" argnr="0" leftargnr="0"/>
++<Format kind="O" symbolnr="42" argnr="0" leftargnr="0"/>
+@@ -1141 +1119 @@
+-<Format kind="O" symbolnr="44" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="43" argnr="1" leftargnr="0"/>
+@@ -1214 +1192 @@
+-<Format kind="O" symbolnr="45" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="44" argnr="1" leftargnr="0"/>
+@@ -1238 +1216 @@
+-<Format kind="K" symbolnr="7" argnr="2" rightsymbolnr="7"/>
++<Format kind="K" symbolnr="5" argnr="2" rightsymbolnr="5"/>
+@@ -1253 +1231 @@
+-<Format kind="O" symbolnr="47" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="46" argnr="2" leftargnr="0"/>
+@@ -1268 +1246 @@
+-<Format kind="O" symbolnr="48" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="47" argnr="2" leftargnr="0"/>
+@@ -1283 +1261 @@
+-<Format kind="O" symbolnr="49" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="48" argnr="1" leftargnr="0"/>
+@@ -1294 +1272 @@
+-<Format kind="O" symbolnr="50" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="49" argnr="2" leftargnr="1"/>
+@@ -1309 +1287 @@
+-<Format kind="O" symbolnr="31" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="30" argnr="2" leftargnr="1"/>
+@@ -1324 +1302 @@
+-<Format kind="O" symbolnr="51" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="50" argnr="2" leftargnr="0"/>
+@@ -1339 +1317 @@
+-<Format kind="O" symbolnr="52" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="51" argnr="2" leftargnr="0"/>
+@@ -1354 +1332 @@
+-<Format kind="O" symbolnr="53" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="52" argnr="2" leftargnr="0"/>
+@@ -1369 +1347 @@
+-<Format kind="O" symbolnr="53" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="52" argnr="1" leftargnr="0"/>
+@@ -1390 +1368 @@
+-<Format kind="O" symbolnr="54" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="53" argnr="1" leftargnr="0"/>
+@@ -1401 +1379 @@
+-<Format kind="O" symbolnr="54" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="53" argnr="1" leftargnr="0"/>
+@@ -1412 +1390 @@
+-<Format kind="O" symbolnr="55" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="54" argnr="1" leftargnr="0"/>
 --- prel/p/petri_2.dfr
 +++ prel/p/petri_2.dfr
 @@ -5,11 +4,0 @@
@@ -1486,6 +2619,113 @@
 -<Format kind="O" symbolnr="24" argnr="1" leftargnr="0"/>
 -<Format kind="V" symbolnr="6" argnr="1"/>
 +<Format kind="V" symbolnr="5" argnr="1"/>
+--- prel/p/polyform.dno
++++ prel/p/polyform.dno
+@@ -77,11 +76,0 @@
+-<ArticleID name="ZFMISC_1"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="0"/>
+-<SymbolCount kind="O" nr="1"/>
+-<SymbolCount kind="R" nr="1"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -187 +176 @@
+-<Format kind="V" symbolnr="8" argnr="1"/>
++<Format kind="V" symbolnr="7" argnr="1"/>
+@@ -198 +187 @@
+-<Format kind="V" symbolnr="9" argnr="1"/>
++<Format kind="V" symbolnr="8" argnr="1"/>
+@@ -209 +198 @@
+-<Format kind="V" symbolnr="10" argnr="1"/>
++<Format kind="V" symbolnr="9" argnr="1"/>
+@@ -220 +209 @@
+-<Format kind="V" symbolnr="11" argnr="1"/>
++<Format kind="V" symbolnr="10" argnr="1"/>
+@@ -235 +224 @@
+-<Format kind="V" symbolnr="12" argnr="1"/>
++<Format kind="V" symbolnr="11" argnr="1"/>
+@@ -250 +239 @@
+-<Format kind="V" symbolnr="12" argnr="1"/>
++<Format kind="V" symbolnr="11" argnr="1"/>
+@@ -265 +254 @@
+-<Format kind="V" symbolnr="12" argnr="1"/>
++<Format kind="V" symbolnr="11" argnr="1"/>
+@@ -337 +326 @@
+-<Format kind="O" symbolnr="8" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="7" argnr="1" leftargnr="0"/>
+@@ -352 +341 @@
+-<Format kind="O" symbolnr="10" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="9" argnr="2" leftargnr="1"/>
+@@ -373 +362 @@
+-<Format kind="O" symbolnr="11" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="10" argnr="2" leftargnr="0"/>
+@@ -394 +383 @@
+-<Format kind="O" symbolnr="12" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="11" argnr="2" leftargnr="1"/>
+@@ -415 +404 @@
+-<Format kind="O" symbolnr="13" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="12" argnr="2" leftargnr="0"/>
+@@ -436 +425 @@
+-<Format kind="O" symbolnr="14" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="13" argnr="1" leftargnr="0"/>
+@@ -451 +440 @@
+-<Format kind="O" symbolnr="15" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="14" argnr="1" leftargnr="0"/>
+@@ -466 +455 @@
+-<Format kind="O" symbolnr="16" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="15" argnr="1" leftargnr="0"/>
+@@ -481 +470 @@
+-<Format kind="O" symbolnr="17" argnr="3" leftargnr="1"/>
++<Format kind="O" symbolnr="16" argnr="3" leftargnr="1"/>
+@@ -508 +497 @@
+-<Format kind="O" symbolnr="18" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="17" argnr="2" leftargnr="0"/>
+@@ -546 +535 @@
+-<Format kind="O" symbolnr="19" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="18" argnr="2" leftargnr="1"/>
+@@ -567 +556 @@
+-<Format kind="O" symbolnr="20" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="19" argnr="2" leftargnr="1"/>
+@@ -588 +577 @@
+-<Format kind="O" symbolnr="21" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="20" argnr="2" leftargnr="0"/>
+@@ -628 +617 @@
+-<Format kind="O" symbolnr="22" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="21" argnr="1" leftargnr="0"/>
+@@ -657 +646 @@
+-<Format kind="O" symbolnr="23" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="22" argnr="2" leftargnr="1"/>
+@@ -678 +667 @@
+-<Format kind="O" symbolnr="24" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="23" argnr="2" leftargnr="1"/>
+@@ -699 +688 @@
+-<Format kind="O" symbolnr="25" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="24" argnr="2" leftargnr="1"/>
+@@ -720 +709 @@
+-<Format kind="O" symbolnr="26" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="25" argnr="2" leftargnr="1"/>
+@@ -741 +730 @@
+-<Format kind="O" symbolnr="27" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="26" argnr="2" leftargnr="1"/>
+@@ -762 +751 @@
+-<Format kind="O" symbolnr="28" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="27" argnr="2" leftargnr="1"/>
+@@ -783 +772 @@
+-<Format kind="O" symbolnr="29" argnr="2" leftargnr="1"/>
++<Format kind="O" symbolnr="28" argnr="2" leftargnr="1"/>
+@@ -804 +793 @@
+-<Format kind="O" symbolnr="30" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="29" argnr="1" leftargnr="0"/>
+@@ -819 +808 @@
+-<Format kind="O" symbolnr="31" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="30" argnr="1" leftargnr="0"/>
+@@ -834 +823 @@
+-<Format kind="O" symbolnr="32" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="31" argnr="1" leftargnr="0"/>
 --- prel/p/prefer_1.dfr
 +++ prel/p/prefer_1.dfr
 @@ -5,11 +4,0 @@
@@ -1555,6 +2795,44 @@
 -<Format kind="O" symbolnr="17" argnr="0" leftargnr="0"/>
 +<Format kind="O" symbolnr="12" argnr="2" leftargnr="0"/>
 +<Format kind="O" symbolnr="12" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="13" argnr="0" leftargnr="0"/>
+--- prel/s/sgraph1.dno
++++ prel/s/sgraph1.dno
+@@ -47,11 +46,0 @@
+-<ArticleID name="SETWISEO"/>
+-<SymbolCount kind="G" nr="0"/>
+-<SymbolCount kind="K" nr="1"/>
+-<SymbolCount kind="L" nr="1"/>
+-<SymbolCount kind="M" nr="0"/>
+-<SymbolCount kind="O" nr="4"/>
+-<SymbolCount kind="R" nr="0"/>
+-<SymbolCount kind="U" nr="0"/>
+-<SymbolCount kind="V" nr="1"/>
+-</Vocabulary>
+-<Vocabulary>
+@@ -201 +190 @@
+-<Format kind="O" symbolnr="11" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="7" argnr="2" leftargnr="0"/>
+@@ -239 +228 @@
+-<Format kind="O" symbolnr="12" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="8" argnr="1" leftargnr="0"/>
+@@ -250 +239 @@
+-<Format kind="O" symbolnr="13" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="9" argnr="1" leftargnr="0"/>
+@@ -261 +250 @@
+-<Format kind="O" symbolnr="14" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="10" argnr="2" leftargnr="0"/>
+@@ -280 +269 @@
+-<Format kind="O" symbolnr="15" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="11" argnr="2" leftargnr="0"/>
+@@ -308 +297 @@
+-<Format kind="O" symbolnr="16" argnr="2" leftargnr="0"/>
++<Format kind="O" symbolnr="12" argnr="2" leftargnr="0"/>
+@@ -325 +314 @@
+-<Format kind="O" symbolnr="16" argnr="1" leftargnr="0"/>
++<Format kind="O" symbolnr="12" argnr="1" leftargnr="0"/>
+@@ -337 +326 @@
+-<Format kind="O" symbolnr="17" argnr="0" leftargnr="0"/>
 +<Format kind="O" symbolnr="13" argnr="0" leftargnr="0"/>
 --- prel/s/stacks_1.dfr
 +++ prel/s/stacks_1.dfr
