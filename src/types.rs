@@ -1270,16 +1270,16 @@ macro_rules! impl_constructors {
     #[derive(Clone, Debug)]
     pub enum ConstructorDef { $($variant($ty),)* }
     impl<V: VisitMut> Visitable<V> for ConstructorDef {
-      fn visit(&mut self, v: &mut V) {
-        match self { $(Self::$variant(c) => c.visit(v)),* }
-      }
+      fn visit(&mut self, v: &mut V) { match self { $(Self::$variant(c) => c.visit(v)),* } }
     }
 
     impl Constructors {
       pub fn push(&mut self, c: ConstructorDef) -> ConstrKind {
-        match c {
-          $(ConstructorDef::$variant(c) => ConstrKind::$variant(self.$field.push(c))),*
-        }
+        match c { $(ConstructorDef::$variant(c) => ConstrKind::$variant(self.$field.push(c))),* }
+      }
+
+      pub fn append(&mut self, mut other: Constructors) {
+        $(self.$field.0.append(&mut other.$field.0));*
       }
 
       pub fn visit_at<V: VisitMut>(&mut self, v: &mut V, k: ConstrKind) {
@@ -1321,6 +1321,9 @@ macro_rules! impl_constructors {
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
     pub enum ConstrKind { $($variant($id),)* }
+    impl<V: VisitMut> Visitable<V> for ConstrKind {
+      fn visit(&mut self, v: &mut V) { match self { $(Self::$variant(c) => c.visit(v)),* } }
+    }
 
     impl ConstrKind {
       pub fn discr(&self) -> u8 {
@@ -1547,7 +1550,10 @@ pub struct ConstrDef {
   pub primary: Box<[Type]>,
 }
 impl<V: VisitMut> Visitable<V> for ConstrDef {
-  fn visit(&mut self, v: &mut V) { v.with_locus_tys(&mut self.primary, |_| {}) }
+  fn visit(&mut self, v: &mut V) {
+    self.constr.visit(v);
+    v.with_locus_tys(&mut self.primary, |_| {})
+  }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1614,6 +1620,7 @@ impl std::ops::Deref for Definiens {
 
 impl<V: VisitMut> Visitable<V> for Definiens {
   fn visit(&mut self, v: &mut V) {
+    self.c.constr.visit(v);
     v.with_locus_tys(&mut self.c.primary, |v| {
       self.assumptions.visit(v);
       self.value.visit(v)
@@ -2324,8 +2331,16 @@ pub enum PatternKind {
 }
 impl<V: VisitMut> Visitable<V> for PatternKind {
   fn visit(&mut self, v: &mut V) {
-    if let Self::ExpandableMode { expansion } = self {
-      expansion.visit(v);
+    match self {
+      Self::Mode(nr) => nr.visit(v),
+      Self::ExpandableMode { expansion } => expansion.visit(v),
+      Self::Struct(nr) => nr.visit(v),
+      Self::Attr(nr) => nr.visit(v),
+      Self::Pred(nr) => nr.visit(v),
+      Self::Func(nr) => nr.visit(v),
+      Self::Sel(nr) => nr.visit(v),
+      Self::Aggr(nr) => nr.visit(v),
+      Self::SubAggr(nr) => nr.visit(v),
     }
   }
 }
@@ -2333,14 +2348,14 @@ impl<V: VisitMut> Visitable<V> for PatternKind {
 impl PatternKind {
   pub fn class(&self) -> PatternKindClass {
     match self {
-      PatternKind::Mode(_) | PatternKind::ExpandableMode { .. } => PatternKindClass::Mode,
-      PatternKind::Struct(_) => PatternKindClass::Struct,
-      PatternKind::Attr(_) => PatternKindClass::Attr,
-      PatternKind::Pred(_) => PatternKindClass::Pred,
-      PatternKind::Func(_) => PatternKindClass::Func,
-      PatternKind::Sel(_) => PatternKindClass::Sel,
-      PatternKind::Aggr(_) => PatternKindClass::Aggr,
-      PatternKind::SubAggr(_) => PatternKindClass::SubAggr,
+      Self::Mode(_) | Self::ExpandableMode { .. } => PatternKindClass::Mode,
+      Self::Struct(_) => PatternKindClass::Struct,
+      Self::Attr(_) => PatternKindClass::Attr,
+      Self::Pred(_) => PatternKindClass::Pred,
+      Self::Func(_) => PatternKindClass::Func,
+      Self::Sel(_) => PatternKindClass::Sel,
+      Self::Aggr(_) => PatternKindClass::Aggr,
+      Self::SubAggr(_) => PatternKindClass::SubAggr,
     }
   }
 }
@@ -2375,6 +2390,12 @@ pub struct DepNotation {
   pub sig: Vec<Article>,
   pub vocs: Vocabularies,
   pub pats: Vec<(Format, Pattern)>,
+}
+
+#[derive(Default)]
+pub struct AccumConstructors {
+  pub accum: Vec<(Article, ConstructorsBase)>,
+  pub constrs: Constructors,
 }
 
 #[derive(Default, PartialEq, Eq)]
@@ -2422,6 +2443,13 @@ pub enum TheoremKind {
   Def(ConstrKind),
   Thm,
 }
+impl<V: VisitMut> Visitable<V> for TheoremKind {
+  fn visit(&mut self, v: &mut V) {
+    if let Self::Def(k) = self {
+      k.visit(v)
+    }
+  }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Theorem {
@@ -2429,7 +2457,10 @@ pub struct Theorem {
   pub stmt: Formula,
 }
 impl<V: VisitMut> Visitable<V> for Theorem {
-  fn visit(&mut self, v: &mut V) { self.stmt.visit(v) }
+  fn visit(&mut self, v: &mut V) {
+    self.kind.visit(v);
+    self.stmt.visit(v)
+  }
 }
 
 #[derive(Default, PartialEq, Eq)]

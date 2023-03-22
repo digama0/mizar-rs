@@ -334,9 +334,7 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_aco(
-    &self, accum: &mut Vec<(Article, ConstructorsBase)>, constrs: &mut Constructors,
-  ) -> io::Result<()> {
+  pub fn read_aco(&self, aco: &mut AccumConstructors) -> io::Result<()> {
     let (mut r, mut buf) = MizReader::new(self.open(true, "aco")?, MaybeMut::None, false);
     let buf = &mut buf;
     r.read_pi(buf);
@@ -346,10 +344,11 @@ impl MizPath {
       let art = Article::from_upper(&e.try_get_attribute(b"name").unwrap().unwrap().value);
       let mut counts = Default::default();
       r.parse_constr_counts_body(buf, &mut counts);
-      accum.push((art, counts))
+      aco.accum.push((art, counts))
     }
-    r.parse_constructors_body(buf, Some(constrs));
+    r.parse_constructors_body(buf, Some(&mut aco.constrs));
     assert!(matches!(r.read_event(buf), Event::Eof));
+    assert_eq!(aco.accum[0].0.as_str(), "hidden");
     Ok(())
   }
 

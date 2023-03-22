@@ -1090,11 +1090,11 @@ macro_rules! mk_visit {
 
       fn visit_type(&mut self, ty: &$($mutbl)? Type) {
         if self.abort() { return }
+        self.visit_attr_pair(&$($mutbl)? ty.attrs);
         match &$($mutbl)? ty.kind {
           TypeKind::Mode(nr) => self.visit_mode_id($(&$mutbl)? *nr),
           TypeKind::Struct(nr) => self.visit_struct_id($(&$mutbl)? *nr),
         }
-        self.visit_attr_pair(&$($mutbl)? ty.attrs);
         self.visit_terms(&$($mutbl)? ty.args);
       }
 
