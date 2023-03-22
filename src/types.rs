@@ -1393,9 +1393,41 @@ pub struct ClustersRef<'a> {
   pub conditional: &'a [ConditionalCluster],
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ClustersRaw {
+  pub registered: Vec<RegisteredCluster>,
+  pub functor: Vec<FunctorCluster>,
+  pub conditional: Vec<ConditionalCluster>,
+}
+impl<V: VisitMut> Visitable<V> for ClustersRaw {
+  fn visit(&mut self, v: &mut V) {
+    self.registered.visit(v);
+    self.functor.visit(v);
+    self.conditional.visit(v);
+  }
+}
+
 impl ClustersRef<'_> {
   pub fn is_empty(&self) -> bool {
     self.registered.is_empty() && self.functor.is_empty() && self.conditional.is_empty()
+  }
+
+  pub fn to_owned(self) -> ClustersRaw {
+    ClustersRaw {
+      registered: self.registered.to_owned(),
+      functor: self.functor.to_owned(),
+      conditional: self.conditional.to_owned(),
+    }
+  }
+}
+
+impl ClustersRaw {
+  pub fn as_ref(&self) -> ClustersRef<'_> {
+    ClustersRef {
+      registered: &self.registered,
+      functor: &self.functor,
+      conditional: &self.conditional,
+    }
   }
 }
 
@@ -2406,22 +2438,10 @@ pub struct DepConstructors {
   pub constrs: Constructors,
 }
 
-#[derive(Default, PartialEq, Eq)]
+#[derive(Default, Debug, PartialEq, Eq)]
 pub struct DepClusters {
   pub sig: Vec<Article>,
-  pub registered: Vec<RegisteredCluster>,
-  pub functor: Vec<FunctorCluster>,
-  pub conditional: Vec<ConditionalCluster>,
-}
-
-impl DepClusters {
-  pub fn as_ref(&self) -> ClustersRef<'_> {
-    ClustersRef {
-      registered: &self.registered,
-      functor: &self.functor,
-      conditional: &self.conditional,
-    }
-  }
+  pub cl: ClustersRaw,
 }
 
 #[derive(Default, PartialEq, Eq)]

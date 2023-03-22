@@ -374,7 +374,7 @@ impl Analyzer<'_> {
       }
       ast::Statement::IterEquality { prop, just, steps } => {
         if let Formula::Pred { nr, args } = self.elab_intern_formula(&prop.f, true) {
-          if let (nr, [lhs, rhs]) = Formula::adjust_pred(nr, &args, &self.g.constrs) {
+          if let (nr, [lhs, rhs]) = Formula::adjust_pred(nr, &args, Some(&self.g.constrs)) {
             if self.g.reqs.equals_to() == Some(nr) {
               self.elab_justification(None, &self.g.reqs.mk_eq(lhs.clone(), rhs.clone()), just);
               let mut mid = rhs.clone();
@@ -721,7 +721,7 @@ impl Analyzer<'_> {
               let PatternKind::Attr(nr) = pat.kind else { unreachable!() };
               let mut args = subst.trim_to(self.g.constrs.attribute[nr].primary.len());
               args.iter_mut().for_each(|t| t.strip_qua_mut());
-              let (nr, args) = Formula::adjust_attr(nr, &args, &self.g.constrs);
+              let (nr, args) = Formula::adjust_attr(nr, &args, Some(&self.g.constrs));
               return Formula::Attr { nr, args: args.to_owned().into() }.maybe_neg(pat.pos == pos)
             }
           }
@@ -832,8 +832,8 @@ impl Analyzer<'_> {
         let mut ty2 = ty.clone();
         attrs.iter().rev().for_each(|attr| {
           let attr = self.elab_attr(attr, true, &mut ty2);
-          ty2.attrs.0.insert(&self.g.constrs, &self.lc, attr.clone());
-          ty2.attrs.1.insert(&self.g.constrs, &self.lc, attr);
+          ty2.attrs.0.insert(Some(&self.g.constrs), &self.lc, attr.clone());
+          ty2.attrs.1.insert(Some(&self.g.constrs), &self.lc, attr);
           ty2.round_up_with_self(&self.g, &self.lc, false);
           assert!(matches!(ty2.attrs.0, Attrs::Consistent(_)));
         });
@@ -890,8 +890,8 @@ impl Analyzer<'_> {
           (OneDiff::Fail, _) | (_, OneDiff::Same) => {}
           (_, OneDiff::Fail) | (OneDiff::Same, _) => *self = other,
           (OneDiff::One(a1, a2), OneDiff::One(b1, b2)) => {
-            if a1.cmp(ctx, None, b1, CmpStyle::Strict).is_ne()
-              || a2.cmp(ctx, None, b2, CmpStyle::Strict).is_ne()
+            if a1.cmp(Some(ctx), None, b1, CmpStyle::Strict).is_ne()
+              || a2.cmp(Some(ctx), None, b2, CmpStyle::Strict).is_ne()
             {
               *self = OneDiff::Fail
             }
@@ -1395,11 +1395,11 @@ impl Analyzer<'_> {
           continue 'start
         }
         Formula::Pred { nr, args } if atomic > 0 => {
-          let (n, args) = Formula::adjust_pred(*nr, args, &self.g.constrs);
+          let (n, args) = Formula::adjust_pred(*nr, args, Some(&self.g.constrs));
           (ConstrKind::Pred(n), args)
         }
         Formula::Attr { nr, args } if atomic > 0 => {
-          let (n, args) = Formula::adjust_attr(*nr, args, &self.g.constrs);
+          let (n, args) = Formula::adjust_attr(*nr, args, Some(&self.g.constrs));
           (ConstrKind::Attr(n), args)
         }
         Formula::Is { term, ty } if atomic > 0 => {
@@ -3306,7 +3306,7 @@ impl BlockReader {
         let attr = elab.elab_attr(attr, true, &mut ty);
         let args = attr.args.iter().cloned().chain([Term::Bound(BoundId(0))]).collect();
         conjs.push(Formula::Attr { nr: attr.nr, args }.maybe_neg(attr.pos));
-        attrs.insert(&elab.g.constrs, &elab.lc, attr);
+        attrs.insert(Some(&elab.g.constrs), &elab.lc, attr);
       }
     });
     let (kind, args) = match ty.kind {
@@ -3355,14 +3355,14 @@ impl BlockReader {
         let attr = elab.elab_attr(attr, true, &mut ty);
         let args = attr.args.iter().cloned().chain([Term::Bound(BoundId(0))]).collect();
         conjs.push(Formula::Attr { nr: attr.nr, args }.maybe_neg(attr.pos));
-        attrs1.insert(&elab.g.constrs, &elab.lc, attr);
+        attrs1.insert(Some(&elab.g.constrs), &elab.lc, attr);
       }
       let f = Formula::mk_and_with(|conjs| {
         for attr in concl {
           let attr = elab.elab_attr(attr, true, &mut ty);
           let args = attr.args.iter().cloned().chain([Term::Bound(BoundId(0))]).collect();
           conjs.push(Formula::Attr { nr: attr.nr, args }.maybe_neg(attr.pos));
-          attrs2.insert(&elab.g.constrs, &elab.lc, attr);
+          attrs2.insert(Some(&elab.g.constrs), &elab.lc, attr);
         }
       });
       f.mk_neg().append_conjuncts_to(conjs)
@@ -3398,7 +3398,7 @@ impl BlockReader {
     let term = elab.elab_term(term);
     let mut term2 = match term {
       Term::Functor { nr, ref args } => {
-        let (nr, args) = Term::adjust(nr, args, &elab.g.constrs);
+        let (nr, args) = Term::adjust(nr, args, Some(&elab.g.constrs));
         Term::Functor { nr, args: args.to_vec().into() }
       }
       Term::Aggregate { .. } | Term::Selector { .. } => term.clone(),
@@ -3434,7 +3434,7 @@ impl BlockReader {
 
     let mut attrs = ty.attrs.0.clone();
     for attr in concl {
-      attrs.insert(&elab.g.constrs, &elab.lc, attr);
+      attrs.insert(Some(&elab.g.constrs), &elab.lc, attr);
     }
 
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
@@ -3567,7 +3567,7 @@ impl BlockReader {
       let Term::Functor { nr, ref args } = from else {
         panic!("reduction must have a functor term on the LHS")
       };
-      let args = Term::adjust(nr, args, &elab.g.constrs).1;
+      let args = Term::adjust(nr, args, Some(&elab.g.constrs)).1;
       elab.with_eq(|ctx| subterm_list(ctx, args, to.skip_priv_func(Some(ctx.lc))))
     };
     assert!(reduction_allowed, "Right term must be a subterm of the left term");

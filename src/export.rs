@@ -36,7 +36,7 @@ fn assert_eq_iter<T: Debug + PartialEq<U>, U: Debug>(
 }
 
 struct ExportPrep<'a> {
-  ctx: &'a Constructors,
+  ctx: Option<&'a Constructors>,
   lc: &'a LocalContext,
   ic: &'a IdxVec<InferId, Assignment>,
   depth: u32,
@@ -56,6 +56,12 @@ impl VisitMut for ExportPrep<'_> {
   fn visit_attr_pair(&mut self, attrs: &mut (Attrs, Attrs)) {
     self.visit_attrs(&mut attrs.0);
     attrs.1.clone_from(&attrs.0);
+  }
+}
+
+impl<'a> ExportPrep<'a> {
+  fn with_ctx(&mut self, ctx: Option<&Constructors>, f: impl FnOnce(&mut ExportPrep<'_>)) {
+    f(&mut ExportPrep { ctx, ..*self });
   }
 }
 
@@ -191,7 +197,7 @@ impl Analyzer<'_> {
 
     // self.r.g.clusters.visit(&mut ExportPrep { ctx: &self.r.g.constrs, lc: &self.r.lc });
     let ep = &mut ExportPrep {
-      ctx: &self.r.g.constrs,
+      ctx: Some(&self.r.g.constrs),
       lc: &self.r.lc,
       ic: &self.r.lc.infer_const.borrow().vec,
       depth: 0,
@@ -268,12 +274,10 @@ impl Analyzer<'_> {
         assert_eq!(constrs1.len(), dco2.counts);
         aco.accum.push((self.article, self.g.constrs.len()));
       }
-      macro_rules! process {
-        ($($field:ident),*) => {$(
-          assert_eq_iter(concat!("constrs.", stringify!($field)),
-            constrs1.$field.0.iter(), dco2.constrs.$field.0.iter());
-        )*};
-      }
+      macro_rules! process { ($($field:ident),*) => {$(
+        assert_eq_iter(concat!("constrs.", stringify!($field)),
+          constrs1.$field.0.iter(), dco2.constrs.$field.0.iter());
+      )*}}
       process!(mode, struct_mode, attribute, predicate, functor, selector, aggregate);
     }
 
@@ -307,27 +311,35 @@ impl Analyzer<'_> {
       assert_eq_iter("notations", pats1.iter(), dno2.pats.iter());
     }
 
-    if true {
-      return
-    }
-
     // validating .dcl
     {
       let mut dcl2 = Default::default();
       let nonempty = self.path.read_dcl(MML, &mut dcl2).unwrap();
-      if nonempty {
-        assert_eq!(arts2, dcl2.sig);
-      }
+      ep.with_ctx(None, |ep| dcl2.cl.visit(ep));
       let since1 = self.g.clusters.since(&self.export.clusters_base);
-      macro_rules! process {
-        ($($field:ident),*) => {$({
-          dcl2.$field.visit(ep);
-          let cs = since1.$field.iter().map(|c| c.visit_cloned(ep)).collect_vec();
-          assert_eq_iter(concat!("clusters.", stringify!($field)),
-            cs.iter(), dcl2.$field.iter());
-        })*};
+      assert_eq!(!since1.is_empty(), nonempty);
+      let mut cl1 = since1.to_owned();
+      cl1.visit(ep);
+      if !nonempty {
+        // nothing
+      } else if MML {
+        assert_eq!(arts2, dcl2.sig);
+      } else {
+        let mut marks = MarkConstr::new(&aco.accum, arts1.len());
+        cl1.visit(&mut marks);
+        marks.closure(&mut aco.constrs);
+        marks.apply_with(|v| cl1.visit(v));
+        assert_eq!(marks.filtered(&arts2), dcl2.sig);
       }
+      macro_rules! process { ($($field:ident),*) => {$({
+        assert_eq_iter(concat!("clusters.", stringify!($field)),
+          cl1.$field.iter(), dcl2.cl.$field.iter());
+      })*}}
       process!(registered, functor, conditional);
+    }
+
+    if true {
+      return
     }
 
     // validating .def

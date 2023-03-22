@@ -393,9 +393,9 @@ impl MizPath {
     r.parse_signature(buf, &mut dcl.sig);
     while let Event::Start(e) = r.read_event(buf) {
       match r.parse_cluster_attrs(&e) {
-        (aid, ClusterKind::R) => dcl.registered.push(r.parse_rcluster(buf, aid)),
-        (aid, ClusterKind::F) => dcl.functor.push(r.parse_fcluster(buf, aid)),
-        (aid, ClusterKind::C) => dcl.conditional.push(r.parse_ccluster(buf, aid)),
+        (aid, ClusterKind::R) => dcl.cl.registered.push(r.parse_rcluster(buf, aid)),
+        (aid, ClusterKind::F) => dcl.cl.functor.push(r.parse_fcluster(buf, aid)),
+        (aid, ClusterKind::C) => dcl.cl.conditional.push(r.parse_ccluster(buf, aid)),
       }
     }
     assert!(matches!(r.read_event(buf), Event::Eof));
@@ -700,9 +700,8 @@ impl MizReader<'_> {
     while let Some(attr) = self.parse_attr(buf) {
       attrs.push(attr)
     }
-    if let Some(ctx) = self.ctx.get() {
-      attrs.sort_by(|a, b| a.cmp(ctx, None, b, CmpStyle::Attr));
-    }
+    let ctx = self.ctx.get();
+    attrs.sort_by(|a, b| a.cmp(ctx, None, b, CmpStyle::Attr));
     Attrs::Consistent(attrs)
   }
 

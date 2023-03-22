@@ -295,7 +295,7 @@ impl<'a> Unifier<'a> {
     for (pos, bas) in self.bas.iter() {
       for f in &bas.0 .0 {
         if let Formula::Pred { nr, args } = f {
-          let (nr, args) = Formula::adjust_pred(*nr, args, &self.g.constrs);
+          let (nr, args) = Formula::adjust_pred(*nr, args, Some(&self.g.constrs));
           if self.g.reqs.belongs_to() == Some(nr) {
             if let Some(ec) = args[1].unmark(self.lc).class() {
               for &m in &self.eq_class[ec].terms[CTK::Fraenkel] {
@@ -415,7 +415,7 @@ impl Term {
   /// ChReconQualFrm
   fn mk_is(self: Box<Term>, g: &Global, lc: &LocalContext, attr: Attr) -> Formula {
     let mut ty = self.get_type_uncached(g, lc);
-    ty.attrs.0.insert(&g.constrs, lc, attr);
+    ty.attrs.0.insert(Some(&g.constrs), lc, attr);
     if matches!(ty.attrs.0, Attrs::Inconsistent) {
       Formula::Neg { f: Box::new(Formula::True) }
     } else {
@@ -482,7 +482,7 @@ impl Unify<'_> {
             }
           }
         }
-        let (nr, args) = Formula::adjust_pred(nr, args, &self.g.constrs);
+        let (nr, args) = Formula::adjust_pred(nr, args, Some(&self.g.constrs));
         if self.g.reqs.belongs_to() == Some(nr) {
           let [arg1, arg2] = args else { unreachable!() };
           if let Some(empty) = self.g.reqs.empty() {
@@ -767,8 +767,8 @@ impl Unify<'_> {
     &mut self, attr1: &Attr, attr2: &Attr, pos: bool, out: &mut Dnf<FVarId, EqClassId>,
   ) -> Result<(), Overflow> {
     // vprintln!("or_unify_attr {pos}: {attr1:?} <> {attr2:?} <- {out:?}");
-    let (n1, args1) = attr1.adjust(&self.g.constrs);
-    let (n2, args2) = attr2.adjust(&self.g.constrs);
+    let (n1, args1) = attr1.adjust(Some(&self.g.constrs));
+    let (n2, args2) = attr2.adjust(Some(&self.g.constrs));
     if n1 == n2 && (attr1.pos == attr2.pos) == pos {
       out.mk_or_else(|| self.unify_terms(args1, args2))?
     }
@@ -848,8 +848,8 @@ impl Unify<'_> {
   ) -> Result<Dnf<FVarId, EqClassId>, Overflow> {
     let Term::Functor { nr: n2, args: ref args2 } = *t2 else { return Ok(Dnf::FALSE) };
     // vprintln!("unify: {:?} =?= {:?}", args1, t2);
-    let (n1, args1) = Term::adjust(n1, args1, &self.g.constrs);
-    let (n2, args2) = Term::adjust(n2, args2, &self.g.constrs);
+    let (n1, args1) = Term::adjust(n1, args1, Some(&self.g.constrs));
+    let (n2, args2) = Term::adjust(n2, args2, Some(&self.g.constrs));
     if n1 == n2 {
       self.unify_terms(args1, args2)
     } else {
@@ -997,8 +997,8 @@ impl Unify<'_> {
         res
       }
       (Formula::Pred { nr: n1, args: args1 }, Formula::Pred { nr: n2, args: args2 }) => {
-        let (n1_adj, args1_adj) = Formula::adjust_pred(*n1, args1, &self.g.constrs);
-        let (n2_adj, args2_adj) = Formula::adjust_pred(*n2, args2, &self.g.constrs);
+        let (n1_adj, args1_adj) = Formula::adjust_pred(*n1, args1, Some(&self.g.constrs));
+        let (n2_adj, args2_adj) = Formula::adjust_pred(*n2, args2, Some(&self.g.constrs));
         if n1_adj != n2_adj {
           return Ok(Dnf::FALSE)
         }
@@ -1030,8 +1030,8 @@ impl Unify<'_> {
         Formula::PrivPred { nr: PrivPredId(n2), args: args2, .. },
       ) if n1 == n2 => self.unify_terms(args1, args2)?,
       (Formula::Attr { nr: n1, args: args1 }, Formula::Attr { nr: n2, args: args2 }) => {
-        let (n1, args1) = Formula::adjust_attr(*n1, args1, &self.g.constrs);
-        let (n2, args2) = Formula::adjust_attr(*n2, args2, &self.g.constrs);
+        let (n1, args1) = Formula::adjust_attr(*n1, args1, Some(&self.g.constrs));
+        let (n2, args2) = Formula::adjust_attr(*n2, args2, Some(&self.g.constrs));
         if n1 == n2 {
           self.unify_terms(args1, args2)?
         } else {
@@ -1119,8 +1119,8 @@ impl UnifyWithConst<'_> {
   fn or_unify_attr(
     &mut self, attr1: &Attr, attr2: &Attr, out: &mut Dnf<FVarId, EqClassId>,
   ) -> Result<(), Overflow> {
-    let (n1, args1) = attr1.adjust(&self.0.g.constrs);
-    let (n2, args2) = attr2.adjust(&self.0.g.constrs);
+    let (n1, args1) = attr1.adjust(Some(&self.0.g.constrs));
+    let (n2, args2) = attr2.adjust(Some(&self.0.g.constrs));
     if n1 == n2 && attr1.pos == attr2.pos {
       out.mk_or_else(|| self.unify_terms(args1, args2))?
     }
@@ -1187,8 +1187,8 @@ impl UnifyWithConst<'_> {
   ) -> Result<Dnf<FVarId, EqClassId>, Overflow> {
     match (f1, f2) {
       (Formula::Pred { nr: n1, args: args1 }, Formula::Pred { nr: n2, args: args2 }) => {
-        let (n1, args1) = Formula::adjust_pred(*n1, args1, &self.0.g.constrs);
-        let (n2, args2) = Formula::adjust_pred(*n2, args2, &self.0.g.constrs);
+        let (n1, args1) = Formula::adjust_pred(*n1, args1, Some(&self.0.g.constrs));
+        let (n2, args2) = Formula::adjust_pred(*n2, args2, Some(&self.0.g.constrs));
         if n1 == n2 {
           self.unify_terms(args1, args2)
         } else {
@@ -1204,8 +1204,8 @@ impl UnifyWithConst<'_> {
         Formula::PrivPred { nr: PrivPredId(n2), args: args2, .. },
       ) if n1 == n2 => self.unify_terms(args1, args2),
       (Formula::Attr { nr: n1, args: args1 }, Formula::Attr { nr: n2, args: args2 }) => {
-        let (n1, args1) = Formula::adjust_attr(*n1, args1, &self.0.g.constrs);
-        let (n2, args2) = Formula::adjust_attr(*n2, args2, &self.0.g.constrs);
+        let (n1, args1) = Formula::adjust_attr(*n1, args1, Some(&self.0.g.constrs));
+        let (n2, args2) = Formula::adjust_attr(*n2, args2, Some(&self.0.g.constrs));
         if n1 == n2 {
           self.unify_terms(args1, args2)
         } else {
@@ -1257,8 +1257,8 @@ impl EquateClass<'_> {
           for &m in &etm.terms[CTK::Functor] {
             let Term::Functor { nr: nr2, args: ref args2 } = lc.marks[m].0
             else { unreachable!() };
-            let (nr, adj) = Term::adjust(nr, args, &g.constrs);
-            let (nr2, adj2) = Term::adjust(nr2, args2, &g.constrs);
+            let (nr, adj) = Term::adjust(nr, args, Some(&g.constrs));
+            let (nr2, adj2) = Term::adjust(nr2, args2, Some(&g.constrs));
             if nr != nr2 {
               continue
             }
@@ -1297,8 +1297,8 @@ impl Equate for EquateClass<'_> {
   fn eq_pred(
     &mut self, ctx: &mut EqCtx<'_>, n1: PredId, n2: PredId, args1: &[Term], args2: &[Term],
   ) -> bool {
-    let (n1_adj, args1_adj) = Formula::adjust_pred(n1, args1, &ctx.g.constrs);
-    let (n2_adj, args2_adj) = Formula::adjust_pred(n2, args2, &ctx.g.constrs);
+    let (n1_adj, args1_adj) = Formula::adjust_pred(n1, args1, Some(&ctx.g.constrs));
+    let (n2_adj, args2_adj) = Formula::adjust_pred(n2, args2, Some(&ctx.g.constrs));
     if n1_adj != n2_adj {
       return false
     }

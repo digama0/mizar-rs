@@ -60,7 +60,7 @@ impl Attrs {
   }
   fn try_insert(&mut self, ctx: &Constructors, lc: &LocalContext, item: Attr) -> OrUnsat<bool> {
     // vprintln!("insert {item:?} -> {self:?}");
-    let changed = self.insert(ctx, lc, item);
+    let changed = self.insert(Some(ctx), lc, item);
     self.try_attrs()?;
     Ok(changed)
   }
@@ -129,8 +129,8 @@ impl Equate for EqMarks {
   fn eq_pred(
     &mut self, ctx: &mut EqCtx<'_>, n1: PredId, n2: PredId, args1: &[Term], args2: &[Term],
   ) -> bool {
-    let (n1_adj, args1_adj) = Formula::adjust_pred(n1, args1, &ctx.g.constrs);
-    let (n2_adj, args2_adj) = Formula::adjust_pred(n2, args2, &ctx.g.constrs);
+    let (n1_adj, args1_adj) = Formula::adjust_pred(n1, args1, Some(&ctx.g.constrs));
+    let (n2_adj, args2_adj) = Formula::adjust_pred(n2, args2, Some(&ctx.g.constrs));
     n1_adj == n2_adj
       && (self.eq_terms(ctx, args1_adj, args2_adj)
         || {
@@ -295,7 +295,7 @@ impl<'a> Equalizer<'a> {
     OnVarMut(|n| *n -= depth).visit_term(tm);
     let vec = coll(&mut self.constrs);
     match vec.binary_search_by(|&m| {
-      self.lc.marks[m].0.cmp(&self.g.constrs, Some(self.lc), tm, CmpStyle::Red)
+      self.lc.marks[m].0.cmp(Some(&self.g.constrs), Some(self.lc), tm, CmpStyle::Red)
     }) {
       Ok(i) => Some(Ok(self.lc.marks[vec[i]].1)),
       Err(i) => Some(Err(i)),
@@ -379,7 +379,7 @@ impl VisitMut for Y<'_, '_> {
         } else {
           *Term::Functor { nr, args: orig }.round_up_type(self.g, self.lc, true).to_owned()
         };
-        let (nr2, args2) = Term::adjust(nr, args, &self.g.constrs);
+        let (nr2, args2) = Term::adjust(nr, args, Some(&self.g.constrs));
         if let Some(m) = self.constrs.functor.find(self.g, self.lc, nr2, args2) {
           *tm = Term::EqMark(self.terms[self.lc.marks[m].1].mark);
           return
@@ -394,7 +394,7 @@ impl VisitMut for Y<'_, '_> {
         let constr = &self.g.constrs.functor[nr];
         if constr.properties.get(PropertyKind::Commutativity) {
           args1.swap(constr.properties.arg1 as usize, constr.properties.arg2 as usize);
-          let (nr3, comm_args) = Term::adjust(nr, &args1, &self.g.constrs);
+          let (nr3, comm_args) = Term::adjust(nr, &args1, Some(&self.g.constrs));
           let m =
             self.lc.marks.push((Term::Functor { nr: nr3, args: comm_args.to_vec().into() }, et));
           self.terms[et].eq_class.push(m);
@@ -525,7 +525,7 @@ impl Equalizer<'_> {
       Term::Functor { nr, ref mut args } => {
         self.y(|y| y.visit_terms(args))?;
         let c = &self.g.constrs.functor[nr];
-        let (nr1, args1) = Term::adjust(nr, args, &self.g.constrs);
+        let (nr1, args1) = Term::adjust(nr, args, Some(&self.g.constrs));
         if let Some(m) = self.constrs.functor.find(self.g, self.lc, nr1, args1) {
           return Ok(self.lc.marks[m].1)
         }
@@ -549,7 +549,7 @@ impl Equalizer<'_> {
         self.constrs.functor.insert(nr1, m);
         self.terms[et].eq_class.push(m);
         if let Some(args) = comm_args {
-          let (nr2, args2) = Term::adjust(nr, &args, &self.g.constrs);
+          let (nr2, args2) = Term::adjust(nr, &args, Some(&self.g.constrs));
           let m = self.lc.marks.push((Term::Functor { nr: nr2, args: args2.to_vec().into() }, fi));
           self.constrs.functor.insert(nr2, m);
           self.terms[et].eq_class.push(m);
@@ -659,8 +659,8 @@ impl Instantiate<'_> {
     match (tgt.unmark(self.lc), src) {
       (Term::Numeral(n), Term::Numeral(n2)) => Dnf::mk_bool(n == n2),
       (Term::Functor { nr: n1, args: args1 }, Term::Functor { nr: n2, args: args2 }) => {
-        let (n1, args1) = Term::adjust(*n1, args1, &self.g.constrs);
-        let (n2, args2) = Term::adjust(*n2, args2, &self.g.constrs);
+        let (n1, args1) = Term::adjust(*n1, args1, Some(&self.g.constrs));
+        let (n2, args2) = Term::adjust(*n2, args2, Some(&self.g.constrs));
         if n1 == n2 {
           let mut res = Dnf::True;
           for (a, b) in args1.iter().zip(args2) {
@@ -699,11 +699,11 @@ impl Instantiate<'_> {
           }
           &Term::Numeral(n) => Dnf::mk_bool(self.terms[et].number == Some(n.into())),
           Term::Functor { nr: n1, args: args1 } => {
-            let (n1, args1) = Term::adjust(*n1, args1, &self.g.constrs);
+            let (n1, args1) = Term::adjust(*n1, args1, Some(&self.g.constrs));
             let mut res = Dnf::FALSE;
             for &m in &self.terms[et].eq_class {
               if let Term::Functor { nr: n2, args: args2 } = &self.lc.marks[m].0 {
-                let (n2, args2) = Term::adjust(*n2, args2, &self.g.constrs);
+                let (n2, args2) = Term::adjust(*n2, args2, Some(&self.g.constrs));
                 if n1 == n2 {
                   res.mk_or_else(|| Ok(self.inst_terms(args1, args2))).unwrap()
                 }
@@ -788,10 +788,10 @@ impl Instantiate<'_> {
     let Attrs::Consistent(sc) = &self.terms[et].supercluster else { unreachable!() };
     // vprintln!("and_inst {attrs:?} <> {:?}", self.terms[et]);
     'next: for a1 in attrs {
-      let (n1, args1) = a1.adjust(&self.g.constrs);
+      let (n1, args1) = a1.adjust(Some(&self.g.constrs));
       let mut z = Dnf::FALSE;
       for a2 in sc {
-        let (n2, args2) = a2.adjust(&self.g.constrs);
+        let (n2, args2) = a2.adjust(Some(&self.g.constrs));
         if n1 == n2 && a1.pos == a2.pos {
           z.mk_or(self.inst_terms(args1, args2)).unwrap();
           if let Dnf::True = z {
@@ -1016,7 +1016,7 @@ impl<'a> Equalizer<'a> {
             res.push(Attr { nr: attr.nr, pos: attr.pos, args })
           }
         }
-        res.sort_by(|a1, a2| a1.cmp_abs(&self.g.constrs, Some(self.lc), a2, CmpStyle::Attr));
+        res.sort_by(|a1, a2| a1.cmp_abs(Some(&self.g.constrs), Some(self.lc), a2, CmpStyle::Attr));
         Attrs::Consistent(res)
       }
     }
@@ -1043,7 +1043,7 @@ impl<'a> Equalizer<'a> {
               Dnf::Or(conjs) => conjs.into_iter().next(),
             } {
               let m = if let Term::Functor { nr, args } = &red.terms[1] {
-                let (nr, args) = Term::adjust(*nr, args, &self.g.constrs);
+                let (nr, args) = Term::adjust(*nr, args, Some(&self.g.constrs));
                 self.locate_term(&conj, &Term::Functor { nr, args: args.to_vec().into() })
               } else {
                 self.locate_term(&conj, &red.terms[1])
@@ -1307,8 +1307,8 @@ impl<'a> Equalizer<'a> {
                   Term::Functor { nr: nr1, args: args1 },
                   Term::Functor { nr: nr2, args: args2 },
                 ) => {
-                  let args1 = Term::adjust(*nr1, args1, &self.g.constrs).1;
-                  let args2 = Term::adjust(*nr2, args2, &self.g.constrs).1;
+                  let args1 = Term::adjust(*nr1, args1, Some(&self.g.constrs)).1;
+                  let args2 = Term::adjust(*nr2, args2, Some(&self.g.constrs)).1;
                   if EqMarks.eq(self.g, self.lc, args1, args2) {
                     to_union.push((et1, et2))
                   }
@@ -1737,7 +1737,7 @@ impl<'a> Equalizer<'a> {
               self.terms[et].supercluster.try_attrs()?;
             }
             Formula::Pred { nr, args } if pos => {
-              let (nr, args) = Formula::adjust_pred(*nr, args, &self.g.constrs);
+              let (nr, args) = Formula::adjust_pred(*nr, args, Some(&self.g.constrs));
               if self.g.reqs.equals_to() == Some(nr) {
                 let [arg1, arg2] = args else { unreachable!() };
                 let m1 = self.y(|y| arg1.visit_cloned(y))?.mark().unwrap();
@@ -2140,7 +2140,7 @@ impl<'a> Equalizer<'a> {
       // }
       for pos in &pos_bas.0 .0 {
         if let Formula::Pred { nr, args } = pos {
-          let (nr, args) = Formula::adjust_pred(*nr, args, &self.g.constrs);
+          let (nr, args) = Formula::adjust_pred(*nr, args, Some(&self.g.constrs));
           if self.g.reqs.less_or_equal() == Some(nr) {
             let [arg1, arg2] = args else { unreachable!() };
             let et1 = self.lc.marks[arg1.mark().unwrap()].1;
@@ -2246,7 +2246,7 @@ impl<'a> Equalizer<'a> {
       // }
       for pos2 in &pos_bas.0 .0 {
         if let Formula::Pred { nr, args } = pos2 {
-          let (nr, args) = Formula::adjust_pred(*nr, args, &self.g.constrs);
+          let (nr, args) = Formula::adjust_pred(*nr, args, Some(&self.g.constrs));
           if self.g.reqs.belongs_to() == Some(nr) {
             let [arg1, arg2] = args else { unreachable!() };
             let et2 = self.lc.marks[arg2.mark().unwrap()].1;
@@ -2308,7 +2308,7 @@ impl<'a> Equalizer<'a> {
           Formula::SchPred { .. } | Formula::PrivPred { .. } =>
             self.match_formulas(neg, &pos_bas)?,
           Formula::Pred { nr, args } => {
-            let (nr, args) = Formula::adjust_pred(*nr, args, &self.g.constrs);
+            let (nr, args) = Formula::adjust_pred(*nr, args, Some(&self.g.constrs));
             if self.g.reqs.less_or_equal() == Some(nr) {
               let [arg1, arg2] = args else { unreachable!() };
               let et1 = self.lc.marks[arg1.mark().unwrap()].1;
@@ -2478,7 +2478,7 @@ impl<'a> Equalizer<'a> {
     for f in &neg_bas.0 .0 {
       match f {
         Formula::Pred { nr, args } => {
-          let (nr, args) = Formula::adjust_pred(*nr, args, &self.g.constrs);
+          let (nr, args) = Formula::adjust_pred(*nr, args, Some(&self.g.constrs));
           let props = self.g.constrs.predicate[nr].properties;
           if props.get(PropertyKind::Reflexivity) {
             ineqs.process_ineq(
@@ -2490,7 +2490,7 @@ impl<'a> Equalizer<'a> {
           if self.g.reqs.equals_to() != Some(nr) {
             for f2 in &pos_bas.0 .0 {
               if let Formula::Pred { nr: nr2, args: args2 } = f2 {
-                let (nr2, args2) = Formula::adjust_pred(*nr2, args2, &self.g.constrs);
+                let (nr2, args2) = Formula::adjust_pred(*nr2, args2, Some(&self.g.constrs));
                 if nr == nr2 {
                   ineqs.push_if_one_diff(&self.lc.marks, args, args2)
                 }

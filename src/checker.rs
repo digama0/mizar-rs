@@ -171,7 +171,7 @@ impl<'a> Checker<'a> {
           let mut inst = Inst::new(&self.g.constrs, self.lc, &attr.args, 0);
           let mut attrs = c.ty.attrs.1.visit_cloned(&mut inst);
           let attr = Attr { nr: attr.nr, pos: !attr.pos, args: attr.args.clone() };
-          attrs.insert(&self.g.constrs, self.lc, attr);
+          attrs.insert(Some(&self.g.constrs), self.lc, attr);
           attrs.visit(&mut self.intern_const());
           let ty3 = Type { kind: ty.kind, attrs: (attrs.clone(), attrs), args: ty.args.clone() };
           let f3 = Formula::Is { term: term.clone(), ty: Box::new(ty3) };
@@ -287,12 +287,12 @@ impl Expand<'_> {
         self.lc.bound_var.0.pop().unwrap();
       }
       Formula::Pred { nr, args } => {
-        let (n2, args2) = Formula::adjust_pred(*nr, args, &self.g.constrs);
+        let (n2, args2) = Formula::adjust_pred(*nr, args, Some(&self.g.constrs));
         let expansions = self.well_matched_expansions(ConstrKind::Pred(n2), args2);
         f.conjdisj_many(pos, expansions);
       }
       Formula::Attr { nr, args } => {
-        let n2 = Formula::adjust_attr(*nr, args, &self.g.constrs).0;
+        let n2 = Formula::adjust_attr(*nr, args, Some(&self.g.constrs)).0;
         let expansions = self.well_matched_expansions(ConstrKind::Attr(n2), args);
         f.conjdisj_many(pos, expansions);
       }
@@ -346,7 +346,7 @@ impl Expand<'_> {
       loop {
         match tm {
           Term::Functor { nr, args }
-            if Some(Term::adjust(*nr, args, &g.constrs).0) == g.reqs.zero_number() =>
+            if Some(Term::adjust(*nr, args, Some(&g.constrs)).0) == g.reqs.zero_number() =>
           {
             *zero = Some(tm.clone());
             return Some(0)
@@ -896,13 +896,13 @@ impl<'a> SchemeCtx<'a> {
         PrivPred { nr: PrivPredId(n2), args: args2, .. },
       ) if pos => n1 == n2 && self.eq_terms(args1, args2),
       (Attr { nr: n1, args: args1 }, Attr { nr: n2, args: args2 }) if pos => {
-        let (n1, args1) = Formula::adjust_attr(*n1, args1, &self.g.constrs);
-        let (n2, args2) = Formula::adjust_attr(*n2, args2, &self.g.constrs);
+        let (n1, args1) = Formula::adjust_attr(*n1, args1, Some(&self.g.constrs));
+        let (n2, args2) = Formula::adjust_attr(*n2, args2, Some(&self.g.constrs));
         n1 == n2 && self.eq_terms(args1, args2)
       }
       (Pred { nr: n1, args: args1 }, Pred { nr: n2, args: args2 }) if pos => {
-        let (n1, args1) = Formula::adjust_pred(*n1, args1, &self.g.constrs);
-        let (n2, args2) = Formula::adjust_pred(*n2, args2, &self.g.constrs);
+        let (n1, args1) = Formula::adjust_pred(*n1, args1, Some(&self.g.constrs));
+        let (n2, args2) = Formula::adjust_pred(*n2, args2, Some(&self.g.constrs));
         n1 == n2 && self.eq_terms(args1, args2)
       }
       (ForAll { dom: dom1, scope: sc1 }, ForAll { dom: dom2, scope: sc2 }) if pos =>
@@ -1007,8 +1007,8 @@ impl<'a> SchemeCtx<'a> {
       | (Numeral(n1), Numeral(n2)) => n1 == n2,
       (Infer(InferId(n1)), Infer(InferId(n2))) if n1 == n2 => true,
       (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) => {
-        let (n1, args1) = Term::adjust(*n1, args1, &self.g.constrs);
-        let (n2, args2) = Term::adjust(*n2, args2, &self.g.constrs);
+        let (n1, args1) = Term::adjust(*n1, args1, Some(&self.g.constrs));
+        let (n2, args2) = Term::adjust(*n2, args2, Some(&self.g.constrs));
         n1 == n2 && self.eq_terms(args1, args2)
       }
       (Aggregate { nr: AggrId(n1), args: args1 }, Aggregate { nr: AggrId(n2), args: args2 })
@@ -1082,8 +1082,8 @@ impl<'a> SchemeCtx<'a> {
   }
 
   fn eq_attr(&mut self, a1: &Attr, a2: &Attr) -> bool {
-    let (n1, args1) = a1.adjust(&self.g.constrs);
-    let (n2, args2) = a2.adjust(&self.g.constrs);
+    let (n1, args1) = a1.adjust(Some(&self.g.constrs));
+    let (n2, args2) = a2.adjust(Some(&self.g.constrs));
     n1 == n2 && a1.pos == a2.pos && self.eq_terms(args1, args2)
   }
 

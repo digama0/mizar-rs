@@ -613,7 +613,7 @@ impl Reader {
             let mut ic = self.lc.infer_const.borrow_mut();
             let Some(asgn) = ic.0.get_mut(i) else { break };
             if let Term::Functor { nr, args } = &asgn.def {
-              let (nr, args) = Term::adjust(*nr, args, &self.g.constrs);
+              let (nr, args) = Term::adjust(*nr, args, Some(&self.g.constrs));
               if f == nr {
                 let args = &args.to_owned();
                 drop(ic);

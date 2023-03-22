@@ -230,16 +230,15 @@ impl Attr {
     ctx.attribute[self.nr].c.redefines.unwrap_or(self.nr)
   }
 
-  fn adjust(&self, ctx: &Constructors) -> (AttrId, &[Term]) {
+  fn adjust(&self, ctx: Option<&Constructors>) -> (AttrId, &[Term]) {
+    let Some(ctx) = ctx else { return (self.nr, &self.args) };
     let c = &ctx.attribute[self.nr].c;
-    match c.redefines {
-      Some(nr) => (nr, &self.args[c.superfluous as usize..]),
-      None => (self.nr, &self.args),
-    }
+    let Some(nr) = c.redefines else { return (self.nr, &self.args) };
+    (nr, &self.args[c.superfluous as usize..])
   }
 
   fn cmp_abs(
-    &self, ctx: &Constructors, lc: Option<&LocalContext>, other: &Self, style: CmpStyle,
+    &self, ctx: Option<&Constructors>, lc: Option<&LocalContext>, other: &Self, style: CmpStyle,
   ) -> Ordering {
     let (n1, args1) = self.adjust(ctx);
     let (n2, args2) = other.adjust(ctx);
@@ -247,7 +246,7 @@ impl Attr {
   }
 
   fn cmp(
-    &self, ctx: &Constructors, lc: Option<&LocalContext>, other: &Self, style: CmpStyle,
+    &self, ctx: Option<&Constructors>, lc: Option<&LocalContext>, other: &Self, style: CmpStyle,
   ) -> Ordering {
     self.cmp_abs(ctx, lc, other, style).then_with(|| self.pos.cmp(&other.pos))
   }
@@ -266,12 +265,11 @@ impl Term {
     (0..n).map(|i| Term::Locus(Idx::from_usize(i))).collect()
   }
 
-  fn adjust<'a>(n: FuncId, args: &'a [Term], ctx: &Constructors) -> (FuncId, &'a [Term]) {
+  fn adjust<'a>(n: FuncId, args: &'a [Term], ctx: Option<&Constructors>) -> (FuncId, &'a [Term]) {
+    let Some(ctx) = ctx else { return (n, args) };
     let c = &ctx.functor[n].c;
-    match c.redefines {
-      Some(nr) => (nr, &args[c.superfluous as usize..]),
-      None => (n, args),
-    }
+    let Some(nr) = c.redefines else { return (n, args) };
+    (nr, &args[c.superfluous as usize..])
   }
 
   pub fn adjusted_nr(nr: FuncId, ctx: &Constructors) -> FuncId {
@@ -314,11 +312,12 @@ impl Term {
   /// * CmpStyle::Red: CompRdTrms(fTrm1 = self, fTrm2 = other)
   /// * CmpStyle::Alt: CompareTrms(fTrm1 = self, fTrm2 = other)
   fn cmp(
-    &self, ctx: &Constructors, lc: Option<&LocalContext>, other: &Term, style: CmpStyle,
+    &self, ctx: Option<&Constructors>, lc: Option<&LocalContext>, other: &Term, style: CmpStyle,
   ) -> Ordering {
     use Term::*;
     fn cmp(
-      ctx: &Constructors, lc: Option<&LocalContext>, this: &Term, other: &Term, style: CmpStyle,
+      ctx: Option<&Constructors>, lc: Option<&LocalContext>, this: &Term, other: &Term,
+      style: CmpStyle,
     ) -> Ordering {
       Term::discr(this).cmp(&Term::discr(other)).then_with(|| match (this, other) {
         (Locus(LocusId(n1)), Locus(LocusId(n2))) => n1.cmp(n2),
@@ -379,7 +378,8 @@ impl Term {
   }
 
   fn cmp_list(
-    ctx: &Constructors, lc: Option<&LocalContext>, tms1: &[Term], tms2: &[Term], style: CmpStyle,
+    ctx: Option<&Constructors>, lc: Option<&LocalContext>, tms1: &[Term], tms2: &[Term],
+    style: CmpStyle,
   ) -> Ordering {
     cmp_list(tms1, tms2, |tm1, tm2| tm1.cmp(ctx, lc, tm2, style))
   }
@@ -465,7 +465,7 @@ impl Type {
   }
 
   fn cmp(
-    &self, ctx: &Constructors, lc: Option<&LocalContext>, other: &Type, style: CmpStyle,
+    &self, ctx: Option<&Constructors>, lc: Option<&LocalContext>, other: &Type, style: CmpStyle,
   ) -> Ordering {
     self.kind.cmp(&other.kind).then_with(|| {
       let o = self.attrs.0.cmp(ctx, lc, &other.attrs.0, style);
@@ -618,24 +618,26 @@ impl Type {
 }
 
 impl Formula {
-  fn adjust_pred<'a>(n: PredId, args: &'a [Term], ctx: &Constructors) -> (PredId, &'a [Term]) {
+  fn adjust_pred<'a>(
+    n: PredId, args: &'a [Term], ctx: Option<&Constructors>,
+  ) -> (PredId, &'a [Term]) {
+    let Some(ctx) = ctx else { return (n, args) };
     let c = &ctx.predicate[n];
-    match c.redefines {
-      Some(nr) => (nr, &args[c.superfluous as usize..]),
-      None => (n, args),
-    }
+    let Some(nr) = c.redefines else { return (n, args) };
+    (nr, &args[c.superfluous as usize..])
   }
 
-  fn adjust_attr<'a>(n: AttrId, args: &'a [Term], ctx: &Constructors) -> (AttrId, &'a [Term]) {
+  fn adjust_attr<'a>(
+    n: AttrId, args: &'a [Term], ctx: Option<&Constructors>,
+  ) -> (AttrId, &'a [Term]) {
+    let Some(ctx) = ctx else { return (n, args) };
     let c = &ctx.attribute[n].c;
-    match c.redefines {
-      Some(nr) => (nr, &args[c.superfluous as usize..]),
-      None => (n, args),
-    }
+    let Some(nr) = c.redefines else { return (n, args) };
+    (nr, &args[c.superfluous as usize..])
   }
 
   fn cmp(
-    &self, ctx: &Constructors, lc: Option<&LocalContext>, other: &Formula, style: CmpStyle,
+    &self, ctx: Option<&Constructors>, lc: Option<&LocalContext>, other: &Formula, style: CmpStyle,
   ) -> Ordering {
     // vprintln!("{self:?} <?> {other:?}");
     self.discr().cmp(&other.discr()).then_with(|| {
@@ -686,7 +688,7 @@ impl Formula {
   }
 
   fn cmp_list(
-    ctx: &Constructors, lc: Option<&LocalContext>, fs1: &[Formula], fs2: &[Formula],
+    ctx: Option<&Constructors>, lc: Option<&LocalContext>, fs1: &[Formula], fs2: &[Formula],
     style: CmpStyle,
   ) -> Ordering {
     // vprintln!("{fs1:?} <?> {fs2:?}");
@@ -770,8 +772,8 @@ trait Equate {
         if n1 == n2 =>
         true,
       (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) => {
-        let (n1, args1) = Term::adjust(*n1, args1, &ctx.g.constrs);
-        let (n2, args2) = Term::adjust(*n2, args2, &ctx.g.constrs);
+        let (n1, args1) = Term::adjust(*n1, args1, Some(&ctx.g.constrs));
+        let (n2, args2) = Term::adjust(*n2, args2, Some(&ctx.g.constrs));
         n1 == n2 && self.eq_terms(ctx, args1, args2)
       }
       (SchFunc { nr: SchFuncId(n1), args: args1 }, SchFunc { nr: SchFuncId(n2), args: args2 })
@@ -849,8 +851,8 @@ trait Equate {
   /// on Subst: EsAttr
   fn eq_attr(&mut self, ctx: &mut EqCtx<'_>, a1: &Attr, a2: &Attr) -> bool {
     // vprintln!("{a1:?} =? {a2:?}");
-    let (n1, args1) = a1.adjust(&ctx.g.constrs);
-    let (n2, args2) = a2.adjust(&ctx.g.constrs);
+    let (n1, args1) = a1.adjust(Some(&ctx.g.constrs));
+    let (n2, args2) = a2.adjust(Some(&ctx.g.constrs));
     n1 == n2 && a1.pos == a2.pos && self.eq_terms(ctx, args1, args2)
   }
 
@@ -866,9 +868,12 @@ trait Equate {
   fn eq_pred(
     &mut self, ctx: &mut EqCtx<'_>, n1: PredId, n2: PredId, args1: &[Term], args2: &[Term],
   ) -> bool {
-    let (n1, args1) =
-      if Self::ADJUST_LEFT { Formula::adjust_pred(n1, args1, &ctx.g.constrs) } else { (n1, args1) };
-    let (n2, args2) = Formula::adjust_pred(n2, args2, &ctx.g.constrs);
+    let (n1, args1) = if Self::ADJUST_LEFT {
+      Formula::adjust_pred(n1, args1, Some(&ctx.g.constrs))
+    } else {
+      (n1, args1)
+    };
+    let (n2, args2) = Formula::adjust_pred(n2, args2, Some(&ctx.g.constrs));
     n1 == n2 && self.eq_terms(ctx, args1, args2)
   }
 
@@ -892,8 +897,8 @@ trait Equate {
         PrivPred { nr: PrivPredId(n2), args: args2, .. },
       ) => n1 == n2 && self.eq_terms(ctx, args1, args2),
       (Attr { nr: n1, args: args1 }, Attr { nr: n2, args: args2 }) => {
-        let (n1, args1) = Formula::adjust_attr(*n1, args1, &ctx.g.constrs);
-        let (n2, args2) = Formula::adjust_attr(*n2, args2, &ctx.g.constrs);
+        let (n1, args1) = Formula::adjust_attr(*n1, args1, Some(&ctx.g.constrs));
+        let (n2, args2) = Formula::adjust_attr(*n2, args2, Some(&ctx.g.constrs));
         n1 == n2 && self.eq_terms(ctx, args1, args2)
       }
       (Pred { nr: n1, args: args1 }, Pred { nr: n2, args: args2 }) =>
@@ -938,8 +943,8 @@ impl Equate for () {
   fn eq_pred(
     &mut self, ctx: &mut EqCtx<'_>, n1: PredId, n2: PredId, args1: &[Term], args2: &[Term],
   ) -> bool {
-    let (n1, args1) = Formula::adjust_pred(n1, args1, &ctx.g.constrs);
-    let (n2, args2) = Formula::adjust_pred(n2, args2, &ctx.g.constrs);
+    let (n1, args1) = Formula::adjust_pred(n1, args1, Some(&ctx.g.constrs));
+    let (n2, args2) = Formula::adjust_pred(n2, args2, Some(&ctx.g.constrs));
     n1 == n2
       && (self.eq_terms(ctx, args1, args2)
         || Some(n1) == ctx.g.reqs.equals_to()
@@ -1270,7 +1275,7 @@ impl<F: FnMut(FuncId, &[Term])> Visit for OnFunc<F> {
 }
 
 fn has_func<'a>(ctx: &'a Constructors, nr: FuncId, found: &'a mut bool) -> impl Visit + 'a {
-  OnFunc(move |n, args| *found |= n == nr || Term::adjust(n, args, ctx).0 == nr)
+  OnFunc(move |n, args| *found |= n == nr || Term::adjust(n, args, Some(ctx)).0 == nr)
 }
 
 struct Inst<'a> {
@@ -1309,7 +1314,7 @@ impl VisitMut for Inst<'_> {
   }
 
   fn visit_attrs(&mut self, attrs: &mut Attrs) {
-    attrs.reinsert_all(self.ctx, self.lc, !self.lc.attr_sort_bug, |attr| {
+    attrs.reinsert_all(Some(self.ctx), self.lc, !self.lc.attr_sort_bug, |attr| {
       self.visit_terms(&mut attr.args)
     })
   }
@@ -1466,7 +1471,7 @@ impl TermCollection {
 
   /// MSortedCollection.Search(self = self, Key = tm, out Index)
   fn find(&self, ctx: &Constructors, tm: &Term) -> Result<usize, usize> {
-    self.terms.binary_search_by(|a| a.0.cmp(ctx, None, tm, CmpStyle::Alt))
+    self.terms.binary_search_by(|a| a.0.cmp(Some(ctx), None, tm, CmpStyle::Alt))
   }
 
   fn insert_raw(&mut self, ctx: &Constructors, base: u32, tm: Term, ty: Type) -> usize {
@@ -1859,7 +1864,7 @@ impl Attrs {
   }
 
   fn cmp(
-    &self, ctx: &Constructors, lc: Option<&LocalContext>, other: &Attrs, style: CmpStyle,
+    &self, ctx: Option<&Constructors>, lc: Option<&LocalContext>, other: &Attrs, style: CmpStyle,
   ) -> Ordering {
     let (this, other) = (self.attrs(), other.attrs());
     this
@@ -1887,7 +1892,7 @@ impl Attrs {
 
   /// MAttrCollection.Insert(self = self, aItem = item)
   /// returns true if self changed
-  pub fn insert(&mut self, ctx: &Constructors, lc: &LocalContext, item: Attr) -> bool {
+  pub fn insert(&mut self, ctx: Option<&Constructors>, lc: &LocalContext, item: Attr) -> bool {
     let Self::Consistent(this) = self else { return false };
     match this.binary_search_by(|attr| attr.cmp_abs(ctx, Some(lc), &item, CmpStyle::Attr)) {
       Ok(i) =>
@@ -1907,14 +1912,15 @@ impl Attrs {
   /// MAttrCollection.GetAttr(self = self, aAttrNr = item.nr, aAttrArgs = item.args)
   pub fn find(&self, ctx: &Constructors, lc: &LocalContext, item: &Attr) -> Option<&Attr> {
     let Self::Consistent(this) = self else { return None };
-    let n = this.binary_search_by(|attr| attr.cmp_abs(ctx, Some(lc), item, CmpStyle::Attr)).ok()?;
+    let n =
+      this.binary_search_by(|attr| attr.cmp_abs(Some(ctx), Some(lc), item, CmpStyle::Attr)).ok()?;
     Some(&this[n])
   }
 
   pub fn find0_abs(&self, ctx: &Constructors, nr: AttrId) -> Option<&Attr> {
     let Self::Consistent(this) = self else { return None };
     assert!(&ctx.attribute[nr].c.redefines.is_none());
-    let n = this.binary_search_by(|attr| attr.adjust(ctx).0.cmp(&nr)).ok()?;
+    let n = this.binary_search_by(|attr| attr.adjust(Some(ctx)).0.cmp(&nr)).ok()?;
     Some(&this[n])
   }
 
@@ -1923,7 +1929,8 @@ impl Attrs {
   }
 
   fn reinsert_all(
-    &mut self, ctx: &Constructors, lc: &LocalContext, yes: bool, mut f: impl FnMut(&mut Attr),
+    &mut self, ctx: Option<&Constructors>, lc: &LocalContext, yes: bool,
+    mut f: impl FnMut(&mut Attr),
   ) {
     if let Attrs::Consistent(attrs1) = self {
       if yes {
@@ -1945,7 +1952,7 @@ impl Attrs {
     } else if let Self::Consistent(_) = self {
       if let Self::Consistent(other) = other {
         for attr in other {
-          self.insert(ctx, lc, attr.visit_cloned(v));
+          self.insert(Some(ctx), lc, attr.visit_cloned(v));
         }
       } else {
         *self = Self::Inconsistent
@@ -1965,7 +1972,7 @@ impl Attrs {
         for item in itertools::merge_join_by(
           std::mem::take(this).into_iter(),
           other.iter().map(map),
-          |a, b| a.cmp_abs(ctx, Some(lc), b, CmpStyle::Attr),
+          |a, b| a.cmp_abs(Some(ctx), Some(lc), b, CmpStyle::Attr),
         ) {
           match item {
             EitherOrBoth::Left(attr) | EitherOrBoth::Right(attr) => this.push(attr),
@@ -1991,7 +1998,7 @@ impl Attrs {
   /// ContradictoryAttrs(aClu1 = self, aClu2 = other)
   pub fn contradicts(&self, ctx: &Constructors, lc: &LocalContext, other: &Self) -> bool {
     let (Self::Consistent(this), Self::Consistent(other)) = (self, other) else { return true };
-    itertools::merge_join_by(this, other, |a, b| a.cmp_abs(ctx, Some(lc), b, CmpStyle::Attr))
+    itertools::merge_join_by(this, other, |a, b| a.cmp_abs(Some(ctx), Some(lc), b, CmpStyle::Attr))
       .any(|item| matches!(item, EitherOrBoth::Both(attr1, attr2) if attr1.pos != attr2.pos))
   }
 
@@ -2227,7 +2234,7 @@ impl VisitMut for ExpandPrivFunc<'_> {
   }
 
   fn visit_attrs(&mut self, attrs: &mut Attrs) {
-    attrs.reinsert_all(self.0, self.1, true, |attr| self.visit_terms(&mut attr.args))
+    attrs.reinsert_all(Some(self.0), self.1, true, |attr| self.visit_terms(&mut attr.args))
   }
 
   /// CopyExpFrm
@@ -2261,7 +2268,7 @@ impl Term {
     match *self {
       Term::Numeral(n) => Some(n.into()),
       Term::Functor { nr, ref args } => {
-        let (nr, args) = Term::adjust(nr, args, &g.constrs);
+        let (nr, args) = Term::adjust(nr, args, Some(&g.constrs));
         macro_rules! op {
           (|$x:ident, $y:ident| $e:expr) => {{
             let [arg1, arg2] = args else { unreachable!() };
@@ -2335,7 +2342,8 @@ impl<'a> InternConst<'a> {
   fn collect_infer_const(&mut self, tm: &mut Term) {
     if self.only_constants {
       let mut ic = self.lc.infer_const.borrow_mut();
-      let nr = match ic.find_index(|a| a.def.cmp(&self.g.constrs, None, tm, CmpStyle::Strict)) {
+      let nr = match ic.find_index(|a| a.def.cmp(Some(&self.g.constrs), None, tm, CmpStyle::Strict))
+      {
         Ok(nr) => nr,
         Err(i) => {
           drop(ic);
@@ -2368,7 +2376,7 @@ impl<'a> InternConst<'a> {
     }
     let (nr, args) = {
       let Term::Functor { nr, ref args } = *tm else { unreachable!() };
-      Term::adjust(nr, args, &self.g.constrs)
+      Term::adjust(nr, args, Some(&self.g.constrs))
     };
     if self.infer_consts.contains(&nr) {
       return eq
@@ -2450,7 +2458,7 @@ impl VisitMut for InternConst<'_> {
         self.visit_terms(args);
         if self.only_constants {
           let ic = self.lc.infer_const.borrow();
-          match ic.find_index(|a| a.def.cmp(&self.g.constrs, None, tm, CmpStyle::Strict)) {
+          match ic.find_index(|a| a.def.cmp(Some(&self.g.constrs), None, tm, CmpStyle::Strict)) {
             Ok(nr) => *tm = Term::Infer(nr),
             _ => {
               // vprintln!("search for {tm:?} failed");
@@ -2494,7 +2502,7 @@ impl VisitMut for InternConst<'_> {
   }
 
   fn visit_attrs(&mut self, attrs: &mut Attrs) {
-    attrs.reinsert_all(&self.g.constrs, self.lc, !self.lc.attr_sort_bug, |attr| {
+    attrs.reinsert_all(Some(&self.g.constrs), self.lc, !self.lc.attr_sort_bug, |attr| {
       self.visit_terms(&mut attr.args)
     })
   }
@@ -2528,7 +2536,7 @@ impl VisitMut for ExpandConsts<'_> {
   }
 
   fn visit_attrs(&mut self, attrs: &mut Attrs) {
-    attrs.reinsert_all(self.ctx, self.lc, !self.lc.attr_sort_bug, |attr| {
+    attrs.reinsert_all(Some(self.ctx), self.lc, !self.lc.attr_sort_bug, |attr| {
       self.visit_terms(&mut attr.args)
     })
   }
@@ -2725,7 +2733,7 @@ impl LocalContext {
       let mut i = Idx::from_usize(len);
       for asgn in &mut descope.old {
         if !has_local_const.contains(&i) {
-          match ic.find_index(|a| a.def.cmp(ctx, None, &asgn.def, CmpStyle::Strict)) {
+          match ic.find_index(|a| a.def.cmp(Some(ctx), None, &asgn.def, CmpStyle::Strict)) {
             Ok(nr) => descope.remap.insert(i, nr),
             Err(idx) => {
               let j = ic.insert_at(idx, std::mem::take(asgn));
