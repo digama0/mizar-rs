@@ -1,9 +1,6 @@
 use crate::analyze::Analyzer;
 use crate::parser::MaybeMut;
-use crate::types::{
-  ArticleId, Attrs, ClustersBase, Constructors, ConstructorsBase, IdxVec, InferId,
-  PatternKindClass, SchId, Term, Theorem, Type, Visitable, Vocabularies,
-};
+use crate::types::*;
 use crate::{Assignment, LocalContext, OnVarMut, VisitMut};
 use enum_map::EnumMap;
 use itertools::Itertools;
@@ -60,6 +57,51 @@ impl VisitMut for ExportPrep<'_> {
     self.visit_attrs(&mut attrs.0);
     attrs.1.clone_from(&attrs.0);
   }
+}
+
+#[derive(Default)]
+struct MarkConstr<'a> {
+  accum: &'a [(Article, ConstructorsBase)],
+  used: Vec<bool>,
+}
+impl<'a> MarkConstr<'a> {
+  fn new(accum: &'a [(Article, ConstructorsBase)]) -> Self {
+    Self { accum, used: vec![false; accum.len()] }
+  }
+  fn mark(&mut self, n: u32, key: impl Fn(&ConstructorsBase) -> u32) {
+    let i = self.accum.partition_point(|(_, base)| key(base) <= n);
+    if let Some(b) = self.used.get_mut(i) {
+      *b = true;
+    }
+  }
+}
+impl VisitMut for MarkConstr<'_> {
+  fn visit_mode_id(&mut self, n: &mut ModeId) { self.mark(n.0, |b| b.mode) }
+  fn visit_struct_id(&mut self, n: &mut StructId) { self.mark(n.0, |b| b.struct_mode) }
+  fn visit_attr_id(&mut self, n: &mut AttrId) { self.mark(n.0, |b| b.attribute) }
+  fn visit_pred_id(&mut self, n: &mut PredId) { self.mark(n.0, |b| b.predicate) }
+  fn visit_func_id(&mut self, n: &mut FuncId) { self.mark(n.0, |b| b.functor) }
+  fn visit_sel_id(&mut self, n: &mut SelId) { self.mark(n.0, |b| b.selector) }
+  fn visit_aggr_id(&mut self, n: &mut AggrId) { self.mark(n.0, |b| b.aggregate) }
+}
+
+#[derive(Default)]
+struct ApplyMarkConstr(Vec<(ConstructorsBase, ConstructorsBase)>);
+impl ApplyMarkConstr {
+  fn apply(&mut self, n: &mut u32, key: impl Fn(&ConstructorsBase) -> u32) {
+    if let Some(i) = self.0.partition_point(|(base, _)| key(base) <= *n).checked_sub(1) {
+      *n -= key(&self.0[i].1)
+    }
+  }
+}
+impl VisitMut for ApplyMarkConstr {
+  fn visit_mode_id(&mut self, n: &mut ModeId) { self.apply(&mut n.0, |b| b.mode) }
+  fn visit_struct_id(&mut self, n: &mut StructId) { self.apply(&mut n.0, |b| b.struct_mode) }
+  fn visit_attr_id(&mut self, n: &mut AttrId) { self.apply(&mut n.0, |b| b.attribute) }
+  fn visit_pred_id(&mut self, n: &mut PredId) { self.apply(&mut n.0, |b| b.predicate) }
+  fn visit_func_id(&mut self, n: &mut FuncId) { self.apply(&mut n.0, |b| b.functor) }
+  fn visit_sel_id(&mut self, n: &mut SelId) { self.apply(&mut n.0, |b| b.selector) }
+  fn visit_aggr_id(&mut self, n: &mut AggrId) { self.apply(&mut n.0, |b| b.aggregate) }
 }
 
 impl Analyzer<'_> {
@@ -143,6 +185,67 @@ impl Analyzer<'_> {
       }
     }
 
+    // validating .dco
+    {
+      let mut dco2 = Default::default();
+      let nonempty = self.path.read_dco(MML, &mut dco2).unwrap();
+      let since1 = self.g.constrs.since(&self.export.constrs_base);
+      let mut constrs1 = since1.to_owned();
+      constrs1.visit(ep);
+      assert_eq!(!since1.is_empty(), nonempty);
+      if !nonempty {
+        // nothing
+      } else if MML {
+        assert_eq!(arts1, dco2.sig);
+        assert_eq!(constrs1.len(), dco2.counts);
+      } else {
+        let (mut accum, mut aco) = Default::default();
+        self.path.read_aco(&mut accum, &mut aco).unwrap();
+        assert!(!accum.is_empty()); // accum[0] = HIDDEN
+        let mut base = aco.len();
+        assert_eq!(self.export.constrs_base, base);
+        assert_eq!(arts1.len(), accum.len());
+        let mut marks = MarkConstr::new(&accum);
+        constrs1.visit(&mut marks);
+        for i in (1..accum.len()).rev() {
+          let lo = &accum[i - 1].1;
+          if marks.used[i] {
+            aco.visit_range(&mut marks, lo..&base)
+          }
+          base = *lo
+        }
+        marks.used[0] = true; // HIDDEN must be used
+        let mut offset = ConstructorsBase::default();
+        let mut apply = ApplyMarkConstr::default();
+        let mut last = true;
+        for ((_, accum), &mark) in accum.iter().zip(marks.used.iter().skip(1).chain([&true])) {
+          if last != mark {
+            if mark {
+              offset += *accum - base;
+              apply.0.push((base, offset));
+            } else {
+              base = *accum;
+            }
+            last = mark
+          }
+        }
+        if !apply.0.is_empty() {
+          constrs1.visit(&mut apply);
+        }
+        let marked_art = arts1.iter().zip(&marks.used).filter(|p| *p.1).map(|p| *p.0).collect_vec();
+        assert!(nonempty);
+        assert_eq!(marked_art, dco2.sig);
+        assert_eq!(constrs1.len(), dco2.counts);
+      }
+      macro_rules! process {
+        ($($field:ident),*) => {$(
+          assert_eq_iter(concat!("constrs.", stringify!($field)),
+            constrs1.$field.0.iter(), dco2.constrs.$field.0.iter());
+        )*};
+      }
+      process!(mode, struct_mode, attribute, predicate, functor, selector, aggregate);
+    }
+
     if true {
       return
     }
@@ -150,7 +253,8 @@ impl Analyzer<'_> {
     // validating .dno
     {
       let mut dno2 = Default::default();
-      if self.path.read_dno(MML, &mut dno2).unwrap() {
+      let nonempty = self.path.read_dno(MML, &mut dno2).unwrap();
+      if nonempty {
         assert_eq!(arts2, dno2.sig);
         assert_eq!(vocs1, dno2.vocs);
       }
@@ -168,28 +272,11 @@ impl Analyzer<'_> {
       );
     }
 
-    // validating .dco
-    {
-      let mut dco2 = Default::default();
-      let since1 = self.g.constrs.since(&self.export.constrs_base);
-      if self.path.read_dco(MML, &mut dco2).unwrap() {
-        assert_eq!(arts1, dco2.sig);
-        assert_eq!(since1.len(), dco2.counts);
-      }
-      macro_rules! process {
-        ($($field:ident),*) => {$({
-          let cs = since1.$field.iter().map(|c| c.visit_cloned(ep)).collect_vec();
-          assert_eq_iter(concat!("constrs.", stringify!($field)),
-            cs.iter(), dco2.constrs.$field.0.iter());
-        })*};
-      }
-      process!(mode, struct_mode, attribute, predicate, functor, selector, aggregate);
-    }
-
     // validating .dcl
     {
       let mut dcl2 = Default::default();
-      if self.path.read_dcl(MML, &mut dcl2).unwrap() {
+      let nonempty = self.path.read_dcl(MML, &mut dcl2).unwrap();
+      if nonempty {
         assert_eq!(arts2, dcl2.sig);
       }
       let since1 = self.g.clusters.since(&self.export.clusters_base);
@@ -207,8 +294,9 @@ impl Analyzer<'_> {
     // validating .def
     {
       let (mut sig, mut def2) = Default::default();
-      if self.path.read_definitions(MaybeMut::None, MML, "def", Some(&mut sig), &mut def2).unwrap()
-      {
+      let nonempty =
+        self.path.read_definitions(MaybeMut::None, MML, "def", Some(&mut sig), &mut def2).unwrap();
+      if nonempty {
         assert_eq!(arts2, sig);
       }
       let def1 = &self.definitions[self.export.definitions_base as usize..];
@@ -219,11 +307,11 @@ impl Analyzer<'_> {
     // validating .did
     {
       let (mut sig, mut did2) = Default::default();
-      if self
+      let nonempty = self
         .path
         .read_identify_regs(MaybeMut::None, MML, "did", Some(&mut sig), &mut did2)
-        .unwrap()
-      {
+        .unwrap();
+      if nonempty {
         assert_eq!(arts2, sig);
       }
       let did1 = &self.identify[self.export.identify_base as usize..];
@@ -234,11 +322,11 @@ impl Analyzer<'_> {
     // validating .drd
     {
       let (mut sig, mut drd2) = Default::default();
-      if self
+      let nonempty = self
         .path
         .read_reduction_regs(MaybeMut::None, MML, "drd", Some(&mut sig), &mut drd2)
-        .unwrap()
-      {
+        .unwrap();
+      if nonempty {
         assert_eq!(arts2, sig);
       }
       let drd1 = &self.reductions[self.export.reductions_base as usize..];
@@ -249,7 +337,9 @@ impl Analyzer<'_> {
     // validating .dpr
     {
       let (mut sig, mut dpr2) = Default::default();
-      if self.path.read_properties(MaybeMut::None, MML, "dpr", Some(&mut sig), &mut dpr2).unwrap() {
+      let nonempty =
+        self.path.read_properties(MaybeMut::None, MML, "dpr", Some(&mut sig), &mut dpr2).unwrap();
+      if nonempty {
         assert_eq!(arts2, sig);
       }
       let dpr1 = &self.properties[self.export.properties_base as usize..];
@@ -260,7 +350,8 @@ impl Analyzer<'_> {
     // validating .the
     {
       let mut thms2 = Default::default();
-      if self.path.read_the(MML, &mut thms2).unwrap() {
+      let nonempty = self.path.read_the(MML, &mut thms2).unwrap();
+      if nonempty {
         assert_eq!(arts2, thms2.sig);
       }
       assert_eq_iter("theorems", self.export.theorems.iter(), thms2.thm.iter());
@@ -269,7 +360,8 @@ impl Analyzer<'_> {
     // validating .sch
     {
       let mut schs2 = Default::default();
-      if self.path.read_sch(MML, &mut schs2).unwrap() {
+      let nonempty = self.path.read_sch(MML, &mut schs2).unwrap();
+      if nonempty {
         assert_eq!(arts2, schs2.sig);
       }
       let sch1 = (self.export.schemes.iter())

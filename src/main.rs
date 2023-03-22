@@ -1023,6 +1023,14 @@ macro_rules! mk_visit {
       fn push_bound(&mut self, _ty: Option<&$($mutbl)? Type>) {}
       fn pop_bound(&mut self, _n: u32) {}
 
+      fn visit_mode_id(&mut self, _n: $(&$mutbl)? ModeId) {}
+      fn visit_struct_id(&mut self, _n: $(&$mutbl)? StructId) {}
+      fn visit_attr_id(&mut self, _n: $(&$mutbl)? AttrId) {}
+      fn visit_pred_id(&mut self, _n: $(&$mutbl)? PredId) {}
+      fn visit_func_id(&mut self, _n: $(&$mutbl)? FuncId) {}
+      fn visit_sel_id(&mut self, _n: $(&$mutbl)? SelId) {}
+      fn visit_aggr_id(&mut self, _n: $(&$mutbl)? AggrId) {}
+
       fn super_visit_term(&mut self, tm: &$($mutbl)? Term) {
         if self.abort() { return }
         match tm {
@@ -1034,10 +1042,19 @@ macro_rules! mk_visit {
           | Term::Infer(_)
           | Term::FreeVar(_)
           | Term::It => {}
-          Term::SchFunc { args, .. }
-          | Term::Aggregate { args, .. }
-          | Term::Functor { args, .. }
-          | Term::Selector { args, .. } => self.visit_terms(args),
+          Term::SchFunc { args, .. } => self.visit_terms(args),
+          Term::Aggregate { nr, args } => {
+            self.visit_aggr_id($(&$mutbl)? *nr);
+            self.visit_terms(args)
+          }
+          Term::Functor { nr, args } => {
+            self.visit_func_id($(&$mutbl)? *nr);
+            self.visit_terms(args)
+          }
+          Term::Selector { nr, args } =>  {
+            self.visit_sel_id($(&$mutbl)? *nr);
+            self.visit_terms(args)
+          }
           Term::PrivFunc { args, value, .. } => {
             self.visit_terms(args);
             self.visit_term(value)
@@ -1073,6 +1090,10 @@ macro_rules! mk_visit {
 
       fn visit_type(&mut self, ty: &$($mutbl)? Type) {
         if self.abort() { return }
+        match &$($mutbl)? ty.kind {
+          TypeKind::Mode(nr) => self.visit_mode_id($(&$mutbl)? *nr),
+          TypeKind::Struct(nr) => self.visit_struct_id($(&$mutbl)? *nr),
+        }
         self.visit_attr_pair(&$($mutbl)? ty.attrs);
         self.visit_terms(&$($mutbl)? ty.args);
       }
@@ -1088,6 +1109,7 @@ macro_rules! mk_visit {
         if let Attrs::Consistent(attrs) = attrs {
           for attr in attrs {
             if self.abort() { return }
+            self.visit_attr_id($(&$mutbl)? attr.nr);
             self.visit_terms(&$($mutbl)? attr.args)
           }
         }
@@ -1112,9 +1134,15 @@ macro_rules! mk_visit {
       fn super_visit_formula(&mut self, f: &$($mutbl)? Formula) {
         if self.abort() { return }
         match f {
-          Formula::SchPred { args, .. }
-          | Formula::Pred { args, .. }
-          | Formula::Attr { args, .. } => self.visit_terms(args),
+          Formula::SchPred { args, .. } => self.visit_terms(args),
+          Formula::Pred { nr, args } =>  {
+            self.visit_pred_id($(&$mutbl)? *nr);
+            self.visit_terms(args)
+          }
+          Formula::Attr { nr, args } =>  {
+            self.visit_attr_id($(&$mutbl)? *nr);
+            self.visit_terms(args)
+          }
           Formula::PrivPred { args, value, .. } => {
             self.visit_terms(args);
             self.visit_formula(value)
@@ -3004,7 +3032,7 @@ fn main() {
   let mut cfg = Config {
     top_item_header: false,
     always_verbose_item: false,
-    item_header: DEBUG,
+    item_header: false,
     checker_inputs: DEBUG,
     checker_header: DEBUG,
     checker_conjuncts: DEBUG,

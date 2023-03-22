@@ -329,12 +329,26 @@ impl MizPath {
     let buf = &mut buf;
     r.read_pi(buf);
     r.read_start(buf, Some(b"Constructors"));
-    while let Ok(e) = r.try_read_start(buf, Some(b"Constructor")) {
-      let attrs = r.parse_constructor_attrs(&e);
-      let constr = r.parse_constructor_body(buf, attrs);
-      let MaybeMut::Mut(constrs) = &mut r.ctx else { unreachable!() };
-      constrs.push(constr);
+    r.parse_constructors_body(buf, None);
+    assert!(matches!(r.read_event(buf), Event::Eof));
+    Ok(())
+  }
+
+  pub fn read_aco(
+    &self, accum: &mut Vec<(Article, ConstructorsBase)>, constrs: &mut Constructors,
+  ) -> io::Result<()> {
+    let (mut r, mut buf) = MizReader::new(self.open(true, "aco")?, MaybeMut::None, false);
+    let buf = &mut buf;
+    r.read_pi(buf);
+    r.read_start(buf, Some(b"Constructors"));
+    r.read_start(buf, Some(b"SignatureWithCounts"));
+    while let Ok(e) = r.try_read_start(buf, Some(b"ConstrCounts")) {
+      let art = Article::from_upper(&e.try_get_attribute(b"name").unwrap().unwrap().value);
+      let mut counts = Default::default();
+      r.parse_constr_counts_body(buf, &mut counts);
+      accum.push((art, counts))
     }
+    r.parse_constructors_body(buf, Some(constrs));
     assert!(matches!(r.read_event(buf), Event::Eof));
     Ok(())
   }
@@ -348,32 +362,8 @@ impl MizPath {
     r.read_start(buf, Some(b"Constructors"));
     r.parse_signature(buf, &mut dco.sig);
     r.read_start(buf, Some(b"ConstrCounts"));
-    while let Ok(e) = r.try_read_start(buf, Some(b"ConstrCount")) {
-      let (mut kind, mut nr) = Default::default();
-      for attr in e.attributes().map(Result::unwrap) {
-        match attr.key {
-          b"kind" => kind = r.get_attr_unescaped(&attr.value).chars().next().unwrap() as u8,
-          b"nr" => nr = r.get_attr::<u32>(&attr.value),
-          _ => {}
-        }
-      }
-      match kind {
-        b'M' => dco.counts.mode += nr,
-        b'L' => dco.counts.struct_mode += nr,
-        b'V' => dco.counts.attribute += nr,
-        b'R' => dco.counts.predicate += nr,
-        b'K' => dco.counts.functor += nr,
-        b'U' => dco.counts.selector += nr,
-        b'G' => dco.counts.aggregate += nr,
-        _ => panic!("bad kind"),
-      }
-      r.end_tag(buf)
-    }
-    while let Ok(e) = r.try_read_start(buf, Some(b"Constructor")) {
-      let attrs = r.parse_constructor_attrs(&e);
-      let constr = r.parse_constructor_body(buf, attrs);
-      dco.constrs.push(constr);
-    }
+    r.parse_constr_counts_body(buf, &mut dco.counts);
+    r.parse_constructors_body(buf, Some(&mut dco.constrs));
     assert!(matches!(r.read_event(buf), Event::Eof));
     Ok(true)
   }
@@ -934,6 +924,30 @@ impl MizReader<'_> {
     Pattern { kind, fmt, primary, visible, pos }
   }
 
+  fn parse_constr_counts_body(&mut self, buf: &mut Vec<u8>, counts: &mut ConstructorsBase) {
+    while let Ok(e) = self.try_read_start(buf, Some(b"ConstrCount")) {
+      let (mut kind, mut nr) = Default::default();
+      for attr in e.attributes().map(Result::unwrap) {
+        match attr.key {
+          b"kind" => kind = self.get_attr_unescaped(&attr.value).chars().next().unwrap() as u8,
+          b"nr" => nr = self.get_attr::<u32>(&attr.value),
+          _ => {}
+        }
+      }
+      match kind {
+        b'M' => counts.mode += nr,
+        b'L' => counts.struct_mode += nr,
+        b'V' => counts.attribute += nr,
+        b'R' => counts.predicate += nr,
+        b'K' => counts.functor += nr,
+        b'U' => counts.selector += nr,
+        b'G' => counts.aggregate += nr,
+        _ => panic!("bad kind"),
+      }
+      self.end_tag(buf)
+    }
+  }
+
   fn parse_constructor_attrs(&mut self, e: &BytesStart<'_>) -> ConstructorAttrs {
     let mut attrs = ConstructorAttrs::default();
     for attr in e.attributes().map(Result::unwrap) {
@@ -1033,6 +1047,19 @@ impl MizReader<'_> {
       b'K' => Some(ConstrKind::Func(FuncId(constr_nr))),
       b'M' => Some(ConstrKind::Mode(ModeId(constr_nr))),
       c => panic!("bad constr kind {c}"),
+    }
+  }
+
+  fn parse_constructors_body(&mut self, buf: &mut Vec<u8>, mut constrs: Option<&mut Constructors>) {
+    while let Ok(e) = self.try_read_start(buf, Some(b"Constructor")) {
+      let attrs = self.parse_constructor_attrs(&e);
+      let constr = self.parse_constructor_body(buf, attrs);
+      if let Some(constrs) = &mut constrs {
+        constrs.push(constr);
+      } else {
+        let MaybeMut::Mut(constrs) = &mut self.ctx else { unreachable!() };
+        constrs.push(constr);
+      }
     }
   }
 

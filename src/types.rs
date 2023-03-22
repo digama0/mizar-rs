@@ -197,7 +197,7 @@ impl<I: Idx, T> Index<Range<I>> for IdxVec<I, T> {
 
 #[macro_export]
 macro_rules! mk_id {
-  ($($id:ident($ty:ty),)*) => {
+  ($($id:ident($ty:ty) $(+ Visit($visit:ident))?,)*) => {
     $(
       #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
       pub struct $id(pub $ty);
@@ -212,6 +212,10 @@ macro_rules! mk_id {
         type Err = std::num::ParseIntError;
         fn from_str(s: &str) -> Result<Self, Self::Err> { <$ty>::from_str(s).map($id) }
       }
+
+      $(impl<V: VisitMut> Visitable<V> for $id {
+        fn visit(&mut self, v: &mut V) { v.$visit(self) }
+      })?
     )*
   };
 }
@@ -313,15 +317,15 @@ impl<T> ExtVec<T> {
 }
 
 mk_id! {
-  ModeId(u32),
-  StructId(u32),
-  AttrId(u32),
-  PredId(u32),
+  ModeId(u32) + Visit(visit_mode_id),
+  StructId(u32) + Visit(visit_struct_id),
+  AttrId(u32) + Visit(visit_attr_id),
+  PredId(u32) + Visit(visit_pred_id),
   SchPredId(u32),
   PrivPredId(u32),
-  FuncId(u32),
-  SelId(u32),
-  AggrId(u32),
+  FuncId(u32) + Visit(visit_func_id),
+  SelId(u32) + Visit(visit_sel_id),
+  AggrId(u32) + Visit(visit_aggr_id),
   BoundId(u32),
   ConstId(u32),
   FVarId(u32),
@@ -552,23 +556,23 @@ pub trait Visitable<V> {
 impl<V> Visitable<V> for () {
   fn visit(&mut self, _: &mut V) {}
 }
-impl<V, T: Visitable<V>> Visitable<V> for &mut T {
+impl<V, T: Visitable<V> + ?Sized> Visitable<V> for &mut T {
   fn visit(&mut self, v: &mut V) { (**self).visit(v) }
 }
-impl<V, T: Visitable<V>> Visitable<V> for Box<T> {
+impl<V, T: Visitable<V> + ?Sized> Visitable<V> for Box<T> {
   fn visit(&mut self, v: &mut V) { (**self).visit(v) }
 }
-impl<V, T: Visitable<V>> Visitable<V> for Box<[T]> {
+impl<V, T: Visitable<V>> Visitable<V> for [T] {
   fn visit(&mut self, v: &mut V) { self.iter_mut().for_each(|t| t.visit(v)) }
 }
 impl<V, T: Visitable<V>, const N: usize> Visitable<V> for [T; N] {
-  fn visit(&mut self, v: &mut V) { self.iter_mut().for_each(|t| t.visit(v)) }
+  fn visit(&mut self, v: &mut V) { <[T]>::visit(self, v) }
 }
 impl<V, T: Visitable<V>> Visitable<V> for Option<T> {
   fn visit(&mut self, v: &mut V) { self.iter_mut().for_each(|t| t.visit(v)) }
 }
 impl<V, T: Visitable<V>> Visitable<V> for Vec<T> {
-  fn visit(&mut self, v: &mut V) { self.iter_mut().for_each(|t| t.visit(v)) }
+  fn visit(&mut self, v: &mut V) { (**self).visit(v) }
 }
 impl<V, T: Visitable<V>> Visitable<V> for ExtVec<T> {
   fn visit(&mut self, v: &mut V) { self.vec.visit(v) }
@@ -1166,8 +1170,10 @@ impl<I> Constructor<I> {
     Self { primary, redefines: None, superfluous: 0, properties: Properties::EMPTY }
   }
 }
-impl<I, V: VisitMut> Visitable<V> for Constructor<I> {
-  fn visit(&mut self, v: &mut V) { v.with_locus_tys(&mut self.primary, |_| {}) }
+impl<V: VisitMut, I: Visitable<V>> Visitable<V> for Constructor<I> {
+  fn visit(&mut self, v: &mut V) {
+    v.with_locus_tys(&mut self.primary, |v| self.redefines.visit(v))
+  }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1180,8 +1186,13 @@ impl<I> std::ops::Deref for TyConstructor<I> {
   type Target = Constructor<I>;
   fn deref(&self) -> &Self::Target { &self.c }
 }
-impl<I, V: VisitMut> Visitable<V> for TyConstructor<I> {
-  fn visit(&mut self, v: &mut V) { v.with_locus_tys(&mut self.c.primary, |v| self.ty.visit(v)) }
+impl<V: VisitMut, I: Visitable<V>> Visitable<V> for TyConstructor<I> {
+  fn visit(&mut self, v: &mut V) {
+    v.with_locus_tys(&mut self.c.primary, |v| {
+      self.c.redefines.visit(v);
+      self.ty.visit(v)
+    })
+  }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1200,7 +1211,12 @@ impl std::ops::Deref for StructMode {
 }
 impl<V: VisitMut> Visitable<V> for StructMode {
   fn visit(&mut self, v: &mut V) {
-    v.with_locus_tys(&mut self.c.primary, |v| self.parents.visit(v));
+    v.with_locus_tys(&mut self.c.primary, |v| {
+      self.c.redefines.visit(v);
+      self.parents.visit(v);
+    });
+    self.aggr.visit(v);
+    self.fields.visit(v);
   }
 }
 
@@ -1212,7 +1228,10 @@ pub struct Aggregate {
   pub fields: Box<[SelId]>,
 }
 impl<V: VisitMut> Visitable<V> for Aggregate {
-  fn visit(&mut self, v: &mut V) { self.c.visit(v) }
+  fn visit(&mut self, v: &mut V) {
+    self.c.visit(v);
+    self.fields.visit(v);
+  }
 }
 
 impl std::ops::Deref for Aggregate {
@@ -1223,114 +1242,104 @@ impl std::ops::DerefMut for Aggregate {
   fn deref_mut(&mut self) -> &mut Self::Target { &mut self.c }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Constructors {
-  pub mode: IdxVec<ModeId, TyConstructor<ModeId>>,
-  pub struct_mode: IdxVec<StructId, StructMode>,
-  /// Invariant: The `ty` field is always equal to `primary.last()`
-  pub attribute: IdxVec<AttrId, TyConstructor<AttrId>>,
-  pub predicate: IdxVec<PredId, Constructor<PredId>>,
-  pub functor: IdxVec<FuncId, TyConstructor<FuncId>>,
-  pub selector: IdxVec<SelId, TyConstructor<SelId>>,
-  pub aggregate: IdxVec<AggrId, Aggregate>,
-}
-impl<V: VisitMut> Visitable<V> for Constructors {
-  fn visit(&mut self, v: &mut V) {
-    self.mode.visit(v);
-    self.struct_mode.visit(v);
-    self.attribute.visit(v);
-    self.predicate.visit(v);
-    self.functor.visit(v);
-    self.selector.visit(v);
-    self.aggregate.visit(v);
-  }
-}
+macro_rules! impl_constructors {
+  (struct Constructors {
+    $($(#[$attr:meta])* $variant:ident($field:ident): IdxVec<$id:ty, $ty:ty> = $lit:expr,)*
+  }) => {
+    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    pub struct Constructors { $($(#[$attr])* pub $field: IdxVec<$id, $ty>),* }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ConstructorsBase {
-  pub mode: u32,
-  pub struct_mode: u32,
-  pub attribute: u32,
-  pub predicate: u32,
-  pub functor: u32,
-  pub selector: u32,
-  pub aggregate: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ConstructorsRef<'a> {
-  pub mode: &'a [TyConstructor<ModeId>],
-  pub struct_mode: &'a [StructMode],
-  pub attribute: &'a [TyConstructor<AttrId>],
-  pub predicate: &'a [Constructor<PredId>],
-  pub functor: &'a [TyConstructor<FuncId>],
-  pub selector: &'a [TyConstructor<SelId>],
-  pub aggregate: &'a [Aggregate],
-}
-
-impl Constructors {
-  pub fn push(&mut self, c: ConstructorDef) -> ConstrKind {
-    match c {
-      ConstructorDef::Mode(c) => ConstrKind::Mode(self.mode.push(c)),
-      ConstructorDef::Struct(c) => ConstrKind::Struct(self.struct_mode.push(c)),
-      ConstructorDef::Attr(c) => ConstrKind::Attr(self.attribute.push(c)),
-      ConstructorDef::Pred(c) => ConstrKind::Pred(self.predicate.push(c)),
-      ConstructorDef::Func(c) => ConstrKind::Func(self.functor.push(c)),
-      ConstructorDef::Sel(c) => ConstrKind::Sel(self.selector.push(c)),
-      ConstructorDef::Aggr(c) => ConstrKind::Aggr(self.aggregate.push(c)),
+    impl<V: VisitMut> Visitable<V> for Constructors {
+      fn visit(&mut self, v: &mut V) { $(self.$field.visit(v));* }
     }
-  }
 
-  pub fn visit_at<V: VisitMut>(&mut self, v: &mut V, k: ConstrKind) {
-    match k {
-      ConstrKind::Mode(k) => self.mode[k].visit(v),
-      ConstrKind::Struct(k) => self.struct_mode[k].visit(v),
-      ConstrKind::Attr(k) => self.attribute[k].visit(v),
-      ConstrKind::Pred(k) => self.predicate[k].visit(v),
-      ConstrKind::Func(k) => self.functor[k].visit(v),
-      ConstrKind::Sel(k) => self.selector[k].visit(v),
-      ConstrKind::Aggr(k) => self.aggregate[k].visit(v),
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct ConstructorsBase { $(pub $field: u32),* }
+
+    impl std::ops::AddAssign for ConstructorsBase {
+      fn add_assign(&mut self, rhs: Self) { $(self.$field += rhs.$field);* }
     }
-  }
-
-  pub fn since(&self, base: &ConstructorsBase) -> ConstructorsRef<'_> {
-    ConstructorsRef {
-      mode: &self.mode.0[base.mode as usize..],
-      struct_mode: &self.struct_mode.0[base.struct_mode as usize..],
-      attribute: &self.attribute.0[base.attribute as usize..],
-      predicate: &self.predicate.0[base.predicate as usize..],
-      functor: &self.functor.0[base.functor as usize..],
-      selector: &self.selector.0[base.selector as usize..],
-      aggregate: &self.aggregate.0[base.aggregate as usize..],
+    impl std::ops::Sub for ConstructorsBase {
+      type Output = Self;
+      fn sub(self, rhs: Self) -> Self { Self { $($field: self.$field - rhs.$field),* } }
     }
-  }
 
-  pub fn len(&self) -> ConstructorsBase { self.as_ref().len() }
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct ConstructorsRef<'a> { $(pub $field: &'a [$ty]),* }
 
-  pub fn as_ref(&self) -> ConstructorsRef<'_> { self.since(&Default::default()) }
+    #[derive(Clone, Debug)]
+    pub enum ConstructorDef { $($variant($ty),)* }
+    impl<V: VisitMut> Visitable<V> for ConstructorDef {
+      fn visit(&mut self, v: &mut V) {
+        match self { $(Self::$variant(c) => c.visit(v)),* }
+      }
+    }
+
+    impl Constructors {
+      pub fn push(&mut self, c: ConstructorDef) -> ConstrKind {
+        match c {
+          $(ConstructorDef::$variant(c) => ConstrKind::$variant(self.$field.push(c))),*
+        }
+      }
+
+      pub fn visit_at<V: VisitMut>(&mut self, v: &mut V, k: ConstrKind) {
+        match k { $(ConstrKind::$variant(k) => self.$field[k].visit(v)),* }
+      }
+
+      pub fn visit_range<V: VisitMut>(&mut self, v: &mut V, r: std::ops::Range<&ConstructorsBase>) {
+        $(self.$field.0[r.start.$field as usize..r.end.$field as usize].visit(v));*
+      }
+
+      pub fn since(&self, base: &ConstructorsBase) -> ConstructorsRef<'_> {
+        ConstructorsRef { $($field: &self.$field.0[base.$field as usize..]),* }
+      }
+
+      pub fn extend(&mut self, other: &ConstructorsRef<'_>) {
+        $(self.$field.0.extend_from_slice(other.$field));*
+      }
+
+      pub fn len(&self) -> ConstructorsBase {
+        ConstructorsBase { $($field: self.$field.len() as u32),* }
+      }
+
+      pub fn as_ref(&self) -> ConstructorsRef<'_> {
+        ConstructorsRef { $($field: &self.$field.0),* }
+      }
+    }
+
+    impl ConstructorsRef<'_> {
+      pub fn is_empty(&self) -> bool { $(self.$field.is_empty())&&* }
+
+      pub fn len(&self) -> ConstructorsBase {
+        ConstructorsBase { $($field: self.$field.len() as u32),* }
+      }
+
+      pub fn to_owned(self) -> Constructors {
+        Constructors { $($field: IdxVec::from(self.$field.to_vec())),* }
+      }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    pub enum ConstrKind { $($variant($id),)* }
+
+    impl ConstrKind {
+      pub fn discr(&self) -> u8 {
+        match self { $(Self::$variant(_) => $lit,)* }
+      }
+    }
+  };
 }
 
-impl ConstructorsRef<'_> {
-  pub fn is_empty(&self) -> bool {
-    self.mode.is_empty()
-      && self.struct_mode.is_empty()
-      && self.attribute.is_empty()
-      && self.predicate.is_empty()
-      && self.functor.is_empty()
-      && self.selector.is_empty()
-      && self.aggregate.is_empty()
-  }
-
-  pub fn len(&self) -> ConstructorsBase {
-    ConstructorsBase {
-      mode: self.mode.len() as u32,
-      struct_mode: self.struct_mode.len() as u32,
-      attribute: self.attribute.len() as u32,
-      predicate: self.predicate.len() as u32,
-      functor: self.functor.len() as u32,
-      selector: self.selector.len() as u32,
-      aggregate: self.aggregate.len() as u32,
-    }
+impl_constructors! {
+  struct Constructors {
+    Mode(mode): IdxVec<ModeId, TyConstructor<ModeId>> = b'M',
+    Struct(struct_mode): IdxVec<StructId, StructMode> = b'S',
+    /// Invariant: The `ty` field is always equal to `primary.last()`
+    Attr(attribute): IdxVec<AttrId, TyConstructor<AttrId>> = b'V',
+    Pred(predicate): IdxVec<PredId, Constructor<PredId>> = b'R',
+    Func(functor): IdxVec<FuncId, TyConstructor<FuncId>> = b'K',
+    Sel(selector): IdxVec<SelId, TyConstructor<SelId>> = b'U',
+    Aggr(aggregate): IdxVec<AggrId, Aggregate> = b'G',
   }
 }
 
@@ -1530,31 +1539,6 @@ impl ConditionalClusters {
   }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ConstrKind {
-  Mode(ModeId),
-  Struct(StructId),
-  Attr(AttrId),
-  Pred(PredId),
-  Func(FuncId),
-  Sel(SelId),
-  Aggr(AggrId),
-}
-
-impl ConstrKind {
-  pub fn discr(&self) -> u8 {
-    match self {
-      ConstrKind::Mode(_) => b'M',
-      ConstrKind::Struct(_) => b'S',
-      ConstrKind::Pred(_) => b'R',
-      ConstrKind::Attr(_) => b'V',
-      ConstrKind::Func(_) => b'K',
-      ConstrKind::Sel(_) => b'U',
-      ConstrKind::Aggr(_) => b'G',
-    }
-  }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConstrDef {
   // pub def_nr: u32,
@@ -1610,30 +1594,6 @@ impl DefValue {
     match self {
       DefValue::Term(_) => b'e',
       DefValue::Formula(_) => b'm',
-    }
-  }
-}
-
-#[derive(Clone, Debug)]
-pub enum ConstructorDef {
-  Mode(TyConstructor<ModeId>),
-  Struct(StructMode),
-  Attr(TyConstructor<AttrId>),
-  Pred(Constructor<PredId>),
-  Func(TyConstructor<FuncId>),
-  Sel(TyConstructor<SelId>),
-  Aggr(Aggregate),
-}
-impl<V: VisitMut> Visitable<V> for ConstructorDef {
-  fn visit(&mut self, v: &mut V) {
-    match self {
-      ConstructorDef::Mode(c) => c.visit(v),
-      ConstructorDef::Struct(c) => c.visit(v),
-      ConstructorDef::Attr(c) => c.visit(v),
-      ConstructorDef::Pred(c) => c.visit(v),
-      ConstructorDef::Func(c) => c.visit(v),
-      ConstructorDef::Sel(c) => c.visit(v),
-      ConstructorDef::Aggr(c) => c.visit(v),
     }
   }
 }
