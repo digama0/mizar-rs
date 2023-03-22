@@ -191,6 +191,18 @@ impl VisitMut for ApplyMarkConstr {
   fn visit_aggr_id(&mut self, n: &mut AggrId) { self.apply(&mut n.0, |b| b.aggregate) }
 }
 
+impl AccumConstructors {
+  fn mark<T: for<'a> Visitable<MarkConstr<'a>> + Visitable<ApplyMarkConstr>>(
+    &mut self, t: &mut T, n: usize, arts: &[Article],
+  ) -> Vec<Article> {
+    let mut marks = MarkConstr::new(&self.accum, n);
+    t.visit(&mut marks);
+    marks.closure(&mut self.constrs);
+    marks.apply_with(|v| t.visit(v));
+    marks.filtered(arts)
+  }
+}
+
 impl Analyzer<'_> {
   pub fn export(&mut self) {
     const MML: bool = false;
@@ -325,11 +337,7 @@ impl Analyzer<'_> {
       } else if MML {
         assert_eq!(arts2, dcl2.sig);
       } else {
-        let mut marks = MarkConstr::new(&aco.accum, arts1.len());
-        cl1.visit(&mut marks);
-        marks.closure(&mut aco.constrs);
-        marks.apply_with(|v| cl1.visit(v));
-        assert_eq!(marks.filtered(&arts2), dcl2.sig);
+        assert_eq!(aco.mark(&mut cl1, arts1.len(), &arts2), dcl2.sig);
       }
       macro_rules! process { ($($field:ident),*) => {$({
         assert_eq_iter(concat!("clusters.", stringify!($field)),
@@ -351,17 +359,9 @@ impl Analyzer<'_> {
       } else if MML {
         assert_eq!(arts2, sig);
       } else {
-        let mut marks = MarkConstr::new(&aco.accum, arts1.len());
-        def1.visit(&mut marks);
-        marks.closure(&mut aco.constrs);
-        marks.apply_with(|v| def1.visit(v));
-        assert_eq!(marks.filtered(&arts2), sig);
+        assert_eq!(aco.mark(&mut def1, arts1.len(), &arts2), sig);
       }
       assert_eq_iter("definitions", def1.iter(), def2.iter());
-    }
-
-    if true {
-      return
     }
 
     // validating .did
@@ -371,11 +371,16 @@ impl Analyzer<'_> {
         .path
         .read_identify_regs(MaybeMut::None, MML, "did", Some(&mut sig), &mut did2)
         .unwrap();
-      if nonempty {
+      let mut did1 = self.identify[self.export.identify_base as usize..].to_owned();
+      did1.visit(ep);
+      assert_eq!(!did1.is_empty(), nonempty);
+      if !nonempty {
+        // nothing
+      } else if MML {
         assert_eq!(arts2, sig);
+      } else {
+        assert_eq!(aco.mark(&mut did1, arts1.len(), &arts2), sig);
       }
-      let did1 = &self.identify[self.export.identify_base as usize..];
-      let did1 = did1.iter().map(|c| c.visit_cloned(ep)).collect_vec();
       assert_eq_iter("identities", did1.iter(), did2.iter());
     }
 
@@ -386,11 +391,16 @@ impl Analyzer<'_> {
         .path
         .read_reduction_regs(MaybeMut::None, MML, "drd", Some(&mut sig), &mut drd2)
         .unwrap();
-      if nonempty {
+      let mut drd1 = self.reductions[self.export.reductions_base as usize..].to_owned();
+      drd1.visit(ep);
+      assert_eq!(!drd1.is_empty(), nonempty);
+      if !nonempty {
+        // nothing
+      } else if MML {
         assert_eq!(arts2, sig);
+      } else {
+        assert_eq!(aco.mark(&mut drd1, arts1.len(), &arts2), sig);
       }
-      let drd1 = &self.reductions[self.export.reductions_base as usize..];
-      let drd1 = drd1.iter().map(|c| c.visit_cloned(ep)).collect_vec();
       assert_eq_iter("reductions", drd1.iter(), drd2.iter());
     }
 
@@ -399,12 +409,21 @@ impl Analyzer<'_> {
       let (mut sig, mut dpr2) = Default::default();
       let nonempty =
         self.path.read_properties(MaybeMut::None, MML, "dpr", Some(&mut sig), &mut dpr2).unwrap();
-      if nonempty {
+      let mut dpr1 = self.properties[self.export.properties_base as usize..].to_owned();
+      dpr1.visit(ep);
+      assert_eq!(!dpr1.is_empty(), nonempty);
+      if !nonempty {
+        // nothing
+      } else if MML {
         assert_eq!(arts2, sig);
+      } else {
+        assert_eq!(aco.mark(&mut dpr1, arts1.len(), &arts2), sig);
       }
-      let dpr1 = &self.properties[self.export.properties_base as usize..];
-      let dpr1 = dpr1.iter().map(|c| c.visit_cloned(ep)).collect_vec();
       assert_eq_iter("properties", dpr1.iter(), dpr2.iter());
+    }
+
+    if true {
+      return
     }
 
     // validating .the
