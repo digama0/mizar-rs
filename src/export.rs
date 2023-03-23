@@ -205,16 +205,12 @@ impl AccumConstructors {
 
 impl Analyzer<'_> {
   pub fn export(&mut self) {
-    const MML: bool = false;
-
-    // self.r.g.clusters.visit(&mut ExportPrep { ctx: &self.r.g.constrs, lc: &self.r.lc });
     let ep = &mut ExportPrep {
       ctx: Some(&self.r.g.constrs),
       lc: &self.r.lc,
       ic: &self.r.lc.infer_const.borrow().vec,
       depth: 0,
     };
-    self.export.theorems.visit(ep);
 
     // loading .sgl
     let mut arts2 = vec![];
@@ -245,14 +241,10 @@ impl Analyzer<'_> {
       };
       let mut dfr1 = &self.lc.formatter.formats.formats.0[format_base..];
       let (mut vocs2, mut dfr2) = Default::default();
-      let nonempty = self.path.read_dfr(MML, &mut vocs2, &mut dfr2).unwrap();
+      let nonempty = self.path.read_dfr(false, &mut vocs2, &mut dfr2).unwrap();
       assert_eq!(!dfr1.is_empty(), nonempty);
       let mut marked_dfr;
-      if !nonempty {
-        // nothing
-      } else if MML {
-        assert_eq!(vocs1, vocs2);
-      } else {
+      if nonempty {
         let mut marked_vocs = Vocabularies::default();
         marked_dfr = dfr1.to_owned();
         mark_formats(&vocs1, &mut marked_vocs, &mut marked_dfr, |x| x);
@@ -265,17 +257,12 @@ impl Analyzer<'_> {
     // validating .dco (also push current article to aco)
     {
       let mut dco2 = Default::default();
-      let nonempty = self.path.read_dco(MML, &mut dco2).unwrap();
+      let nonempty = self.path.read_dco(false, &mut dco2).unwrap();
       let since1 = self.g.constrs.since(&self.export.constrs_base);
       let mut constrs1 = since1.to_owned();
       constrs1.visit(ep);
       assert_eq!(!since1.is_empty(), nonempty);
-      if !nonempty {
-        // nothing
-      } else if MML {
-        assert_eq!(arts1, dco2.sig);
-        assert_eq!(constrs1.len(), dco2.counts);
-      } else {
+      if nonempty {
         aco.constrs.append(constrs1.clone());
         let mut marks = MarkConstr::new(&aco.accum, arts1.len());
         *marks.used.last_mut().unwrap() = true;
@@ -303,14 +290,9 @@ impl Analyzer<'_> {
         })
         .collect_vec();
       let mut dno2 = Default::default();
-      let nonempty = self.path.read_dno(MML, &mut dno2).unwrap();
+      let nonempty = self.path.read_dno(false, &mut dno2).unwrap();
       assert_eq!(!pats1.is_empty(), nonempty);
-      if !nonempty {
-        // nothing
-      } else if MML {
-        assert_eq!(arts2, dno2.sig);
-        assert_eq!(vocs1, dno2.vocs);
-      } else {
+      if nonempty {
         let mut marked_vocs = Vocabularies::default();
         mark_formats(&vocs1, &mut marked_vocs, &mut pats1, |(fmt, _)| fmt);
         let mut marks = MarkConstr::new(&aco.accum, arts1.len());
@@ -326,17 +308,13 @@ impl Analyzer<'_> {
     // validating .dcl
     {
       let mut dcl2 = Default::default();
-      let nonempty = self.path.read_dcl(MML, &mut dcl2).unwrap();
+      let nonempty = self.path.read_dcl(false, &mut dcl2).unwrap();
       ep.with_ctx(None, |ep| dcl2.cl.visit(ep));
       let since1 = self.g.clusters.since(&self.export.clusters_base);
       assert_eq!(!since1.is_empty(), nonempty);
       let mut cl1 = since1.to_owned();
       cl1.visit(ep);
-      if !nonempty {
-        // nothing
-      } else if MML {
-        assert_eq!(arts2, dcl2.sig);
-      } else {
+      if nonempty {
         assert_eq!(aco.mark(&mut cl1, arts1.len(), &arts2), dcl2.sig);
       }
       macro_rules! process { ($($field:ident),*) => {$({
@@ -349,16 +327,13 @@ impl Analyzer<'_> {
     // validating .def
     {
       let (mut sig, mut def2) = Default::default();
-      let nonempty =
-        self.path.read_definitions(MaybeMut::None, MML, "def", Some(&mut sig), &mut def2).unwrap();
+      let nonempty = (self.path)
+        .read_definitions(MaybeMut::None, false, "def", Some(&mut sig), &mut def2)
+        .unwrap();
       let mut def1 = self.definitions[self.export.definitions_base as usize..].to_owned();
       def1.visit(ep);
       assert_eq!(!def1.is_empty(), nonempty);
-      if !nonempty {
-        // nothing
-      } else if MML {
-        assert_eq!(arts2, sig);
-      } else {
+      if nonempty {
         assert_eq!(aco.mark(&mut def1, arts1.len(), &arts2), sig);
       }
       assert_eq_iter("definitions", def1.iter(), def2.iter());
@@ -367,18 +342,13 @@ impl Analyzer<'_> {
     // validating .did
     {
       let (mut sig, mut did2) = Default::default();
-      let nonempty = self
-        .path
-        .read_identify_regs(MaybeMut::None, MML, "did", Some(&mut sig), &mut did2)
+      let nonempty = (self.path)
+        .read_identify_regs(MaybeMut::None, false, "did", Some(&mut sig), &mut did2)
         .unwrap();
       let mut did1 = self.identify[self.export.identify_base as usize..].to_owned();
       did1.visit(ep);
       assert_eq!(!did1.is_empty(), nonempty);
-      if !nonempty {
-        // nothing
-      } else if MML {
-        assert_eq!(arts2, sig);
-      } else {
+      if nonempty {
         assert_eq!(aco.mark(&mut did1, arts1.len(), &arts2), sig);
       }
       assert_eq_iter("identities", did1.iter(), did2.iter());
@@ -387,18 +357,13 @@ impl Analyzer<'_> {
     // validating .drd
     {
       let (mut sig, mut drd2) = Default::default();
-      let nonempty = self
-        .path
-        .read_reduction_regs(MaybeMut::None, MML, "drd", Some(&mut sig), &mut drd2)
+      let nonempty = (self.path)
+        .read_reduction_regs(MaybeMut::None, false, "drd", Some(&mut sig), &mut drd2)
         .unwrap();
       let mut drd1 = self.reductions[self.export.reductions_base as usize..].to_owned();
       drd1.visit(ep);
       assert_eq!(!drd1.is_empty(), nonempty);
-      if !nonempty {
-        // nothing
-      } else if MML {
-        assert_eq!(arts2, sig);
-      } else {
+      if nonempty {
         assert_eq!(aco.mark(&mut drd1, arts1.len(), &arts2), sig);
       }
       assert_eq_iter("reductions", drd1.iter(), drd2.iter());
@@ -408,15 +373,11 @@ impl Analyzer<'_> {
     {
       let (mut sig, mut dpr2) = Default::default();
       let nonempty =
-        self.path.read_properties(MaybeMut::None, MML, "dpr", Some(&mut sig), &mut dpr2).unwrap();
+        self.path.read_properties(MaybeMut::None, false, "dpr", Some(&mut sig), &mut dpr2).unwrap();
       let mut dpr1 = self.properties[self.export.properties_base as usize..].to_owned();
       dpr1.visit(ep);
       assert_eq!(!dpr1.is_empty(), nonempty);
-      if !nonempty {
-        // nothing
-      } else if MML {
-        assert_eq!(arts2, sig);
-      } else {
+      if nonempty {
         assert_eq!(aco.mark(&mut dpr1, arts1.len(), &arts2), sig);
       }
       assert_eq_iter("properties", dpr1.iter(), dpr2.iter());
@@ -425,34 +386,28 @@ impl Analyzer<'_> {
     // validating .the
     {
       let mut thms2 = Default::default();
-      let nonempty = self.path.read_the(MML, &mut thms2).unwrap();
-      assert_eq!(!self.export.theorems.is_empty(), nonempty);
-      if !nonempty {
-        // nothing
-      } else if MML {
-        assert_eq!(arts2, thms2.sig);
-      } else {
-        assert_eq!(aco.mark(&mut self.export.theorems, arts1.len(), &arts2), thms2.sig);
+      let nonempty = self.path.read_the(false, &mut thms2).unwrap();
+      let mut thms1 = std::mem::take(&mut self.export.theorems);
+      assert_eq!(!thms1.is_empty(), nonempty);
+      if nonempty {
+        thms1.visit(ep);
+        assert_eq!(aco.mark(&mut thms1, arts1.len(), &arts2), thms2.sig);
       }
-      assert_eq_iter("theorems", self.export.theorems.iter(), thms2.thm.iter());
+      assert_eq_iter("theorems", thms1.iter(), thms2.thm.iter());
     }
 
     // validating .sch
     {
       let mut schs2 = Default::default();
-      let nonempty = self.path.read_sch(MML, &mut schs2).unwrap();
-      let mut sch1 = (self.export.schemes.iter())
+      let nonempty = self.path.read_sch(false, &mut schs2).unwrap();
+      let mut schs1 = (self.export.schemes.iter())
         .map(|i| i.map(|i| self.libs.sch[&(ArticleId::SELF, i)].visit_cloned(ep)))
         .collect_vec();
-      assert_eq!(!sch1.is_empty(), nonempty);
-      if !nonempty {
-        // nothing
-      } else if MML {
-        assert_eq!(arts2, schs2.sig);
-      } else {
-        assert_eq!(aco.mark(&mut sch1, arts1.len(), &arts2), schs2.sig);
+      assert_eq!(!schs1.is_empty(), nonempty);
+      if nonempty {
+        assert_eq!(aco.mark(&mut schs1, arts1.len(), &arts2), schs2.sig);
       }
-      assert_eq_iter("schemes", sch1.iter(), schs2.sch.iter());
+      assert_eq_iter("schemes", schs1.iter(), schs2.sch.iter());
     }
   }
 }
