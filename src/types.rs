@@ -2424,7 +2424,7 @@ pub struct DepNotation {
   pub pats: Vec<(Format, Pattern)>,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct AccumConstructors {
   pub accum: Vec<(Article, ConstructorsBase)>,
   pub constrs: Constructors,

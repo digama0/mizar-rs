@@ -422,16 +422,17 @@ impl Analyzer<'_> {
       assert_eq_iter("properties", dpr1.iter(), dpr2.iter());
     }
 
-    if true {
-      return
-    }
-
     // validating .the
     {
       let mut thms2 = Default::default();
       let nonempty = self.path.read_the(MML, &mut thms2).unwrap();
-      if nonempty {
+      assert_eq!(!self.export.theorems.is_empty(), nonempty);
+      if !nonempty {
+        // nothing
+      } else if MML {
         assert_eq!(arts2, thms2.sig);
+      } else {
+        assert_eq!(aco.mark(&mut self.export.theorems, arts1.len(), &arts2), thms2.sig);
       }
       assert_eq_iter("theorems", self.export.theorems.iter(), thms2.thm.iter());
     }
@@ -440,12 +441,17 @@ impl Analyzer<'_> {
     {
       let mut schs2 = Default::default();
       let nonempty = self.path.read_sch(MML, &mut schs2).unwrap();
-      if nonempty {
-        assert_eq!(arts2, schs2.sig);
-      }
-      let sch1 = (self.export.schemes.iter())
+      let mut sch1 = (self.export.schemes.iter())
         .map(|i| i.map(|i| self.libs.sch[&(ArticleId::SELF, i)].visit_cloned(ep)))
         .collect_vec();
+      assert_eq!(!sch1.is_empty(), nonempty);
+      if !nonempty {
+        // nothing
+      } else if MML {
+        assert_eq!(arts2, schs2.sig);
+      } else {
+        assert_eq!(aco.mark(&mut sch1, arts1.len(), &arts2), schs2.sig);
+      }
       assert_eq_iter("schemes", sch1.iter(), schs2.sch.iter());
     }
   }
