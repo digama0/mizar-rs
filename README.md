@@ -70,14 +70,14 @@ See [#2](https://github.com/digama0/mizar-rs/issues/2#issuecomment-1467281905) f
 
 Here some additional mizar-rs modes:
 
-|                    | command         | real time | CPU time   |
-|--------------------|-----------------|-----------|------------|
-| analyzer (quick)   | `EXPORT`        | 35.03 sec | 3.62 min   |
-| analyzer           | `ANALYZER_ONLY` | 2.42 min  | 13.14 min  |
-| checker            | `CHECKER_ONLY`  | 11.33 min | 73.70 min  |
-| analyzer + checker | (default)       | 11.71 min | 81.93 min  |
+|                           | command         | real time | CPU time   |
+|---------------------------|-----------------|-----------|------------|
+| analyzer (quick) + export | `EXPORT`        | 35.36 sec | 3.56 min   |
+| analyzer                  | `ANALYZER_ONLY` | 2.42 min  | 13.14 min  |
+| checker                   | `CHECKER_ONLY`  | 11.33 min | 73.70 min  |
+| analyzer + checker        | (default)       | 11.71 min | 81.93 min  |
 
-The "analyzer (quick)" mode performs just enough analysis to construct theorem statements. This is mostly useful for constructing data for dependent articles, and represents the not-trivially-parallelizable part of MML processing when generating data files from scratch. (In the tests above we assume that all the auxiliary files have already been created, so we are not actually working from scratch.)
+The "analyzer (quick)" mode performs just enough analysis to construct theorem statements. This is used as input to the "export" step, which constructs the `prel/` data for dependent articles, and represents the not-trivially-parallelizable part of MML processing when generating data files from scratch. (In the tests above we assume that all the auxiliary files have already been created, so we are not actually working from scratch.)
 
 ## Configuration
 
