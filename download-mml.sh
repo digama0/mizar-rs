@@ -10,6 +10,7 @@ for i in mizbin mizdoc mizshare; do
 done
 cd mizshare
 patch < ../../mml.patch
+patch < ../../prel.patch
 # for i in \
 #   realset1 seqfunc limfunc4 sin_cos6 fdiff_4 fdiff_6 fdiff_7 fdiff_8 \
 #   fdiff_9 fdiff_10 sin_cos9 integr12 integr13 integr14 complsp1 decomp_1 \
