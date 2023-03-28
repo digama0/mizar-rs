@@ -1,3 +1,4 @@
+use crate::accom::Accomodator;
 use crate::checker::Checker;
 use crate::types::*;
 use crate::*;
@@ -13,6 +14,7 @@ pub struct Reader {
   pub libs: Libraries,
   pub article: Article,
   treat_thm_as_axiom: bool,
+  pub accom: Option<Box<Accomodator>>,
   /// gFormatsColl
   pub formats: BTreeMap<Format, FormatId>,
   /// Notat
@@ -43,40 +45,65 @@ impl WithGlobalLocal for Reader {
 }
 
 impl MizPath {
-  pub fn with_reader(&self, cfg: &Config, f: impl FnOnce(&mut Reader)) {
+  pub fn with_reader(&self, cfg: &Config, f: &mut dyn FnMut(&mut Reader)) {
+    let mut accom = cfg.accom_enabled.then(Box::<Accomodator>::default);
+    if let Some(accom) = &mut accom {
+      self.read_evl(&mut accom.dirs).unwrap();
+    }
+
     // MizPBlockObj.InitPrepData
     let mut refs = References::default();
-    self.read_ref(&mut refs).unwrap();
+    let refs = if cfg.analyzer_enabled || cfg.accom_enabled {
+      None
+    } else {
+      if cfg.checker_enabled {
+        self.read_ref(&mut refs).unwrap();
+      }
+      Some(&refs)
+    };
 
     // Load_EnvConstructors
-    let mut reqs = RequirementIndexes::default();
-    self.read_ere(&mut reqs).unwrap();
+    let mut v = Reader::new(cfg, accom, self.art);
+    v.lc.attr_sort_bug = cfg.attr_sort_bug;
+    v.lc.formatter.dump = cfg.dump_formatter;
+    let old = v.lc.start_stash();
+    if let Some(accom) = &mut v.accom {
+      accom.accom_constructors(&mut v.g.constrs).unwrap();
+      accom.accom_requirements(&v.g.constrs, &mut v.g.reqs).unwrap();
+    } else {
+      self.read_atr(&mut v.g.constrs).unwrap();
+      self.read_ere(&mut v.g.reqs).unwrap();
+    }
+    v.g.reqs.init_rev();
     let mut has_omega = false;
-    let numeral_type = if let (Some(element), Some(omega)) = (reqs.element(), reqs.omega()) {
+    if let (Some(element), Some(omega)) = (v.g.reqs.element(), v.g.reqs.omega()) {
       has_omega = true;
-      Type {
+      v.g.numeral_type = Type {
         kind: TypeKind::Mode(element),
         attrs: Default::default(),
         args: vec![Term::Functor { nr: omega, args: Box::new([]) }],
       }
-    } else {
-      Type::SET
-    };
-    let mut v = Reader::new(cfg, reqs, numeral_type, self.art);
-    v.lc.attr_sort_bug = cfg.attr_sort_bug;
-    v.lc.formatter.dump = cfg.dump_formatter;
-    self.read_atr(&mut v.g.constrs).unwrap();
-    let old = v.lc.start_stash();
-    let mut formats = None;
-    if cfg.analyzer_enabled {
-      let mut f = Default::default();
-      self.read_formats("frx", &mut f).unwrap();
-      v.formats.extend(f.formats.enum_iter().map(|(id, f)| (*f, id)));
-      formats = Some(f)
     }
-    v.lc.formatter.init(self, cfg.exporter_enabled, formats);
+    let mut formats = cfg.analyzer_enabled.then(Default::default);
     let mut notations = Default::default();
-    self.read_eno(&mut notations).unwrap();
+    if let Some(accom) = &v.accom {
+      accom.accom_notations(&mut v.formats, formats.as_mut(), &mut notations).unwrap();
+    } else {
+      if let Some(f) = &mut formats {
+        self.read_formats("frx", f).unwrap();
+        v.formats.extend(f.formats.enum_iter().map(|(id, f)| (*f, id)));
+      }
+      self.read_eno(&mut notations).unwrap();
+    }
+    v.lc.formatter.init_formats(self, cfg.exporter_enabled, formats);
+    let symbols = v.accom.as_deref_mut().filter(|_| cfg.checker_enabled).map(|accom| {
+      let mut symbols = Default::default();
+      self.read_dcx(&mut symbols).unwrap();
+      accom.init_symbols(&symbols);
+      symbols
+    });
+    v.lc.formatter.init_symbols(self, symbols);
+    v.lc.formatter.init();
     v.lc.formatter.extend(&v.g.constrs, &notations);
     if cfg.dump_constructors {
       v.g.constrs.dump()
@@ -84,7 +111,13 @@ impl MizPath {
     if cfg.dump_requirements {
       v.g.reqs.dump(&v.g.constrs)
     }
-    self.read_ecl(&v.g.constrs, &mut v.g.clusters).unwrap();
+    if let Some(accom) = &v.accom {
+      accom.accom_clusters(&v.g.constrs, &mut v.g.clusters).unwrap();
+    } else {
+      self.read_ecl(&v.g.constrs, &mut v.g.clusters).unwrap();
+    }
+    v.g.clusters.functor.sort_all(|a, b| FunctorCluster::cmp_term(&a.term, &v.g.constrs, &b.term));
+
     let mut attrs = Attrs::default();
     if let Some(zero) = v.g.reqs.zero() {
       attrs.push(Attr::new0(zero, false))
@@ -120,7 +153,13 @@ impl MizPath {
 
     // LoadDefinitions
     if cfg.analyzer_enabled {
-      self.read_definitions(&v.g.constrs, true, "dfs", None, &mut v.definitions).unwrap();
+      if let Some(accom) = &v.accom {
+        accom
+          .accom_definitions(&v.g.constrs, DirectiveKind::Definitions, &mut v.definitions)
+          .unwrap();
+      } else {
+        self.read_definitions(&v.g.constrs, true, "dfs", None, &mut v.definitions).unwrap();
+      }
       if cfg.dump_definitions {
         for d in &v.definitions {
           eprintln!("definition: {d:?}");
@@ -130,7 +169,13 @@ impl MizPath {
 
     // LoadEqualities
     if cfg.checker_enabled {
-      self.read_definitions(&v.g.constrs, true, "dfe", None, &mut v.equalities).unwrap();
+      if let Some(accom) = &v.accom {
+        accom
+          .accom_definitions(&v.g.constrs, DirectiveKind::Equalities, &mut v.equalities)
+          .unwrap();
+      } else {
+        self.read_definitions(&v.g.constrs, true, "dfe", None, &mut v.equalities).unwrap();
+      }
       if cfg.dump_definitions {
         for d in &v.equalities {
           eprintln!("equality: {d:?}");
@@ -140,7 +185,13 @@ impl MizPath {
 
     // LoadExpansions
     if cfg.checker_enabled {
-      self.read_definitions(&v.g.constrs, true, "dfx", None, &mut v.expansions).unwrap();
+      if let Some(accom) = &v.accom {
+        accom
+          .accom_definitions(&v.g.constrs, DirectiveKind::Expansions, &mut v.expansions)
+          .unwrap();
+      } else {
+        self.read_definitions(&v.g.constrs, true, "dfx", None, &mut v.expansions).unwrap();
+      }
       if cfg.dump_definitions {
         for d in &v.expansions {
           eprintln!("expansion: {d:?}");
@@ -149,16 +200,21 @@ impl MizPath {
     }
 
     // LoadPropertiesReg
-    self.read_properties(&v.g.constrs, true, "epr", None, &mut v.properties).unwrap();
-
-    // LoadIdentify
-    if cfg.checker_enabled {
-      self.read_identify_regs(&v.g.constrs, true, "eid", None, &mut v.identify).unwrap();
+    if let Some(accom) = &v.accom {
+      accom.accom_properties(&v.g.constrs, &mut v.properties).unwrap();
+    } else {
+      self.read_properties(&v.g.constrs, true, "epr", None, &mut v.properties).unwrap();
     }
 
-    // LoadReductions
-    if cfg.checker_enabled {
-      self.read_reduction_regs(&v.g.constrs, true, "erd", None, &mut v.reductions).unwrap();
+    // LoadIdentify, LoadReductions
+    if cfg.checker_enabled || cfg.exporter_enabled {
+      if let Some(accom) = &v.accom {
+        accom.accom_identify_regs(&v.g.constrs, &mut v.identify).unwrap();
+        accom.accom_reduction_regs(&v.g.constrs, &mut v.reductions).unwrap();
+      } else {
+        self.read_identify_regs(&v.g.constrs, true, "eid", None, &mut v.identify).unwrap();
+        self.read_reduction_regs(&v.g.constrs, true, "erd", None, &mut v.reductions).unwrap();
+      }
     }
 
     // in mizar this was done inside the parser
@@ -218,11 +274,19 @@ impl MizPath {
 
     // InLibraries
     if cfg.checker_enabled {
-      self.read_eth(&v.g.constrs, &refs, &mut v.libs).unwrap();
+      if let Some(accom) = &v.accom {
+        accom.accom_theorems(&mut v.libs).unwrap();
+      } else {
+        self.read_eth(&v.g.constrs, refs, &mut v.libs).unwrap();
+      }
       let cc = &mut InternConst::new(&v.g, &v.lc, &v.equals, &v.identify, &v.func_ids);
       v.libs.thm.values_mut().for_each(|f| f.visit(cc));
       v.libs.def.values_mut().for_each(|f| f.visit(cc));
-      self.read_esh(&v.g.constrs, &refs, &mut v.libs).unwrap();
+      if let Some(accom) = &v.accom {
+        accom.accom_schemes(&mut v.libs).unwrap();
+      } else {
+        self.read_esh(&v.g.constrs, refs, &mut v.libs).unwrap();
+      }
       RoundUpTypes::with(&v.g, &mut v.lc, |rr| v.libs.visit(rr));
 
       if cfg.dump_libraries {
@@ -251,20 +315,21 @@ pub struct Scope {
 }
 
 impl Reader {
-  pub fn new(cfg: &Config, reqs: RequirementIndexes, numeral_type: Type, article: Article) -> Self {
+  pub fn new(cfg: &Config, accom: Option<Box<Accomodator>>, article: Article) -> Self {
     Reader {
       g: Global {
         cfg: cfg.clone(),
-        reqs,
+        reqs: Default::default(),
         constrs: Default::default(),
         clusters: Default::default(),
-        numeral_type,
+        numeral_type: Type::SET,
         nat: None,
       },
       lc: LocalContext::default(),
       libs: Libraries::default(),
       article,
       treat_thm_as_axiom: matches!(article.as_str(), "tarski_0" | "tarski_a"),
+      accom,
       formats: Default::default(),
       notations: Default::default(),
       definitions: Default::default(),

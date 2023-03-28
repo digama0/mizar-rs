@@ -417,6 +417,10 @@ impl From<FuncId> for RequirementKind {
 }
 
 macro_rules! mk_requirements {
+  (@to_kind FuncId $e:tt) => { ConstrKind::Func($e) };
+  (@to_kind AttrId $e:tt) => { ConstrKind::Attr($e) };
+  (@to_kind PredId $e:tt) => { ConstrKind::Pred($e) };
+  (@to_kind ModeId $e:tt) => { ConstrKind::Mode($e) };
   (@is_func FuncId) => { true };
   (@is_func $_:tt) => { false };
   ($($(#[$attr:meta])* $id:ident: $ty:tt,)*) => {
@@ -438,6 +442,13 @@ macro_rules! mk_requirements {
       pub fn get(&self, req: Requirement) -> Option<RequirementKind> {
         match req {
           $(Requirement::$id => self.get_raw(req).map(|x| $ty(x).into()),)*
+        }
+      }
+
+      pub fn set(&mut self, req: Requirement, value: ConstrKind) {
+        match (req, value) {
+          $((Requirement::$id, mk_requirements!(@to_kind $ty n)) => self.fwd[req] = n.0 + 1,)*
+          _ => panic!("incorrect type for requirement"),
         }
       }
     }
@@ -986,7 +997,7 @@ impl<V: VisitMut> Visitable<V> for Attr {
   fn visit(&mut self, v: &mut V) { self.args.visit(v) }
 }
 
-#[derive(Copy, Clone, Default, PartialEq, Eq)]
+#[derive(Hash, Copy, Clone, Default, PartialEq, Eq)]
 pub struct Article([u8; 8]);
 
 impl std::fmt::Debug for Article {
@@ -1278,7 +1289,7 @@ macro_rules! impl_constructors {
         match c { $(ConstructorDef::$variant(c) => ConstrKind::$variant(self.$field.push(c))),* }
       }
 
-      pub fn append(&mut self, mut other: Constructors) {
+      pub fn append(&mut self, other: &mut Constructors) {
         $(self.$field.0.append(&mut other.$field.0));*
       }
 
@@ -1329,6 +1340,10 @@ macro_rules! impl_constructors {
       pub fn discr(&self) -> u8 {
         match self { $(Self::$variant(_) => $lit,)* }
       }
+
+      pub fn lt(self, base: &ConstructorsBase) -> bool {
+        match self { $(Self::$variant(c) => c.0 < base.$field),* }
+      }
     }
   };
 }
@@ -1376,6 +1391,15 @@ impl Clusters {
       functor: &self.functor.0[base.functor as usize..],
       conditional: &self.conditional.vec[base.conditional as usize..],
     }
+  }
+
+  pub fn append(&mut self, ctx: &Constructors, other: &mut ClustersRaw) {
+    self.registered.append(&mut other.registered);
+    self.functor.0.append(&mut other.functor);
+    for cc in &other.conditional {
+      self.conditional.update_attr_clusters(ctx, &cc.antecedent);
+    }
+    self.conditional.vec.append(&mut other.conditional)
   }
 }
 
@@ -1561,8 +1585,8 @@ impl<V: VisitMut> Visitable<V> for ConditionalClusters {
 }
 
 impl ConditionalClusters {
-  pub fn push(&mut self, ctx: &Constructors, cc: ConditionalCluster) {
-    if let Attrs::Consistent(attrs) = &cc.antecedent {
+  pub fn update_attr_clusters(&mut self, ctx: &Constructors, attrs: &Attrs) {
+    if let Attrs::Consistent(attrs) = attrs {
       for attr in attrs {
         self.attr_clusters[attr.pos]
           .entry(attr.adjusted_nr(ctx))
@@ -1570,6 +1594,9 @@ impl ConditionalClusters {
           .insert(self.vec.len() as u32);
       }
     }
+  }
+  pub fn push(&mut self, ctx: &Constructors, cc: ConditionalCluster) {
+    self.update_attr_clusters(ctx, &cc.antecedent);
     self.vec.push(cc)
   }
 }
@@ -2170,6 +2197,7 @@ pub enum SymbolKind {
   Attr(AttrSymId),
   Struct(StructSymId),
   Sel(SelSymId),
+  Article(ArticleId),
 }
 impl From<FuncSymId> for SymbolKind {
   fn from(v: FuncSymId) -> Self { Self::Func(v) }
@@ -2207,12 +2235,12 @@ impl SymbolKind {
       SymbolKind::Attr(_) => SymbolKindClass::Attr,
       SymbolKind::Struct(_) => SymbolKindClass::Struct,
       SymbolKind::Sel(_) => SymbolKindClass::Sel,
+      SymbolKind::Article(_) => unreachable!(),
     }
   }
 }
 
-#[derive(Debug, Default)]
-pub struct Symbols(pub Vec<(SymbolKind, String)>);
+pub type Symbols = Vec<(SymbolKind, String)>;
 
 #[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
 pub struct FormatAggr {
@@ -2414,8 +2442,19 @@ impl<V: VisitMut> Visitable<V> for Pattern {
 #[derive(Debug, Default)]
 pub struct Notations(pub Vec<Pattern>);
 
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct SymbolsBase(pub EnumMap<SymbolKindClass, u32>);
+
+impl std::ops::AddAssign<&Self> for SymbolsBase {
+  fn add_assign(&mut self, rhs: &Self) {
+    for (i, val) in &rhs.0 {
+      self.0[i] += val
+    }
+  }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Vocabularies(pub Vec<(Article, EnumMap<SymbolKindClass, u32>)>);
+pub struct Vocabularies(pub Vec<(Article, SymbolsBase)>);
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct DepNotation {
@@ -2427,6 +2466,7 @@ pub struct DepNotation {
 #[derive(Debug, Default)]
 pub struct AccumConstructors {
   pub accum: Vec<(Article, ConstructorsBase)>,
+  pub base: ConstructorsBase,
   pub constrs: Constructors,
 }
 
@@ -2493,4 +2533,49 @@ pub struct DepTheorems {
 pub struct DepSchemes {
   pub sig: Vec<Article>,
   pub sch: Vec<Option<Scheme>>,
+}
+
+#[derive(Clone, Copy, Debug, Enum)]
+pub enum DirectiveKind {
+  Vocabularies,
+  Notations,
+  Definitions,
+  Theorems,
+  Schemes,
+  Registrations,
+  Constructors,
+  Requirements,
+  Equalities,
+  Expansions,
+}
+
+impl DirectiveKind {
+  pub fn name(self) -> &'static str {
+    match self {
+      Self::Vocabularies => "vocabularies",
+      Self::Notations => "notations",
+      Self::Definitions => "definitions",
+      Self::Theorems => "theorems",
+      Self::Schemes => "schemes",
+      Self::Registrations => "registrations",
+      Self::Constructors => "constructors",
+      Self::Requirements => "requirements",
+      Self::Equalities => "equalities",
+      Self::Expansions => "expansions",
+    }
+  }
+}
+
+#[derive(Debug, Default)]
+pub struct Directives(pub EnumMap<DirectiveKind, Vec<(Position, Article)>>);
+
+pub struct DepRequirement {
+  pub req: Requirement,
+  pub kind: ConstrKind,
+}
+
+#[derive(Default)]
+pub struct DepRequirements {
+  pub sig: Vec<Article>,
+  pub reqs: Vec<DepRequirement>,
 }

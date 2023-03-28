@@ -78,20 +78,30 @@ impl Formatter {
     pats.iter().for_each(|pat| self.push(ctx, pat))
   }
 
-  pub fn init(&mut self, path: &MizPath, must_init_formats: bool, formats: Option<Formats>) {
-    if self.cfg.enable_formatter || must_init_formats {
+  pub fn init_formats(&mut self, path: &MizPath, force: bool, formats: Option<Formats>) {
+    if self.cfg.enable_formatter || force {
       self.formats = formats.unwrap_or_else(|| {
         let mut formats = Default::default();
         path.read_formats("frx", &mut formats).unwrap();
         formats
       });
     }
+  }
+
+  pub fn init_symbols(&mut self, path: &MizPath, symbols: Option<Vec<(SymbolKind, String)>>) {
+    if self.cfg.enable_formatter {
+      self.symbols.extend(symbols.unwrap_or_else(|| {
+        let mut symbols = Default::default();
+        path.read_dcx(&mut symbols).unwrap();
+        symbols
+      }))
+    }
+  }
+
+  pub fn init(&mut self) {
     if !self.cfg.enable_formatter {
       return
     }
-    let mut symbols = Default::default();
-    path.read_dcx(&mut symbols).unwrap();
-    self.symbols = symbols.0.into_iter().collect();
     for f in &self.formats.formats.0 {
       match f {
         Format::Aggr(f) => assert!(self.symbols.contains_key(&f.sym.into())),

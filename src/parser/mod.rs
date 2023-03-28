@@ -1,7 +1,7 @@
 use crate::parser::article::ArticleParser;
 use crate::types::*;
 use crate::{CmpStyle, MizPath, OnVarMut, RequirementIndexes, VisitMut};
-use enum_map::{Enum, EnumMap};
+use enum_map::Enum;
 use quick_xml::escape::unescape;
 use quick_xml::events::{BytesStart, Event};
 use std::collections::HashMap;
@@ -24,7 +24,6 @@ impl MizPath {
       *val = buf.trim_end().parse().unwrap();
       buf.clear();
     }
-    idx.init_rev();
     Ok(())
   }
 
@@ -227,6 +226,25 @@ impl<'a> MizReader<'a> {
 }
 
 impl MizPath {
+  pub fn read_evl(&self, dirs: &mut Directives) -> io::Result<()> {
+    let (mut r, mut buf) = MizReader::new(self.open(true, "evl")?, MaybeMut::None, false);
+    let buf = &mut buf;
+    r.read_start(buf, Some(b"Environ"));
+    for (i, dir) in &mut dirs.0 {
+      let e = r.read_start(buf, Some(b"Directive"));
+      assert_eq!(e.try_get_attribute("name").unwrap().unwrap().value, i.name().as_bytes());
+      while let Ok(e) = r.try_read_start(buf, Some(b"Ident")) {
+        let pos = r.get_pos(&e);
+        let art = Article::from_upper(&e.try_get_attribute("name").unwrap().unwrap().value);
+        dir.push((pos, art));
+        r.end_tag(buf);
+      }
+    }
+    r.end_tag(buf);
+    assert!(matches!(r.read_event(buf), Event::Eof));
+    Ok(())
+  }
+
   pub fn read_dcx(&self, syms: &mut Symbols) -> io::Result<()> {
     let (mut r, mut buf) = MizReader::new(self.open(true, "dcx")?, MaybeMut::None, false);
     let buf = &mut buf;
@@ -251,9 +269,10 @@ impl MizPath {
         b'V' => SymbolKind::Attr(AttrSymId(nr - 1)),
         b'G' => SymbolKind::Struct(StructSymId(nr - 1)),
         b'U' => SymbolKind::Sel(SelSymId(nr - 1)),
+        b'A' => SymbolKind::Article(ArticleId(nr)),
         _ => continue, // the dcx file has a bunch of other crap too
       };
-      syms.0.push((kind, name));
+      syms.push((kind, name));
     }
     assert!(matches!(r.read_event(buf), Event::Eof));
     Ok(())
@@ -344,7 +363,7 @@ impl MizPath {
       let art = Article::from_upper(&e.try_get_attribute(b"name").unwrap().unwrap().value);
       let mut counts = Default::default();
       r.parse_constr_counts_body(buf, &mut counts);
-      aco.accum.push((art, counts))
+      aco.accum.push((art, std::mem::replace(&mut aco.base, counts)))
     }
     r.parse_constructors_body(buf, Some(&mut aco.constrs));
     assert!(matches!(r.read_event(buf), Event::Eof));
@@ -367,6 +386,21 @@ impl MizPath {
     Ok(true)
   }
 
+  pub fn read_dre(&self, dre: &mut DepRequirements) -> io::Result<()> {
+    let (mut r, mut buf) = MizReader::new(self.open(false, "dre")?, MaybeMut::None, false);
+    let buf = &mut buf;
+    r.read_start(buf, Some(b"Requirements"));
+    r.parse_signature(buf, &mut dre.sig);
+    while let Ok(e) = r.try_read_start(buf, Some(b"Requirement")) {
+      let kind = r.parse_constr_kind(&e).unwrap();
+      let nr: u32 = r.get_attr(&e.try_get_attribute(b"nr").unwrap().unwrap().value);
+      dre.reqs.push(DepRequirement { req: Requirement::from_usize(nr as _), kind });
+      r.end_tag(buf)
+    }
+    assert!(matches!(r.read_event(buf), Event::Eof));
+    Ok(())
+  }
+
   pub fn read_ecl(&self, ctx: &Constructors, clusters: &mut Clusters) -> io::Result<()> {
     let (mut r, mut buf) = MizReader::new(self.open(true, "ecl")?, ctx, false);
     r.read_pi(&mut buf);
@@ -379,7 +413,6 @@ impl MizPath {
       }
     }
     assert!(matches!(r.read_event(&mut buf), Event::Eof));
-    clusters.functor.sort_all(|a, b| FunctorCluster::cmp_term(&a.term, ctx, &b.term));
     Ok(())
   }
 
@@ -499,7 +532,7 @@ impl MizPath {
   }
 
   pub fn read_eth(
-    &self, ctx: &Constructors, refs: &References, libs: &mut Libraries,
+    &self, ctx: &Constructors, refs: Option<&References>, libs: &mut Libraries,
   ) -> io::Result<()> {
     let (mut r, mut buf) = match self.open(true, "eth") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -519,12 +552,12 @@ impl MizPath {
         }
       }
       match kind {
-        b'T' if refs.thm.contains_key(&(lib_nr, ThmId(thm_nr))) => {
+        b'T' if refs.map_or(true, |refs| refs.thm.contains_key(&(lib_nr, ThmId(thm_nr)))) => {
           let th = r.parse_formula(buf).unwrap();
           r.end_tag(buf);
           libs.thm.insert((lib_nr, ThmId(thm_nr)), th);
         }
-        b'D' if refs.def.contains_key(&(lib_nr, DefId(thm_nr))) => {
+        b'D' if refs.map_or(true, |refs| refs.def.contains_key(&(lib_nr, DefId(thm_nr)))) => {
           let th = r.parse_formula(buf).unwrap();
           r.end_tag(buf);
           libs.def.insert((lib_nr, DefId(thm_nr)), th);
@@ -568,7 +601,7 @@ impl MizPath {
   }
 
   pub fn read_esh(
-    &self, ctx: &Constructors, refs: &References, libs: &mut Libraries,
+    &self, ctx: &Constructors, refs: Option<&References>, libs: &mut Libraries,
   ) -> io::Result<()> {
     let (mut r, mut buf) = match self.open(true, "esh") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -586,7 +619,7 @@ impl MizPath {
           _ => {}
         }
       }
-      if refs.sch.contains_key(&(lib_nr, sch_nr)) {
+      if refs.map_or(true, |refs| refs.sch.contains_key(&(lib_nr, sch_nr))) {
         let sch_funcs = r.parse_arg_types(buf);
         let thesis = r.parse_formula(buf).unwrap();
         let mut prems = vec![];
@@ -749,7 +782,7 @@ impl MizReader<'_> {
       let e = self.read_start(buf, Some(b"ArticleID"));
       let aid = Article::from_upper(&e.try_get_attribute(b"name").unwrap().unwrap().value);
       self.end_tag(buf);
-      let mut symbols = EnumMap::default();
+      let mut symbols = SymbolsBase::default();
       while let Ok(e) = self.try_read_start(buf, Some(b"SymbolCount")) {
         let (mut kind, mut nr) = Default::default();
         for attr in e.attributes().map(Result::unwrap) {
@@ -771,7 +804,7 @@ impl MizReader<'_> {
           b'V' => SymbolKindClass::Attr,
           _ => panic!("unexpected symbol kind {:?}", kind as char),
         };
-        symbols[class] += nr;
+        symbols.0[class] += nr;
       }
       vocs.0.push((aid, symbols));
     }

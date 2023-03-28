@@ -70,23 +70,23 @@ fn mark_formats<T>(
   get: impl Fn(&mut T) -> &mut Format,
 ) {
   let mut trans = EnumMap::<_, Vec<_>>::default();
-  let (mut hi, mut new): (EnumMap<_, u32>, EnumMap<_, u32>) = Default::default();
+  let (mut hi, mut new) = <(SymbolsBase, SymbolsBase)>::default();
   for (_, (art, counts)) in vocs.0.iter().enumerate() {
     let lo = hi;
-    counts.iter().for_each(|(i, &count)| hi[i] += count);
+    hi += counts;
     let used = fmts.iter_mut().any(|fmt| {
       let mut used = false;
-      get(fmt).visit(|k, sym| used |= (lo[k]..hi[k]).contains(&sym));
+      get(fmt).visit(|k, sym| used |= (lo.0[k]..hi.0[k]).contains(&sym));
       used
     });
     if used {
       marked_vocs.0.push((*art, *counts));
-      for (kind, &count) in counts {
-        trans[kind].extend((0..count).map(|i| Some(i + new[kind])));
-        new[kind] += count
+      for (kind, &count) in &counts.0 {
+        trans[kind].extend((0..count).map(|i| Some(i + new.0[kind])))
       }
+      new += counts;
     } else {
-      for (kind, &count) in counts {
+      for (kind, &count) in &counts.0 {
         trans[kind].extend((0..count).map(|_| None))
       }
     }
@@ -97,45 +97,48 @@ fn mark_formats<T>(
 }
 
 struct MarkConstr<'a> {
-  /// Article, plus the constructor counts *including* this article.
+  /// Article, plus the constructor counts *excluding* this article.
   /// The current article may be in the list, in which case it is at the end.
   accum: &'a [(Article, ConstructorsBase)],
-  /// This is a parallel array, where `used[i]` corresponds to `accum[i+1]`.
-  /// `used[-1] -> accum[0]` is effectively true always because it is the HIDDEN article,
+  /// The total constructor counts
+  base: &'a ConstructorsBase,
+  /// This is a parallel array, where `used[i]` corresponds to `accum[i]`,
   /// and `used.last()` is true if constructors from the current article are used.
   /// (Because this always contains an entry for the current article it may either
-  /// be the same length or one shorter than accum.)
+  /// be the same length or one longer than accum.)
   used: Vec<bool>,
 }
 
 impl<'a> MarkConstr<'a> {
-  fn new(accum: &'a [(Article, ConstructorsBase)], n: usize) -> Self {
-    Self { accum, used: vec![false; n] }
+  fn new(accum: &'a [(Article, ConstructorsBase)], base: &'a ConstructorsBase, n: usize) -> Self {
+    Self { accum, base, used: vec![false; n + 1] }
   }
 
   fn mark(&mut self, n: u32, key: impl Fn(&ConstructorsBase) -> u32) {
-    if let Some(i) = self.accum.partition_point(|(_, base)| key(base) <= n).checked_sub(1) {
-      self.used[i] = true
+    if n < key(self.base) {
+      self.used[self.accum[1..].partition_point(|(_, base)| key(base) <= n)] = true
     }
   }
 
   fn closure(&mut self, constrs: &mut Constructors) {
-    let n = self.accum.len() - 1;
-    let mut base = self.accum[n].1;
-    for i in (0..n).rev() {
-      let lo = &self.accum[i].1;
+    let mut base = *self.base;
+    // We skip the first two because the first is HIDDEN (which is always used)
+    // and the second step can't have any effect
+    for (i, (_, lo)) in self.accum.iter().enumerate().skip(2).rev() {
       if self.used[i] {
         constrs.visit_range(self, lo..&base)
       }
       base = *lo
     }
+    self.used[0] = true
   }
 
   fn apply(&self) -> ApplyMarkConstr {
     let (mut offset, mut base) = Default::default();
     let mut apply = ApplyMarkConstr::default();
     let mut prev = true;
-    for ((_, accum), &mark) in self.accum.iter().zip(&self.used) {
+    for (accum, &mark) in self.accum.iter().map(|p| &p.1).chain([self.base]).zip(&self.used).skip(1)
+    {
       if prev != mark {
         if mark {
           offset += *accum - base;
@@ -157,7 +160,7 @@ impl<'a> MarkConstr<'a> {
   }
 
   fn filtered<T: Copy>(&self, ts: &[T]) -> Vec<T> {
-    ts.iter().zip([true].iter().chain(&self.used)).filter(|p| *p.1).map(|p| *p.0).collect_vec()
+    ts.iter().zip(&self.used).filter(|p| *p.1).map(|p| *p.0).collect_vec()
   }
 }
 
@@ -195,7 +198,7 @@ impl AccumConstructors {
   fn mark<T: for<'a> Visitable<MarkConstr<'a>> + Visitable<ApplyMarkConstr>>(
     &mut self, t: &mut T, n: usize, arts: &[Article],
   ) -> Vec<Article> {
-    let mut marks = MarkConstr::new(&self.accum, n);
+    let mut marks = MarkConstr::new(&self.accum, &self.base, n);
     t.visit(&mut marks);
     marks.closure(&mut self.constrs);
     marks.apply_with(|v| t.visit(v));
@@ -214,7 +217,11 @@ impl Analyzer<'_> {
 
     // loading .sgl
     let mut arts2 = vec![];
-    self.path.read_sgl(&mut arts2).unwrap();
+    if let Some(accom) = &self.accom {
+      arts2.extend(accom.sig.sig.0.iter().map(|p| p.0));
+    } else {
+      self.path.read_sgl(&mut arts2).unwrap()
+    }
     let arts1 = if self.g.constrs.since(&self.export.constrs_base).is_empty() {
       &*arts2
     } else {
@@ -224,11 +231,16 @@ impl Analyzer<'_> {
     };
 
     // loading .vcl
-    let (mut vocs1, mut aco) = Default::default();
+    let (mut vocs1, mut aco) = <(_, AccumConstructors)>::default();
     self.path.read_vcl(&mut vocs1).unwrap();
 
     // loading .aco
-    self.path.read_aco(&mut aco).unwrap();
+    if let Some(accom) = &mut self.r.accom {
+      aco.accum = std::mem::take(&mut accom.sig.sig.0);
+      aco.base = accom.sig.base;
+    } else {
+      self.path.read_aco(&mut aco).unwrap();
+    }
     assert_eq!(self.export.constrs_base, aco.constrs.len());
     assert_eq!(arts1.len(), aco.accum.len());
 
@@ -263,15 +275,16 @@ impl Analyzer<'_> {
       constrs1.visit(ep);
       assert_eq!(!since1.is_empty(), nonempty);
       if nonempty {
-        aco.constrs.append(constrs1.clone());
-        let mut marks = MarkConstr::new(&aco.accum, arts1.len());
+        aco.constrs.append(&mut constrs1.clone());
+        let mut marks = MarkConstr::new(&aco.accum, &aco.base, arts1.len());
         *marks.used.last_mut().unwrap() = true;
         constrs1.visit(&mut marks);
         marks.closure(&mut aco.constrs);
         marks.apply_with(|v| constrs1.visit(v));
         assert_eq!(marks.filtered(arts1), dco2.sig);
         assert_eq!(constrs1.len(), dco2.counts);
-        aco.accum.push((self.article, self.g.constrs.len()));
+        aco.accum.push((self.article, aco.base));
+        aco.base = self.g.constrs.len();
       }
       macro_rules! process { ($($field:ident),*) => {$(
         assert_eq_iter(concat!("constrs.", stringify!($field)),
@@ -295,7 +308,7 @@ impl Analyzer<'_> {
       if nonempty {
         let mut marked_vocs = Vocabularies::default();
         mark_formats(&vocs1, &mut marked_vocs, &mut pats1, |(fmt, _)| fmt);
-        let mut marks = MarkConstr::new(&aco.accum, arts1.len());
+        let mut marks = MarkConstr::new(&aco.accum, &aco.base, arts1.len());
         pats1.iter_mut().for_each(|p| p.1.visit(&mut marks));
         marks.closure(&mut aco.constrs);
         marks.apply_with(|v| pats1.iter_mut().for_each(|p| p.1.visit(v)));

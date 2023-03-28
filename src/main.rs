@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::{Mutex, RwLock};
 
+mod accom;
 mod analyze;
 mod ast;
 mod bignum;
@@ -2892,22 +2893,11 @@ impl RequirementIndexes {
   }
 }
 
-// static MIZFILES: Lazy<PathBuf> = Lazy::new(|| {
-//   std::env::var_os("MIZFILES").expect("MIZFILES environment variable is not set").into()
-// });
-// static PREL: Lazy<PathBuf> = Lazy::new(|| MIZFILES.join("prel"));
-
 pub struct MizPath {
   art: Article,
   mml: PathBuf,
   prel: PathBuf,
 }
-
-// fn get_mml_article(article: &str) -> MizPath {
-//   let mut path = PREL.join(&article[..1]);
-//   path.push(article);
-//   MizPath(path)
-// }
 
 impl MizPath {
   fn new(s: &str) -> Self {
@@ -2987,10 +2977,11 @@ pub struct Config {
   pub dump_libraries: bool,
   pub dump_formatter: bool,
 
-  pub exporter_enabled: bool,
+  pub accom_enabled: bool,
   pub analyzer_enabled: bool,
   pub analyzer_full: bool,
   pub checker_enabled: bool,
+  pub exporter_enabled: bool,
 
   // Unsound flags //
   /// This flag enables checking of `P[a] & ... & P[b]` equality by checking
@@ -3054,10 +3045,11 @@ fn main() {
     dump_libraries: false,
     dump_formatter: false,
 
-    exporter_enabled: false,
+    accom_enabled: false,
     analyzer_enabled: false,
     analyzer_full: false,
     checker_enabled: false,
+    exporter_enabled: false,
 
     legacy_flex_handling: true,
     flex_expansion_bug: true,
@@ -3081,19 +3073,14 @@ fn main() {
   // print_stats_and_exit(cfg.parallelism);
   let analyzer_only = std::env::var("ANALYZER_ONLY").is_ok();
   let checker_only = std::env::var("CHECKER_ONLY").is_ok();
+  cfg.accom_enabled = std::env::var("ACCOM").is_ok();
   cfg.exporter_enabled = std::env::var("EXPORT").is_ok();
-  (cfg.analyzer_enabled, cfg.analyzer_full, cfg.checker_enabled) =
-    match (analyzer_only, checker_only, cfg.exporter_enabled) {
-      (true, true, _) => panic!("CHECKER_ONLY and ANALYZER_ONLY are mutually exclusive"),
-      (_, true, true) => panic!("CHECKER_ONLY and EXPORT are mutually exclusive"),
-      (false, true, false) => (false, false, true),
-      (true, false, _) => (true, true, false),
-      (false, false, true) => (true, false, false),
-      (false, false, false) => (true, true, true),
-    };
-  if std::env::var("ONE_ITEM").is_ok() {
-    cfg.one_item = true;
-  }
+  assert!(!checker_only || !cfg.checker_enabled, "CHECKER_ONLY and EXPORT are mutually exclusive");
+  cfg.analyzer_enabled =
+    analyzer_only || (checker_only && cfg.accom_enabled) || cfg.exporter_enabled;
+  cfg.analyzer_full = analyzer_only || !(checker_only || cfg.exporter_enabled);
+  cfg.checker_enabled = checker_only || !(analyzer_only || cfg.exporter_enabled);
+  cfg.one_item = std::env::var("ONE_ITEM").is_ok();
   let orig_mizar = std::env::var("ORIG_MIZAR").is_ok();
   let mut args = std::env::args().skip(1);
   let first_file = args.next().and_then(|s| s.parse().ok()).unwrap_or(FIRST_FILE);
@@ -3134,6 +3121,18 @@ fn main() {
           let start = std::time::Instant::now();
           if let Err(_payload) = std::panic::catch_unwind(|| {
             if orig_mizar {
+              if cfg.accom_enabled {
+                let mut cmd = std::process::Command::new("miz/mizbin/accom");
+                cmd.arg("-lqs");
+                let output = cmd.arg(format!("{}.miz", path.mml.display())).output().unwrap();
+                if !output.status.success() {
+                  eprintln!("\nfile {} failed. Output:", path.art);
+                  std::io::stderr().write_all(&output.stderr).unwrap();
+                  std::io::stdout().write_all(&output.stdout).unwrap();
+                  std::io::stdout().flush().unwrap();
+                  panic!("mizar accom failed")
+                }
+              }
               let mut cmd = std::process::Command::new("miz/mizbin/verifier");
               let cmd = match (cfg.analyzer_enabled, cfg.checker_enabled) {
                 (true, false) => cmd.arg("-a"),
@@ -3147,13 +3146,13 @@ fn main() {
                 std::io::stderr().write_all(&output.stderr).unwrap();
                 std::io::stdout().write_all(&output.stdout).unwrap();
                 std::io::stdout().flush().unwrap();
-                panic!("mizar failed")
+                panic!("mizar verifier failed")
               }
               // println!("{}", String::from_utf8(output.stdout).unwrap());
             } else if cfg.analyzer_enabled {
-              path.with_reader(cfg, |v| v.run_analyzer(&path));
+              path.with_reader(cfg, &mut |v| v.run_analyzer(&path));
             } else if cfg.checker_enabled {
-              path.with_reader(cfg, |v| v.run_checker(&path));
+              path.with_reader(cfg, &mut |v| v.run_checker(&path));
             }
           }) {
             println!("error: {i}: {s} panicked");
