@@ -239,9 +239,15 @@ impl<'a> Unifier<'a> {
 
     // This is a super sketchy test, since it is non-monotonic -
     // rejecting more possibilities can cause more proofs to check
-    if complementary.len() != 1 {
-      return Ok(Ok(()))
-    }
+    // if complementary.len() != 1 {
+    //   return Ok(Ok(()))
+    // }
+
+    // This is heuristic but better than just failing when multiple
+    // options are available. When there are several options but all of
+    // them are equivalent then this method works
+    complementary.truncate(1);
+
     // ResolventVerify
     'next: for (cls, dnf) in complementary {
       let mut dnfs = vec![dnf];
@@ -1133,8 +1139,7 @@ impl UnifyWithConst<'_> {
   ) -> Result<Dnf<FVarId, EqClassId>, Overflow> {
     let Attrs::Consistent(attrs1) = attrs1 else { unreachable!() };
     let Attrs::Consistent(attrs2) = attrs2 else { unreachable!() };
-    // This test is wrong, but it is needed because of non-monotonicity in resolution()
-    if attrs1.len() < attrs2.len() {
+    if attrs1.len() > attrs2.len() {
       return Ok(Dnf::FALSE)
     }
     let mut inst = Dnf::True;
