@@ -3065,11 +3065,11 @@ fn main() {
     dump_libraries: false,
     dump_formatter: false,
 
-    accom_enabled: false,
-    analyzer_enabled: false,
-    analyzer_full: false,
-    checker_enabled: false,
-    exporter_enabled: false,
+    accom_enabled: true,
+    analyzer_enabled: true,
+    analyzer_full: true,
+    checker_enabled: true,
+    exporter_enabled: true,
 
     legacy_flex_handling: true,
     flex_expansion_bug: true,
@@ -3079,8 +3079,9 @@ fn main() {
     first_verbose_top_item: None,
     first_verbose_item: None,
     one_item: false,
-    first_verbose_checker: None, //if DEBUG { Some(0) } else { None };
+    first_verbose_checker: None,
     skip_to_verbose: DEBUG,
+
     parallelism: if DEBUG || ONE_FILE { 1 } else { 8 },
   };
 
@@ -3091,16 +3092,13 @@ fn main() {
   // let path = MizPath(Article::from_bytes(b"TEST"), "../test/text/test".into());
   // path.with_reader(&cfg, |v| v.run_checker(&path));
   // print_stats_and_exit(cfg.parallelism);
-  let analyzer_only = std::env::var("ANALYZER_ONLY").is_ok();
-  let checker_only = std::env::var("CHECKER_ONLY").is_ok();
-  cfg.accom_enabled = std::env::var("ACCOM").is_ok();
-  cfg.exporter_enabled = std::env::var("EXPORT").is_ok();
-  assert!(!checker_only || !cfg.checker_enabled, "CHECKER_ONLY and EXPORT are mutually exclusive");
-  let default = !analyzer_only && !checker_only && !cfg.exporter_enabled;
-  cfg.analyzer_enabled =
-    default || analyzer_only || (checker_only && cfg.accom_enabled) || cfg.exporter_enabled;
-  cfg.analyzer_full = default || analyzer_only || !(checker_only || cfg.exporter_enabled);
-  cfg.checker_enabled = default || checker_only || !(analyzer_only || cfg.exporter_enabled);
+  cfg.analyzer_enabled = std::env::var("NO_ANALYZER").is_err();
+  cfg.analyzer_full = cfg.analyzer_enabled;
+  cfg.checker_enabled = std::env::var("NO_CHECKER").is_err();
+  cfg.accom_enabled = std::env::var("NO_ACCOM").is_err();
+  cfg.exporter_enabled = std::env::var("NO_EXPORT").is_err();
+  cfg.analyzer_enabled |= cfg.exporter_enabled; // exporter needs (quick) analyzer
+  cfg.analyzer_full |= cfg.checker_enabled; // checker needs analyzer_full (if analyzer is used)
   cfg.one_item = std::env::var("ONE_ITEM").is_ok();
   let orig_mizar = std::env::var("ORIG_MIZAR").is_ok();
   let mut args = std::env::args().skip(1);

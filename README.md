@@ -68,51 +68,65 @@ Here is a performance comparison of running the original Mizar checker vs the ne
 Note that, compared to `verifier`, `mizar-rs` benefits more from running both parts together rather than separately (the `analyzer + checker` row is less than `analyzer` plus `checker`), because `mizar-rs` does not do two passes.
 See [#2](https://github.com/digama0/mizar-rs/issues/2#issuecomment-1467281905) for more detailed plots and per-file measurements.
 
-Here some additional mizar-rs modes:
+Here some additional mizar-rs modes, together with the time taken to check the MML on 8 threads:
 
-|                           | command         | real time | CPU time   |
-|---------------------------|-----------------|-----------|------------|
-| analyzer (quick) + export | `EXPORT`        | 35.36 sec | 3.56 min   |
-| analyzer                  | `ANALYZER_ONLY` | 2.42 min  | 13.14 min  |
-| checker                   | `CHECKER_ONLY`  | 11.33 min | 73.70 min  |
-| analyzer + checker        | (default)       | 11.71 min | 81.93 min  |
+|                            | command                      | real time | CPU time   |
+|----------------------------|------------------------------|-----------|------------|
+| accom + export             | `EXPORT`                     | 28.88 sec | 3.44 min   |
+| export                     | `NO_ACCOM` + `EXPORT`        | 31.22 sec | 3.71 min   |
+| accom + analyzer           | `ANALYZER_ONLY`              | 1.75 min  | 12.99 min  |
+| analyzer                   | `NO_ACCOM` + `ANALYZER_ONLY` | 1.70 min  | 12.83 min  |
+| checker                    | `CHECKER_ONLY`               | 11.33 min | 73.70 min  |
+| accom + analyzer + checker |  (default)                   | 11.86 min | 88.87 min  |
+| analyzer + checker         | `NO_ACCOM`                   | 12.45 min | 91.84 min  |
 
-The "analyzer (quick)" mode performs just enough analysis to construct theorem statements. This is used as input to the "export" step, which constructs the `prel/` data for dependent articles, and represents the not-trivially-parallelizable part of MML processing when generating data files from scratch. (In the tests above we assume that all the auxiliary files have already been created, so we are not actually working from scratch.)
+* The "export" mode also includes running the analyzer in "quick" mode, which does just enough analysis to construct theorem statements. This constructs the `prel/` data for dependent articles, and represents the not-trivially-parallelizable part of MML processing when generating data files from scratch.
+
+* The "accom" mode (which can be mixed with any of the others) uses the `prel/` files directly to import dependencies, rather than using the files prepared by Mizar's `accom` tool. As the numbers show, the cost of this extra processing is sometimes negative, because we are reading fewer files total and doing less XML parsing.
 
 ## Configuration
 
-Currently all configuration is stored in the code itself. Most flags are in
-[main.rs](src/main.rs) at the start of `main()`, and can be used to debug why a proof fails:
+Currently most configuration is stored in the code itself. Most flags are in
+[main.rs](src/main.rs) at the start of `main()`, and can be used to debug why a proof fails.
+
 ```rust
+// verbose printing options
 top_item_header: false,
 always_verbose_item: false,
 item_header: DEBUG,
 checker_inputs: DEBUG,
 checker_header: DEBUG,
-checker_conjuncts: false,
-checker_result: false,
-unify_header: false,
-unify_insts: false,
-```
+checker_conjuncts: DEBUG,
+checker_result: DEBUG,
+unify_header: DEBUG,
+unify_insts: DEBUG,
 
-There are also options to dump various parts of the input state:
-```rust
+// dump various parts of the input state
 dump_constructors: false,
 dump_requirements: false,
+dump_notations: false,
+dump_clusters: false,
 dump_definitions: false,
 dump_libraries: false,
 dump_formatter: false,
 ```
 
-This is equivalent to the `-a` and `-c` flags in Mizar.
+These flags allow enabling different components of Mizar. The processing is always
+single-pass, so this just affects what the starting point of processing is.
+The default behavior is to run all the passes.
 ```rust
-analyzer_enabled: true,
-checker_enabled: true,
+accom_enabled: true, // set env var NO_ACCOM to disable
+analyzer_enabled: true, // set env var NO_ANALYZER to disable
+analyzer_full: true, // enabled as required for other flags
+checker_enabled: true, // set env var NO_CHECKER to disable
+exporter_enabled: true, // set env var NO_EXPORT to disable
 ```
 
 When this is enabled, the new checker is disabled completely and the only thing
 that remains of the program is the top loop which dispatches file tasks, shelling
 out to `mizbin/verifier`. This is used for timing comparisons.
+Where applicable the same accom / analyzer / checker settings are respected
+as in the main program.
 ```rust
 const ORIG_MIZAR: bool = false;
 ```
@@ -123,11 +137,6 @@ patching of MML:
 legacy_flex_handling: true,
 flex_expansion_bug: true,
 attr_sort_bug: true,
-
-const EXPECTED_ERRORS: &[(&str, usize)] =
-  // These failures are caused by a bug in the statement of FLEXARY1:def 9
-  // which requires a patch to Mizar, at least as long as we are using the Mizar analyzer
-  &[("eulrpart", 153), ("eulrpart", 154), ("eulrpart", 628)];
 ```
 
 This is used for zooming in on a particular proof or file. The number of each file
@@ -148,14 +157,6 @@ skip_to_verbose: DEBUG,
 The `parallelism` option controls how many parallel threads are used. Adjust this to taste.
 ```rust
 parallelism: if DEBUG || ONE_FILE { 1 } else { 8 },
-```
-
-Original Mizar `verifier -c`:
-```
-________________________________________________________
-Executed in   57.37 mins    fish           external
-   usr time  417.57 mins  644.00 micros  417.57 mins
-   sys time    1.26 mins    0.00 micros    1.26 mins
 ```
 
 ## Formatter configuration
