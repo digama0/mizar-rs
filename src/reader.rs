@@ -448,7 +448,7 @@ impl Reader {
       }
     }
 
-    // self.dbg_scope_check();
+    // self._dbg_scope_check();
     descope
   }
 
@@ -890,10 +890,13 @@ impl Reader {
     }
     let (_, i) = (self.g.clusters.functor)
       .equal_range(|a| FunctorCluster::cmp_term(&a.term, &self.g.constrs, &cl.term));
-    self.g.clusters.functor.insert_at(i, cl);
+    self.g.clusters.functor.insert_at(i, cl.clone());
     for (&i, attrs) in &mut rounded_up {
       attrs.visit(&mut self.intern_const());
       self.lc.infer_const.get_mut()[i].ty.attrs.1 = std::mem::take(attrs);
+      if let Some(asgn) = self.lc.infer_const.get_mut().get(InferId(56)) {
+        vprintln!("round up with {cl:?}\n?56 := {asgn:?}");
+      }
     }
     self.round_up_further(rounded_up);
     self.pending_defs.push(PendingDef::Cluster(ClusterKind::F, i))

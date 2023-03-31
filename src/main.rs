@@ -2554,6 +2554,7 @@ impl VisitMut for ExpandConsts<'_> {
   }
 }
 
+#[derive(Debug)]
 struct Descope {
   num_consts: u32,
   infer_const: u32,
@@ -2704,7 +2705,7 @@ impl LocalContext {
     assert!(ic.sorted.len() == len);
     if check_for_local_const {
       let mut has_local_const = HashSet::<InferId>::new();
-      // vprintln!("start loop {} -> {}", len, old.len());
+      // vprintln!("start loop {} .. {}", len, len + descope.old.len());
       'retry: loop {
         for (i, asgn) in descope.old.iter().enumerate() {
           let i = Idx::from_usize(len + i);
@@ -2749,18 +2750,14 @@ impl LocalContext {
             Ok(nr) => descope.remap.insert(i, nr),
             Err(idx) => {
               let j = ic.insert_at(idx, std::mem::take(asgn));
-              // eprintln!("reinsert ?{i:?} => ?{j:?} : {:?} := {:?}", ic[j].ty, ic[j].def);
+              // vprintln!("reinsert ?{i:?} => ?{j:?} : {:?} := {:?}", ic[j].ty, ic[j].def);
               descope.remap.insert(i, j)
             }
           };
         }
         i.0 += 1;
       }
-      if !descope.remap.is_empty() {
-        for asgn in &mut ic.0[len..] {
-          asgn.visit(&mut descope);
-        }
-      }
+      ic.visit(&mut descope)
     }
     for asgn in &mut ic.0 {
       if asgn.eq_const.iter().any(|n| n.0 >= descope.infer_const) {
@@ -3035,7 +3032,7 @@ const DEBUG: bool = cfg!(debug_assertions);
 
 impl FormatterConfig {
   const DEFAULT: Self = Self {
-    enable_formatter: false,
+    enable_formatter: true,
     show_infer: true,
     show_only_infer: false,
     show_priv: false,
@@ -3052,7 +3049,7 @@ fn main() {
   let mut cfg = Config {
     top_item_header: false,
     always_verbose_item: false,
-    item_header: false,
+    item_header: DEBUG,
     checker_inputs: DEBUG,
     checker_header: DEBUG,
     checker_conjuncts: DEBUG,
