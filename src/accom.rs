@@ -1,5 +1,6 @@
+use crate::parser::MaybeMut;
 use crate::types::*;
-use crate::{mk_id, MizPath, VisitMut};
+use crate::{mk_id, CmpStyle, MizPath, VisitMut};
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 
@@ -8,7 +9,7 @@ mk_id! {
   SigId(u32),
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct VocBuilder {
   pub voc: IdxVec<VocId, (Article, SymbolsBase)>,
   base: SymbolsBase,
@@ -21,48 +22,59 @@ impl VocBuilder {
     i
   }
 
-  fn get_or_push(&mut self, art: Article, val: &SymbolsBase) -> VocId {
+  fn get_or_push(&mut self, art: Article, val: &SymbolsBase) -> (VocId, bool) {
     let res = self.voc.enum_iter().find(|p| p.1 .0 == art);
     if let Some((i, (_, val2))) = res {
-      assert_eq!(val2, val);
-      i
+      assert_eq!(*self.hi(i) - val2, *val);
+      (i, true)
     } else {
-      self.push(art, val)
+      (self.push(art, val), false)
     }
+  }
+
+  fn hi(&self, id: VocId) -> &SymbolsBase {
+    self.voc.get(VocId(id.0 + 1)).map_or(&self.base, |(_, base)| base)
   }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct SigBuilder {
   pub sig: IdxVec<SigId, (Article, ConstructorsBase)>,
   pub base: ConstructorsBase,
 }
 
 impl SigBuilder {
-  fn push(&mut self, constrs: &mut Constructors, art: Article) -> SigId {
+  fn push(&mut self, constrs: Option<&mut Constructors>, art: Article) -> SigId {
     let mut dco = Default::default();
-    assert!(MizPath::new(art.as_str()).read_dco(false, &mut dco).unwrap());
+    assert!(MizPath::new(art.as_str()).read_dco(false, &mut dco, constrs.is_some()).unwrap());
     self.push_from(constrs, art, &mut dco)
   }
 
   fn push_from(
-    &mut self, constrs: &mut Constructors, art: Article, dco: &mut DepConstructors,
+    &mut self, constrs: Option<&mut Constructors>, art: Article, dco: &mut DepConstructors,
   ) -> SigId {
-    let mut rename = RenameConstr::default();
-    for &art2 in &dco.sig {
-      let i = self.get(art2);
-      rename.push(self, i);
+    if let Some(constrs) = constrs {
+      let mut rename = RenameConstr::default();
+      for &art2 in &dco.sig {
+        let i = self.get(art2);
+        rename.push(self, i, true);
+      }
+      let i = self.sig.push((art, self.base));
+      self.base += dco.counts;
+      rename.push(self, i, true);
+      dco.constrs.visit(&mut rename);
+      constrs.append(&mut dco.constrs);
+      i
+    } else {
+      let i = self.sig.push((art, self.base));
+      self.base += dco.counts;
+      i
     }
-    dco.constrs.visit(&mut rename);
-    constrs.append(&mut dco.constrs);
-    let i = self.sig.push((art, self.base));
-    self.base += dco.counts;
-    i
   }
 
-  fn get_or_push(&mut self, constrs: &mut Constructors, art: Article) -> SigId {
-    let id = self.sig.enum_iter().find(|p| p.1 .0 == art).map(|p| p.0);
-    id.unwrap_or_else(|| self.push(constrs, art))
+  fn get_or_push(&mut self, constrs: Option<&mut Constructors>, art: Article) -> SigId {
+    let id = self.sig.enum_iter().find(|p| p.1 .0 == art);
+    id.map(|p| p.0).unwrap_or_else(|| self.push(constrs, art))
   }
 
   fn get(&self, art: Article) -> SigId {
@@ -76,55 +88,82 @@ impl SigBuilder {
     self.sig.get(SigId(id.0 + 1)).map_or(&self.base, |(_, base)| base)
   }
 
-  fn rename(&self, sig: &[Article]) -> RenameConstr {
-    let mut rename = RenameConstr::default();
-    sig.iter().for_each(|&art| rename.push(self, self.get(art)));
+  fn rename<'a>(&mut self, sig: &[Article], ctx: Option<&'a Constructors>) -> RenameConstr<'a> {
+    let mut rename = RenameConstr { ctx, ..Default::default() };
+    let limit = self.sig.len();
+    for &art in sig {
+      let id = self.get_or_push(None, art);
+      rename.push(self, id, id.into_usize() < limit)
+    }
     rename
+  }
+
+  fn truncate(&mut self, len: usize) {
+    if self.sig.len() > len {
+      self.base = self.sig.0[len].1;
+      self.sig.0.truncate(len)
+    }
   }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Accomodator {
   pub dirs: Directives,
   pub sig: SigBuilder,
   pub articles: HashMap<Article, ArticleId>,
+  dict: VocBuilder,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct RenameSymbol {
-  trans: Vec<(SymbolsBase, SymbolsBase)>,
+  trans: Vec<(SymbolsBase, SymbolsBase, bool)>,
   base: SymbolsBase,
+  failed: bool,
 }
 impl RenameSymbol {
-  fn push(&mut self, val: &SymbolsBase, tgt: &SymbolsBase) {
-    self.trans.push((self.base, *tgt));
+  fn push(&mut self, val: &SymbolsBase, tgt: &SymbolsBase, allow: bool) {
+    self.trans.push((self.base, *tgt, allow));
     self.base += val;
   }
   fn apply(&mut self, k: SymbolKindClass, n: &mut u32) {
-    let (from, to) = &self.trans[self.trans.partition_point(|(base, _)| base.0[k] <= *n) - 1];
-    *n = *n - from.0[k] + to.0[k]
+    if let Some(i) = self.trans.partition_point(|(base, _, _)| base.0[k] <= *n).checked_sub(1) {
+      let (from, to, allow) = &self.trans[i];
+      *n = *n - from.0[k] + to.0[k];
+      self.failed |= !*allow;
+    }
   }
+  fn ok(&mut self) -> bool { !std::mem::take(&mut self.failed) }
 }
 
-#[derive(Default)]
-struct RenameConstr {
-  trans: Vec<(ConstructorsBase, ConstructorsBase)>,
+#[derive(Debug, Default)]
+struct RenameConstr<'a> {
+  trans: Vec<(ConstructorsBase, ConstructorsBase, bool)>,
   base: ConstructorsBase,
+  failed: bool,
+  ctx: Option<&'a Constructors>,
 }
-impl RenameConstr {
-  fn push(&mut self, sig: &SigBuilder, i: SigId) {
+impl RenameConstr<'_> {
+  fn push(&mut self, sig: &SigBuilder, i: SigId, allow: bool) {
     let lo = self.base;
     self.base += *sig.hi(i) - sig.sig[i].1;
-    self.trans.push((lo, sig.sig[i].1))
+    self.trans.push((lo, sig.sig[i].1, allow))
   }
 
   fn apply(&mut self, n: &mut u32, key: impl Fn(&ConstructorsBase) -> u32) {
-    let (from, to) = &self.trans[self.trans.partition_point(|(base, _)| key(base) <= *n) - 1];
-    *n = *n - key(from) + key(to)
+    assert!(*n < key(&self.base));
+    if let Some(i) = self.trans.partition_point(|p| key(&p.0) <= *n).checked_sub(1) {
+      let (from, to, allow) = &self.trans[i];
+      *n = *n - key(from) + key(to);
+      self.failed |= !*allow;
+    }
   }
+
+  fn ok(&mut self) -> bool { !std::mem::take(&mut self.failed) }
 }
 
-impl VisitMut for RenameConstr {
+impl VisitMut for RenameConstr<'_> {
+  const MODIFY_IDS: bool = true;
+  fn abort(&self) -> bool { self.failed }
   fn visit_mode_id(&mut self, n: &mut ModeId) { self.apply(&mut n.0, |b| b.mode) }
   fn visit_struct_id(&mut self, n: &mut StructId) { self.apply(&mut n.0, |b| b.struct_mode) }
   fn visit_attr_id(&mut self, n: &mut AttrId) { self.apply(&mut n.0, |b| b.attribute) }
@@ -132,14 +171,66 @@ impl VisitMut for RenameConstr {
   fn visit_func_id(&mut self, n: &mut FuncId) { self.apply(&mut n.0, |b| b.functor) }
   fn visit_sel_id(&mut self, n: &mut SelId) { self.apply(&mut n.0, |b| b.selector) }
   fn visit_aggr_id(&mut self, n: &mut AggrId) { self.apply(&mut n.0, |b| b.aggregate) }
+  fn visit_attrs(&mut self, attrs: &mut Attrs) {
+    if let Attrs::Consistent(attrs) = attrs {
+      for attr in &mut *attrs {
+        self.visit_attr_id(&mut attr.nr);
+        self.visit_terms(&mut attr.args);
+        if self.failed {
+          return
+        }
+      }
+      attrs.sort_by(|a, b| a.cmp(self.ctx, None, b, CmpStyle::Attr));
+    }
+  }
 }
 
 impl Accomodator {
-  pub fn init_symbols(&mut self, symbols: &[(SymbolKind, String)]) {
-    for (kind, name) in symbols {
-      if let SymbolKind::Article(n) = *kind {
-        assert!(self.articles.insert(Article::from_upper(name.as_bytes()), n).is_none());
+  /// ProcessVocabularies
+  pub fn accom_symbols(
+    &mut self, mml_vct: &[u8], syms: &mut Symbols, priority: &mut Vec<(PriorityKind, u32)>,
+  ) {
+    for &(_, art) in &self.dirs.0[DirectiveKind::Vocabularies] {
+      let mut voc = Default::default();
+      assert!(art.read_vct(mml_vct, &mut voc)); // TODO: private vocabularies
+      let hidden = self.dict.voc.is_empty();
+      self.dict.voc.push((art, self.dict.base));
+      if hidden {
+        // The setup here is a bit weird. The HIDDEN article has some tokens defined
+        // here by hard-coding, and other tokens defined in mml.vct. The net result is
+        // that even though mml.vct says "G0 K0 L0 M1 O0 R2 U0 V1" it is really
+        // treated as "G0 K3 L3 M2 O0 R3 U0 V1" when appearing in .dno files.
+        for &(c, token) in SymbolData::BUILTIN_SYMBOLS {
+          let n = self.dict.base.0[c];
+          self.dict.base.0[c] += 1;
+          syms.push(((c, n).into(), token.to_owned()));
+        }
       }
+      for SymbolData { kind, token } in voc.symbols {
+        let c = kind.class();
+        let n = self.dict.base.0[c];
+        self.dict.base.0[c] += 1;
+        match kind {
+          SymbolDataKind::LeftBrk =>
+            priority.push((PriorityKind::LeftBrk(LeftBrkSymId(n)), DEFAULT_PRIO)),
+          SymbolDataKind::RightBrk =>
+            priority.push((PriorityKind::RightBrk(RightBrkSymId(n)), DEFAULT_PRIO)),
+          SymbolDataKind::Func { prio } =>
+            priority.push((PriorityKind::Functor(FuncSymId(n)), prio)),
+          _ => {}
+        }
+        syms.push(((c, n).into(), token.to_owned()))
+      }
+    }
+  }
+
+  pub fn accom_articles(&mut self) {
+    let mut id = ArticleId(1); // 0 is reserved for SELF
+    for &(_, art) in &self.dirs.0[DirectiveKind::Theorems] {
+      assert!(self.articles.insert(art, id.fresh()).is_none())
+    }
+    for &(_, art) in &self.dirs.0[DirectiveKind::Schemes] {
+      self.articles.entry(art).or_insert_with(|| id.fresh());
     }
   }
 
@@ -147,12 +238,12 @@ impl Accomodator {
   pub fn accom_constructors(&mut self, constrs: &mut Constructors) -> io::Result<()> {
     for &(_, art) in &self.dirs.0[DirectiveKind::Constructors] {
       let mut dco = Default::default();
-      assert!(MizPath::new(art.as_str()).read_dco(false, &mut dco).unwrap());
+      assert!(MizPath::new(art.as_str()).read_dco(false, &mut dco, true).unwrap());
       for &art2 in &dco.sig {
-        self.sig.get_or_push(constrs, art2);
+        self.sig.get_or_push(Some(constrs), art2);
       }
       if !self.sig.sig.0.iter().any(|p| p.0 == art) {
-        self.sig.push_from(constrs, art, &mut dco);
+        self.sig.push_from(Some(constrs), art, &mut dco);
       }
     }
     Ok(())
@@ -160,28 +251,49 @@ impl Accomodator {
 
   /// ProcessRequirements
   pub fn accom_requirements(
-    &self, ctx: &Constructors, idx: &mut RequirementIndexes,
+    &mut self, ctx: &Constructors, idx: &mut RequirementIndexes,
   ) -> io::Result<()> {
     for &(_, art) in &self.dirs.0[DirectiveKind::Requirements] {
       let mut dre = Default::default();
       MizPath::new(art.as_str()).read_dre(&mut dre)?;
-      let mut rename = self.sig.rename(&dre.sig);
+      let len = self.sig.sig.len();
+      let mut rename = self.sig.rename(&dre.sig, Some(ctx));
       for DepRequirement { req, mut kind } in dre.reqs {
         kind.visit(&mut rename);
-        assert!(kind.lt(&ctx.len()), "inaccessible requirement");
+        assert!(rename.ok() && kind.lt(&ctx.len()), "inaccessible requirement");
         idx.set(req, kind);
       }
+      self.sig.truncate(len);
     }
     Ok(())
   }
 
   /// ProcessClusters
-  pub fn accom_clusters(&self, ctx: &Constructors, clusters: &mut Clusters) -> io::Result<()> {
+  pub fn accom_clusters(&mut self, ctx: &Constructors, clusters: &mut Clusters) -> io::Result<()> {
     for &(_, art) in &self.dirs.0[DirectiveKind::Registrations] {
       let mut dcl = Default::default();
       if MizPath::new(art.as_str()).read_dcl(false, &mut dcl)? {
-        dcl.cl.visit(&mut self.sig.rename(&dcl.sig));
-        clusters.append(ctx, &mut dcl.cl);
+        let len = self.sig.sig.len();
+        let mut rename = self.sig.rename(&dcl.sig, Some(ctx));
+        for mut cl in dcl.cl.registered {
+          cl.visit(&mut rename);
+          if rename.ok() {
+            clusters.registered.push(cl);
+          }
+        }
+        for mut cl in dcl.cl.functor {
+          cl.visit(&mut rename);
+          if rename.ok() {
+            clusters.functor.0.push(cl);
+          }
+        }
+        for mut cl in dcl.cl.conditional {
+          cl.visit(&mut rename);
+          if rename.ok() {
+            clusters.conditional.push(ctx, cl);
+          }
+        }
+        self.sig.truncate(len);
       }
     }
     Ok(())
@@ -189,43 +301,60 @@ impl Accomodator {
 
   /// ProcessNotations
   pub fn accom_notations(
-    &self, fmt_map: &mut BTreeMap<Format, FormatId>, mut fmts: Option<&mut Formats>,
+    &mut self, fmt_map: &mut BTreeMap<Format, FormatId>, mut fmts: Option<&mut Formats>,
     pats: &mut Vec<Pattern>,
   ) -> io::Result<()> {
-    let mut dict = VocBuilder::default();
+    if let Some(fmts) = &mut fmts {
+      assert_eq!(fmts.formats.push(Format::Attr(FormatAttr::STRICT)), FormatId::STRICT)
+    }
     for &(_, art) in &self.dirs.0[DirectiveKind::Notations] {
       let mut dno = Default::default();
       assert!(MizPath::new(art.as_str()).read_dno(false, &mut dno)?);
       let mut s_rename = RenameSymbol::default();
-      if fmts.is_some() {
-        for &(art, ref val) in &dno.vocs.0 {
-          let i = dict.get_or_push(art, val);
-          s_rename.push(val, &dict.voc[i].1);
+      for &(art, ref val) in &dno.vocs.0 {
+        let (i, old) = self.dict.get_or_push(art, val);
+        s_rename.push(val, &self.dict.voc[i].1, old);
+      }
+      let len = self.sig.sig.len();
+      let mut rename = self.sig.rename(&dno.sig, None);
+      for Pattern { mut kind, mut fmt, mut primary, visible, pos } in dno.pats {
+        fmt.visit_mut(|k, c| s_rename.apply(k, c));
+        if s_rename.ok() {
+          kind.visit(&mut rename);
+          primary.visit(&mut rename);
+          if rename.ok() {
+            if let Some(fmt) = match &mut fmts {
+              Some(fmts) => Some(*fmt_map.entry(fmt).or_insert_with(|| fmts.formats.push(fmt))),
+              None => fmt_map.get(&fmt).copied(),
+            } {
+              pats.push(Pattern { kind, fmt, primary, visible, pos })
+            }
+          }
         }
       }
-      let mut rename = self.sig.rename(&dno.sig);
-      for (mut fmt, mut pat) in dno.pats {
-        pat.visit(&mut rename);
-        if let Some(fmts) = fmts.as_deref_mut() {
-          fmt.visit_mut(|k, c| s_rename.apply(k, c));
-          pat.fmt = *fmt_map.entry(fmt).or_insert_with(|| fmts.formats.push(fmt));
-        }
-        pats.push(pat)
-      }
+      self.sig.truncate(len);
     }
+    pats.sort_by_key(|pat| pat.kind.class() as u8);
     Ok(())
   }
 
   /// ProcessIdentify
   pub fn accom_identify_regs(
-    &self, ctx: &Constructors, ids: &mut Vec<IdentifyFunc>,
+    &mut self, ctx: &Constructors, ids: &mut Vec<IdentifyFunc>,
   ) -> io::Result<()> {
     for &(_, art) in &self.dirs.0[DirectiveKind::Registrations] {
       let (mut sig, mut did) = Default::default();
       let path = MizPath::new(art.as_str());
-      if path.read_identify_regs(ctx, false, "did", Some(&mut sig), &mut did)? {
-        did.visit(&mut self.sig.rename(&sig));
-        ids.append(&mut did);
+      if path.read_identify_regs(MaybeMut::None, false, "did", Some(&mut sig), &mut did)? {
+        let len = self.sig.sig.len();
+        let mut rename = self.sig.rename(&sig, Some(ctx));
+        for mut id in did {
+          id.visit(&mut rename);
+          if rename.ok() {
+            ids.push(id);
+          }
+        }
+        self.sig.truncate(len);
       }
     }
     Ok(())
@@ -233,26 +362,43 @@ impl Accomodator {
 
   /// ProcessReductions
   pub fn accom_reduction_regs(
-    &self, ctx: &Constructors, reds: &mut Vec<Reduction>,
+    &mut self, ctx: &Constructors, reds: &mut Vec<Reduction>,
   ) -> io::Result<()> {
     for &(_, art) in &self.dirs.0[DirectiveKind::Registrations] {
       let (mut sig, mut drd) = Default::default();
       let path = MizPath::new(art.as_str());
-      if path.read_reduction_regs(ctx, false, "drd", Some(&mut sig), &mut drd)? {
-        drd.visit(&mut self.sig.rename(&sig));
-        reds.append(&mut drd);
+      if path.read_reduction_regs(MaybeMut::None, false, "drd", Some(&mut sig), &mut drd)? {
+        let len = self.sig.sig.len();
+        let mut rename = self.sig.rename(&sig, Some(ctx));
+        for mut red in drd {
+          red.visit(&mut rename);
+          if rename.ok() {
+            reds.push(red);
+          }
+        }
+        self.sig.truncate(len);
       }
     }
     Ok(())
   }
 
   /// ProcessProperties
-  pub fn accom_properties(&self, ctx: &Constructors, props: &mut Vec<Property>) -> io::Result<()> {
+  pub fn accom_properties(
+    &mut self, ctx: &Constructors, props: &mut Vec<Property>,
+  ) -> io::Result<()> {
     for &(_, art) in &self.dirs.0[DirectiveKind::Registrations] {
       let (mut sig, mut dpr) = Default::default();
-      if MizPath::new(art.as_str()).read_properties(ctx, false, "dpr", Some(&mut sig), &mut dpr)? {
-        dpr.visit(&mut self.sig.rename(&sig));
-        props.append(&mut dpr);
+      let path = MizPath::new(art.as_str());
+      if path.read_properties(MaybeMut::None, false, "dpr", Some(&mut sig), &mut dpr)? {
+        let len = self.sig.sig.len();
+        let mut rename = self.sig.rename(&sig, Some(ctx));
+        for mut prop in dpr {
+          prop.visit(&mut rename);
+          if rename.ok() {
+            props.push(prop);
+          }
+        }
+        self.sig.truncate(len);
       }
     }
     Ok(())
@@ -260,60 +406,78 @@ impl Accomodator {
 
   /// ProcessDefinitions
   pub fn accom_definitions(
-    &self, ctx: &Constructors, kind: DirectiveKind, defs: &mut Vec<Definiens>,
+    &mut self, ctx: &Constructors, kind: DirectiveKind, defs: &mut Vec<Definiens>,
   ) -> io::Result<()> {
     for &(_, art) in &self.dirs.0[kind] {
       let (mut sig, mut def) = Default::default();
-      if MizPath::new(art.as_str()).read_definitions(ctx, false, "def", Some(&mut sig), &mut def)? {
-        def.visit(&mut self.sig.rename(&sig));
-        defs.append(&mut def);
+      let path = MizPath::new(art.as_str());
+      if path.read_definitions(MaybeMut::None, false, "def", Some(&mut sig), &mut def)? {
+        let len = self.sig.sig.len();
+        let mut rename = self.sig.rename(&sig, Some(ctx));
+        for mut def in def {
+          def.visit(&mut rename);
+          if rename.ok() {
+            defs.push(def);
+          }
+        }
+        self.sig.truncate(len);
       }
     }
     Ok(())
   }
 
   /// ProcessTheorems
-  pub fn accom_theorems(&self, libs: &mut Libraries) -> io::Result<()> {
+  pub fn accom_theorems(&mut self, ctx: &Constructors, libs: &mut Libraries) -> io::Result<()> {
     for &(_, art) in &self.dirs.0[DirectiveKind::Theorems] {
       let mut thms = Default::default();
       if MizPath::new(art.as_str()).read_the(false, &mut thms)? {
-        let mut rename = self.sig.rename(&thms.sig);
+        let len = self.sig.sig.len();
+        let mut rename = self.sig.rename(&thms.sig, Some(ctx));
         let (mut thm_nr, mut def_nr) = <(ThmId, DefId)>::default();
         let lib_nr = self.articles.get(&art).copied();
         for mut thm in thms.thm {
           match thm.kind {
-            TheoremKind::CanceledThm => thm_nr.0 += 1,
-            TheoremKind::CanceledDef => def_nr.0 += 1,
-            TheoremKind::Def(_) => {
+            TheoremKind::Def(_) | TheoremKind::CanceledDef => {
+              let def_nr = def_nr.fresh();
               thm.stmt.visit(&mut rename);
-              libs.def.insert((lib_nr.unwrap(), def_nr.fresh()), thm.stmt);
+              if rename.ok() {
+                libs.def.insert((lib_nr.unwrap(), def_nr), thm.stmt);
+              }
             }
-            TheoremKind::Thm => {
+            TheoremKind::Thm | TheoremKind::CanceledThm => {
+              let thm_nr = thm_nr.fresh();
               thm.stmt.visit(&mut rename);
-              libs.thm.insert((lib_nr.unwrap(), thm_nr.fresh()), thm.stmt);
+              if rename.ok() {
+                libs.thm.insert((lib_nr.unwrap(), thm_nr), thm.stmt);
+              }
             }
           }
         }
+        self.sig.truncate(len);
       }
     }
     Ok(())
   }
 
   /// ProcessSchemes
-  pub fn accom_schemes(&self, libs: &mut Libraries) -> io::Result<()> {
+  pub fn accom_schemes(&mut self, ctx: &Constructors, libs: &mut Libraries) -> io::Result<()> {
     for &(_, art) in &self.dirs.0[DirectiveKind::Schemes] {
       let mut schs = Default::default();
       if MizPath::new(art.as_str()).read_sch(false, &mut schs)? {
-        let mut rename = self.sig.rename(&schs.sig);
+        let len = self.sig.sig.len();
+        let mut rename = self.sig.rename(&schs.sig, Some(ctx));
         let mut sch_nr = SchId::default();
         let lib_nr = self.articles.get(&art).copied();
         for sch in schs.sch {
           let sch_nr = sch_nr.fresh();
           if let Some(mut sch) = sch {
             sch.visit(&mut rename);
-            libs.sch.insert((lib_nr.unwrap(), sch_nr), sch);
+            if rename.ok() {
+              libs.sch.insert((lib_nr.unwrap(), sch_nr), sch);
+            }
           }
         }
+        self.sig.truncate(len);
       }
     }
     Ok(())

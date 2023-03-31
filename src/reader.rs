@@ -45,7 +45,7 @@ impl WithGlobalLocal for Reader {
 }
 
 impl MizPath {
-  pub fn with_reader(&self, cfg: &Config, f: &mut dyn FnMut(&mut Reader)) {
+  pub fn with_reader(&self, cfg: &Config, mml_vct: &[u8], f: &mut dyn FnMut(&mut Reader)) {
     let mut accom = cfg.accom_enabled.then(Box::<Accomodator>::default);
     if let Some(accom) = &mut accom {
       self.read_evl(&mut accom.dirs).unwrap();
@@ -84,24 +84,31 @@ impl MizPath {
         args: vec![Term::Functor { nr: omega, args: Box::new([]) }],
       }
     }
-    let mut formats = cfg.analyzer_enabled.then(Default::default);
-    let mut notations = Default::default();
-    if let Some(accom) = &v.accom {
-      accom.accom_notations(&mut v.formats, formats.as_mut(), &mut notations).unwrap();
-    } else {
-      if let Some(f) = &mut formats {
-        self.read_formats("frx", f).unwrap();
-        v.formats.extend(f.formats.enum_iter().map(|(id, f)| (*f, id)));
-      }
-      self.read_eno(&mut notations).unwrap();
-    }
-    v.lc.formatter.init_formats(self, cfg.exporter_enabled, formats);
-    let symbols = v.accom.as_deref_mut().filter(|_| cfg.checker_enabled).map(|accom| {
+    let symbols = v.accom.as_deref_mut().map(|accom| {
       let mut symbols = Default::default();
-      self.read_dcx(&mut symbols).unwrap();
-      accom.init_symbols(&symbols);
+      accom.accom_symbols(mml_vct, &mut symbols, &mut v.lc.formatter.formats.priority);
+      if cfg.checker_enabled {
+        accom.accom_articles()
+      }
       symbols
     });
+    let mut notations = Default::default();
+    if cfg.analyzer_enabled || v.lc.formatter.cfg.enable_formatter || cfg.exporter_enabled {
+      v.lc.formatter.formats.priority.clear();
+      self.read_formats("frx", &mut v.lc.formatter.formats).unwrap();
+      v.formats.extend(v.lc.formatter.formats.formats.enum_iter().map(|(id, f)| (*f, id)));
+    }
+    if let Some(accom) = &mut v.accom {
+      accom.accom_notations(&mut v.formats, None, &mut notations).unwrap();
+    } else {
+      self.read_eno(&mut notations).unwrap();
+    }
+    if cfg.dump_notations {
+      notations.iter().for_each(|pat| eprintln!("{pat:?}"))
+    }
+    if !(v.lc.formatter.cfg.enable_formatter || cfg.exporter_enabled) {
+      std::mem::take(&mut v.lc.formatter.formats);
+    }
     v.lc.formatter.init_symbols(self, symbols);
     v.lc.formatter.init();
     v.lc.formatter.extend(&v.g.constrs, &notations);
@@ -111,12 +118,15 @@ impl MizPath {
     if cfg.dump_requirements {
       v.g.reqs.dump(&v.g.constrs)
     }
-    if let Some(accom) = &v.accom {
+    if let Some(accom) = &mut v.accom {
       accom.accom_clusters(&v.g.constrs, &mut v.g.clusters).unwrap();
     } else {
       self.read_ecl(&v.g.constrs, &mut v.g.clusters).unwrap();
     }
     v.g.clusters.functor.sort_all(|a, b| FunctorCluster::cmp_term(&a.term, &v.g.constrs, &b.term));
+    if cfg.dump_clusters {
+      v.g.clusters.dump()
+    }
 
     let mut attrs = Attrs::default();
     if let Some(zero) = v.g.reqs.zero() {
@@ -153,7 +163,7 @@ impl MizPath {
 
     // LoadDefinitions
     if cfg.analyzer_enabled {
-      if let Some(accom) = &v.accom {
+      if let Some(accom) = &mut v.accom {
         accom
           .accom_definitions(&v.g.constrs, DirectiveKind::Definitions, &mut v.definitions)
           .unwrap();
@@ -169,7 +179,7 @@ impl MizPath {
 
     // LoadEqualities
     if cfg.checker_enabled {
-      if let Some(accom) = &v.accom {
+      if let Some(accom) = &mut v.accom {
         accom
           .accom_definitions(&v.g.constrs, DirectiveKind::Equalities, &mut v.equalities)
           .unwrap();
@@ -185,7 +195,7 @@ impl MizPath {
 
     // LoadExpansions
     if cfg.checker_enabled {
-      if let Some(accom) = &v.accom {
+      if let Some(accom) = &mut v.accom {
         accom
           .accom_definitions(&v.g.constrs, DirectiveKind::Expansions, &mut v.expansions)
           .unwrap();
@@ -200,7 +210,7 @@ impl MizPath {
     }
 
     // LoadPropertiesReg
-    if let Some(accom) = &v.accom {
+    if let Some(accom) = &mut v.accom {
       accom.accom_properties(&v.g.constrs, &mut v.properties).unwrap();
     } else {
       self.read_properties(&v.g.constrs, true, "epr", None, &mut v.properties).unwrap();
@@ -208,7 +218,7 @@ impl MizPath {
 
     // LoadIdentify, LoadReductions
     if cfg.checker_enabled || cfg.exporter_enabled {
-      if let Some(accom) = &v.accom {
+      if let Some(accom) = &mut v.accom {
         accom.accom_identify_regs(&v.g.constrs, &mut v.identify).unwrap();
         accom.accom_reduction_regs(&v.g.constrs, &mut v.reductions).unwrap();
       } else {
@@ -274,16 +284,16 @@ impl MizPath {
 
     // InLibraries
     if cfg.checker_enabled {
-      if let Some(accom) = &v.accom {
-        accom.accom_theorems(&mut v.libs).unwrap();
+      if let Some(accom) = &mut v.accom {
+        accom.accom_theorems(&v.g.constrs, &mut v.libs).unwrap();
       } else {
         self.read_eth(&v.g.constrs, refs, &mut v.libs).unwrap();
       }
       let cc = &mut InternConst::new(&v.g, &v.lc, &v.equals, &v.identify, &v.func_ids);
       v.libs.thm.values_mut().for_each(|f| f.visit(cc));
       v.libs.def.values_mut().for_each(|f| f.visit(cc));
-      if let Some(accom) = &v.accom {
-        accom.accom_schemes(&mut v.libs).unwrap();
+      if let Some(accom) = &mut v.accom {
+        accom.accom_schemes(&v.g.constrs, &mut v.libs).unwrap();
       } else {
         self.read_esh(&v.g.constrs, refs, &mut v.libs).unwrap();
       }
@@ -295,6 +305,9 @@ impl MizPath {
         }
         for (&(ar, nr), th) in &v.libs.def {
           eprintln!("art {ar:?}:def {nr:?} = {th:?}");
+        }
+        for (&(ar, nr), sch) in &v.libs.sch {
+          eprintln!("art {ar:?}:sch {nr:?} = {sch:?}");
         }
       }
     }

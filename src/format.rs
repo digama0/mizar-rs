@@ -26,7 +26,7 @@ impl Default for FormatterConfig {
 #[derive(Default, Debug)]
 pub struct Formatter {
   pub dump: bool,
-  cfg: FormatterConfig,
+  pub cfg: FormatterConfig,
   symbols: HashMap<SymbolKind, String>,
   pub formats: Formats,
   mode: HashMap<ModeId, (u8, Box<[LocusId]>, FormatMode)>,
@@ -44,7 +44,7 @@ impl Formatter {
       return
     }
     if self.dump {
-      eprintln!("{pat:#?}")
+      eprintln!("{pat:?}")
     }
     fn ins<I: Idx, F: std::fmt::Debug>(
       c: &Constructor<I>, map: &mut HashMap<I, (u8, Box<[LocusId]>, F)>, pat: &Pattern, i: I, f: F,
@@ -76,16 +76,6 @@ impl Formatter {
 
   pub fn extend(&mut self, ctx: &Constructors, pats: &[Pattern]) {
     pats.iter().for_each(|pat| self.push(ctx, pat))
-  }
-
-  pub fn init_formats(&mut self, path: &MizPath, force: bool, formats: Option<Formats>) {
-    if self.cfg.enable_formatter || force {
-      self.formats = formats.unwrap_or_else(|| {
-        let mut formats = Default::default();
-        path.read_formats("frx", &mut formats).unwrap();
-        formats
-      });
-    }
   }
 
   pub fn init_symbols(&mut self, path: &MizPath, symbols: Option<Vec<(SymbolKind, String)>>) {

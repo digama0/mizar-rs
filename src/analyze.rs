@@ -72,7 +72,7 @@ impl Reader {
   }
 }
 
-impl Pattern {
+impl<F> Pattern<F> {
   fn check_types<'a>(
     &self, g: &Global, lc: &LocalContext, args: &'a [TermQua],
   ) -> Option<Subst<'a>> {
@@ -2576,7 +2576,7 @@ impl CheckAccess {
     }
   }
 }
-impl Pattern {
+impl<F> Pattern<F> {
   fn check_access(&self) {
     CheckAccess::with(&self.primary, |occ| self.visible.iter().for_each(|&v| occ.set(v)))
   }

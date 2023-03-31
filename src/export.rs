@@ -96,6 +96,7 @@ fn mark_formats<T>(
   }
 }
 
+#[derive(Debug)]
 struct MarkConstr<'a> {
   /// Article, plus the constructor counts *excluding* this article.
   /// The current article may be in the list, in which case it is at the end.
@@ -174,7 +175,7 @@ impl VisitMut for MarkConstr<'_> {
   fn visit_aggr_id(&mut self, n: &mut AggrId) { self.mark(n.0, |b| b.aggregate) }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct ApplyMarkConstr(Vec<(ConstructorsBase, ConstructorsBase)>);
 impl ApplyMarkConstr {
   fn apply(&mut self, n: &mut u32, key: impl Fn(&ConstructorsBase) -> u32) {
@@ -185,6 +186,7 @@ impl ApplyMarkConstr {
 }
 
 impl VisitMut for ApplyMarkConstr {
+  const MODIFY_IDS: bool = true;
   fn visit_mode_id(&mut self, n: &mut ModeId) { self.apply(&mut n.0, |b| b.mode) }
   fn visit_struct_id(&mut self, n: &mut StructId) { self.apply(&mut n.0, |b| b.struct_mode) }
   fn visit_attr_id(&mut self, n: &mut AttrId) { self.apply(&mut n.0, |b| b.attribute) }
@@ -238,6 +240,8 @@ impl Analyzer<'_> {
     if let Some(accom) = &mut self.r.accom {
       aco.accum = std::mem::take(&mut accom.sig.sig.0);
       aco.base = accom.sig.base;
+      aco.constrs.extend(&self.g.constrs.upto(&aco.base));
+      aco.constrs.visit(ep);
     } else {
       self.path.read_aco(&mut aco).unwrap();
     }
@@ -269,7 +273,7 @@ impl Analyzer<'_> {
     // validating .dco (also push current article to aco)
     {
       let mut dco2 = Default::default();
-      let nonempty = self.path.read_dco(false, &mut dco2).unwrap();
+      let nonempty = self.path.read_dco(false, &mut dco2, true).unwrap();
       let since1 = self.g.constrs.since(&self.export.constrs_base);
       let mut constrs1 = since1.to_owned();
       constrs1.visit(ep);
@@ -298,8 +302,8 @@ impl Analyzer<'_> {
       let mut pats1 = (self.notations.iter())
         .flat_map(|(i, nota)| &nota[self.export.notations_base[i] as usize..])
         .map(|pat| {
-          let mut pat = pat.visit_cloned(ep);
-          (self.lc.formatter.formats.formats[std::mem::take(&mut pat.fmt)], pat)
+          let Pattern { kind, fmt, primary, visible, pos } = pat.visit_cloned(ep);
+          Pattern { kind, fmt: self.lc.formatter.formats.formats[fmt], primary, visible, pos }
         })
         .collect_vec();
       let mut dno2 = Default::default();
@@ -307,11 +311,11 @@ impl Analyzer<'_> {
       assert_eq!(!pats1.is_empty(), nonempty);
       if nonempty {
         let mut marked_vocs = Vocabularies::default();
-        mark_formats(&vocs1, &mut marked_vocs, &mut pats1, |(fmt, _)| fmt);
+        mark_formats(&vocs1, &mut marked_vocs, &mut pats1, |p| &mut p.fmt);
         let mut marks = MarkConstr::new(&aco.accum, &aco.base, arts1.len());
-        pats1.iter_mut().for_each(|p| p.1.visit(&mut marks));
+        pats1.iter_mut().for_each(|p| p.visit(&mut marks));
         marks.closure(&mut aco.constrs);
-        marks.apply_with(|v| pats1.iter_mut().for_each(|p| p.1.visit(v)));
+        marks.apply_with(|v| pats1.iter_mut().for_each(|p| p.visit(v)));
         assert_eq!(marks.filtered(&arts2), dno2.sig);
         assert_eq!(marked_vocs, dno2.vocs);
       }

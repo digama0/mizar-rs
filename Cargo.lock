@@ -151,6 +151,7 @@ dependencies = [
  "ctrlc",
  "enum-map",
  "itertools",
+ "memchr",
  "num-bigint",
  "num-traits",
  "once_cell",

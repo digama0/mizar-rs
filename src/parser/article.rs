@@ -143,7 +143,7 @@ impl ArticleParser<'_> {
       for attr in e.attributes().map(Result::unwrap) {
         match attr.key {
           b"kind" => kind = attr.value[0],
-          b"nr" => nr = self.r.get_attr(&attr.value),
+          b"nr" => nr = self.r.get_attr::<u32>(&attr.value) - 1,
           b"articlenr" => article_nr = self.r.get_attr(&attr.value),
           _ => {}
         }
@@ -176,7 +176,7 @@ impl ArticleParser<'_> {
         let (mut article_nr, mut nr) = Default::default();
         for attr in e.attributes().map(Result::unwrap) {
           match attr.key {
-            b"nr" => nr = self.r.get_attr(&attr.value),
+            b"nr" => nr = self.r.get_attr::<u32>(&attr.value) - 1,
             b"articlenr" => article_nr = self.r.get_attr(&attr.value),
             _ => {}
           }
@@ -342,7 +342,8 @@ impl ArticleParser<'_> {
         }
         b"SchemeBlock" => {
           let start = self.r.get_pos(&e);
-          let nr = self.r.get_attr(&e.try_get_attribute(b"schemenr").unwrap().unwrap().value);
+          let nr =
+            self.r.get_attr::<u32>(&e.try_get_attribute(b"schemenr").unwrap().unwrap().value) - 1;
           let mut decls = vec![];
           loop {
             if let Event::Start(e) = self.r.read_event(&mut self.buf) {
@@ -727,7 +728,7 @@ impl ArticleParser<'_> {
         }
         b"Pattern" => {
           let attrs = self.r.parse_pattern_attrs(&e);
-          ArticleElem::Pattern(self.r.parse_pattern_body(&mut self.buf, attrs))
+          ArticleElem::Pattern(self.r.parse_pattern_body(&mut self.buf, attrs, |x| x))
         }
         b"BlockThesis" => {
           // Note: It seems to be somewhat rare, but there is a bvar error in the block thesis

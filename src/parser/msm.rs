@@ -2,9 +2,9 @@
 use super::XmlReader;
 use crate::ast::*;
 use crate::types::{
-  ArticleId, AttrSymId, CancelKind, ConstId, FuncSymId, LabelId, LeftBrkSymId, LocusId, ModeSymId,
-  Position, PredSymId, PropertyKind, Reference, ReferenceKind, RightBrkSymId, SchId, SelSymId,
-  StructSymId,
+  ArticleId, AttrSymId, CancelKind, ConstId, DefId, FuncSymId, LabelId, LeftBrkSymId, LocusId,
+  ModeSymId, Position, PredSymId, PropertyKind, Reference, ReferenceKind, RightBrkSymId, SchId,
+  SelSymId, StructSymId, ThmId,
 };
 use crate::{types, MizPath};
 use enum_map::Enum;
@@ -412,7 +412,7 @@ impl MsmParser {
         let (mut sym, mut spelling, mut nr) = <_>::default();
         for attr in e.attributes().map(Result::unwrap) {
           match attr.key {
-            b"nr" => nr = self.r.get_attr(&attr.value),
+            b"nr" => nr = SchId(self.r.get_attr::<u32>(&attr.value) - 1),
             b"idnr" => sym = self.r.get_attr(&attr.value),
             b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
             _ => {}
@@ -888,8 +888,8 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value),
                 b"col" => pos.col = self.r.get_attr(&attr.value),
                 b"nr" => art = self.r.get_attr(&attr.value),
-                b"idnr" => id = self.r.get_attr(&attr.value),
-                b"schnr" => sch = self.r.get_attr(&attr.value),
+                b"idnr" => id = self.r.get_attr::<u32>(&attr.value),
+                b"schnr" => sch = self.r.get_attr::<u32>(&attr.value),
                 _ => {}
               }
             }
@@ -901,7 +901,7 @@ impl MsmParser {
                 _ => panic!("unexpected element"),
               }
             }
-            let sch = (ArticleId(art), SchId(if art == 0 { sch } else { id }));
+            let sch = (ArticleId(art), SchId(if art == 0 { sch - 1 } else { id - 1 }));
             return Elem::Inference(pos, InferenceKind::From { sch }, refs)
           }
           b"Implicitly-Qualified-Segment" => {
@@ -1026,7 +1026,7 @@ impl MsmParser {
                 b"col" => pos.col = self.r.get_attr(&attr.value),
                 b"nr" => article_nr = self.r.get_attr(&attr.value),
                 // b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
-                b"number" => thm_nr = self.r.get_attr(&attr.value),
+                b"number" => thm_nr = ThmId(self.r.get_attr::<u32>(&attr.value) - 1),
                 _ => {}
               }
             }
@@ -1040,7 +1040,7 @@ impl MsmParser {
                 b"col" => pos.col = self.r.get_attr(&attr.value),
                 b"nr" => article_nr = self.r.get_attr(&attr.value),
                 // b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
-                b"number" => def_nr = self.r.get_attr(&attr.value),
+                b"number" => def_nr = DefId(self.r.get_attr::<u32>(&attr.value) - 1),
                 _ => {}
               }
             }

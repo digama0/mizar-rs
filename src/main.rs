@@ -183,6 +183,16 @@ impl VisitMut for RoundUpTypes<'_> {
     ty.round_up_with_self(self.g, self.lc, false)
   }
 
+  fn visit_flex_and(&mut self, [tm_l, tm_r]: &mut [Term; 2], scope: &mut Formula) {
+    self.visit_term(tm_l);
+    self.visit_term(tm_r);
+    if self.g.nat.is_some() {
+      self.push_bound(None);
+      self.visit_formula(scope);
+      self.pop_bound(1)
+    }
+  }
+
   fn visit_push_locus_tys(&mut self, tys: &mut [Type]) {
     for ty in tys {
       self.visit_type(ty);
@@ -1024,6 +1034,7 @@ pub struct Subst<'a> {
 macro_rules! mk_visit {
   ($visit:ident$(, $mutbl:tt)?) => {
     pub trait $visit {
+      const MODIFY_IDS: bool = false;
       #[inline] fn abort(&self) -> bool { false }
       /// This is called with `None` only for FlexAnd binders, which use type `g.nat`
       fn push_bound(&mut self, _ty: Option<&$($mutbl)? Type>) {}
@@ -1168,7 +1179,7 @@ macro_rules! mk_visit {
             self.visit_formula(scope);
             self.pop_bound(1)
           }
-          Formula::FlexAnd { terms, scope } => self.visit_flex_and(terms,scope),
+          Formula::FlexAnd { terms, scope } => self.visit_flex_and(terms, scope),
           Formula::LegacyFlexAnd { orig } =>
             for f in &$($mutbl)? **orig {
               self.visit_formula(f)
@@ -2893,6 +2904,14 @@ impl RequirementIndexes {
   }
 }
 
+impl Clusters {
+  fn dump(&self) {
+    self.registered.iter().for_each(|cl| eprintln!("{cl:?}"));
+    self.functor.vec.0.iter().for_each(|cl| eprintln!("{cl:?}"));
+    self.conditional.vec.iter().for_each(|cl| eprintln!("{cl:?}"));
+  }
+}
+
 pub struct MizPath {
   art: Article,
   mml: PathBuf,
@@ -2973,6 +2992,8 @@ pub struct Config {
 
   pub dump_constructors: bool,
   pub dump_requirements: bool,
+  pub dump_notations: bool,
+  pub dump_clusters: bool,
   pub dump_definitions: bool,
   pub dump_libraries: bool,
   pub dump_formatter: bool,
@@ -3014,7 +3035,7 @@ const DEBUG: bool = cfg!(debug_assertions);
 
 impl FormatterConfig {
   const DEFAULT: Self = Self {
-    enable_formatter: true,
+    enable_formatter: false,
     show_infer: true,
     show_only_infer: false,
     show_priv: false,
@@ -3022,7 +3043,7 @@ impl FormatterConfig {
     show_invisible: true,
     show_orig: true,
     upper_clusters: false,
-    both_clusters: false,
+    both_clusters: true,
     negation_sugar: true,
   };
 }
@@ -3041,6 +3062,8 @@ fn main() {
 
     dump_constructors: false,
     dump_requirements: false,
+    dump_notations: false,
+    dump_clusters: false,
     dump_definitions: false,
     dump_libraries: false,
     dump_formatter: false,
@@ -3076,10 +3099,11 @@ fn main() {
   cfg.accom_enabled = std::env::var("ACCOM").is_ok();
   cfg.exporter_enabled = std::env::var("EXPORT").is_ok();
   assert!(!checker_only || !cfg.checker_enabled, "CHECKER_ONLY and EXPORT are mutually exclusive");
+  let default = !analyzer_only && !checker_only && !cfg.exporter_enabled;
   cfg.analyzer_enabled =
-    analyzer_only || (checker_only && cfg.accom_enabled) || cfg.exporter_enabled;
-  cfg.analyzer_full = analyzer_only || !(checker_only || cfg.exporter_enabled);
-  cfg.checker_enabled = checker_only || !(analyzer_only || cfg.exporter_enabled);
+    default || analyzer_only || (checker_only && cfg.accom_enabled) || cfg.exporter_enabled;
+  cfg.analyzer_full = default || analyzer_only || !(checker_only || cfg.exporter_enabled);
+  cfg.checker_enabled = default || checker_only || !(analyzer_only || cfg.exporter_enabled);
   cfg.one_item = std::env::var("ONE_ITEM").is_ok();
   let orig_mizar = std::env::var("ORIG_MIZAR").is_ok();
   let mut args = std::env::args().skip(1);
@@ -3090,6 +3114,8 @@ fn main() {
   ctrlc::set_handler(move || print_stats_and_exit(cfg.parallelism))
     .expect("Error setting Ctrl-C handler");
   let file = std::fs::read_to_string("miz/mizshare/mml.lar").unwrap();
+  let mml_vct =
+    &if cfg.accom_enabled { std::fs::read("miz/mizshare/mml.vct").unwrap() } else { vec![] };
   let jobs = &Mutex::new(file.lines().enumerate().skip(first_file).collect_vec().into_iter());
   let running = &*std::iter::repeat_with(|| RwLock::new(None)).take(cfg.parallelism).collect_vec();
   let refresh_status_line = |mut msg: String| {
@@ -3150,9 +3176,9 @@ fn main() {
               }
               // println!("{}", String::from_utf8(output.stdout).unwrap());
             } else if cfg.analyzer_enabled {
-              path.with_reader(cfg, &mut |v| v.run_analyzer(&path));
+              path.with_reader(cfg, mml_vct, &mut |v| v.run_analyzer(&path));
             } else if cfg.checker_enabled {
-              path.with_reader(cfg, &mut |v| v.run_checker(&path));
+              path.with_reader(cfg, mml_vct, &mut |v| v.run_checker(&path));
             }
           }) {
             println!("error: {i}: {s} panicked");

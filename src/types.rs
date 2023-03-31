@@ -2,7 +2,7 @@ use crate::VisitMut;
 use enum_map::{Enum, EnumMap};
 use paste::paste;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::marker::PhantomData;
 use std::ops::{Index, IndexMut, Range};
 
@@ -1228,6 +1228,9 @@ impl<V: VisitMut> Visitable<V> for StructMode {
     });
     self.aggr.visit(v);
     self.fields.visit(v);
+    if V::MODIFY_IDS {
+      self.fields.sort_unstable();
+    }
   }
 }
 
@@ -1303,6 +1306,10 @@ macro_rules! impl_constructors {
 
       pub fn since(&self, base: &ConstructorsBase) -> ConstructorsRef<'_> {
         ConstructorsRef { $($field: &self.$field.0[base.$field as usize..]),* }
+      }
+
+      pub fn upto(&self, base: &ConstructorsBase) -> ConstructorsRef<'_> {
+        ConstructorsRef { $($field: &self.$field.0[..base.$field as usize]),* }
       }
 
       pub fn extend(&mut self, other: &ConstructorsRef<'_>) {
@@ -1753,9 +1760,9 @@ pub type SchRef = (ArticleId, SchId);
 
 #[derive(Default, Debug)]
 pub struct References {
-  pub thm: HashMap<ThmRef, u32>,
-  pub def: HashMap<DefRef, u32>,
-  pub sch: HashMap<SchRef, u32>,
+  pub thm: HashSet<ThmRef>,
+  pub def: HashSet<DefRef>,
+  pub sch: HashSet<SchRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2149,7 +2156,7 @@ pub enum Item {
   },
 }
 
-#[derive(Clone, Copy, Debug, Enum)]
+#[derive(Clone, Copy, Debug, Enum, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SymbolKindClass {
   Struct,
   LeftBrk,
@@ -2174,6 +2181,19 @@ impl SymbolKindClass {
       SymbolKindClass::Attr => b'V',
     }
   }
+  pub fn parse(c: u8) -> Self {
+    match c {
+      b'G' => SymbolKindClass::Struct,
+      b'K' => SymbolKindClass::LeftBrk,
+      b'L' => SymbolKindClass::RightBrk,
+      b'M' => SymbolKindClass::Mode,
+      b'O' => SymbolKindClass::Func,
+      b'R' => SymbolKindClass::Pred,
+      b'U' => SymbolKindClass::Sel,
+      b'V' => SymbolKindClass::Attr,
+      _ => panic!("unexpected symbol kind {:?}", c as char),
+    }
+  }
 }
 
 mk_id! {
@@ -2186,8 +2206,12 @@ mk_id! {
   StructSymId(u32),
   SelSymId(u32),
 }
+impl AttrSymId {
+  // The "strict" (a.k.a "not abstract") builtin attribute
+  pub const STRICT: Self = Self(0);
+}
 
-#[derive(Hash, PartialEq, Eq, Debug)]
+#[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum SymbolKind {
   Func(FuncSymId),
   LeftBrk(LeftBrkSymId),
@@ -2197,7 +2221,6 @@ pub enum SymbolKind {
   Attr(AttrSymId),
   Struct(StructSymId),
   Sel(SelSymId),
-  Article(ArticleId),
 }
 impl From<FuncSymId> for SymbolKind {
   fn from(v: FuncSymId) -> Self { Self::Func(v) }
@@ -2223,6 +2246,20 @@ impl From<StructSymId> for SymbolKind {
 impl From<SelSymId> for SymbolKind {
   fn from(v: SelSymId) -> Self { Self::Sel(v) }
 }
+impl From<(SymbolKindClass, u32)> for SymbolKind {
+  fn from((kind, n): (SymbolKindClass, u32)) -> Self {
+    match kind {
+      SymbolKindClass::Struct => Self::Struct(StructSymId(n)),
+      SymbolKindClass::LeftBrk => Self::LeftBrk(LeftBrkSymId(n)),
+      SymbolKindClass::RightBrk => Self::RightBrk(RightBrkSymId(n)),
+      SymbolKindClass::Mode => Self::Mode(ModeSymId(n)),
+      SymbolKindClass::Func => Self::Func(FuncSymId(n)),
+      SymbolKindClass::Pred => Self::Pred(PredSymId(n)),
+      SymbolKindClass::Sel => Self::Sel(SelSymId(n)),
+      SymbolKindClass::Attr => Self::Attr(AttrSymId(n)),
+    }
+  }
+}
 
 impl SymbolKind {
   fn _class(&self) -> SymbolKindClass {
@@ -2235,7 +2272,6 @@ impl SymbolKind {
       SymbolKind::Attr(_) => SymbolKindClass::Attr,
       SymbolKind::Struct(_) => SymbolKindClass::Struct,
       SymbolKind::Sel(_) => SymbolKindClass::Sel,
-      SymbolKind::Article(_) => unreachable!(),
     }
   }
 }
@@ -2262,6 +2298,10 @@ pub struct FormatMode {
 pub struct FormatAttr {
   pub sym: AttrSymId,
   pub args: u8,
+}
+impl FormatAttr {
+  // The "strict" (a.k.a "not abstract") builtin attribute
+  pub const STRICT: Self = Self { sym: AttrSymId::STRICT, args: 1 };
 }
 
 #[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
@@ -2350,7 +2390,7 @@ pub struct Formats {
   pub priority: Vec<(PriorityKind, u32)>,
 }
 
-#[derive(Enum)]
+#[derive(Debug, Enum)]
 pub enum PatternKindClass {
   Mode,
   Struct,
@@ -2421,18 +2461,18 @@ impl PatternKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Pattern {
+pub struct Pattern<F = FormatId> {
   pub kind: PatternKind,
   // pub pid: u32,
   // pub article: Article,
   // pub abs_nr: u32,
-  pub fmt: FormatId,
+  pub fmt: F,
   // pub redefines: Option<u32>,
   pub primary: Box<[Type]>,
   pub visible: Box<[LocusId]>,
   pub pos: bool,
 }
-impl<V: VisitMut> Visitable<V> for Pattern {
+impl<V: VisitMut, F> Visitable<V> for Pattern<F> {
   fn visit(&mut self, v: &mut V) {
     self.kind.visit(v);
     self.primary.visit(v);
@@ -2440,7 +2480,7 @@ impl<V: VisitMut> Visitable<V> for Pattern {
 }
 
 #[derive(Debug, Default)]
-pub struct Notations(pub Vec<Pattern>);
+pub struct Notations<F>(pub Vec<Pattern<F>>);
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct SymbolsBase(pub EnumMap<SymbolKindClass, u32>);
@@ -2452,6 +2492,15 @@ impl std::ops::AddAssign<&Self> for SymbolsBase {
     }
   }
 }
+impl std::ops::Sub<&Self> for SymbolsBase {
+  type Output = Self;
+  fn sub(mut self, rhs: &Self) -> Self::Output {
+    for (i, val) in rhs.0 {
+      self.0[i] -= val
+    }
+    self
+  }
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Vocabularies(pub Vec<(Article, SymbolsBase)>);
@@ -2460,7 +2509,7 @@ pub struct Vocabularies(pub Vec<(Article, SymbolsBase)>);
 pub struct DepNotation {
   pub sig: Vec<Article>,
   pub vocs: Vocabularies,
-  pub pats: Vec<(Format, Pattern)>,
+  pub pats: Vec<Pattern<Format>>,
 }
 
 #[derive(Debug, Default)]
@@ -2470,7 +2519,7 @@ pub struct AccumConstructors {
   pub constrs: Constructors,
 }
 
-#[derive(Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct DepConstructors {
   pub sig: Vec<Article>,
   pub counts: ConstructorsBase,
@@ -2523,7 +2572,7 @@ impl<V: VisitMut> Visitable<V> for Theorem {
   }
 }
 
-#[derive(Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct DepTheorems {
   pub sig: Vec<Article>,
   pub thm: Vec<Theorem>,
@@ -2569,13 +2618,71 @@ impl DirectiveKind {
 #[derive(Debug, Default)]
 pub struct Directives(pub EnumMap<DirectiveKind, Vec<(Position, Article)>>);
 
+#[derive(Debug)]
 pub struct DepRequirement {
   pub req: Requirement,
   pub kind: ConstrKind,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct DepRequirements {
   pub sig: Vec<Article>,
   pub reqs: Vec<DepRequirement>,
+}
+
+pub struct TokenKind(pub u8, pub u32); // TODO: enum
+
+pub struct Token {
+  pub kind: TokenKind,
+  pub value: String,
+}
+
+pub const DEFAULT_PRIO: u32 = 64;
+pub enum SymbolDataKind<'a> {
+  Struct,
+  LeftBrk,
+  RightBrk,
+  Mode,
+  Func { prio: u32 },
+  Pred { infinitive: Option<&'a str> },
+  Sel,
+  Attr,
+}
+impl<'a> SymbolDataKind<'a> {
+  pub fn class(&self) -> SymbolKindClass {
+    match *self {
+      SymbolDataKind::Struct => SymbolKindClass::Struct,
+      SymbolDataKind::LeftBrk => SymbolKindClass::LeftBrk,
+      SymbolDataKind::RightBrk => SymbolKindClass::RightBrk,
+      SymbolDataKind::Mode => SymbolKindClass::Mode,
+      SymbolDataKind::Func { .. } => SymbolKindClass::Func,
+      SymbolDataKind::Pred { .. } => SymbolKindClass::Pred,
+      SymbolDataKind::Sel => SymbolKindClass::Sel,
+      SymbolDataKind::Attr => SymbolKindClass::Attr,
+    }
+  }
+}
+
+pub struct SymbolData<'a> {
+  pub kind: SymbolDataKind<'a>,
+  pub token: &'a str,
+}
+
+impl SymbolData<'static> {
+  pub const BUILTIN_SYMBOLS: &[(SymbolKindClass, &'static str)] = &[
+    (SymbolKindClass::Mode, "set"),
+    (SymbolKindClass::Pred, "="),
+    (SymbolKindClass::LeftBrk, "["),
+    (SymbolKindClass::RightBrk, "]"),
+    (SymbolKindClass::LeftBrk, "{"),
+    (SymbolKindClass::RightBrk, "}"),
+    (SymbolKindClass::LeftBrk, "("),
+    (SymbolKindClass::RightBrk, ")"),
+  ];
+}
+
+#[derive(Default)]
+pub struct Vocabulary<'a> {
+  pub base: SymbolsBase,
+  pub symbols: Vec<SymbolData<'a>>,
 }

@@ -4,7 +4,7 @@ use crate::{CmpStyle, MizPath, OnVarMut, RequirementIndexes, VisitMut};
 use enum_map::Enum;
 use quick_xml::escape::unescape;
 use quick_xml::events::{BytesStart, Event};
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
 use std::str::FromStr;
@@ -30,7 +30,7 @@ impl MizPath {
   pub fn read_ref(&self, refs: &mut References) -> io::Result<()> {
     let mut r = BufReader::new(self.open(true, "ref")?);
     fn parse_one<T: Idx>(
-      r: &mut impl BufRead, buf: &mut String, map: &mut HashMap<(ArticleId, T), u32>,
+      r: &mut impl BufRead, buf: &mut String, map: &mut HashSet<(ArticleId, T)>,
     ) -> io::Result<()> {
       let mut c = [0];
       loop {
@@ -38,10 +38,12 @@ impl MizPath {
         if let [b';'] = c {
           return Ok(())
         }
-        r.read_line(buf).unwrap();
+        r.read_line(buf)?;
         let mut it = buf.split_whitespace();
-        let [x1, x2, y] = [(); 3].map(|_| it.next().unwrap().parse().unwrap());
-        assert!(map.insert((ArticleId(x1), T::from_usize(x2 as usize)), y).is_none());
+        let [x1, x2, _y] = [(); 3].map(|_| it.next().unwrap().parse().unwrap());
+        if let Some(x2) = u32::checked_sub(x2, 1) {
+          assert!(map.insert((ArticleId(x1), T::from_usize(x2 as usize))));
+        }
         buf.clear();
       }
     }
@@ -65,6 +67,76 @@ impl MizPath {
     // Note: this is not the end of the file (constructor data follows),
     // but the remainder is never parsed by Mizar
     Ok(())
+  }
+
+  pub fn read_dct(file: File, syms: &mut Vec<Token>) -> io::Result<()> {
+    let mut r = BufReader::new(file);
+    let mut buf = vec![];
+    loop {
+      r.read_until(b'\n', &mut buf)?;
+      let [c, ref rest @ ..] = *buf else { break };
+      let i = rest.iter().position(|&c| c == b' ').unwrap();
+      let n: u32 = std::str::from_utf8(&rest[..i]).unwrap().parse().unwrap();
+      let value = std::str::from_utf8(&rest[i + 1..]).unwrap().trim_end().to_owned();
+      syms.push(Token { kind: TokenKind(c, n), value });
+      buf.clear();
+    }
+    Ok(())
+  }
+}
+
+impl Article {
+  pub fn read_vct<'a>(self, mut buf: &'a [u8], voc: &mut Vocabulary<'a>) -> bool {
+    let mut pattern = [0; 9];
+    let n = self.as_bytes().len();
+    pattern[..n].copy_from_slice(self.as_bytes());
+    pattern[..n].make_ascii_uppercase();
+    pattern[n] = b'\n';
+    let pattern = &pattern[..=n];
+    while let Some(i) = memchr::memchr(b'#', buf) {
+      if i.checked_sub(1).map_or(true, |i| buf[i] == b'\n')
+        && buf[i + 1..].get(0..pattern.len()) == Some(pattern)
+      {
+        buf = &buf[i + 1 + pattern.len()..];
+        let mut total = 0;
+        for (kind, base) in voc.base.0.iter_mut() {
+          assert_eq!(SymbolKindClass::parse(buf[0]), kind);
+          let i = buf[1..].iter().position(|&c| c == b' ').unwrap();
+          *base = std::str::from_utf8(&buf[1..][..i]).unwrap().parse().unwrap();
+          total += *base;
+          buf = &buf[i + 2..];
+        }
+        buf = &buf[1..];
+        for _ in 0..total {
+          let kind = SymbolKindClass::parse(buf[0]);
+          let i = buf[1..].iter().position(|&c| c == b'\n').unwrap();
+          let line = std::str::from_utf8(&buf[1..][..i]).unwrap().trim_end();
+          let (token, kind) = match (kind, line.split_once(' ')) {
+            (SymbolKindClass::Func, Some((left, right))) =>
+              (left, SymbolDataKind::Func { prio: right.parse().unwrap() }),
+            (SymbolKindClass::Pred, Some((left, right))) => {
+              assert!(!right.is_empty() && !right.contains(' '));
+              (left, SymbolDataKind::Pred { infinitive: Some(right) })
+            }
+            (_, Some(_)) => panic!("invalid vocabulary line '{line}'"),
+            (SymbolKindClass::Struct, None) => (line, SymbolDataKind::Struct),
+            (SymbolKindClass::LeftBrk, None) => (line, SymbolDataKind::LeftBrk),
+            (SymbolKindClass::RightBrk, None) => (line, SymbolDataKind::RightBrk),
+            (SymbolKindClass::Mode, None) => (line, SymbolDataKind::Mode),
+            (SymbolKindClass::Func, None) => (line, SymbolDataKind::Func { prio: DEFAULT_PRIO }),
+            (SymbolKindClass::Pred, None) => (line, SymbolDataKind::Pred { infinitive: None }),
+            (SymbolKindClass::Sel, None) => (line, SymbolDataKind::Sel),
+            (SymbolKindClass::Attr, None) => (line, SymbolDataKind::Attr),
+          };
+          assert!(!token.is_empty());
+          voc.symbols.push(SymbolData { kind, token });
+          buf = &buf[i + 2..];
+        }
+        return true
+      }
+      buf = &buf[i + 1..];
+    }
+    false
   }
 }
 
@@ -262,14 +334,13 @@ impl MizPath {
       r.end_tag(buf);
       let kind = match kind {
         b'O' => SymbolKind::Func(FuncSymId(nr - 1)),
-        b'K' | b'[' | b'{' => SymbolKind::LeftBrk(LeftBrkSymId(nr - 1)),
-        b'L' | b']' | b'}' => SymbolKind::RightBrk(RightBrkSymId(nr - 1)),
+        b'K' | b'[' | b'{' | b'(' => SymbolKind::LeftBrk(LeftBrkSymId(nr - 1)),
+        b'L' | b']' | b'}' | b')' => SymbolKind::RightBrk(RightBrkSymId(nr - 1)),
         b'R' | b'=' => SymbolKind::Pred(PredSymId(nr - 1)), // '=' is its own token
         b'M' | 0xE0 => SymbolKind::Mode(ModeSymId(nr - 1)), // 0xE0 = "set", which is in its own token class
         b'V' => SymbolKind::Attr(AttrSymId(nr - 1)),
         b'G' => SymbolKind::Struct(StructSymId(nr - 1)),
         b'U' => SymbolKind::Sel(SelSymId(nr - 1)),
-        b'A' => SymbolKind::Article(ArticleId(nr)),
         _ => continue, // the dcx file has a bunch of other crap too
       };
       syms.push((kind, name));
@@ -319,7 +390,7 @@ impl MizPath {
     r.read_start(buf, Some(b"Notations"));
     while let Ok(e) = r.try_read_start(buf, Some(b"Pattern")) {
       let attrs = r.parse_pattern_attrs(&e);
-      notas.push(r.parse_pattern_body(buf, attrs))
+      notas.push(r.parse_pattern_body(buf, attrs, |x| x))
     }
     assert!(matches!(r.read_event(buf), Event::Eof));
     Ok(())
@@ -337,7 +408,7 @@ impl MizPath {
     while let Ok(e) = r.try_read_start(buf, Some(b"Pattern")) {
       let attrs = r.parse_pattern_attrs(&e);
       let Elem::Format(fmt) = r.parse_elem(buf) else { panic!("expected <Format>") };
-      dno.pats.push((fmt, r.parse_pattern_body(buf, attrs)))
+      dno.pats.push(r.parse_pattern_body(buf, attrs, |_| fmt))
     }
     assert!(matches!(r.read_event(buf), Event::Eof));
     Ok(true)
@@ -371,7 +442,9 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_dco(&self, mml: bool, dco: &mut DepConstructors) -> io::Result<bool> {
+  pub fn read_dco(
+    &self, mml: bool, dco: &mut DepConstructors, read_constrs: bool,
+  ) -> io::Result<bool> {
     let (mut r, mut buf) = match self.open(mml, "dco") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
@@ -381,8 +454,10 @@ impl MizPath {
     r.parse_signature(buf, &mut dco.sig);
     r.read_start(buf, Some(b"ConstrCounts"));
     r.parse_constr_counts_body(buf, &mut dco.counts);
-    r.parse_constructors_body(buf, Some(&mut dco.constrs));
-    assert!(matches!(r.read_event(buf), Event::Eof));
+    if read_constrs {
+      r.parse_constructors_body(buf, Some(&mut dco.constrs));
+      assert!(matches!(r.read_event(buf), Event::Eof));
+    }
     Ok(true)
   }
 
@@ -394,7 +469,7 @@ impl MizPath {
     while let Ok(e) = r.try_read_start(buf, Some(b"Requirement")) {
       let kind = r.parse_constr_kind(&e).unwrap();
       let nr: u32 = r.get_attr(&e.try_get_attribute(b"nr").unwrap().unwrap().value);
-      dre.reqs.push(DepRequirement { req: Requirement::from_usize(nr as _), kind });
+      dre.reqs.push(DepRequirement { req: Requirement::from_usize((nr - 1) as _), kind });
       r.end_tag(buf)
     }
     assert!(matches!(r.read_event(buf), Event::Eof));
@@ -546,18 +621,18 @@ impl MizPath {
       for attr in e.attributes().map(Result::unwrap) {
         match attr.key {
           b"articlenr" => lib_nr = r.get_attr(&attr.value),
-          b"nr" => thm_nr = r.get_attr(&attr.value),
+          b"nr" => thm_nr = r.get_attr::<u32>(&attr.value) - 1,
           b"kind" => kind = attr.value[0],
           _ => {}
         }
       }
       match kind {
-        b'T' if refs.map_or(true, |refs| refs.thm.contains_key(&(lib_nr, ThmId(thm_nr)))) => {
+        b'T' if refs.map_or(true, |refs| refs.thm.contains(&(lib_nr, ThmId(thm_nr)))) => {
           let th = r.parse_formula(buf).unwrap();
           r.end_tag(buf);
           libs.thm.insert((lib_nr, ThmId(thm_nr)), th);
         }
-        b'D' if refs.map_or(true, |refs| refs.def.contains_key(&(lib_nr, DefId(thm_nr)))) => {
+        b'D' if refs.map_or(true, |refs| refs.def.contains(&(lib_nr, DefId(thm_nr)))) => {
           let th = r.parse_formula(buf).unwrap();
           r.end_tag(buf);
           libs.def.insert((lib_nr, DefId(thm_nr)), th);
@@ -615,19 +690,20 @@ impl MizPath {
       for attr in e.attributes().map(Result::unwrap) {
         match attr.key {
           b"articlenr" => lib_nr = r.get_attr(&attr.value),
-          b"nr" => sch_nr = r.get_attr(&attr.value),
+          b"nr" => sch_nr = SchId(r.get_attr::<u32>(&attr.value) - 1),
           _ => {}
         }
       }
-      if refs.map_or(true, |refs| refs.sch.contains_key(&(lib_nr, sch_nr))) {
+      if refs.map_or(true, |refs| refs.sch.contains(&(lib_nr, sch_nr))) {
         let sch_funcs = r.parse_arg_types(buf);
-        let thesis = r.parse_formula(buf).unwrap();
-        let mut prems = vec![];
-        while let Some(f) = r.parse_formula(buf) {
-          prems.push(f)
-        }
-        assert!(lib_nr != ArticleId::SELF);
-        libs.sch.insert((lib_nr, sch_nr), Scheme { sch_funcs, prems: prems.into(), thesis });
+        if let Some(thesis) = r.parse_formula(buf) {
+          let mut prems = vec![];
+          while let Some(f) = r.parse_formula(buf) {
+            prems.push(f)
+          }
+          assert!(lib_nr != ArticleId::SELF);
+          libs.sch.insert((lib_nr, sch_nr), Scheme { sch_funcs, prems: prems.into(), thesis });
+        } // else canceled scheme
       } else {
         r.read_to_end(b"Scheme", buf)
       }
@@ -793,18 +869,7 @@ impl MizReader<'_> {
           }
         }
         self.end_tag(buf);
-        let class = match kind {
-          b'G' => SymbolKindClass::Struct,
-          b'K' => SymbolKindClass::LeftBrk,
-          b'L' => SymbolKindClass::RightBrk,
-          b'M' => SymbolKindClass::Mode,
-          b'O' => SymbolKindClass::Func,
-          b'R' => SymbolKindClass::Pred,
-          b'U' => SymbolKindClass::Sel,
-          b'V' => SymbolKindClass::Attr,
-          _ => panic!("unexpected symbol kind {:?}", kind as char),
-        };
-        symbols.0[class] += nr;
+        symbols.0[SymbolKindClass::parse(kind)] += nr;
       }
       vocs.0.push((aid, symbols));
     }
@@ -928,9 +993,10 @@ impl MizReader<'_> {
     attrs
   }
 
-  fn parse_pattern_body(
+  fn parse_pattern_body<F>(
     &mut self, buf: &mut Vec<u8>, PatternAttrs { kind, fmt, constr, pos, .. }: PatternAttrs,
-  ) -> Pattern {
+    map: impl FnOnce(FormatId) -> F,
+  ) -> Pattern<F> {
     let primary = self.parse_arg_types(buf);
     self.read_start(buf, Some(b"Visible"));
     let visible = self.parse_int_list(buf, |n| LocusId(n as u8 - 1));
@@ -952,7 +1018,7 @@ impl MizReader<'_> {
       _ => panic!("unknown pattern kind"),
     };
     self.end_tag(buf);
-    Pattern { kind, fmt, primary, visible, pos }
+    Pattern { kind, fmt: map(fmt), primary, visible, pos }
   }
 
   fn parse_constr_counts_body(&mut self, buf: &mut Vec<u8>, counts: &mut ConstructorsBase) {
