@@ -27,6 +27,7 @@ mod reader;
 mod types;
 mod unify;
 mod util;
+mod write;
 
 impl Global {
   /// TypReachable(fWider = wider, fNarrower = narrower)
@@ -136,14 +137,34 @@ impl Global {
   }
 
   pub fn expand_flex_and(
-    &self, nat: &Type, le: PredId, [t1, t2]: [Term; 2], scope: Box<Formula>, depth: u32,
+    nat: Box<Type>, le: PredId, [t1, t2]: [Term; 2], scope: Box<Formula>, depth: u32,
   ) -> Formula {
     let f = Formula::mk_and_with(|conjs| {
       conjs.push(Formula::Pred { nr: le, args: Box::new([t1, Term::Bound(BoundId(depth))]) });
       conjs.push(Formula::Pred { nr: le, args: Box::new([Term::Bound(BoundId(depth)), t2]) });
       scope.mk_neg().append_conjuncts_to(conjs);
     });
-    Formula::forall(nat.clone(), f.mk_neg())
+    Formula::ForAll { dom: nat, scope: Box::new(f.mk_neg()) }
+  }
+
+  pub fn into_legacy_flex_and(
+    nat: &mut Box<Type>, le: PredId, terms2: &mut Box<[Term; 2]>, scope2: &mut Box<Formula>,
+    depth: u32,
+  ) -> Formula {
+    let orig1 = (**scope2).visit_cloned(&mut Inst0(depth, &terms2[0]));
+    let orig2 = (**scope2).visit_cloned(&mut Inst0(depth, &terms2[1]));
+    let expansion = Box::new(Self::expand_flex_and(
+      std::mem::take(nat),
+      le,
+      (**terms2).clone(),
+      std::mem::take(scope2),
+      depth,
+    ));
+    Formula::LegacyFlexAnd {
+      orig: Box::new([orig1, orig2]),
+      terms: std::mem::take(terms2),
+      expansion,
+    }
   }
 }
 
@@ -161,12 +182,7 @@ impl RoundUpTypes<'_> {
 }
 
 impl VisitMut for RoundUpTypes<'_> {
-  fn push_bound(&mut self, ty: Option<&mut Type>) {
-    self.lc.bound_var.push(match ty {
-      Some(t) => t.clone(),
-      None => self.g.nat.as_deref().unwrap().clone(),
-    });
-  }
+  fn push_bound(&mut self, ty: &mut Type) { self.lc.bound_var.push(ty.clone()); }
   fn pop_bound(&mut self, n: u32) {
     self.lc.bound_var.0.truncate(self.lc.bound_var.0.len() - n as usize);
     self.lc.clear_term_cache()
@@ -183,14 +199,15 @@ impl VisitMut for RoundUpTypes<'_> {
     ty.round_up_with_self(self.g, self.lc, false)
   }
 
-  fn visit_flex_and(&mut self, [tm_l, tm_r]: &mut [Term; 2], scope: &mut Formula) {
+  fn visit_flex_and(
+    &mut self, nat: &mut Type, _le: &mut PredId, [tm_l, tm_r]: &mut [Term; 2], scope: &mut Formula,
+  ) {
+    self.visit_type(nat);
     self.visit_term(tm_l);
     self.visit_term(tm_r);
-    if self.g.nat.is_some() {
-      self.push_bound(None);
-      self.visit_formula(scope);
-      self.pop_bound(1)
-    }
+    self.push_bound(nat);
+    self.visit_formula(scope);
+    self.pop_bound(1)
   }
 
   fn visit_push_locus_tys(&mut self, tys: &mut [Type]) {
@@ -689,9 +706,9 @@ impl Formula {
         (ForAll { dom: dom1, scope: sc1 }, ForAll { dom: dom2, scope: sc2 }) =>
           dom1.cmp(ctx, lc, dom2, style).then_with(|| sc1.cmp(ctx, lc, sc2, style)),
         #[allow(clippy::explicit_auto_deref)]
-        (FlexAnd { terms: t1, scope: sc1 }, FlexAnd { terms: t2, scope: sc2 }) =>
+        (FlexAnd { terms: t1, scope: sc1, .. }, FlexAnd { terms: t2, scope: sc2, .. }) =>
           Term::cmp_list(ctx, lc, &**t1, &**t2, style).then_with(|| sc1.cmp(ctx, lc, sc2, style)),
-        (LegacyFlexAnd { orig: args1 }, LegacyFlexAnd { orig: args2 }) =>
+        (LegacyFlexAnd { orig: args1, .. }, LegacyFlexAnd { orig: args2, .. }) =>
           Formula::cmp_list(ctx, lc, &**args1, &**args2, style),
         _ => unreachable!(),
       }
@@ -916,9 +933,9 @@ trait Equate {
         self.eq_pred(ctx, *n1, *n2, args1, args2),
       (ForAll { dom: dom1, scope: sc1 }, ForAll { dom: dom2, scope: sc2 }) =>
         self.eq_forall(ctx, dom1, dom2, sc1, sc2),
-      (FlexAnd { terms: t1, scope: sc1 }, FlexAnd { terms: t2, scope: sc2 }) =>
+      (FlexAnd { terms: t1, scope: sc1, .. }, FlexAnd { terms: t2, scope: sc2, .. }) =>
         self.eq_terms(ctx, &**t1, &**t2) && self.eq_formula(ctx, sc1, sc2),
-      (LegacyFlexAnd { orig: args1 }, LegacyFlexAnd { orig: args2 }) =>
+      (LegacyFlexAnd { orig: args1, .. }, LegacyFlexAnd { orig: args2, .. }) =>
         self.eq_formulas(ctx, &**args1, &**args2),
       _ => false,
     }
@@ -1036,8 +1053,7 @@ macro_rules! mk_visit {
     pub trait $visit {
       const MODIFY_IDS: bool = false;
       #[inline] fn abort(&self) -> bool { false }
-      /// This is called with `None` only for FlexAnd binders, which use type `g.nat`
-      fn push_bound(&mut self, _ty: Option<&$($mutbl)? Type>) {}
+      fn push_bound(&mut self, _ty: &$($mutbl)? Type) {}
       fn pop_bound(&mut self, _n: u32) {}
 
       fn visit_mode_id(&mut self, _n: $(&$mutbl)? ModeId) {}
@@ -1081,7 +1097,7 @@ macro_rules! mk_visit {
           Term::Fraenkel { args, scope, compr } => {
             for ty in &$($mutbl)? **args {
               self.visit_type(ty);
-              self.push_bound(Some(ty));
+              self.push_bound(ty);
             }
             self.visit_term(scope);
             self.visit_formula(compr);
@@ -1138,12 +1154,14 @@ macro_rules! mk_visit {
       }
 
       fn visit_flex_and(
-        &mut self, [tm_l, tm_r]: &$($mutbl)? [Term; 2],
-        scope: &$($mutbl)? Formula,
+        &mut self, nat: &$($mutbl)? Type, le: $(&$mutbl)? PredId,
+        [tm_l, tm_r]: &$($mutbl)? [Term; 2], scope: &$($mutbl)? Formula,
       ) {
+        self.visit_type(nat);
+        self.visit_pred_id(le);
         self.visit_term(tm_l);
         self.visit_term(tm_r);
-        self.push_bound(None);
+        self.push_bound(nat);
         self.visit_formula(scope);
         self.pop_bound(1)
       }
@@ -1175,15 +1193,21 @@ macro_rules! mk_visit {
             },
           Formula::ForAll { dom, scope } => {
             self.visit_type(dom);
-            self.push_bound(Some(dom));
+            self.push_bound(dom);
             self.visit_formula(scope);
             self.pop_bound(1)
           }
-          Formula::FlexAnd { terms, scope } => self.visit_flex_and(terms, scope),
-          Formula::LegacyFlexAnd { orig } =>
+          Formula::FlexAnd { nat, le, terms, scope } =>
+            self.visit_flex_and(nat, $(&$mutbl)? *le, terms, scope),
+          Formula::LegacyFlexAnd { orig, terms, expansion } => {
             for f in &$($mutbl)? **orig {
               self.visit_formula(f)
-            },
+            }
+            for t in &$($mutbl)? **terms {
+              self.visit_term(t)
+            }
+            self.visit_formula(expansion);
+          },
           Formula::True => {}
         }
       }
@@ -1305,7 +1329,7 @@ impl<'a> Inst<'a> {
 }
 
 impl VisitMut for Inst<'_> {
-  fn push_bound(&mut self, _: Option<&mut Type>) { self.depth += 1 }
+  fn push_bound(&mut self, _: &mut Type) { self.depth += 1 }
   fn pop_bound(&mut self, n: u32) { self.depth -= n }
   fn visit_term(&mut self, tm: &mut Term) {
     match *tm {
@@ -2428,7 +2452,7 @@ impl<'a> InternConst<'a> {
 }
 
 impl VisitMut for InternConst<'_> {
-  fn push_bound(&mut self, _: Option<&mut Type>) { self.depth += 1 }
+  fn push_bound(&mut self, _: &mut Type) { self.depth += 1 }
   fn pop_bound(&mut self, n: u32) { self.depth -= n }
 
   /// CollectConstInTrm
@@ -2494,7 +2518,7 @@ impl VisitMut for InternConst<'_> {
       Term::Fraenkel { args, scope, compr } => {
         for ty in &mut **args {
           self.visit_type(ty);
-          self.push_bound(Some(ty));
+          self.push_bound(ty);
         }
         self.visit_term(scope);
         self.visit_formula(compr);
@@ -2536,7 +2560,7 @@ impl LocalContext {
 }
 
 impl VisitMut for ExpandConsts<'_> {
-  fn push_bound(&mut self, _: Option<&mut Type>) { self.depth += 1 }
+  fn push_bound(&mut self, _: &mut Type) { self.depth += 1 }
   fn pop_bound(&mut self, n: u32) { self.depth -= n }
 
   /// ExpandInferConsts
@@ -2634,8 +2658,6 @@ pub struct Global {
   /// It is `set` until the NUMERALS requirement is read,
   /// and then it changes to `Element of omega`
   numeral_type: Type,
-  /// This is the type `natural set`, with an up to date upper cluster
-  nat: Option<Box<Type>>,
 }
 
 #[derive(Default)]
@@ -2813,7 +2835,7 @@ struct Abstract<'a> {
 }
 
 impl VisitMut for Abstract<'_> {
-  fn push_bound(&mut self, _: Option<&mut Type>) { self.depth += 1 }
+  fn push_bound(&mut self, _: &mut Type) { self.depth += 1 }
   fn pop_bound(&mut self, n: u32) { self.depth -= n }
   fn visit_term(&mut self, tm: &mut Term) {
     match tm {
@@ -2929,6 +2951,17 @@ impl MizPath {
     path.set_extension(ext);
     File::open(path)
   }
+
+  fn create(&self, new_prel: bool, ext: &str) -> io::Result<File> {
+    let mut path = if new_prel {
+      let s = self.art.as_str();
+      format!("miz/prel/{}/{s}", &s[..1]).into()
+    } else {
+      self.prel.clone()
+    };
+    path.set_extension(ext);
+    File::create(path)
+  }
 }
 
 pub fn stat(s: &'static str) {
@@ -3000,6 +3033,8 @@ pub struct Config {
   pub analyzer_full: bool,
   pub checker_enabled: bool,
   pub exporter_enabled: bool,
+  pub verify_export: bool,
+  pub xml_export: bool,
 
   // Unsound flags //
   /// This flag enables checking of `P[a] & ... & P[b]` equality by checking
@@ -3070,6 +3105,8 @@ fn main() {
     analyzer_full: true,
     checker_enabled: true,
     exporter_enabled: true,
+    verify_export: false,
+    xml_export: false,
 
     legacy_flex_handling: true,
     flex_expansion_bug: true,
@@ -3096,9 +3133,11 @@ fn main() {
   cfg.analyzer_full = cfg.analyzer_enabled;
   cfg.checker_enabled = std::env::var("NO_CHECKER").is_err();
   cfg.accom_enabled = std::env::var("NO_ACCOM").is_err();
-  cfg.exporter_enabled = std::env::var("NO_EXPORT").is_err();
+  cfg.verify_export = std::env::var("NO_EXPORT").is_err();
+  cfg.xml_export = std::env::var("XML_EXPORT").is_ok();
   cfg.analyzer_enabled |= cfg.exporter_enabled; // exporter needs (quick) analyzer
   cfg.analyzer_full |= cfg.checker_enabled; // checker needs analyzer_full (if analyzer is used)
+  cfg.exporter_enabled = cfg.xml_export || cfg.verify_export;
   cfg.one_item = std::env::var("ONE_ITEM").is_ok();
   let orig_mizar = std::env::var("ORIG_MIZAR").is_ok();
   let mut args = std::env::args().skip(1);

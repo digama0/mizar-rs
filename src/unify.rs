@@ -1056,7 +1056,10 @@ impl Unify<'_> {
         inst.mk_and_then(|| self.unify_type(ty1, ty2))?;
         inst
       }
-      (Formula::FlexAnd { terms: t1, scope: sc1 }, Formula::FlexAnd { terms: t2, scope: sc2 }) => {
+      (
+        Formula::FlexAnd { terms: t1, scope: sc1, .. },
+        Formula::FlexAnd { terms: t2, scope: sc2, .. },
+      ) => {
         let mut inst = self.unify_term(&t1[0], &t2[0])?;
         inst.mk_and_then(|| self.unify_term(&t1[1], &t2[1]))?;
         self.depth += 1;
@@ -1064,7 +1067,7 @@ impl Unify<'_> {
         self.depth -= 1;
         inst
       }
-      (Formula::LegacyFlexAnd { orig: t1 }, Formula::LegacyFlexAnd { orig: t2 }) => {
+      (Formula::LegacyFlexAnd { orig: t1, .. }, Formula::LegacyFlexAnd { orig: t2, .. }) => {
         let mut inst = self.unify_formula(&t1[0], &t2[0])?;
         inst.mk_and_then(|| self.unify_formula(&t1[1], &t2[1]))?;
         inst

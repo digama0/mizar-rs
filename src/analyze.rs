@@ -1025,7 +1025,7 @@ impl Analyzer<'_> {
             Self::eq_type(ctx, ic, dom1, dom2)
               .and_then(&ctx.g.constrs, || Self::eq_formula(ctx, ic, sc1, sc2)),
           #[allow(clippy::explicit_auto_deref)]
-          (FlexAnd { terms: t1, scope: sc1 }, FlexAnd { terms: t2, scope: sc2 }) =>
+          (FlexAnd { terms: t1, scope: sc1, .. }, FlexAnd { terms: t2, scope: sc2, .. }) =>
             Self::eq_terms(ctx, ic, &**t1, &**t2)
               .and_then(&ctx.g.constrs, || Self::eq_formula(ctx, ic, sc1, sc2)),
           _ => Self::bool(false),
@@ -1148,10 +1148,10 @@ impl Analyzer<'_> {
             ForAll { dom, scope }
           }
           #[allow(clippy::explicit_auto_deref)]
-          (FlexAnd { terms: t1, scope: sc1 }, FlexAnd { terms: t2, scope: sc2 }) => {
+          (FlexAnd { terms: t1, scope: sc1, nat, le }, FlexAnd { terms: t2, scope: sc2, .. }) => {
             let terms = Box::new([self.term(ctx, &t1[0], &t2[0]), self.term(ctx, &t1[1], &t2[1])]);
             let scope = ctx.enter(1, |ctx| Box::new(self.formula(ctx, sc1, sc2)));
-            FlexAnd { terms, scope }
+            FlexAnd { terms, scope, nat: nat.clone(), le: *le }
           }
           _ => Self::fail(),
         }
@@ -1159,7 +1159,7 @@ impl Analyzer<'_> {
     }
 
     let Some(natural) = self.g.reqs.natural() else { panic!("requirement NUMERALS missing") };
-    let Some(_le) = self.g.reqs.less_or_equal() else { panic!("requirement REAL missing") };
+    let Some(le) = self.g.reqs.less_or_equal() else { panic!("requirement REAL missing") };
     let f1 = self.elab_formula(f1, pos);
     let f2 = self.elab_formula(f2, pos);
     let (t1, t2) = self.g.with_eq(&self.lc, |ctx| {
@@ -1184,9 +1184,12 @@ impl Analyzer<'_> {
       is_natural(&t1) && is_natural(&t2),
       "can't abstract flex-and term, boundary variable does not have 'natural' adjective"
     );
+    let mut nat =
+      Box::new(Type { kind: ModeId::SET.into(), attrs: (natural.clone(), natural), args: vec![] });
+    nat.round_up_with_self(&self.g, &self.lc, false);
     let scope =
       self.g.with_eq(&self.lc, |ctx| Apply { t1: &t1, t2: &t2, base }.formula(ctx, &f1, &f2));
-    Formula::FlexAnd { terms: Box::new([t1, t2]), scope: Box::new(scope) }
+    Formula::FlexAnd { terms: Box::new([t1, t2]), scope: Box::new(scope), nat, le }
   }
 
   fn elab_push_conjuncts(&mut self, f: &ast::Formula, conjs: &mut Vec<Formula>, pos: bool) {
@@ -1389,9 +1392,9 @@ impl Analyzer<'_> {
           continue 'start
         }
         Formula::FlexAnd { .. } => {
-          let (Some(nat), Some(le)) = (&self.g.nat, self.g.reqs.less_or_equal()) else { break };
-          let Formula::FlexAnd { terms, scope } = std::mem::take(&mut *f.1) else { unreachable!() };
-          *f.1 = self.g.expand_flex_and(nat, le, *terms, scope, 0);
+          let Formula::FlexAnd { nat, le, terms, scope } = std::mem::take(&mut *f.1)
+          else { unreachable!() };
+          *f.1 = Global::expand_flex_and(nat, le, *terms, scope, 0);
           continue 'start
         }
         Formula::Pred { nr, args } if atomic > 0 => {
@@ -3783,10 +3786,6 @@ impl ReadProof for BlockReader {
       let mut attrs = elab.g.numeral_type.attrs.1.clone();
       attrs.round_up_with(&elab.g, &elab.lc, &elab.g.numeral_type, false);
       elab.g.numeral_type.attrs.1 = attrs;
-      if let Some(mut nat) = elab.g.nat.take() {
-        nat.round_up_with_self(&elab.g, &elab.lc, false);
-        elab.g.nat = Some(nat)
-      }
       for i in 0..elab.g.clusters.registered.len() {
         let cl = &elab.r.g.clusters.registered[i];
         let mut attrs = cl.consequent.1.clone();

@@ -832,11 +832,15 @@ pub enum Formula {
   },
   /// ikFrmFlexConj
   FlexAnd {
+    nat: Box<Type>,
+    le: PredId,
     terms: Box<[Term; 2]>,
     scope: Box<Formula>,
   },
   LegacyFlexAnd {
     orig: Box<[Formula; 2]>,
+    terms: Box<[Term; 2]>,
+    expansion: Box<Formula>,
   },
   /// ikFrmVerum
   True,
@@ -1025,36 +1029,61 @@ impl Article {
   pub fn as_str(&self) -> &str { std::str::from_utf8(self.as_bytes()).unwrap() }
 }
 
-#[derive(Copy, Clone, Debug, Enum, PartialEq, Eq)]
-pub enum PropertyKind {
-  /// Applicable to PredId. Means: `∀ x y, P[x, y] -> P[y, x]`
-  Symmetry,
-  /// Applicable to PredId. Means: `∀ x, P[x, x]`
-  Reflexivity,
-  /// Applicable to PredId. Means: `∀ x, !P[x, x]`
-  Irreflexivity,
-  /// unused
-  Associativity,
-  /// unused
-  Transitivity,
-  /// Applicable to FuncId. Means: `∀ x y, F(x, y) = F(y, x)`
-  Commutativity,
-  /// Applicable to PredId. Means: `∀ x y, !P[x, y] -> P[y, x]`
-  Connectedness,
-  /// Applicable to PredId. Means: `∀ x y, P[x, y] -> !P[y, x]`
-  Asymmetry,
-  /// Applicable to FuncId. Means: `∀ x, F(x, x) = x`
-  Idempotence,
-  /// Applicable to FuncId. Means: `∀ x, F(F(x)) = x`
-  Involutiveness,
-  /// Applicable to FuncId. Means: `∀ x, F(F(x)) = F(x)`
-  Projectivity,
-  /// Applicable to ModeId. Means: `∃ S:set, ∀ x:M, x ∈ S`
-  Sethood,
-  /// Special property for AttrId, not in source text.
-  /// Means "not strict", where "strict" is an adjective on structure types
-  /// meaning no additional fields are present.
-  Abstractness,
+macro_rules! mk_property_kind {
+  (enum $ty:ident { $($(#[$attr:meta])* $id:ident = $upper:literal | $lower:literal,)* }) => {
+    #[derive(Copy, Clone, Debug, Enum, PartialEq, Eq)]
+    pub enum $ty {
+      $($(#[$attr])* $id,)*
+    }
+    impl $ty {
+      pub fn name(self) -> &'static [u8] {
+        match self {
+          $(Self::$id => $upper,)*
+        }
+      }
+    }
+    impl TryFrom<&[u8]> for $ty {
+      type Error = ();
+      fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        match value {
+          $($lower | $upper => Ok($ty::$id),)*
+          _ => Err(()),
+        }
+      }
+    }
+  }
+}
+mk_property_kind! {
+  enum PropertyKind {
+    /// Applicable to PredId. Means: `∀ x y, P[x, y] -> P[y, x]`
+    Symmetry = b"Symmetry" | b"symmetry",
+    /// Applicable to PredId. Means: `∀ x, P[x, x]`
+    Reflexivity = b"Reflexivity" | b"reflexivity",
+    /// Applicable to PredId. Means: `∀ x, !P[x, x]`
+    Irreflexivity = b"Irreflexivity" | b"irreflexivity",
+    /// unused
+    Associativity = b"Associativity" | b"associativity",
+    /// unused
+    Transitivity = b"Transitivity" | b"transitivity",
+    /// Applicable to FuncId. Means: `∀ x y, F(x, y) = F(y, x)`
+    Commutativity = b"Commutativity" | b"commutativity",
+    /// Applicable to PredId. Means: `∀ x y, !P[x, y] -> P[y, x]`
+    Connectedness = b"Connectedness" | b"connectedness",
+    /// Applicable to PredId. Means: `∀ x y, P[x, y] -> !P[y, x]`
+    Asymmetry = b"Asymmetry" | b"asymmetry",
+    /// Applicable to FuncId. Means: `∀ x, F(x, x) = x`
+    Idempotence = b"Idempotence" | b"idempotence",
+    /// Applicable to FuncId. Means: `∀ x, F(F(x)) = x`
+    Involutiveness = b"Involutiveness" | b"involutiveness",
+    /// Applicable to FuncId. Means: `∀ x, F(F(x)) = F(x)`
+    Projectivity = b"Projectivity" | b"projectivity",
+    /// Applicable to ModeId. Means: `∃ S:set, ∀ x:M, x ∈ S`
+    Sethood = b"Sethood" | b"sethood",
+    /// Special property for AttrId, not in source text.
+    /// Means "not strict", where "strict" is an adjective on structure types
+    /// meaning no additional fields are present.
+    Abstractness = b"Abstractness" | b"abstractness",
+  }
 }
 
 impl PropertyKind {
@@ -1065,28 +1094,6 @@ impl PropertyKind {
       Self::Connectedness => Self::Asymmetry,
       Self::Asymmetry => Self::Connectedness,
       _ => self,
-    }
-  }
-}
-
-impl TryFrom<&[u8]> for PropertyKind {
-  type Error = ();
-  fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-    match value {
-      b"Symmetry" | b"symmetry" => Ok(PropertyKind::Symmetry),
-      b"Reflexivity" | b"reflexivity" => Ok(PropertyKind::Reflexivity),
-      b"Irreflexivity" | b"irreflexivity" => Ok(PropertyKind::Irreflexivity),
-      b"Associativity" | b"associativity" => Ok(PropertyKind::Associativity),
-      b"Transitivity" | b"transitivity" => Ok(PropertyKind::Transitivity),
-      b"Commutativity" | b"commutativity" => Ok(PropertyKind::Commutativity),
-      b"Connectedness" | b"connectedness" => Ok(PropertyKind::Connectedness),
-      b"Asymmetry" | b"asymmetry" => Ok(PropertyKind::Asymmetry),
-      b"Idempotence" | b"idempotence" => Ok(PropertyKind::Idempotence),
-      b"Involutiveness" | b"involutiveness" => Ok(PropertyKind::Involutiveness),
-      b"Projectivity" | b"projectivity" => Ok(PropertyKind::Projectivity),
-      b"Sethood" | b"sethood" => Ok(PropertyKind::Sethood),
-      b"Abstractness" | b"abstractness" => Ok(PropertyKind::Abstractness),
-      _ => Err(()),
     }
   }
 }
@@ -1344,8 +1351,8 @@ macro_rules! impl_constructors {
     }
 
     impl ConstrKind {
-      pub fn discr(&self) -> u8 {
-        match self { $(Self::$variant(_) => $lit,)* }
+      pub fn discr_nr(&self) -> (u8, u32) {
+        match *self { $(Self::$variant(n) => ($lit, n.0),)* }
       }
 
       pub fn lt(self, base: &ConstructorsBase) -> bool {
@@ -2400,21 +2407,6 @@ pub enum PatternKindClass {
   Sel,
   Aggr,
   SubAggr,
-}
-
-impl PatternKindClass {
-  fn _discr(&self) -> u8 {
-    match self {
-      PatternKindClass::Mode => b'M',
-      PatternKindClass::Struct => b'L',
-      PatternKindClass::Attr => b'V',
-      PatternKindClass::Pred => b'R',
-      PatternKindClass::Func => b'K',
-      PatternKindClass::Sel => b'U',
-      PatternKindClass::Aggr => b'G',
-      PatternKindClass::SubAggr => b'J',
-    }
-  }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

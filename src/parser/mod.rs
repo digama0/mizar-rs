@@ -256,10 +256,11 @@ impl XmlReader {
     (pos, nr.checked_sub(1).map(LabelId))
   }
 
-  fn parse_int_list<T>(&mut self, buf: &mut Vec<u8>, f: impl Fn(u32) -> T) -> Box<[T]> {
+  fn parse_loci(&mut self, buf: &mut Vec<u8>) -> Box<[LocusId]> {
     let mut out = vec![];
     while let Ok(e) = self.try_read_start(buf, Some(b"Int")) {
-      out.push(f(self.get_attr(&e.try_get_attribute(b"x").unwrap().unwrap().value)));
+      let n = self.get_attr::<u8>(&e.try_get_attribute(b"x").unwrap().unwrap().value);
+      out.push(LocusId(n - 1));
       self.end_tag(buf);
     }
     out.into()
@@ -370,9 +371,9 @@ impl MizPath {
   }
 
   pub fn read_dfr(
-    &self, mml: bool, vocs: &mut Vocabularies, formats: &mut IdxVec<FormatId, Format>,
+    &self, vocs: &mut Vocabularies, formats: &mut IdxVec<FormatId, Format>,
   ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(mml, "dfr") {
+    let (mut r, mut buf) = match self.open(false, "dfr") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
     };
@@ -396,8 +397,8 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_dno(&self, mml: bool, dno: &mut DepNotation) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(mml, "dno") {
+  pub fn read_dno(&self, dno: &mut DepNotation) -> io::Result<bool> {
+    let (mut r, mut buf) = match self.open(false, "dno") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
     };
@@ -442,10 +443,8 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_dco(
-    &self, mml: bool, dco: &mut DepConstructors, read_constrs: bool,
-  ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(mml, "dco") {
+  pub fn read_dco(&self, dco: &mut DepConstructors, read_constrs: bool) -> io::Result<bool> {
+    let (mut r, mut buf) = match self.open(false, "dco") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
     };
@@ -491,8 +490,8 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_dcl(&self, mml: bool, dcl: &mut DepClusters) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(mml, "dcl") {
+  pub fn read_dcl(&self, dcl: &mut DepClusters) -> io::Result<bool> {
+    let (mut r, mut buf) = match self.open(false, "dcl") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
     };
@@ -511,10 +510,10 @@ impl MizPath {
   }
 
   pub fn read_definitions<'a>(
-    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, mml: bool, ext: &str,
-    sig: Option<&mut Vec<Article>>, defs: &mut Vec<Definiens>,
+    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, sig: Option<&mut Vec<Article>>,
+    defs: &mut Vec<Definiens>,
   ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(mml, ext) {
+    let (mut r, mut buf) = match self.open(sig.is_none(), ext) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, ctx, false),
     };
@@ -535,10 +534,10 @@ impl MizPath {
   }
 
   pub fn read_properties<'a>(
-    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, mml: bool, ext: &str,
-    sig: Option<&mut Vec<Article>>, props: &mut Vec<Property>,
+    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, sig: Option<&mut Vec<Article>>,
+    props: &mut Vec<Property>,
   ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(mml, ext) {
+    let (mut r, mut buf) = match self.open(sig.is_none(), ext) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, ctx, false),
     };
@@ -559,10 +558,10 @@ impl MizPath {
   }
 
   pub fn read_identify_regs<'a>(
-    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, mml: bool, ext: &str,
-    sig: Option<&mut Vec<Article>>, ids: &mut Vec<IdentifyFunc>,
+    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, sig: Option<&mut Vec<Article>>,
+    ids: &mut Vec<IdentifyFunc>,
   ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(mml, ext) {
+    let (mut r, mut buf) = match self.open(sig.is_none(), ext) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, ctx, false),
     };
@@ -583,10 +582,10 @@ impl MizPath {
   }
 
   pub fn read_reduction_regs<'a>(
-    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, mml: bool, ext: &str,
-    sig: Option<&mut Vec<Article>>, reds: &mut Vec<Reduction>,
+    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, sig: Option<&mut Vec<Article>>,
+    reds: &mut Vec<Reduction>,
   ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(mml, ext) {
+    let (mut r, mut buf) = match self.open(sig.is_none(), ext) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, ctx, false),
     };
@@ -645,8 +644,8 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_the(&self, mml: bool, thms: &mut DepTheorems) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(mml, "the") {
+  pub fn read_the(&self, thms: &mut DepTheorems) -> io::Result<bool> {
+    let (mut r, mut buf) = match self.open(false, "the") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
     };
@@ -712,8 +711,8 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_sch(&self, mml: bool, schs: &mut DepSchemes) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(mml, "sch") {
+  pub fn read_sch(&self, schs: &mut DepSchemes) -> io::Result<bool> {
+    let (mut r, mut buf) = match self.open(false, "sch") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
     };
@@ -806,16 +805,7 @@ impl MizReader<'_> {
   fn parse_attrs(&mut self, buf: &mut Vec<u8>) -> Attrs {
     self.read_start(buf, Some(b"Cluster"));
     let mut attrs = vec![];
-    while let Some(attr) = self.parse_attr(buf) {
-      attrs.push(attr)
-    }
-    let ctx = self.ctx.get();
-    attrs.sort_by(|a, b| a.cmp(ctx, None, b, CmpStyle::Attr));
-    Attrs::Consistent(attrs)
-  }
-
-  fn parse_attr(&mut self, buf: &mut Vec<u8>) -> Option<Attr> {
-    if let Ok(e) = self.try_read_start(buf, Some(b"Adjective")) {
+    while let Ok(e) = self.try_read_start(buf, Some(b"Adjective")) {
       let mut nr = 0;
       let mut pos = true;
       for attr in e.attributes().map(Result::unwrap) {
@@ -825,10 +815,11 @@ impl MizReader<'_> {
           _ => {}
         }
       }
-      Some(Attr { nr: AttrId(nr - 1), pos, args: self.parse_term_list(buf) })
-    } else {
-      None
+      attrs.push(Attr { nr: AttrId(nr - 1), pos, args: self.parse_term_list(buf) })
     }
+    let ctx = self.ctx.get();
+    attrs.sort_by(|a, b| a.cmp(ctx, None, b, CmpStyle::Attr));
+    Attrs::Consistent(attrs)
   }
 
   fn get_basic_attrs(&mut self, e: &BytesStart<'_>) -> (u8, u32) {
@@ -977,12 +968,14 @@ impl MizReader<'_> {
 
   fn parse_pattern_attrs(&mut self, e: &BytesStart<'_>) -> PatternAttrs {
     let mut attrs = PatternAttrs { pos: true, ..PatternAttrs::default() };
+    let mut constr_kind = 0;
     for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
         b"nr" => attrs._abs_nr = self.get_attr(&attr.value),
         b"aid" => attrs._article = Article::from_upper(&attr.value),
         b"kind" => attrs.kind = attr.value[0],
         b"formatnr" => attrs.fmt = FormatId(self.get_attr::<u32>(&attr.value) - 1),
+        b"constrkind" => constr_kind = attr.value[0],
         b"constrnr" => attrs.constr = self.get_attr(&attr.value),
         b"antonymic" => attrs.pos = &*attr.value != b"true",
         b"relnr" => attrs.pid = self.get_attr::<u32>(&attr.value).checked_sub(1),
@@ -990,6 +983,7 @@ impl MizReader<'_> {
         _ => {}
       }
     }
+    assert_eq!(attrs.kind as char, constr_kind as char);
     attrs
   }
 
@@ -999,7 +993,7 @@ impl MizReader<'_> {
   ) -> Pattern<F> {
     let primary = self.parse_arg_types(buf);
     self.read_start(buf, Some(b"Visible"));
-    let visible = self.parse_int_list(buf, |n| LocusId(n as u8 - 1));
+    let visible = self.parse_loci(buf);
     let kind = match (kind, constr.checked_sub(1)) {
       (b'M', Some(nr)) => PatternKind::Mode(ModeId(nr)),
       (b'M', None) => {
@@ -1300,7 +1294,7 @@ impl MizReader<'_> {
         b"Typ" => {
           let (kind, nr) = self.get_basic_attrs(&e);
           let kind = match kind {
-            b'L' | b'G' => TypeKind::Struct(StructId(nr - 1)),
+            b'G' => TypeKind::Struct(StructId(nr - 1)),
             b'M' => TypeKind::Mode(ModeId(nr - 1)),
             _ => panic!("bad type kind"),
           };
@@ -1452,16 +1446,18 @@ impl MizReader<'_> {
           let _orig1 = self.parse_formula(buf).unwrap();
           let _orig2 = self.parse_formula(buf).unwrap();
           let terms = Box::new([self.parse_term(buf).unwrap(), self.parse_term(buf).unwrap()]);
-          let Formula::ForAll { scope, .. } = self.parse_formula(buf).unwrap() else { panic!() };
-          let scope = Formula::mk_and(scope.mk_neg().conjuncts().iter().skip(2).cloned().collect());
+          let Formula::ForAll { dom, scope } = self.parse_formula(buf).unwrap() else { panic!() };
+          let sc2 = scope.mk_neg();
+          let &[Formula::Pred { nr: le, .. }, _, ref rest @ ..] = sc2.conjuncts() else { panic!() };
+          let scope = Formula::mk_and(rest.to_owned());
           self.end_tag(buf);
-          Elem::Formula(Formula::FlexAnd { terms, scope: Box::new(scope.mk_neg()) })
+          Elem::Formula(Formula::FlexAnd { nat: dom, le, terms, scope: Box::new(scope.mk_neg()) })
         }
         b"Verum" => {
           self.end_tag(buf);
           Elem::Formula(Formula::True)
         }
-        b"Essentials" => Elem::Essentials(self.parse_int_list(buf, |n| LocusId(n as u8 - 1))),
+        b"Essentials" => Elem::Essentials(self.parse_loci(buf)),
         b"DefMeaning" => match self.get_basic_attrs(&e).0 {
           b'm' => {
             let f = |e| if let Elem::Formula(f) = e { Some(f) } else { None };

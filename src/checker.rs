@@ -296,10 +296,8 @@ impl Expand<'_> {
         let expansions = self.well_matched_expansions(ConstrKind::Attr(n2), args);
         f.conjdisj_many(pos, expansions);
       }
-      Formula::FlexAnd { terms, scope } =>
+      Formula::FlexAnd { nat, le, terms, scope } =>
         if self.lc.bound_var.is_empty() {
-          let nat = self.g.nat.as_ref().unwrap();
-          let le = self.g.reqs.less_or_equal().unwrap();
           *f = Formula::mk_and_with(|conjs| {
             {
               let mut epf = ExpandPrivFunc(&self.g.constrs, self.lc);
@@ -315,8 +313,9 @@ impl Expand<'_> {
               } else {
                 scope2.clone()
               };
-              let f2 = self.g.expand_flex_and(nat, le, (*terms2).clone(), scope3, 0);
-              let f1 = Formula::FlexAnd { terms: terms2, scope: scope2 };
+              let nat = std::mem::take(nat);
+              let f2 = Global::expand_flex_and(nat.clone(), *le, (*terms2).clone(), scope3, 0);
+              let f1 = Formula::FlexAnd { nat, le: *le, terms: terms2, scope: scope2 };
               conjs.push(f1.maybe_neg(pos));
               f2.maybe_neg(pos).append_conjuncts_to(conjs);
             }
@@ -393,13 +392,11 @@ struct ExpandLegacyFlex {
   depth: u32,
 }
 impl VisitMut for ExpandLegacyFlex {
-  fn push_bound(&mut self, _: Option<&mut Type>) { self.depth += 1 }
+  fn push_bound(&mut self, _: &mut Type) { self.depth += 1 }
   fn pop_bound(&mut self, n: u32) { self.depth -= n }
   fn visit_formula(&mut self, f: &mut Formula) {
-    if let Formula::FlexAnd { terms: terms2, scope: scope2 } = f {
-      let orig1 = (**scope2).visit_cloned(&mut Inst0(self.depth, &terms2[0]));
-      let orig2 = (**scope2).visit_cloned(&mut Inst0(self.depth, &terms2[1]));
-      *f = Formula::LegacyFlexAnd { orig: Box::new([orig1, orig2]) };
+    if let Formula::FlexAnd { nat, le, terms, scope } = f {
+      *f = Global::into_legacy_flex_and(nat, *le, terms, scope, self.depth)
     }
     self.super_visit_formula(f)
   }
@@ -915,10 +912,11 @@ impl<'a> SchemeCtx<'a> {
           r
         },
       #[allow(clippy::explicit_auto_deref)]
-      (FlexAnd { terms: t1, scope: sc1 }, FlexAnd { terms: t2, scope: sc2 }) if pos =>
+      (FlexAnd { nat, terms: t1, scope: sc1, .. }, FlexAnd { terms: t2, scope: sc2, .. })
+        if pos =>
         self.eq_terms(&**t1, &**t2) && {
           self.lc.term_cache.get_mut().open_scope();
-          self.lc.bound_var.0.push(self.g.nat.as_deref().unwrap().clone());
+          self.lc.bound_var.0.push((**nat).clone());
           let r = self.eq_formula(sc1, sc2, true);
           self.lc.bound_var.0.pop();
           self.lc.term_cache.get_mut().close_scope();

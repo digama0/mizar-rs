@@ -141,13 +141,6 @@ impl MizPath {
     v.g.numeral_type.attrs.1 = attrs;
     v.lc.clear_term_cache();
     v.g.round_up_clusters(&mut v.lc);
-    if let Some(natural) = v.g.reqs.natural() {
-      let attrs = || Attrs::Consistent(vec![Attr::new0(natural, true)]);
-      let mut ty =
-        Box::new(Type { kind: ModeId::SET.into(), attrs: (attrs(), attrs()), args: vec![] });
-      ty.round_up_with_self(&v.g, &v.lc, false);
-      v.g.nat = Some(ty)
-    }
 
     if cfg.analyzer_enabled {
       // LoadSGN
@@ -168,7 +161,7 @@ impl MizPath {
           .accom_definitions(&v.g.constrs, DirectiveKind::Definitions, &mut v.definitions)
           .unwrap();
       } else {
-        self.read_definitions(&v.g.constrs, true, "dfs", None, &mut v.definitions).unwrap();
+        self.read_definitions(&v.g.constrs, "dfs", None, &mut v.definitions).unwrap();
       }
       if cfg.dump_definitions {
         for d in &v.definitions {
@@ -184,7 +177,7 @@ impl MizPath {
           .accom_definitions(&v.g.constrs, DirectiveKind::Equalities, &mut v.equalities)
           .unwrap();
       } else {
-        self.read_definitions(&v.g.constrs, true, "dfe", None, &mut v.equalities).unwrap();
+        self.read_definitions(&v.g.constrs, "dfe", None, &mut v.equalities).unwrap();
       }
       if cfg.dump_definitions {
         for d in &v.equalities {
@@ -200,7 +193,7 @@ impl MizPath {
           .accom_definitions(&v.g.constrs, DirectiveKind::Expansions, &mut v.expansions)
           .unwrap();
       } else {
-        self.read_definitions(&v.g.constrs, true, "dfx", None, &mut v.expansions).unwrap();
+        self.read_definitions(&v.g.constrs, "dfx", None, &mut v.expansions).unwrap();
       }
       if cfg.dump_definitions {
         for d in &v.expansions {
@@ -213,7 +206,7 @@ impl MizPath {
     if let Some(accom) = &mut v.accom {
       accom.accom_properties(&v.g.constrs, &mut v.properties).unwrap();
     } else {
-      self.read_properties(&v.g.constrs, true, "epr", None, &mut v.properties).unwrap();
+      self.read_properties(&v.g.constrs, "epr", None, &mut v.properties).unwrap();
     }
 
     // LoadIdentify, LoadReductions
@@ -222,8 +215,8 @@ impl MizPath {
         accom.accom_identify_regs(&v.g.constrs, &mut v.identify).unwrap();
         accom.accom_reduction_regs(&v.g.constrs, &mut v.reductions).unwrap();
       } else {
-        self.read_identify_regs(&v.g.constrs, true, "eid", None, &mut v.identify).unwrap();
-        self.read_reduction_regs(&v.g.constrs, true, "erd", None, &mut v.reductions).unwrap();
+        self.read_identify_regs(&v.g.constrs, "eid", None, &mut v.identify).unwrap();
+        self.read_reduction_regs(&v.g.constrs, "erd", None, &mut v.reductions).unwrap();
       }
     }
 
@@ -263,7 +256,6 @@ impl MizPath {
     // CollectConstInEnvConstructors
     let cc = &mut v.intern_const();
     let numeral_type = v.g.numeral_type.visit_cloned(cc);
-    let nat = v.g.nat.visit_cloned(cc);
     let mut constrs = v.g.constrs.clone();
     constrs.mode.visit(cc);
     constrs.struct_mode.visit(cc);
@@ -278,7 +270,6 @@ impl MizPath {
     // note: collecting in the functor term breaks the sort order
     clusters.functor.vec.0.iter_mut().for_each(|c| c.consequent.1.visit(cc));
     v.g.numeral_type = numeral_type;
-    v.g.nat = nat;
     v.g.constrs = constrs;
     v.g.clusters = clusters;
 
@@ -336,7 +327,6 @@ impl Reader {
         constrs: Default::default(),
         clusters: Default::default(),
         numeral_type: Type::SET,
-        nat: None,
       },
       lc: LocalContext::default(),
       libs: Libraries::default(),
