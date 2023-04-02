@@ -1119,8 +1119,8 @@ impl PropertySet {
       | 1 << PropertyKind::Involutiveness as u16
       | 1 << PropertyKind::Projectivity as u16,
   );
-  const fn uses_arg1(self) -> bool { self.0 & Self::USES_ARG1.0 != 0 }
-  const fn uses_arg2(self) -> bool { self.0 & Self::USES_ARG2.0 != 0 }
+  pub const fn uses_arg1(self) -> bool { self.0 & Self::USES_ARG1.0 != 0 }
+  pub const fn uses_arg2(self) -> bool { self.0 & Self::USES_ARG2.0 != 0 }
 }
 
 impl std::fmt::Debug for PropertySet {
@@ -2570,7 +2570,7 @@ pub struct DepTheorems {
   pub thm: Vec<Theorem>,
 }
 
-#[derive(Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct DepSchemes {
   pub sig: Vec<Article>,
   pub sch: Vec<Option<Scheme>>,

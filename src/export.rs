@@ -6,6 +6,8 @@ use enum_map::EnumMap;
 use itertools::Itertools;
 use std::fmt::Debug;
 
+const DOUBLE_CHECK: bool = false;
+
 #[derive(Default)]
 pub struct Exporter {
   pub notations_base: EnumMap<PatternKindClass, u32>,
@@ -222,7 +224,7 @@ impl Analyzer<'_> {
       ic: &self.r.lc.infer_const.borrow().vec,
       depth: 0,
     };
-    const NEW_PREL: bool = true;
+    let new_prel = !self.g.cfg.overwrite_prel;
 
     // loading .sgl
     let mut arts2 = vec![];
@@ -266,7 +268,7 @@ impl Analyzer<'_> {
       let (mut vocs2, mut dfr2) = Default::default();
       let nonempty = !dfr1.is_empty();
       if self.g.cfg.verify_export {
-        assert_eq!(nonempty, self.path.read_dfr(&mut vocs2, &mut dfr2).unwrap());
+        assert_eq!(nonempty, self.path.read_dfr(false, &mut vocs2, &mut dfr2).unwrap());
       }
       if nonempty {
         let mut marked_vocs = Vocabularies::default();
@@ -277,7 +279,13 @@ impl Analyzer<'_> {
           assert_eq!(dfr1, dfr2.0);
         }
         if self.g.cfg.xml_export {
-          self.path.write_dfr(NEW_PREL, &marked_vocs, &dfr1)
+          self.path.write_dfr(new_prel, &marked_vocs, &dfr1);
+          if DOUBLE_CHECK {
+            let (mut vocs3, mut dfr3) = Default::default();
+            self.path.read_dfr(new_prel, &mut vocs3, &mut dfr3).unwrap();
+            assert_eq!(marked_vocs, vocs3);
+            assert_eq!(dfr1, dfr3.0);
+          }
         }
       }
     }
@@ -288,7 +296,7 @@ impl Analyzer<'_> {
       let since1 = self.g.constrs.since(&self.export.constrs_base);
       let nonempty = !since1.is_empty();
       if self.g.cfg.verify_export {
-        assert_eq!(nonempty, self.path.read_dco(&mut dco2, true).unwrap())
+        assert_eq!(nonempty, self.path.read_dco(false, &mut dco2, true).unwrap())
       }
       let mut constrs1 = since1.to_owned();
       constrs1.visit(ep);
@@ -312,7 +320,12 @@ impl Analyzer<'_> {
           process!(mode, struct_mode, attribute, predicate, functor, selector, aggregate);
         }
         if self.g.cfg.xml_export {
-          self.path.write_dco(NEW_PREL, &dco1)
+          self.path.write_dco(new_prel, &dco1);
+          if DOUBLE_CHECK {
+            let mut dco3 = Default::default();
+            self.path.read_dco(new_prel, &mut dco3, true).unwrap();
+            assert_eq!(dco1, dco3);
+          }
         }
         aco.accum.push((self.article, aco.base));
         aco.base = self.g.constrs.len();
@@ -331,7 +344,7 @@ impl Analyzer<'_> {
       let mut dno2 = Default::default();
       let nonempty = !pats1.is_empty();
       if self.g.cfg.verify_export {
-        assert_eq!(nonempty, self.path.read_dno(&mut dno2).unwrap());
+        assert_eq!(nonempty, self.path.read_dno(false, &mut dno2).unwrap());
       }
       if nonempty {
         let mut marked_vocs = Vocabularies::default();
@@ -347,7 +360,12 @@ impl Analyzer<'_> {
           assert_eq_iter("notations", dno1.pats.iter(), dno2.pats.iter());
         }
         if self.g.cfg.xml_export {
-          self.path.write_dno(NEW_PREL, &dno1)
+          self.path.write_dno(new_prel, &dno1);
+          if DOUBLE_CHECK {
+            let mut dno3 = Default::default();
+            self.path.read_dno(new_prel, &mut dno3).unwrap();
+            assert_eq!(dno1, dno3);
+          }
         }
       }
     }
@@ -358,14 +376,14 @@ impl Analyzer<'_> {
       let since1 = self.g.clusters.since(&self.export.clusters_base);
       let nonempty = !since1.is_empty();
       if self.g.cfg.verify_export {
-        assert_eq!(self.path.read_dcl(&mut dcl2).unwrap(), nonempty);
-        ep.with_ctx(None, |ep| dcl2.cl.visit(ep));
+        assert_eq!(self.path.read_dcl(false, &mut dcl2).unwrap(), nonempty);
       }
       if nonempty {
         let mut cl1 = since1.to_owned();
         cl1.visit(ep);
         let dcl1 = DepClusters { sig: aco.mark(&mut cl1, arts1.len(), &arts2), cl: cl1 };
         if self.g.cfg.verify_export {
+          ep.with_ctx(None, |ep| dcl2.cl.visit(ep));
           assert_eq!(dcl1.sig, dcl2.sig);
           macro_rules! process { ($($field:ident),*) => {$({
             assert_eq_iter(concat!("clusters.", stringify!($field)),
@@ -374,7 +392,12 @@ impl Analyzer<'_> {
           process!(registered, functor, conditional);
         }
         if self.g.cfg.xml_export {
-          self.path.write_dcl(NEW_PREL, &dcl1)
+          self.path.write_dcl(new_prel, &dcl1);
+          if DOUBLE_CHECK {
+            let mut dcl3 = Default::default();
+            self.path.read_dcl(new_prel, &mut dcl3).unwrap();
+            assert_eq!(dcl1, dcl3);
+          }
         }
       }
     }
@@ -385,8 +408,10 @@ impl Analyzer<'_> {
       let def1 = &self.definitions[self.export.definitions_base as usize..];
       let nonempty = !def1.is_empty();
       if self.g.cfg.verify_export {
-        let nonempty2 =
-          self.path.read_definitions(MaybeMut::None, "def", Some(&mut sig), &mut def2).unwrap();
+        let nonempty2 = self
+          .path
+          .read_definitions(MaybeMut::None, false, "def", Some(&mut sig), &mut def2)
+          .unwrap();
         assert_eq!(nonempty, nonempty2);
       }
       if nonempty {
@@ -394,11 +419,21 @@ impl Analyzer<'_> {
         def1.visit(ep);
         let sig1 = aco.mark(&mut def1, arts1.len(), &arts2);
         if self.g.cfg.verify_export {
+          ep.with_ctx(None, |ep| def2.visit(ep));
           assert_eq!(sig1, sig);
           assert_eq_iter("definitions", def1.iter(), def2.iter());
         }
         if self.g.cfg.xml_export {
-          self.path.write_def(NEW_PREL, &sig, &def1)
+          self.path.write_def(new_prel, &sig1, &def1);
+          if DOUBLE_CHECK {
+            let (mut sig3, mut def3) = Default::default();
+            (self.path)
+              .read_definitions(MaybeMut::None, new_prel, "def", Some(&mut sig3), &mut def3)
+              .unwrap();
+            ep.with_ctx(None, |ep| def3.visit(ep));
+            assert_eq!(sig1, sig3);
+            assert_eq!(def1, def3);
+          }
         }
       }
     }
@@ -409,19 +444,31 @@ impl Analyzer<'_> {
       let did1 = &self.identify[self.export.identify_base as usize..];
       let nonempty = !did1.is_empty();
       if self.g.cfg.verify_export {
-        let nonempty2 =
-          self.path.read_identify_regs(MaybeMut::None, "did", Some(&mut sig), &mut did2).unwrap();
+        let nonempty2 = (self.path)
+          .read_identify_regs(MaybeMut::None, false, "did", Some(&mut sig), &mut did2)
+          .unwrap();
         assert_eq!(nonempty, nonempty2);
       }
       if nonempty {
         let mut did1 = did1.to_owned();
         did1.visit(ep);
+        let sig1 = aco.mark(&mut did1, arts1.len(), &arts2);
         if self.g.cfg.verify_export {
-          assert_eq!(aco.mark(&mut did1, arts1.len(), &arts2), sig);
+          ep.with_ctx(None, |ep| did2.visit(ep));
+          assert_eq!(sig1, sig);
           assert_eq_iter("identities", did1.iter(), did2.iter());
         }
         if self.g.cfg.xml_export {
-          self.path.write_did(NEW_PREL, &sig, &did1)
+          self.path.write_did(new_prel, &sig1, &did1);
+          if DOUBLE_CHECK {
+            let (mut sig3, mut did3) = Default::default();
+            (self.path)
+              .read_identify_regs(MaybeMut::None, new_prel, "did", Some(&mut sig3), &mut did3)
+              .unwrap();
+            ep.with_ctx(None, |ep| did3.visit(ep));
+            assert_eq!(sig1, sig3);
+            assert_eq!(did1, did3);
+          }
         }
       }
     }
@@ -432,19 +479,31 @@ impl Analyzer<'_> {
       let drd1 = &self.reductions[self.export.reductions_base as usize..];
       let nonempty = !drd1.is_empty();
       if self.g.cfg.verify_export {
-        let nonempty2 =
-          self.path.read_reduction_regs(MaybeMut::None, "drd", Some(&mut sig), &mut drd2).unwrap();
+        let nonempty2 = (self.path)
+          .read_reduction_regs(MaybeMut::None, false, "drd", Some(&mut sig), &mut drd2)
+          .unwrap();
         assert_eq!(nonempty, nonempty2);
       }
       if nonempty {
         let mut drd1 = drd1.to_owned();
         drd1.visit(ep);
+        let sig1 = aco.mark(&mut drd1, arts1.len(), &arts2);
         if self.g.cfg.verify_export {
-          assert_eq!(aco.mark(&mut drd1, arts1.len(), &arts2), sig);
+          ep.with_ctx(None, |ep| drd2.visit(ep));
+          assert_eq!(sig1, sig);
           assert_eq_iter("reductions", drd1.iter(), drd2.iter());
         }
         if self.g.cfg.xml_export {
-          self.path.write_drd(NEW_PREL, &sig, &drd1)
+          self.path.write_drd(new_prel, &sig1, &drd1);
+          if DOUBLE_CHECK {
+            let (mut sig3, mut drd3) = Default::default();
+            (self.path)
+              .read_reduction_regs(MaybeMut::None, new_prel, "drd", Some(&mut sig3), &mut drd3)
+              .unwrap();
+            ep.with_ctx(None, |ep| drd3.visit(ep));
+            assert_eq!(sig1, sig3);
+            assert_eq!(drd1, drd3);
+          }
         }
       }
     }
@@ -455,19 +514,32 @@ impl Analyzer<'_> {
       let dpr1 = &self.properties[self.export.properties_base as usize..];
       let nonempty = !dpr1.is_empty();
       if self.g.cfg.verify_export {
-        let nonempty2 =
-          self.path.read_properties(MaybeMut::None, "dpr", Some(&mut sig), &mut dpr2).unwrap();
+        let nonempty2 = (self.path)
+          .read_properties(MaybeMut::None, false, "dpr", Some(&mut sig), &mut dpr2)
+          .unwrap();
         assert_eq!(nonempty, nonempty2);
+        dpr2.visit(ep);
       }
       if nonempty {
         let mut dpr1 = dpr1.to_owned();
         dpr1.visit(ep);
+        let sig1 = aco.mark(&mut dpr1, arts1.len(), &arts2);
         if self.g.cfg.verify_export {
-          assert_eq!(aco.mark(&mut dpr1, arts1.len(), &arts2), sig);
+          ep.with_ctx(None, |ep| dpr2.visit(ep));
+          assert_eq!(sig1, sig);
           assert_eq_iter("properties", dpr1.iter(), dpr2.iter());
         }
         if self.g.cfg.xml_export {
-          self.path.write_dpr(NEW_PREL, &sig, &dpr1)
+          self.path.write_dpr(new_prel, &sig1, &dpr1);
+          if DOUBLE_CHECK {
+            let (mut sig3, mut dpr3) = Default::default();
+            (self.path)
+              .read_properties(MaybeMut::None, new_prel, "dpr", Some(&mut sig3), &mut dpr3)
+              .unwrap();
+            ep.with_ctx(None, |ep| dpr3.visit(ep));
+            assert_eq!(sig1, sig3);
+            assert_eq!(dpr1, dpr3);
+          }
         }
       }
     }
@@ -478,17 +550,24 @@ impl Analyzer<'_> {
       let mut thms1 = std::mem::take(&mut self.export.theorems);
       let nonempty = !thms1.is_empty();
       if self.g.cfg.verify_export {
-        assert_eq!(nonempty, self.path.read_the(&mut thms2).unwrap());
+        assert_eq!(nonempty, self.path.read_the(false, &mut thms2).unwrap());
       }
       if nonempty {
         thms1.visit(ep);
         let thms1 = DepTheorems { sig: aco.mark(&mut thms1, arts1.len(), &arts2), thm: thms1 };
         if self.g.cfg.verify_export {
+          ep.with_ctx(None, |ep| thms2.thm.visit(ep));
           assert_eq!(thms1.sig, thms2.sig);
           assert_eq_iter("theorems", thms1.thm.iter(), thms2.thm.iter());
         }
         if self.g.cfg.xml_export {
-          self.path.write_the(NEW_PREL, &thms1)
+          self.path.write_the(new_prel, &thms1);
+          if DOUBLE_CHECK {
+            let mut thms3 = Default::default();
+            self.path.read_the(new_prel, &mut thms3).unwrap();
+            ep.with_ctx(None, |ep| thms3.thm.visit(ep));
+            assert_eq!(thms1, thms3);
+          }
         }
       }
     }
@@ -498,7 +577,7 @@ impl Analyzer<'_> {
       let mut schs2 = Default::default();
       let nonempty = !self.export.schemes.is_empty();
       if self.g.cfg.verify_export {
-        assert_eq!(nonempty, self.path.read_sch(&mut schs2).unwrap());
+        assert_eq!(nonempty, self.path.read_sch(false, &mut schs2).unwrap());
       }
       if nonempty {
         let mut schs1 = (self.export.schemes.iter())
@@ -506,11 +585,18 @@ impl Analyzer<'_> {
           .collect_vec();
         let schs1 = DepSchemes { sig: aco.mark(&mut schs1, arts1.len(), &arts2), sch: schs1 };
         if self.g.cfg.verify_export {
+          ep.with_ctx(None, |ep| schs2.sch.visit(ep));
           assert_eq!(schs1.sig, schs2.sig);
           assert_eq_iter("schemes", schs1.sch.iter(), schs2.sch.iter());
         }
         if self.g.cfg.xml_export {
-          self.path.write_sch(NEW_PREL, &schs1)
+          self.path.write_sch(new_prel, &schs1);
+          if DOUBLE_CHECK {
+            let mut schs3 = Default::default();
+            self.path.read_sch(new_prel, &mut schs3).unwrap();
+            ep.with_ctx(None, |ep| schs3.sch.visit(ep));
+            assert_eq!(schs1, schs3);
+          }
         }
       }
     }

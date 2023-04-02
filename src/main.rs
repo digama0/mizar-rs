@@ -2933,33 +2933,35 @@ impl Clusters {
 
 pub struct MizPath {
   art: Article,
-  mml: PathBuf,
-  prel: PathBuf,
 }
 
 impl MizPath {
-  fn new(s: &str) -> Self {
-    Self {
-      art: Article::from_lower(s.as_bytes()),
-      mml: format!("miz/mizshare/mml/{s}").into(),
-      prel: format!("miz/mizshare/prel/{}/{s}", &s[..1]).into(),
+  fn new(s: &str) -> Self { Self { art: Article::from_lower(s.as_bytes()) } }
+
+  fn mml(&self) -> PathBuf {
+    let s = self.art.as_str();
+    format!("miz/mizshare/mml/{s}").into()
+  }
+
+  fn prel(&self, new_prel: bool) -> PathBuf {
+    let s = self.art.as_str();
+    if new_prel {
+      format!("miz/prel/{}/{s}", &s[..1]).into()
+    } else {
+      format!("miz/mizshare/prel/{}/{s}", &s[..1]).into()
     }
   }
 
-  fn open(&self, mml: bool, ext: &str) -> io::Result<File> {
-    let mut path = if mml { self.mml.clone() } else { self.prel.clone() };
+  fn open(&self, mml: bool, new_prel: bool, ext: &str) -> io::Result<File> {
+    let mut path = if mml { self.mml() } else { self.prel(new_prel) };
     path.set_extension(ext);
     File::open(path)
   }
 
   fn create(&self, new_prel: bool, ext: &str) -> io::Result<File> {
-    let mut path = if new_prel {
-      let s = self.art.as_str();
-      format!("miz/prel/{}/{s}", &s[..1]).into()
-    } else {
-      self.prel.clone()
-    };
+    let mut path = self.prel(new_prel);
     path.set_extension(ext);
+    std::fs::create_dir_all(path.parent().unwrap())?;
     File::create(path)
   }
 }
@@ -3035,6 +3037,7 @@ pub struct Config {
   pub exporter_enabled: bool,
   pub verify_export: bool,
   pub xml_export: bool,
+  pub overwrite_prel: bool,
 
   // Unsound flags //
   /// This flag enables checking of `P[a] & ... & P[b]` equality by checking
@@ -3107,6 +3110,7 @@ fn main() {
     exporter_enabled: true,
     verify_export: false,
     xml_export: false,
+    overwrite_prel: false,
 
     legacy_flex_handling: true,
     flex_expansion_bug: true,
@@ -3184,7 +3188,7 @@ fn main() {
               if cfg.accom_enabled {
                 let mut cmd = std::process::Command::new("miz/mizbin/accom");
                 cmd.arg("-lqs");
-                let output = cmd.arg(format!("{}.miz", path.mml.display())).output().unwrap();
+                let output = cmd.arg(format!("{}.miz", path.mml().display())).output().unwrap();
                 if !output.status.success() {
                   eprintln!("\nfile {} failed. Output:", path.art);
                   std::io::stderr().write_all(&output.stderr).unwrap();
@@ -3200,7 +3204,7 @@ fn main() {
                 (true, true) => &mut cmd,
                 (false, false) => panic!("unsupported"),
               };
-              let output = cmd.arg(format!("{}.miz", path.mml.display())).output().unwrap();
+              let output = cmd.arg(format!("{}.miz", path.mml().display())).output().unwrap();
               if !output.status.success() {
                 eprintln!("\nfile {} failed. Output:", path.art);
                 std::io::stderr().write_all(&output.stderr).unwrap();

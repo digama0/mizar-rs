@@ -14,7 +14,7 @@ mod msm;
 
 impl MizPath {
   pub fn read_ere(&self, idx: &mut RequirementIndexes) -> io::Result<()> {
-    let mut r = BufReader::new(self.open(true, "ere")?);
+    let mut r = BufReader::new(self.open(true, false, "ere")?);
     let mut buf = String::new();
     r.read_line(&mut buf).unwrap();
     assert!(buf.trim_end() == "0");
@@ -28,7 +28,7 @@ impl MizPath {
   }
 
   pub fn read_ref(&self, refs: &mut References) -> io::Result<()> {
-    let mut r = BufReader::new(self.open(true, "ref")?);
+    let mut r = BufReader::new(self.open(true, false, "ref")?);
     fn parse_one<T: Idx>(
       r: &mut impl BufRead, buf: &mut String, map: &mut HashSet<(ArticleId, T)>,
     ) -> io::Result<()> {
@@ -55,7 +55,7 @@ impl MizPath {
   }
 
   pub fn read_sgl(&self, arts: &mut Vec<Article>) -> io::Result<()> {
-    let mut r = BufReader::new(self.open(true, "sgl")?);
+    let mut r = BufReader::new(self.open(true, false, "sgl")?);
     let mut buf = String::new();
     r.read_line(&mut buf).unwrap();
     let n = buf.trim_end().parse().unwrap();
@@ -176,7 +176,7 @@ impl XmlReader {
   fn read_event<'a>(&mut self, buf: &'a mut Vec<u8>) -> Event<'a> {
     buf.clear();
     let e = self.0.read_event(buf).unwrap();
-    // eprintln!("{:w$}{:?}", "", e, w = backtrace::Backtrace::new().frames().len());
+    // vprintln!("{:w$}{:?}", "", e, w = backtrace::Backtrace::new().frames().len());
     e
   }
 
@@ -225,7 +225,7 @@ impl XmlReader {
 
   fn dump(&mut self) {
     let r = self.0.get_mut();
-    r.seek_relative(-1024).unwrap();
+    let _ = r.seek_relative(-1024);
     let mut out = vec![];
     r.read_to_end(&mut out).unwrap();
     println!("{}", std::str::from_utf8(&out[..1024]).unwrap());
@@ -300,7 +300,7 @@ impl<'a> MizReader<'a> {
 
 impl MizPath {
   pub fn read_evl(&self, dirs: &mut Directives) -> io::Result<()> {
-    let (mut r, mut buf) = MizReader::new(self.open(true, "evl")?, MaybeMut::None, false);
+    let (mut r, mut buf) = MizReader::new(self.open(true, false, "evl")?, MaybeMut::None, false);
     let buf = &mut buf;
     r.read_start(buf, Some(b"Environ"));
     for (i, dir) in &mut dirs.0 {
@@ -319,7 +319,7 @@ impl MizPath {
   }
 
   pub fn read_dcx(&self, syms: &mut Symbols) -> io::Result<()> {
-    let (mut r, mut buf) = MizReader::new(self.open(true, "dcx")?, MaybeMut::None, false);
+    let (mut r, mut buf) = MizReader::new(self.open(true, false, "dcx")?, MaybeMut::None, false);
     let buf = &mut buf;
     r.read_start(buf, Some(b"Symbols"));
     while let Ok(e) = r.try_read_start(buf, Some(b"Symbol")) {
@@ -351,14 +351,14 @@ impl MizPath {
   }
 
   pub fn read_vcl(&self, vocs: &mut Vocabularies) -> io::Result<()> {
-    let (mut r, mut buf) = MizReader::new(self.open(true, "vcl")?, MaybeMut::None, false);
+    let (mut r, mut buf) = MizReader::new(self.open(true, false, "vcl")?, MaybeMut::None, false);
     r.parse_vocabularies(&mut buf, vocs);
     assert!(matches!(r.read_event(&mut buf), Event::Eof));
     Ok(())
   }
 
   pub fn read_formats(&self, ext: &str, formats: &mut Formats) -> io::Result<()> {
-    let (mut r, mut buf) = MizReader::new(self.open(true, ext)?, MaybeMut::None, false);
+    let (mut r, mut buf) = MizReader::new(self.open(true, false, ext)?, MaybeMut::None, false);
     let buf = &mut buf;
     r.read_start(buf, Some(b"Formats"));
     r.parse_formats_body(buf, &mut formats.formats, Some(&mut formats.priority));
@@ -371,9 +371,9 @@ impl MizPath {
   }
 
   pub fn read_dfr(
-    &self, vocs: &mut Vocabularies, formats: &mut IdxVec<FormatId, Format>,
+    &self, new_prel: bool, vocs: &mut Vocabularies, formats: &mut IdxVec<FormatId, Format>,
   ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(false, "dfr") {
+    let (mut r, mut buf) = match self.open(false, new_prel, "dfr") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
     };
@@ -385,7 +385,7 @@ impl MizPath {
   }
 
   pub fn read_eno(&self, notas: &mut Vec<Pattern>) -> io::Result<()> {
-    let (mut r, mut buf) = MizReader::new(self.open(true, "eno")?, MaybeMut::None, false);
+    let (mut r, mut buf) = MizReader::new(self.open(true, false, "eno")?, MaybeMut::None, false);
     let buf = &mut buf;
     r.read_pi(buf);
     r.read_start(buf, Some(b"Notations"));
@@ -397,8 +397,8 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_dno(&self, dno: &mut DepNotation) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(false, "dno") {
+  pub fn read_dno(&self, new_prel: bool, dno: &mut DepNotation) -> io::Result<bool> {
+    let (mut r, mut buf) = match self.open(false, new_prel, "dno") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
     };
@@ -416,7 +416,7 @@ impl MizPath {
   }
 
   pub fn read_atr(&self, constrs: &mut Constructors) -> io::Result<()> {
-    let (mut r, mut buf) = MizReader::new(self.open(true, "atr")?, constrs, false);
+    let (mut r, mut buf) = MizReader::new(self.open(true, false, "atr")?, constrs, false);
     let buf = &mut buf;
     r.read_pi(buf);
     r.read_start(buf, Some(b"Constructors"));
@@ -426,7 +426,7 @@ impl MizPath {
   }
 
   pub fn read_aco(&self, aco: &mut AccumConstructors) -> io::Result<()> {
-    let (mut r, mut buf) = MizReader::new(self.open(true, "aco")?, MaybeMut::None, false);
+    let (mut r, mut buf) = MizReader::new(self.open(true, false, "aco")?, MaybeMut::None, false);
     let buf = &mut buf;
     r.read_pi(buf);
     r.read_start(buf, Some(b"Constructors"));
@@ -443,8 +443,10 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_dco(&self, dco: &mut DepConstructors, read_constrs: bool) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(false, "dco") {
+  pub fn read_dco(
+    &self, new_prel: bool, dco: &mut DepConstructors, read_constrs: bool,
+  ) -> io::Result<bool> {
+    let (mut r, mut buf) = match self.open(false, new_prel, "dco") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
     };
@@ -461,7 +463,7 @@ impl MizPath {
   }
 
   pub fn read_dre(&self, dre: &mut DepRequirements) -> io::Result<()> {
-    let (mut r, mut buf) = MizReader::new(self.open(false, "dre")?, MaybeMut::None, false);
+    let (mut r, mut buf) = MizReader::new(self.open(false, false, "dre")?, MaybeMut::None, false);
     let buf = &mut buf;
     r.read_start(buf, Some(b"Requirements"));
     r.parse_signature(buf, &mut dre.sig);
@@ -476,7 +478,7 @@ impl MizPath {
   }
 
   pub fn read_ecl(&self, ctx: &Constructors, clusters: &mut Clusters) -> io::Result<()> {
-    let (mut r, mut buf) = MizReader::new(self.open(true, "ecl")?, ctx, false);
+    let (mut r, mut buf) = MizReader::new(self.open(true, false, "ecl")?, ctx, false);
     r.read_pi(&mut buf);
     r.read_start(&mut buf, Some(b"Registrations"));
     while let Event::Start(e) = r.read_event(&mut buf) {
@@ -490,8 +492,8 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_dcl(&self, dcl: &mut DepClusters) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(false, "dcl") {
+  pub fn read_dcl(&self, new_prel: bool, dcl: &mut DepClusters) -> io::Result<bool> {
+    let (mut r, mut buf) = match self.open(false, new_prel, "dcl") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
     };
@@ -510,10 +512,10 @@ impl MizPath {
   }
 
   pub fn read_definitions<'a>(
-    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, sig: Option<&mut Vec<Article>>,
-    defs: &mut Vec<Definiens>,
+    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, new_prel: bool, ext: &str,
+    sig: Option<&mut Vec<Article>>, defs: &mut Vec<Definiens>,
   ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(sig.is_none(), ext) {
+    let (mut r, mut buf) = match self.open(sig.is_none(), new_prel, ext) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, ctx, false),
     };
@@ -534,10 +536,10 @@ impl MizPath {
   }
 
   pub fn read_properties<'a>(
-    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, sig: Option<&mut Vec<Article>>,
-    props: &mut Vec<Property>,
+    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, new_prel: bool, ext: &str,
+    sig: Option<&mut Vec<Article>>, props: &mut Vec<Property>,
   ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(sig.is_none(), ext) {
+    let (mut r, mut buf) = match self.open(sig.is_none(), new_prel, ext) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, ctx, false),
     };
@@ -558,10 +560,10 @@ impl MizPath {
   }
 
   pub fn read_identify_regs<'a>(
-    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, sig: Option<&mut Vec<Article>>,
-    ids: &mut Vec<IdentifyFunc>,
+    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, new_prel: bool, ext: &str,
+    sig: Option<&mut Vec<Article>>, ids: &mut Vec<IdentifyFunc>,
   ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(sig.is_none(), ext) {
+    let (mut r, mut buf) = match self.open(sig.is_none(), new_prel, ext) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, ctx, false),
     };
@@ -582,10 +584,10 @@ impl MizPath {
   }
 
   pub fn read_reduction_regs<'a>(
-    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, ext: &str, sig: Option<&mut Vec<Article>>,
-    reds: &mut Vec<Reduction>,
+    &self, ctx: impl Into<MaybeMut<'a, Constructors>>, new_prel: bool, ext: &str,
+    sig: Option<&mut Vec<Article>>, reds: &mut Vec<Reduction>,
   ) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(sig.is_none(), ext) {
+    let (mut r, mut buf) = match self.open(sig.is_none(), new_prel, ext) {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, ctx, false),
     };
@@ -608,7 +610,7 @@ impl MizPath {
   pub fn read_eth(
     &self, ctx: &Constructors, refs: Option<&References>, libs: &mut Libraries,
   ) -> io::Result<()> {
-    let (mut r, mut buf) = match self.open(true, "eth") {
+    let (mut r, mut buf) = match self.open(true, false, "eth") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
       file => MizReader::new(file?, ctx, false),
     };
@@ -644,8 +646,8 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_the(&self, thms: &mut DepTheorems) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(false, "the") {
+  pub fn read_the(&self, new_prel: bool, thms: &mut DepTheorems) -> io::Result<bool> {
+    let (mut r, mut buf) = match self.open(false, new_prel, "the") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
     };
@@ -677,7 +679,7 @@ impl MizPath {
   pub fn read_esh(
     &self, ctx: &Constructors, refs: Option<&References>, libs: &mut Libraries,
   ) -> io::Result<()> {
-    let (mut r, mut buf) = match self.open(true, "esh") {
+    let (mut r, mut buf) = match self.open(true, false, "esh") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
       file => MizReader::new(file?, ctx, false),
     };
@@ -711,8 +713,8 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_sch(&self, schs: &mut DepSchemes) -> io::Result<bool> {
-    let (mut r, mut buf) = match self.open(false, "sch") {
+  pub fn read_sch(&self, new_prel: bool, schs: &mut DepSchemes) -> io::Result<bool> {
+    let (mut r, mut buf) = match self.open(false, new_prel, "sch") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
     };
@@ -742,7 +744,7 @@ impl MizPath {
   }
 
   pub fn read_xml(&self) -> io::Result<Vec<Item>> {
-    let (mut r, mut buf) = MizReader::new(self.open(true, "xml")?, MaybeMut::None, true);
+    let (mut r, mut buf) = MizReader::new(self.open(true, false, "xml")?, MaybeMut::None, true);
     r.read_pi(&mut buf);
     r.read_start(&mut buf, Some(b"Article"));
     let mut p = ArticleParser { r, buf };
