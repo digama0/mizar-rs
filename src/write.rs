@@ -89,8 +89,8 @@ impl MizPath {
         };
         let attrs = |w: &mut Elem| {
           w.attr(b"kind", &[kind][..]);
-          // w.attr_str(b"nr", abs_nr);
-          // w.attr_str(b"aid", article);
+          w.attr_str(b"nr", 0 /* abs_nr */);
+          w.attr(b"aid", &b""[..] /* article */);
           w.attr(b"constrkind", &[kind][..]);
           w.attr_str(b"constrnr", nr);
           if !pat.pos {
@@ -150,8 +150,8 @@ impl MizPath {
           let (kind, nr) = def.constr.discr_nr();
           w.attr(b"constrkind", &[kind][..]);
           w.attr_str(b"constrnr", nr + 1);
-          // w.attr_str(b"aid", article);
-          // w.attr_str(b"defnr", def_nr);
+          w.attr(b"aid", &b""[..] /* article */);
+          w.attr_str(b"defnr", 0 /* abs_nr */);
           // w.attr_str(b"vid", lab_id);
           // w.attr_str(b"relnr", rel_nr);
         };
@@ -177,8 +177,8 @@ impl MizPath {
       w.write_signature(sig);
       for id in ids {
         let attrs = |w: &mut Elem| {
-          // w.attr_str(b"aid", article);
-          // w.attr_str(b"nr", abs_nr);
+          w.attr_str(b"nr", 0 /* abs_nr */);
+          w.attr(b"aid", &b""[..] /* article */);
           w.attr(b"constrkind", &b"K"[..]);
         };
         w.with(b"Identify", attrs, |w| {
@@ -204,9 +204,9 @@ impl MizPath {
     w.with0(b"ReductionRegistrations", |w| {
       w.write_signature(sig);
       for red in reds {
-        let attrs = |_: &mut Elem| {
-          // w.attr_str(b"aid", article);
-          // w.attr_str(b"nr", abs_nr);
+        let attrs = |w: &mut Elem| {
+          w.attr(b"aid", &b""[..] /* article */);
+          w.attr_str(b"nr", 0 /* abs_nr */);
         };
         w.with(b"Reduction", attrs, |w| {
           w.write_types(&red.primary);
@@ -224,8 +224,8 @@ impl MizPath {
       w.write_signature(sig);
       for prop in props {
         let attrs = |w: &mut Elem| {
-          // w.attr_str(b"aid", article);
-          // w.attr_str(b"nr", abs_nr);
+          w.attr(b"aid", &b""[..] /* article */);
+          w.attr_str(b"nr", 0 /* abs_nr */);
           w.attr_str(b"x", prop.kind as u8 + 1);
         };
         w.with(b"Property", attrs, |w| {
@@ -401,8 +401,8 @@ impl MizWriter {
   ) {
     let attrs = |w: &mut Elem| {
       w.attr(b"kind", &[kind][..]);
-      // w.attr_str(b"nr", abs_nr);
-      // w.attr_str(b"aid", article);
+      w.attr_str(b"nr", 0 /* abs_nr */);
+      w.attr(b"aid", &b""[..] /* article */);
       if let Some(redef) = c.redefines {
         w.attr_str(b"redefnr", redef.into_usize() + 1);
         w.attr_str(b"superfluous", c.superfluous);
@@ -411,12 +411,10 @@ impl MizWriter {
     };
     self.with(b"Constructor", attrs, |w| {
       let attrs = |w: &mut Elem| {
-        if c.properties.uses_arg1() {
-          w.attr_str(b"propertyarg1", c.properties.arg1 + 1);
-        }
-        if c.properties.uses_arg2() {
-          w.attr_str(b"propertyarg2", c.properties.arg2 + 1)
-        }
+        let arg1 = if c.properties.uses_arg1() { c.properties.arg1 + 1 } else { 0 };
+        w.attr_str(b"propertyarg1", arg1);
+        let arg2 = if c.properties.uses_arg2() { c.properties.arg2 + 1 } else { 0 };
+        w.attr_str(b"propertyarg2", arg2);
       };
       if c.properties.properties != PropertySet::EMPTY {
         w.with(b"Properties", attrs, |w| {
@@ -443,9 +441,9 @@ impl MizWriter {
   }
 
   fn write_cluster(&mut self, tag: &'static [u8], cl: &Cluster, body: impl FnOnce(&mut Self)) {
-    let attrs = |_: &mut Elem| {
-      // w.attr_str(b"aid", article);
-      // w.attr_str(b"nr", abs_nr);
+    let attrs = |w: &mut Elem| {
+      w.attr(b"aid", &b""[..] /* article */);
+      w.attr_str(b"nr", 0 /* abs_nr */);
     };
     self.with(tag, attrs, |w| {
       w.write_arg_types(&cl.primary);
