@@ -1617,7 +1617,7 @@ impl ConditionalClusters {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConstrDef {
-  // pub def_nr: u32,
+  pub def_nr: DefId,
   // pub article: Article,
   pub constr: ConstrKind,
   pub primary: Box<[Type]>,

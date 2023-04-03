@@ -297,6 +297,7 @@ impl Analyzer<'_> {
         dco1.constrs = since1.to_owned();
         dco1.counts = dco1.constrs.len();
         dco1.constrs.visit(ep);
+        let base = aco.constrs.len();
         aco.constrs.append(&mut dco1.constrs.clone());
         let mut marks = MarkConstr::new(&aco.accum, &aco.base, arts1.len());
         *marks.used.last_mut().unwrap() = true;
@@ -314,7 +315,7 @@ impl Analyzer<'_> {
           process!(mode, struct_mode, attribute, predicate, functor, selector, aggregate);
         }
         if self.g.cfg.xml_export {
-          self.path.write_dco(new_prel, &dco1);
+          self.path.write_dco(new_prel, &base, &dco1);
           if DOUBLE_CHECK {
             let mut dco3 = Default::default();
             self.path.read_dco(new_prel, &mut dco3, true).unwrap();

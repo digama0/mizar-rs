@@ -1,6 +1,6 @@
 use crate::types::*;
 use crate::{Global, MizPath};
-use enum_map::Enum;
+use enum_map::{Enum, EnumMap};
 use quick_xml::events::attributes::Attribute;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use std::borrow::Cow;
@@ -33,7 +33,8 @@ impl MizPath {
   }
 
   pub fn write_dco(
-    &self, new_prel: bool, DepConstructors { sig, counts, constrs }: &DepConstructors,
+    &self, new_prel: bool, base: &ConstructorsBase,
+    DepConstructors { sig, counts, constrs }: &DepConstructors,
   ) {
     let mut w = self.create_xml(new_prel, "dco").unwrap();
     w.with0(b"Constructors", |w| {
@@ -47,25 +48,37 @@ impl MizPath {
         w.write_constr_count(b'U', counts.selector);
         w.write_constr_count(b'G', counts.aggregate);
       });
-      constrs.attribute.0.iter().for_each(|c| w.write_ty_constructor(b'V', c));
-      constrs.functor.0.iter().for_each(|c| w.write_ty_constructor(b'K', c));
-      constrs.mode.0.iter().for_each(|c| w.write_ty_constructor(b'M', c));
-      constrs.predicate.0.iter().for_each(|c| w.write_constructor(b'R', c, |_| {}, |_| {}));
-      for c in &constrs.struct_mode.0 {
+      let art = self.art.as_str().to_ascii_uppercase();
+      let art = art.as_bytes();
+      for (i, c) in constrs.attribute.enum_iter() {
+        w.write_ty_constructor(art, (b'V', i.0), base.attribute, c)
+      }
+      for (i, c) in constrs.functor.enum_iter() {
+        w.write_ty_constructor(art, (b'K', i.0), base.functor, c)
+      }
+      for (i, c) in constrs.mode.enum_iter() {
+        w.write_ty_constructor(art, (b'M', i.0), base.mode, c)
+      }
+      for (i, c) in constrs.predicate.enum_iter() {
+        w.write_constructor(art, (b'R', i.0), base.predicate, c, |_| {}, |_| {})
+      }
+      for (i, c) in constrs.struct_mode.enum_iter() {
         let attrs = |w: &mut Elem| w.attr_str(b"structmodeaggrnr", c.aggr.0 + 1);
-        w.write_constructor(b'L', c, attrs, |w| {
+        w.write_constructor(art, (b'L', i.0), base.struct_mode, c, attrs, |w| {
           w.write_types(&c.parents);
           w.write_fields(&c.fields);
         })
       }
-      for c in &constrs.aggregate.0 {
+      for (i, c) in constrs.aggregate.enum_iter() {
         let attrs = |w: &mut Elem| w.attr_str(b"aggregbase", c.base);
-        w.write_constructor(b'G', c, attrs, |w| {
+        w.write_constructor(art, (b'G', i.0), base.aggregate, c, attrs, |w| {
           w.write_type(&c.ty);
           w.write_fields(&c.fields)
         })
       }
-      constrs.selector.0.iter().for_each(|c| w.write_ty_constructor(b'U', c));
+      for (i, c) in constrs.selector.enum_iter() {
+        w.write_ty_constructor(art, (b'U', i.0), base.selector, c)
+      }
     });
     w.finish()
   }
@@ -75,7 +88,11 @@ impl MizPath {
     w.with0(b"Notations", |w| {
       w.write_signature(sig);
       w.write_vocabularies(vocs);
+      let art = self.art.as_str().to_ascii_uppercase();
+      let art = art.as_bytes();
+      let mut counts = EnumMap::<_, u32>::default();
       for pat in pats {
+        let rel_nr = counts[pat.kind.class()].fresh();
         let (kind, nr) = match pat.kind {
           PatternKind::Mode(ModeId(n)) => (b'M', n + 1),
           PatternKind::ExpandableMode { .. } => (b'M', 0),
@@ -89,8 +106,8 @@ impl MizPath {
         };
         let attrs = |w: &mut Elem| {
           w.attr(b"kind", &[kind][..]);
-          w.attr_str(b"nr", 0 /* abs_nr */);
-          w.attr(b"aid", &b""[..] /* article */);
+          w.attr_str(b"nr", rel_nr + 1);
+          w.attr(b"aid", art);
           w.attr(b"constrkind", &[kind][..]);
           w.attr_str(b"constrnr", nr);
           if !pat.pos {
@@ -115,14 +132,16 @@ impl MizPath {
     let mut w = self.create_xml(new_prel, "dcl").unwrap();
     w.with0(b"Registrations", |w| {
       w.write_signature(sig);
-      for cl in &cl.registered {
-        w.write_cluster(b"RCluster", cl, |w| {
+      let art = self.art.as_str().to_ascii_uppercase();
+      let art = art.as_bytes();
+      for (i, cl) in cl.registered.iter().enumerate() {
+        w.write_cluster(b"RCluster", art, i, cl, |w| {
           w.write_type(&cl.ty);
           w.write_attrs(&cl.consequent.0)
         })
       }
-      for cl in &cl.functor {
-        w.write_cluster(b"FCluster", cl, |w| {
+      for (i, cl) in cl.functor.iter().enumerate() {
+        w.write_cluster(b"FCluster", art, i, cl, |w| {
           w.write_term(&cl.term);
           w.write_attrs(&cl.consequent.0);
           if let Some(ty) = &cl.ty {
@@ -130,8 +149,8 @@ impl MizPath {
           }
         })
       }
-      for cl in &cl.conditional {
-        w.write_cluster(b"CCluster", cl, |w| {
+      for (i, cl) in cl.conditional.iter().enumerate() {
+        w.write_cluster(b"CCluster", art, i, cl, |w| {
           w.write_attrs(&cl.antecedent);
           w.write_type(&cl.ty);
           w.write_attrs(&cl.consequent.0)
@@ -145,13 +164,14 @@ impl MizPath {
     let mut w = self.create_xml(new_prel, "def").unwrap();
     w.with0(b"Definientia", |w| {
       w.write_signature(sig);
+      let art = self.art.as_str().to_ascii_uppercase();
       for def in def {
         let attrs = |w: &mut Elem| {
           let (kind, nr) = def.constr.discr_nr();
           w.attr(b"constrkind", &[kind][..]);
           w.attr_str(b"constrnr", nr + 1);
-          w.attr(b"aid", &b""[..] /* article */);
-          w.attr_str(b"defnr", 0 /* abs_nr */);
+          w.attr(b"aid", art.as_bytes());
+          w.attr_str(b"defnr", def.def_nr.0 + 1);
           // w.attr_str(b"vid", lab_id);
           // w.attr_str(b"relnr", rel_nr);
         };
@@ -175,10 +195,12 @@ impl MizPath {
     let mut w = self.create_xml(new_prel, "did").unwrap();
     w.with0(b"IdentifyRegistrations", |w| {
       w.write_signature(sig);
-      for id in ids {
+      let art = self.art.as_str().to_ascii_uppercase();
+      let art = art.as_bytes();
+      for (i, id) in ids.iter().enumerate() {
         let attrs = |w: &mut Elem| {
-          w.attr_str(b"nr", 0 /* abs_nr */);
-          w.attr(b"aid", &b""[..] /* article */);
+          w.attr(b"aid", art);
+          w.attr_str(b"nr", i + 1);
           w.attr(b"constrkind", &b"K"[..]);
         };
         w.with(b"Identify", attrs, |w| {
@@ -203,10 +225,12 @@ impl MizPath {
     let mut w = self.create_xml(new_prel, "drd").unwrap();
     w.with0(b"ReductionRegistrations", |w| {
       w.write_signature(sig);
-      for red in reds {
+      let art = self.art.as_str().to_ascii_uppercase();
+      let art = art.as_bytes();
+      for (i, red) in reds.iter().enumerate() {
         let attrs = |w: &mut Elem| {
-          w.attr(b"aid", &b""[..] /* article */);
-          w.attr_str(b"nr", 0 /* abs_nr */);
+          w.attr(b"aid", art);
+          w.attr_str(b"nr", i + 1);
         };
         w.with(b"Reduction", attrs, |w| {
           w.write_types(&red.primary);
@@ -222,10 +246,12 @@ impl MizPath {
     let mut w = self.create_xml(new_prel, "dpr").unwrap();
     w.with0(b"PropertyRegistration", |w| {
       w.write_signature(sig);
-      for prop in props {
+      let art = self.art.as_str().to_ascii_uppercase();
+      let art = art.as_bytes();
+      for (i, prop) in props.iter().enumerate() {
         let attrs = |w: &mut Elem| {
-          w.attr(b"aid", &b""[..] /* article */);
-          w.attr_str(b"nr", 0 /* abs_nr */);
+          w.attr(b"aid", art);
+          w.attr_str(b"nr", i + 1);
           w.attr_str(b"x", prop.kind as u8 + 1);
         };
         w.with(b"Property", attrs, |w| {
@@ -396,13 +422,14 @@ impl MizWriter {
   }
 
   fn write_constructor<I: Idx>(
-    &mut self, kind: u8, c: &Constructor<I>, attrs: impl FnOnce(&mut Elem),
-    body: impl FnOnce(&mut Self),
+    &mut self, art: &[u8], (kind, nr): (u8, u32), base: u32, c: &Constructor<I>,
+    attrs: impl FnOnce(&mut Elem), body: impl FnOnce(&mut Self),
   ) {
     let attrs = |w: &mut Elem| {
       w.attr(b"kind", &[kind][..]);
-      w.attr_str(b"nr", 0 /* abs_nr */);
-      w.attr(b"aid", &b""[..] /* article */);
+      w.attr_str(b"nr", nr + 1);
+      w.attr(b"aid", art);
+      w.attr_str(b"relnr", base + nr + 1);
       if let Some(redef) = c.redefines {
         w.attr_str(b"redefnr", redef.into_usize() + 1);
         w.attr_str(b"superfluous", c.superfluous);
@@ -430,8 +457,10 @@ impl MizWriter {
     })
   }
 
-  fn write_ty_constructor<I: Idx>(&mut self, kind: u8, c: &TyConstructor<I>) {
-    self.write_constructor(kind, c, |_| {}, |w| w.write_type(&c.ty))
+  fn write_ty_constructor<I: Idx>(
+    &mut self, art: &[u8], kind: (u8, u32), base: u32, c: &TyConstructor<I>,
+  ) {
+    self.write_constructor(art, kind, base, c, |_| {}, |w| w.write_type(&c.ty))
   }
 
   fn write_fields(&mut self, fields: &[SelId]) {
@@ -440,10 +469,13 @@ impl MizWriter {
     })
   }
 
-  fn write_cluster(&mut self, tag: &'static [u8], cl: &Cluster, body: impl FnOnce(&mut Self)) {
+  fn write_cluster(
+    &mut self, tag: &'static [u8], art: &[u8], nr: usize, cl: &Cluster,
+    body: impl FnOnce(&mut Self),
+  ) {
     let attrs = |w: &mut Elem| {
-      w.attr(b"aid", &b""[..] /* article */);
-      w.attr_str(b"nr", 0 /* abs_nr */);
+      w.attr(b"aid", art);
+      w.attr_str(b"nr", nr + 1);
     };
     self.with(tag, attrs, |w| {
       w.write_arg_types(&cl.primary);

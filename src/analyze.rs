@@ -17,6 +17,7 @@ pub struct Analyzer<'a> {
   thesis: Option<Box<Formula>>,
   thesis_stack: Vec<Option<Box<Formula>>>,
   reserved: IdxVec<ReservedId, Type>,
+  defthms: DefId,
   pub export: Exporter,
 }
 impl<'a> std::ops::Deref for Analyzer<'a> {
@@ -42,6 +43,7 @@ impl Reader {
       thesis: None,
       thesis_stack: vec![],
       reserved: Default::default(),
+      defthms: Default::default(),
       export: Default::default(),
     };
     if elab.g.cfg.exporter_enabled {
@@ -532,8 +534,12 @@ impl Analyzer<'_> {
     self.items += n as usize - 1;
     if self.g.cfg.exporter_enabled {
       match kind {
-        CancelKind::Def => (self.export.theorems)
-          .extend((0..n).map(|_| Theorem { kind: TheoremKind::CanceledDef, stmt: Formula::True })),
+        CancelKind::Def => {
+          // canceled defs outside a block don't create a DefTheorem, so they don't increment self.defthms
+          // self.defthms.0 += n;
+          (self.export.theorems)
+            .extend((0..n).map(|_| Theorem { kind: TheoremKind::CanceledDef, stmt: Formula::True }))
+        }
         CancelKind::Thm => (self.export.theorems)
           .extend((0..n).map(|_| Theorem { kind: TheoremKind::CanceledThm, stmt: Formula::True })),
         CancelKind::Sch => self.export.schemes.extend((0..n).map(|_| None)),
@@ -2812,7 +2818,11 @@ impl BlockReader {
       let thm = self.forall_locus(elab, f);
       let df = Box::new(Definiens {
         essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
-        c: ConstrDef { constr: ConstrKind::Func(redefines.unwrap_or(n)), primary },
+        c: ConstrDef {
+          def_nr: elab.defthms.fresh(),
+          constr: ConstrKind::Func(redefines.unwrap_or(n)),
+          primary,
+        },
         assumptions: self.assums(),
         value,
       });
@@ -2893,7 +2903,11 @@ impl BlockReader {
       let thm = self.forall_locus(elab, f);
       let df = Box::new(Definiens {
         essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
-        c: ConstrDef { constr: ConstrKind::Pred(redefines.unwrap_or(n)), primary: primary.clone() },
+        c: ConstrDef {
+          def_nr: elab.defthms.fresh(),
+          constr: ConstrKind::Pred(redefines.unwrap_or(n)),
+          primary: primary.clone(),
+        },
         assumptions: self.assums(),
         value: DefValue::Formula(value),
       });
@@ -3024,7 +3038,11 @@ impl BlockReader {
           let thm = self.forall_locus(elab, Box::new(Formula::ForAll { dom: it_type, scope: f }));
           let df = Box::new(Definiens {
             essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
-            c: ConstrDef { constr: ConstrKind::Mode(redefines.unwrap_or(n)), primary },
+            c: ConstrDef {
+              def_nr: elab.defthms.fresh(),
+              constr: ConstrKind::Mode(redefines.unwrap_or(n)),
+              primary,
+            },
             assumptions: self.assums(),
             value: DefValue::Formula(value),
           });
@@ -3099,7 +3117,11 @@ impl BlockReader {
       let thm = self.forall_locus(elab, f);
       let df = Box::new(Definiens {
         essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
-        c: ConstrDef { constr: ConstrKind::Attr(redefines.unwrap_or(n)), primary: primary.clone() },
+        c: ConstrDef {
+          def_nr: elab.defthms.fresh(),
+          constr: ConstrKind::Attr(redefines.unwrap_or(n)),
+          primary: primary.clone(),
+        },
         assumptions: self.assums(),
         value: DefValue::Formula(value),
       });
@@ -3730,6 +3752,7 @@ impl BlockReader {
 
   fn elab_canceled_def(&mut self, elab: &mut Analyzer, n: u32) {
     elab.items += n as usize - 1;
+    elab.defthms.0 += n;
     if elab.g.cfg.exporter_enabled {
       self.defs.extend((0..n).map(|_| None))
     }

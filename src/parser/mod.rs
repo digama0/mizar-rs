@@ -1156,12 +1156,12 @@ impl MizReader<'_> {
     }
   }
 
-  fn parse_definiens_attrs(&mut self, e: BytesStart<'_>) -> (u32, Article, ConstrKind) {
+  fn parse_definiens_attrs(&mut self, e: BytesStart<'_>) -> (DefId, Article, ConstrKind) {
     let (mut article, mut def_nr) = Default::default();
     for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
         b"aid" => article = Article::from_upper(&attr.value),
-        b"defnr" => def_nr = self.get_attr(&attr.value),
+        b"defnr" => def_nr = DefId(self.get_attr::<u32>(&attr.value) - 1),
         _ => {}
       }
     }
@@ -1169,7 +1169,7 @@ impl MizReader<'_> {
   }
 
   fn parse_definiens_body(
-    &mut self, buf: &mut Vec<u8>, (_def_nr, _article, constr): (u32, Article, ConstrKind),
+    &mut self, buf: &mut Vec<u8>, (def_nr, _article, constr): (DefId, Article, ConstrKind),
   ) -> Definiens {
     let mut primary = vec![];
     let essential = loop {
@@ -1188,7 +1188,7 @@ impl MizReader<'_> {
       _ => panic!("expected <DefMeaning>"),
     };
     self.end_tag(buf);
-    let c = ConstrDef { constr, primary: primary.into() };
+    let c = ConstrDef { def_nr, constr, primary: primary.into() };
     Definiens { c, essential, assumptions, value }
   }
 
