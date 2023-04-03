@@ -370,7 +370,7 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_dfr(
+  pub fn read_dfr_uncached(
     &self, new_prel: bool, vocs: &mut Vocabularies, formats: &mut IdxVec<FormatId, Format>,
   ) -> io::Result<bool> {
     let (mut r, mut buf) = match self.open(false, new_prel, "dfr") {
@@ -397,7 +397,7 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_dno(&self, new_prel: bool, dno: &mut DepNotation) -> io::Result<bool> {
+  pub fn read_dno_uncached(&self, new_prel: bool, dno: &mut DepNotation) -> io::Result<bool> {
     let (mut r, mut buf) = match self.open(false, new_prel, "dno") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
@@ -443,7 +443,7 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_dco(
+  pub fn read_dco_uncached(
     &self, new_prel: bool, dco: &mut DepConstructors, read_constrs: bool,
   ) -> io::Result<bool> {
     let (mut r, mut buf) = match self.open(false, new_prel, "dco") {
@@ -462,7 +462,7 @@ impl MizPath {
     Ok(true)
   }
 
-  pub fn read_dre(&self, dre: &mut DepRequirements) -> io::Result<()> {
+  pub fn read_dre_uncached(&self, dre: &mut DepRequirements) -> io::Result<()> {
     let (mut r, mut buf) = MizReader::new(self.open(false, false, "dre")?, MaybeMut::None, false);
     let buf = &mut buf;
     r.read_start(buf, Some(b"Requirements"));
@@ -492,7 +492,7 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_dcl(&self, new_prel: bool, dcl: &mut DepClusters) -> io::Result<bool> {
+  pub fn read_dcl_uncached(&self, new_prel: bool, dcl: &mut DepClusters) -> io::Result<bool> {
     let (mut r, mut buf) = match self.open(false, new_prel, "dcl") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
@@ -646,7 +646,7 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_the(&self, new_prel: bool, thms: &mut DepTheorems) -> io::Result<bool> {
+  pub fn read_the_uncached(&self, new_prel: bool, thms: &mut DepTheorems) -> io::Result<bool> {
     let (mut r, mut buf) = match self.open(false, new_prel, "the") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),
@@ -713,7 +713,7 @@ impl MizPath {
     Ok(())
   }
 
-  pub fn read_sch(&self, new_prel: bool, schs: &mut DepSchemes) -> io::Result<bool> {
+  pub fn read_sch_uncached(&self, new_prel: bool, schs: &mut DepSchemes) -> io::Result<bool> {
     let (mut r, mut buf) = match self.open(false, new_prel, "sch") {
       Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
       file => MizReader::new(file?, MaybeMut::None, false),

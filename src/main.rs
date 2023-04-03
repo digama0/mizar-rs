@@ -18,6 +18,7 @@ mod accom;
 mod analyze;
 mod ast;
 mod bignum;
+mod cache;
 mod checker;
 mod equate;
 mod export;
@@ -148,21 +149,21 @@ impl Global {
   }
 
   pub fn into_legacy_flex_and(
-    nat: &mut Box<Type>, le: PredId, terms2: &mut Box<[Term; 2]>, scope2: &mut Box<Formula>,
+    nat: &mut Box<Type>, le: PredId, terms: &mut Box<[Term; 2]>, scope: &mut Box<Formula>,
     depth: u32,
   ) -> Formula {
-    let orig1 = (**scope2).visit_cloned(&mut Inst0(depth, &terms2[0]));
-    let orig2 = (**scope2).visit_cloned(&mut Inst0(depth, &terms2[1]));
+    let orig1 = (**scope).visit_cloned(&mut Inst0(depth, &terms[0]));
+    let orig2 = (**scope).visit_cloned(&mut Inst0(depth, &terms[1]));
     let expansion = Box::new(Self::expand_flex_and(
       std::mem::take(nat),
       le,
-      (**terms2).clone(),
-      std::mem::take(scope2),
+      (**terms).clone(),
+      std::mem::take(scope),
       depth,
     ));
     Formula::LegacyFlexAnd {
       orig: Box::new([orig1, orig2]),
-      terms: std::mem::take(terms2),
+      terms: std::mem::take(terms),
       expansion,
     }
   }
@@ -2955,6 +2956,7 @@ impl MizPath {
   fn open(&self, mml: bool, new_prel: bool, ext: &str) -> io::Result<File> {
     let mut path = if mml { self.mml() } else { self.prel(new_prel) };
     path.set_extension(ext);
+    // eprintln!("opening {}", path.to_str().unwrap());
     File::open(path)
   }
 
@@ -2962,6 +2964,7 @@ impl MizPath {
     let mut path = self.prel(new_prel);
     path.set_extension(ext);
     std::fs::create_dir_all(path.parent().unwrap())?;
+    // eprintln!("writing {}", path.to_str().unwrap());
     File::create(path)
   }
 }
@@ -3038,6 +3041,7 @@ pub struct Config {
   pub verify_export: bool,
   pub xml_export: bool,
   pub overwrite_prel: bool,
+  pub cache_prel: bool,
 
   // Unsound flags //
   /// This flag enables checking of `P[a] & ... & P[b]` equality by checking
@@ -3070,7 +3074,7 @@ const DEBUG: bool = cfg!(debug_assertions);
 
 impl FormatterConfig {
   const DEFAULT: Self = Self {
-    enable_formatter: true,
+    enable_formatter: false,
     show_infer: true,
     show_only_infer: false,
     show_priv: false,
@@ -3111,6 +3115,7 @@ fn main() {
     verify_export: false,
     xml_export: false,
     overwrite_prel: false,
+    cache_prel: true,
 
     legacy_flex_handling: true,
     flex_expansion_bug: true,
@@ -3127,6 +3132,7 @@ fn main() {
   };
 
   const FIRST_FILE: usize = 0;
+  const LAST_FILE: Option<usize> = None; //Some(11);
   const ONE_FILE: bool = DEBUG;
 
   // set_verbose(true);
@@ -3137,13 +3143,16 @@ fn main() {
   cfg.analyzer_full = cfg.analyzer_enabled;
   cfg.checker_enabled = std::env::var("NO_CHECKER").is_err();
   cfg.accom_enabled = std::env::var("NO_ACCOM").is_err();
-  cfg.verify_export = std::env::var("NO_EXPORT").is_err();
+  cfg.verify_export = std::env::var("VERIFY_EXPORT").is_ok();
   cfg.xml_export = std::env::var("XML_EXPORT").is_ok();
+  cfg.exporter_enabled = std::env::var("NO_EXPORT").is_err();
   cfg.analyzer_enabled |= cfg.exporter_enabled; // exporter needs (quick) analyzer
   cfg.analyzer_full |= cfg.checker_enabled; // checker needs analyzer_full (if analyzer is used)
-  cfg.exporter_enabled = cfg.xml_export || cfg.verify_export;
   cfg.one_item = std::env::var("ONE_ITEM").is_ok();
+  cfg.cache_prel = !cfg.one_item && std::env::var("NO_CACHE").is_err();
+  cfg.exporter_enabled &= cfg.xml_export || cfg.verify_export || cfg.cache_prel;
   let orig_mizar = std::env::var("ORIG_MIZAR").is_ok();
+  let dep_order = std::env::var("DEP_ORDER").is_ok();
   let mut args = std::env::args().skip(1);
   let first_file = args.next().and_then(|s| s.parse().ok()).unwrap_or(FIRST_FILE);
   if let Some(n) = args.next().and_then(|s| s.parse().ok()) {
@@ -3154,6 +3163,9 @@ fn main() {
   let file = std::fs::read_to_string("miz/mizshare/mml.lar").unwrap();
   let mml_vct =
     &if cfg.accom_enabled { std::fs::read("miz/mizshare/mml.vct").unwrap() } else { vec![] };
+  if cfg.cache_prel {
+    cache::init_cache(file.lines().enumerate().map(|(i, x)| (x, dep_order && i >= first_file)))
+  }
   let jobs = &Mutex::new(file.lines().enumerate().skip(first_file).collect_vec().into_iter());
   let running = &*std::iter::repeat_with(|| RwLock::new(None)).take(cfg.parallelism).collect_vec();
   let refresh_status_line = |mut msg: String| {
@@ -3237,7 +3249,7 @@ fn main() {
           // path.open_msx().unwrap().parse_items();
           // println!("parsed {s}, {} msx items", items.len());
 
-          if ONE_FILE {
+          if ONE_FILE || LAST_FILE == Some(i) {
             break
           }
         }
@@ -3246,5 +3258,6 @@ fn main() {
       });
     }
   });
+  // std::thread::sleep(std::time::Duration::from_secs(60 * 60));
   print_stats_and_exit(cfg.parallelism);
 }

@@ -1103,7 +1103,7 @@ pub struct PropertySet(u16);
 
 impl PropertySet {
   pub const EMPTY: Self = Self(0);
-  pub const USES_ARG2: Self = Self(
+  const USES_ARG2: Self = Self(
     1 << PropertyKind::Symmetry as u16
       | 1 << PropertyKind::Reflexivity as u16
       | 1 << PropertyKind::Irreflexivity as u16
@@ -1114,7 +1114,7 @@ impl PropertySet {
       | 1 << PropertyKind::Associativity as u16
       | 1 << PropertyKind::Transitivity as u16,
   );
-  pub const USES_ARG1: Self = Self(
+  const USES_ARG1: Self = Self(
     Self::USES_ARG2.0
       | 1 << PropertyKind::Involutiveness as u16
       | 1 << PropertyKind::Projectivity as u16,
@@ -2497,7 +2497,7 @@ impl std::ops::Sub<&Self> for SymbolsBase {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Vocabularies(pub Vec<(Article, SymbolsBase)>);
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DepNotation {
   pub sig: Vec<Article>,
   pub vocs: Vocabularies,
@@ -2519,25 +2519,25 @@ pub struct DepConstructors {
   pub constrs: Constructors,
 }
 
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct DepClusters {
   pub sig: Vec<Article>,
   pub cl: ClustersRaw,
 }
 
-#[derive(Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct DepIdentify {
   pub sig: Vec<Article>,
   pub defs: Vec<Definiens>,
 }
 
-#[derive(Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct DepReductions {
   pub sig: Vec<Article>,
   pub defs: Vec<Definiens>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TheoremKind {
   CanceledThm,
   CanceledDef,
@@ -2552,7 +2552,7 @@ impl<V: VisitMut> Visitable<V> for TheoremKind {
   }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Theorem {
   pub kind: TheoremKind,
   pub stmt: Formula,
@@ -2564,13 +2564,13 @@ impl<V: VisitMut> Visitable<V> for Theorem {
   }
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DepTheorems {
   pub sig: Vec<Article>,
   pub thm: Vec<Theorem>,
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DepSchemes {
   pub sig: Vec<Article>,
   pub sch: Vec<Option<Scheme>>,
@@ -2610,13 +2610,13 @@ impl DirectiveKind {
 #[derive(Debug, Default)]
 pub struct Directives(pub EnumMap<DirectiveKind, Vec<(Position, Article)>>);
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DepRequirement {
   pub req: Requirement,
   pub kind: ConstrKind,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct DepRequirements {
   pub sig: Vec<Article>,
   pub reqs: Vec<DepRequirement>,

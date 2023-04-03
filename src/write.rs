@@ -1,5 +1,5 @@
 use crate::types::*;
-use crate::MizPath;
+use crate::{Global, MizPath};
 use enum_map::Enum;
 use quick_xml::events::attributes::Attribute;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
@@ -12,6 +12,7 @@ const INDENT: usize = 0;
 struct MizWriter {
   w: quick_xml::Writer<BufWriter<File>>,
   pending: Option<Elem>,
+  depth: u32,
 }
 
 impl MizPath {
@@ -19,7 +20,7 @@ impl MizPath {
     let w = BufWriter::new(self.create(new_prel, ext)?);
     let mut w = quick_xml::Writer::new_with_indent(w, b' ', INDENT);
     w.write(b"<?xml version=\"1.0\"?>\n").unwrap();
-    Ok(MizWriter { w, pending: None })
+    Ok(MizWriter { w, pending: None, depth: 0 })
   }
 
   pub fn write_dfr(&self, new_prel: bool, vocs: &Vocabularies, formats: &[Format]) {
@@ -523,9 +524,13 @@ impl MizWriter {
       Term::Selector { nr, args } => self.write_func(b"Func", b'U', nr.0, args),
       Term::The { ty } => self.with0(b"Choice", |w| w.write_type(ty)),
       Term::Fraenkel { args, scope, compr } => self.with0(b"Fraenkel", |w| {
-        w.write_types(args);
+        for ty in &**args {
+          w.write_type(ty);
+          w.depth += 1;
+        }
         w.write_term(scope);
-        w.write_formula(compr)
+        w.write_formula(compr);
+        w.depth -= args.len() as u32
       }),
       Term::EqClass(_)
       | Term::EqMark(_)
@@ -569,16 +574,25 @@ impl MizWriter {
         };
         self.with(b"For", attrs, |w| {
           w.write_type(dom);
-          w.write_formula(scope)
+          w.depth += 1;
+          w.write_formula(scope);
+          w.depth -= 1;
         })
       }
-      Formula::True => self.with0(b"Verum", |_| {}),
+      Formula::FlexAnd { nat, le, terms, scope } =>
+        self.write_formula(&Global::into_legacy_flex_and(
+          &mut nat.clone(),
+          *le,
+          &mut terms.clone(),
+          &mut scope.clone(),
+          self.depth,
+        )),
       Formula::LegacyFlexAnd { orig, terms, expansion } => self.with0(b"FlexFrm", |w| {
         w.write_formulas(&**orig);
         w.write_terms(&**terms);
         w.write_formula(expansion)
       }),
-      Formula::FlexAnd { .. } => unreachable!(),
+      Formula::True => self.with0(b"Verum", |_| {}),
     }
   }
 

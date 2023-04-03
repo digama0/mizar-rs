@@ -1,4 +1,3 @@
-use crate::parser::MaybeMut;
 use crate::types::*;
 use crate::{mk_id, CmpStyle, MizPath, VisitMut};
 use std::collections::{BTreeMap, HashMap};
@@ -345,7 +344,7 @@ impl Accomodator {
     for &(_, art) in &self.dirs.0[DirectiveKind::Registrations] {
       let (mut sig, mut did) = Default::default();
       let path = MizPath::new(art.as_str());
-      if path.read_identify_regs(MaybeMut::None, false, "did", Some(&mut sig), &mut did)? {
+      if path.read_did(false, &mut sig, &mut did)? {
         let len = self.sig.sig.len();
         let mut rename = self.sig.rename(&sig, Some(ctx));
         for mut id in did {
@@ -367,7 +366,7 @@ impl Accomodator {
     for &(_, art) in &self.dirs.0[DirectiveKind::Registrations] {
       let (mut sig, mut drd) = Default::default();
       let path = MizPath::new(art.as_str());
-      if path.read_reduction_regs(MaybeMut::None,false,  "drd", Some(&mut sig), &mut drd)? {
+      if path.read_drd(false, &mut sig, &mut drd)? {
         let len = self.sig.sig.len();
         let mut rename = self.sig.rename(&sig, Some(ctx));
         for mut red in drd {
@@ -389,7 +388,7 @@ impl Accomodator {
     for &(_, art) in &self.dirs.0[DirectiveKind::Registrations] {
       let (mut sig, mut dpr) = Default::default();
       let path = MizPath::new(art.as_str());
-      if path.read_properties(MaybeMut::None, false, "dpr", Some(&mut sig), &mut dpr)? {
+      if path.read_dpr(false, &mut sig, &mut dpr)? {
         let len = self.sig.sig.len();
         let mut rename = self.sig.rename(&sig, Some(ctx));
         for mut prop in dpr {
@@ -411,7 +410,7 @@ impl Accomodator {
     for &(_, art) in &self.dirs.0[kind] {
       let (mut sig, mut def) = Default::default();
       let path = MizPath::new(art.as_str());
-      if path.read_definitions(MaybeMut::None,false,  "def", Some(&mut sig), &mut def)? {
+      if path.read_def(false, &mut sig, &mut def)? {
         let len = self.sig.sig.len();
         let mut rename = self.sig.rename(&sig, Some(ctx));
         for mut def in def {
