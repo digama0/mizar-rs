@@ -1,10 +1,5 @@
 use crate::mk_id;
-use crate::types::{
-  AttrSymId, BlockKind, CancelKind, ConstId, CorrCondKind, DefRef, FormatAggr, FormatAttr,
-  FormatFunc, FormatMode, FormatPred, FormatStruct, FuncSymId, LabelId, LeftBrkSymId, LocusId,
-  ModeSymId, Position, PredSymId, PropertyKind, RightBrkSymId, SchId, SchRef, SelSymId,
-  StructSymId, ThmRef,
-};
+use crate::types::*;
 use enum_map::Enum;
 
 #[derive(Debug, Default)]
@@ -270,11 +265,15 @@ pub enum InferenceKind {
 }
 
 #[derive(Debug, Clone)]
+pub enum RefFragment {
+  Thm { pos: Position, id: ThmId },
+  Def { pos: Position, id: DefId },
+}
+#[derive(Debug, Clone)]
 pub enum ReferenceKind {
   Priv(Option<LabelId>),
   UnresolvedPriv(String),
-  Thm(ThmRef),
-  Def(DefRef),
+  Global(ArticleId, Vec<RefFragment>),
 }
 
 #[derive(Debug, Clone)]
@@ -738,6 +737,7 @@ pub enum ItemKind {
   /// itGeneralization, itLociDeclaration
   Let {
     vars: Vec<BinderGroup>,
+    conds: Vec<Proposition>,
   },
   /// itExistentialAssumption
   Given {

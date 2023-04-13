@@ -1,8 +1,32 @@
+--- mml/bagord_2.miz
++++ mml/bagord_2.miz
+@@ -554 +554,2 @@
+-  for x,y being Element of N holds x <= y iff R[x,y];
++  for x,y being Element of N holds x <= y iff R[x,y]
++proof
 --- mml/binari_2.miz
 +++ mml/binari_2.miz
 @@ -28 +28 @@
 - requirements REAL, NUMERALS, SUBSET, ARITHM;
 + requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
+--- mml/binop_1.miz
++++ mml/binop_1.miz
+@@ -745 +745,2 @@
+-    ex z being set st z in Z() & P[x,y,z];
++    ex z being set st z in Z() & P[x,y,z]
++proof
+--- mml/card_4.miz
++++ mml/card_4.miz
+@@ -453 +453,2 @@
+-   { f(n) : P[n] } is countable;
++   { f(n) : P[n] } is countable
++proof
+--- mml/circtrm1.miz
++++ mml/circtrm1.miz
+@@ -553 +553,2 @@
+-ex b being Element of B().i st P[i,a,b];
++ex b being Element of B().i st P[i,a,b]
++proof
 --- mml/complex1.miz
 +++ mml/complex1.miz
 @@ -25 +25 @@
@@ -78,6 +102,40 @@
 @@ -48 +48 @@
 -      REALSET1, FIELD_2, FIELD_3;
 +      REALSET1, FIELD_1, FIELD_2, FIELD_3;
+--- mml/finseq_4.miz
++++ mml/finseq_4.miz
+@@ -2410 +2410,2 @@
+-A1: for n st n in Seg N() ex d being Element of D() st P[n,d];
++A1: for n st n in Seg N() ex d being Element of D() st P[n,d]
++proof
+--- mml/funct_2.miz
++++ mml/funct_2.miz
+@@ -2709 +2709,2 @@
+-A1: for x being set st x in X() holds F(x) in Y();
++A1: for x being set st x in X() holds F(x) in Y()
++proof
+--- mml/funct_3.miz
++++ mml/funct_3.miz
+@@ -119 +119,2 @@
+-   ex z being object st P[x,y,z];
++   ex z being object st P[x,y,z]
++proof
+@@ -166 +167,2 @@
+-  for x,y being object st x in A() & y in B() holds f.(x,y) = F(x,y);
++  for x,y being object st x in A() & y in B() holds f.(x,y) = F(x,y)
++proof
+--- mml/funct_5.miz
++++ mml/funct_5.miz
+@@ -41 +41,2 @@
+- ex f st dom f = FS() & for g st g in FS () holds f.g = f(g);
++ ex f st dom f = FS() & for g st g in FS () holds f.g = f(g)
++proof
+--- mml/funct_7.miz
++++ mml/funct_7.miz
+@@ -837 +837,2 @@
+-A2: for d1,d2 being Element of D() st G(d1) = G(d2) holds d1 = d2;
++A2: for d1,d2 being Element of D() st G(d1) = G(d2) holds d1 = d2
++proof
 --- mml/funct_9.miz
 +++ mml/funct_9.miz
 @@ -27 +27 @@
@@ -98,6 +156,12 @@
 @@ -29 +29 @@
 - requirements NUMERALS, REAL, SUBSET, ARITHM;
 + requirements BOOLE, NUMERALS, REAL, SUBSET, ARITHM;
+--- mml/group_1a.miz
++++ mml/group_1a.miz
+@@ -65 +65,2 @@
+-  ex z being Element of Z() st P[x,y,z];
++  ex z being Element of Z() st P[x,y,z]
++proof
 --- mml/gtarski3.miz
 +++ mml/gtarski3.miz
 @@ -3164 +3164 @@
@@ -128,6 +192,18 @@
 @@ -30 +30 @@
 - requirements NUMERALS, SUBSET, ARITHM;
 + requirements BOOLE, NUMERALS, SUBSET, ARITHM;
+--- mml/integr20.miz
++++ mml/integr20.miz
+@@ -1827 +1827,2 @@
+-         holds s.(2*n) = F(n) & s.(2*n+1) = G(n);
++         holds s.(2*n) = F(n) & s.(2*n+1) = G(n)
++proof
+--- mml/jct_misc.miz
++++ mml/jct_misc.miz
+@@ -51 +51,2 @@
+-   the set of all F(a) where a is Element of A() is non empty;
++   the set of all F(a) where a is Element of A() is non empty
++proof
 --- mml/jordan1d.miz
 +++ mml/jordan1d.miz
 @@ -31 +31 @@
@@ -148,6 +224,18 @@
 @@ -27 +27 @@
 - requirements SUBSET, ARITHM, NUMERALS;
 + requirements BOOLE, SUBSET, ARITHM, NUMERALS;
+--- mml/lmod_7.miz
++++ mml/lmod_7.miz
+@@ -45 +45,2 @@
+-  (for x being object holds x in X2 iff P[x]) holds X1 = X2;
++  (for x being object holds x in X2 iff P[x]) holds X1 = X2
++proof
+--- mml/lopban_4.miz
++++ mml/lopban_4.miz
+@@ -644 +644,2 @@
+-  holds (n <= k implies seq.n=F(k,n)) & (n > k implies seq.n=0.RNS());
++  holds (n <= k implies seq.n=F(k,n)) & (n > k implies seq.n=0.RNS())
++proof
 --- mml/ltlaxio2.miz
 +++ mml/ltlaxio2.miz
 @@ -34 +34 @@
@@ -158,11 +246,47 @@
 @@ -32 +32 @@
 - requirements NUMERALS, SUBSET, REAL, ARITHM;
 + requirements BOOLE, NUMERALS, SUBSET, REAL, ARITHM;
+--- mml/mcart_1.miz
++++ mml/mcart_1.miz
+@@ -1404 +1404,2 @@
+-A1: x in A() implies ex y,z st y in B() & z in C() & P[x,y,z];
++A1: x in A() implies ex y,z st y in B() & z in C() & P[x,y,z]
++proof
 --- mml/menelaus.miz
 +++ mml/menelaus.miz
 @@ -30 +30 @@
 - requirements SUBSET, NUMERALS, ARITHM;
 + requirements BOOLE, SUBSET, NUMERALS, ARITHM;
+--- mml/modelc_1.miz
++++ mml/modelc_1.miz
+@@ -2382 +2382,2 @@
+-  st for f being object st f in M() holds o.(f) = F(f);
++  st for f being object st f in M() holds o.(f) = F(f)
++proof
+@@ -2394 +2395,2 @@
+-  & (for f being object st f in M() holds o2.f = F(f)) holds o1=o2;
++  & (for f being object st f in M() holds o2.f = F(f)) holds o1=o2
++proof
+@@ -2415 +2417,2 @@
+-  (s,f(),g()) =TRUE iff (Fid(h,S())).s=TRUE;
++  (s,f(),g()) =TRUE iff (Fid(h,S())).s=TRUE
++proof
+--- mml/msafree1.miz
++++ mml/msafree1.miz
+@@ -681 +681,2 @@
+-holds IT2().s.y = x iff P[s,x,y];
++holds IT2().s.y = x iff P[s,x,y]
++proof
+--- mml/nat_1.miz
++++ mml/nat_1.miz
+@@ -1025 +1025,2 @@
+-   for n being Nat holds f.(n+1) = G(n,f.n);
++   for n being Nat holds f.(n+1) = G(n,f.n)
++proof
+@@ -1622 +1623,2 @@
+-   ex z being Element of Z() st P[x,y,z];
++   ex z being Element of Z() st P[x,y,z]
++proof
 --- mml/number02.miz
 +++ mml/number02.miz
 @@ -421 +421 @@
@@ -171,6 +295,62 @@
 @@ -446 +446 @@
 -      take 0;
 +      take 0,n;
+--- mml/ordinal1.miz
++++ mml/ordinal1.miz
+@@ -1228 +1228,2 @@
+-A2: for A st A in dom L() holds L().A = F(A);
++A2: for A st A in dom L() holds L().A = F(A)
++proof
+--- mml/ordinal2.miz
++++ mml/ordinal2.miz
+@@ -603 +603,2 @@
+-  is limit_ordinal holds L.A = D(A,L|A);
++  is limit_ordinal holds L.A = D(A,L|A)
++proof
+--- mml/partfun1.miz
++++ mml/partfun1.miz
+@@ -111 +111,2 @@
+-    (not C[x] implies f.x = G(x));
++    (not C[x] implies f.x = G(x))
++proof
+@@ -1547 +1548,2 @@
+-     (C[x] implies f.x = F(x)) & (not C[x] implies f.x = G(x));
++     (C[x] implies f.x = F(x)) & (not C[x] implies f.x = G(x))
++proof
+@@ -1696 +1698,2 @@
+-    (not C[x] implies f.x = G(x));
++    (not C[x] implies f.x = G(x))
++proof
+--- mml/pboole.miz
++++ mml/pboole.miz
+@@ -161 +161,2 @@
+-     for e being object holds e in X.i iff e in A().i & P[i,e];
++     for e being object holds e in X.i iff e in A().i & P[i,e]
++proof
+@@ -1951 +1952,2 @@
+-  for i being object st i in I() holds f.i = F(i);
++  for i being object st i in I() holds f.i = F(i)
++proof
+@@ -2297 +2299,2 @@
+-A1: for i being Element of I() ex j being object st P[i,j];
++A1: for i being Element of I() ex j being object st P[i,j]
++proof
+@@ -2462 +2465,2 @@
+-  for i being set st i in I() holds f.i = F(i);
++  for i being set st i in I() holds f.i = F(i)
++proof
+--- mml/pcomps_1.miz
++++ mml/pcomps_1.miz
+@@ -523 +523,2 @@
+-A1: for Z being Subset of T() st Z in X() holds F(Z) in Y();
++A1: for Z being Subset of T() st Z in X() holds F(Z) in Y()
++proof
+--- mml/pcomps_2.miz
++++ mml/pcomps_2.miz
+@@ -560 +560,2 @@
+-  PM() : P[V]};
++  PM() : P[V]}
++proof
 --- mml/pdiff_3.miz
 +++ mml/pdiff_3.miz
 @@ -29 +29 @@
@@ -181,6 +361,12 @@
 @@ -29 +29 @@
 - requirements SUBSET, REAL, NUMERALS, ARITHM;
 + requirements BOOLE, SUBSET, REAL, NUMERALS, ARITHM;
+--- mml/pre_circ.miz
++++ mml/pre_circ.miz
+@@ -85 +85,2 @@
+-  implies f.i = F(i)) & (not P[i] implies f.i = G(i));
++  implies f.i = F(i)) & (not P[i] implies f.i = G(i))
++proof
 --- mml/prgcor_1.miz
 +++ mml/prgcor_1.miz
 @@ -25 +25 @@
@@ -191,6 +377,36 @@
 @@ -23 +23 @@
 - requirements SUBSET;
 + requirements BOOLE, SUBSET;
+--- mml/recdef_1.miz
++++ mml/recdef_1.miz
+@@ -71 +71,2 @@
+-A1: for n being Nat for x being set ex y being set st P[n,x,y ];
++A1: for n being Nat for x being set ex y being set st P[n,x,y]
++proof
+--- mml/relset_1.miz
++++ mml/relset_1.miz
+@@ -892 +892,2 @@
+-  st for x,y being set holds [x,y] in R iff x in A() & y in B() & P[x,y];
++  st for x,y being set holds [x,y] in R iff x in A() & y in B() & P[x,y]
++proof
+--- mml/rewrite1.miz
++++ mml/rewrite1.miz
+@@ -194 +194,2 @@
+-A3: len p() > 0 & len q() > 0 & p().len p() = q().1;
++A3: len p() > 0 & len q() > 0 & p().len p() = q().1
++proof
+--- mml/roughs_3.miz
++++ mml/roughs_3.miz
+@@ -100 +100,2 @@
+-      P[B1 \/ B2];
++      P[B1 \/ B2]
++  proof
+--- mml/scheme1.miz
++++ mml/scheme1.miz
+@@ -360 +360,2 @@
+-    ex s being Real_Sequence st for n holds s.(2*n) = F(n) & s.(2*n+1) = G(n);
++    ex s being Real_Sequence st for n holds s.(2*n) = F(n) & s.(2*n+1) = G(n)
++proof
 --- mml/scmfsa8b.miz
 +++ mml/scmfsa8b.miz
 @@ -36 +36 @@
@@ -226,6 +442,10 @@
 @@ -28 +28 @@
 - requirements NUMERALS, SUBSET, ARITHM;
 + requirements BOOLE, NUMERALS, SUBSET, ARITHM;
+@@ -117 +117,2 @@
+-  being Functional_Sequence of D1(), D2() st for n being Nat holds G.n = F(n);
++  being Functional_Sequence of D1(), D2() st for n being Nat holds G.n = F(n)
++proof
 --- mml/sfmastr3.miz
 +++ mml/sfmastr3.miz
 @@ -39 +39 @@
@@ -241,12 +461,62 @@
 @@ -31 +31 @@
 - requirements SUBSET, NUMERALS, ARITHM, REAL;
 + requirements BOOLE, SUBSET, NUMERALS, ARITHM, REAL;
+--- mml/sppol_1.miz
++++ mml/sppol_1.miz
+@@ -71 +71,2 @@
+- {F(f(),i): i in dom f() & P[i]} is finite;
++ {F(f(),i): i in dom f() & P[i]} is finite
++proof
 --- mml/stacks_1.miz
 +++ mml/stacks_1.miz
 @@ -502 +501,0 @@
 -::$H-
+--- mml/subset_1.miz
++++ mml/subset_1.miz
+@@ -824 +824,2 @@
+-  in X iff x in A() & P[x];
++  in X iff x in A() & P[x]
++proof
+@@ -886 +887,2 @@
+-  x being Element of A() holds x in B iff P[x];
++  x being Element of A() holds x in B iff P[x]
++proof
+--- mml/topalg_7.miz
++++ mml/topalg_7.miz
+@@ -112 +112,2 @@
+-   for s being Point of S(), t being Point of T() holds f.(s,t) = F(s,t);
++   for s being Point of S(), t being Point of T() holds f.(s,t) = F(s,t)
++proof
+@@ -130 +131,2 @@
+-  holds f = g;
++  holds f = g
++proof
 --- mml/tops_4.miz
 +++ mml/tops_4.miz
 @@ -28 +28 @@
 - requirements SUBSET, REAL;
 + requirements BOOLE, SUBSET, REAL;
+--- mml/wellset1.miz
++++ mml/wellset1.miz
+@@ -94 +94,2 @@
+-  ex B st for R being Relation holds R in B iff R in A() & P[R];
++  ex B st for R being Relation holds R in B iff R in A() & P[R]
++proof
+--- mml/xxreal_2.miz
++++ mml/xxreal_2.miz
+@@ -40 +40,2 @@
+-  of INT: m()<=i & i<=n() & P[i]} is finite;
++  of INT: m()<=i & i<=n() & P[i]} is finite
++proof
+--- mml/yellow18.miz
++++ mml/yellow18.miz
+@@ -3945 +3945,2 @@
+-ex y being object st y in B().i & P[i,x,y];
++ex y being object st y in B().i & P[i,x,y]
++proof
+--- mml/zf_refle.miz
++++ mml/zf_refle.miz
+@@ -174 +174,2 @@
+-A1: for a being Ordinal of W() ex b being Ordinal of W() st P[a,b];
++A1: for a being Ordinal of W() ex b being Ordinal of W() st P[a,b]
++proof

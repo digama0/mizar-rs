@@ -508,7 +508,8 @@ impl MsmParser {
         var: self.parse_variable().unwrap(),
         value: self.parse_term().unwrap(),
       }]),
-      b"Generalization" | b"Loci-Declaration" => ItemKind::Let { vars: vec![*self.parse_binder()] },
+      b"Generalization" | b"Loci-Declaration" =>
+        ItemKind::Let { vars: vec![*self.parse_binder()], conds: vec![] },
       b"Existential-Assumption" => {
         let mut vars = vec![];
         let conds = loop {
@@ -1008,7 +1009,8 @@ impl MsmParser {
                 _ => {}
               }
             }
-            Elem::Reference(Reference { pos, kind: ReferenceKind::Thm((article_nr, thm_nr)) })
+            let refs = vec![RefFragment::Thm { pos, id: thm_nr }];
+            Elem::Reference(Reference { pos, kind: ReferenceKind::Global(article_nr, refs) })
           }
           b"Definition-Reference" => {
             let (mut pos, (mut article_nr, mut def_nr)) = <(Position, _)>::default();
@@ -1022,7 +1024,8 @@ impl MsmParser {
                 _ => {}
               }
             }
-            Elem::Reference(Reference { pos, kind: ReferenceKind::Def((article_nr, def_nr)) })
+            let refs = vec![RefFragment::Def { pos, id: def_nr }];
+            Elem::Reference(Reference { pos, kind: ReferenceKind::Global(article_nr, refs) })
           }
           b"Partial-Definiens" => match self.parse_elem() {
             Elem::Term(case) => Elem::DefCaseTerm(DefCase { case, guard: self.parse_formula() }),

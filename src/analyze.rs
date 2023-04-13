@@ -31,7 +31,7 @@ impl<'a> std::ops::DerefMut for Analyzer<'a> {
 }
 
 impl Reader {
-  pub fn run_analyzer(&mut self, path: &MizPath, parser: Option<&mut MizParser<'_>>) {
+  pub fn run_analyzer(&mut self, path: &MizPath, mut parser: Option<&mut MizParser<'_>>) {
     if !self.g.cfg.analyzer_enabled {
       panic!("analyzer is not enabled")
     }
@@ -60,14 +60,15 @@ impl Reader {
       elab.export.reductions_base = elab.reductions.len() as u32;
       elab.export.properties_base = elab.properties.len() as u32;
     }
-    let r = if let Some(parser) = parser {
-      let r = parser.parse_items();
-      println!("parsed {:?}, {} items", path.art, r.len());
-      return // TODO
+    let r = if let Some(parser) = &mut parser {
+      parser.parse_items()
     } else {
       path.open_msx().unwrap().parse_items()
     };
     // println!("parsed {:?}, {} items", path.art, r.len());
+    if parser.is_some() {
+      return // TODO
+    }
     for (i, it) in r.iter().enumerate() {
       if let Some(n) = elab.g.cfg.first_verbose_top_item {
         set_verbose(i >= n);
@@ -473,19 +474,32 @@ impl Analyzer<'_> {
     f
   }
 
-  fn elab_reference(&mut self, r: &ast::Reference) -> Reference {
-    let kind = match r.kind {
-      // The label cannot be `None` because that only occurs in the spurious anonymous
-      // reference added in MSM, which we strip
-      ast::ReferenceKind::Priv(id) => ReferenceKind::Priv(id.unwrap()),
-      ast::ReferenceKind::UnresolvedPriv(ref name) => {
-        let lab = self.label_names.enum_iter().rev().find(|p| p.1.as_deref() == Some(name));
-        ReferenceKind::Priv(lab.expect("label not found").0)
-      }
-      ast::ReferenceKind::Thm(id) => ReferenceKind::Thm(id),
-      ast::ReferenceKind::Def(id) => ReferenceKind::Def(id),
-    };
-    Reference { pos: r.pos, kind }
+  fn elab_references(&mut self, rs: &[ast::Reference]) -> Vec<Reference> {
+    let mut out = vec![];
+    for r in rs {
+      let kind = match r.kind {
+        // The label cannot be `None` because that only occurs in the spurious anonymous
+        // reference added in MSM, which we strip
+        ast::ReferenceKind::Priv(id) => ReferenceKind::Priv(id.unwrap()),
+        ast::ReferenceKind::UnresolvedPriv(ref name) => {
+          let lab = self.label_names.enum_iter().rev().find(|p| p.1.as_deref() == Some(name));
+          ReferenceKind::Priv(lab.expect("label not found").0)
+        }
+        ast::ReferenceKind::Global(art, ref frags) => {
+          for frag in frags {
+            out.push(match *frag {
+              ast::RefFragment::Thm { pos, id } =>
+                Reference { pos, kind: ReferenceKind::Thm((art, id)) },
+              ast::RefFragment::Def { pos, id } =>
+                Reference { pos, kind: ReferenceKind::Def((art, id)) },
+            })
+          }
+          continue
+        }
+      };
+      out.push(Reference { pos: r.pos, kind })
+    }
+    out
   }
 
   fn elab_justification(&mut self, push_label: bool, thesis: &Formula, just: &ast::Justification) {
@@ -498,7 +512,7 @@ impl Analyzer<'_> {
             &ast::InferenceKind::From { sch } => InferenceKind::From { sch },
           },
           pos,
-          refs: refs.iter().map(|r| self.elab_reference(r)).collect(),
+          refs: self.elab_references(refs),
         };
         self.r.read_inference(thesis, &it)
       }
@@ -2014,13 +2028,20 @@ trait ReadProof {
     }
     // eprintln!("[{:?}] thesis = {:?}", it.pos, elab.thesis);
     match &it.kind {
-      ast::ItemKind::Let { vars } => {
+      ast::ItemKind::Let { vars, conds } => {
         let n = elab.lc.fixed_var.len();
         let istart = elab.lc.infer_const.get_mut().len() as u32;
         for var in vars {
           elab.elab_fixed_vars(var);
         }
-        self.intro(elab, n, istart)
+        self.intro(elab, n, istart);
+        if !conds.is_empty() {
+          let mut conjs = vec![];
+          for prop in conds {
+            elab.elab_proposition(prop, true).append_conjuncts_to(&mut conjs);
+          }
+          self.assume(elab, conjs)
+        }
       }
       ast::ItemKind::Assume(asm) => {
         let mut conjs = vec![];

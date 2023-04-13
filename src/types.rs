@@ -1015,6 +1015,7 @@ impl std::fmt::Display for Article {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.as_str().fmt(f) }
 }
 impl Article {
+  pub const HIDDEN: Article = Article(*b"hidden\0\0");
   pub fn from_lower(s: &[u8]) -> Article {
     let mut arr = [0; MAX_ARTICLE_LEN];
     arr[..s.len()].copy_from_slice(s);

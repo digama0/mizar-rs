@@ -1,8 +1,8 @@
 use crate::ast::*;
 use crate::types::{
-  Article, ArticleId, BlockKind, CorrCondKind, DefId, DirectiveKind, Directives, Idx, LeftBrkSymId,
-  LocusId, ModeSymId, Position, PredSymId, PropertyKind, RightBrkSymId, SchId, SymbolKind, Symbols,
-  ThmId, MAX_ARTICLE_LEN,
+  Article, ArticleId, BlockKind, CorrCondKind, DefId, DirectiveKind, Directives, Format, FormatId,
+  Idx, IdxVec, LeftBrkSymId, LocusId, ModeSymId, Position, PredSymId, PropertyKind, RightBrkSymId,
+  SchId, StructSymId, SymbolKind, Symbols, ThmId, MAX_ARTICLE_LEN,
 };
 use enum_map::Enum;
 use radix_trie::{Trie, TrieCommon};
@@ -98,7 +98,6 @@ mk_keywords! {
   Scheme: b"scheme",
   // Section: b"section",
   // Selector: b"selector",
-  Set: b"set",
   St: b"st",
   Struct: b"struct",
   Such: b"such",
@@ -148,7 +147,7 @@ impl TokenKind {
   const RPAREN: Self = Self::Symbol(SymbolKind::RightBrk(RightBrkSymId::RPAREN)); // )
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct Token<'a> {
   spelling: &'a str,
   pos: Position,
@@ -175,21 +174,8 @@ pub struct Scanner<'a> {
 
 impl<'a> Scanner<'a> {
   fn new(data: &'a [u8]) -> Self {
-    Self {
-      data,
-      line: 1,
-      line_start: 0,
-      pos: 0,
-      phrase_end: None,
-      allow_underscore: true,
-      tokens: Default::default(),
-      lookahead: None,
-      lookahead2: None,
-    }
-  }
-
-  pub fn load_symbols(&mut self, syms: &Symbols) {
-    let mut push1 = |cc: &[u8], kind| assert!(self.tokens.insert(cc.to_owned(), kind).is_none());
+    let mut tokens = Trie::default();
+    let mut push1 = |cc: &[u8], kind| assert!(tokens.insert(cc.to_owned(), kind).is_none());
     push1(b"$", TokenKind::Dollar(0));
     for &(s, kind) in KEYWORDS {
       push1(s, TokenKind::Keyword(kind))
@@ -203,8 +189,28 @@ impl<'a> Scanner<'a> {
     for dir in (0..DirectiveKind::LENGTH).map(DirectiveKind::from_usize) {
       push1(dir.name().as_bytes(), TokenKind::Directive(dir))
     }
+    Self {
+      data,
+      line: 1,
+      line_start: 0,
+      pos: 0,
+      phrase_end: None,
+      allow_underscore: true,
+      tokens,
+      lookahead: None,
+      lookahead2: None,
+    }
+  }
+
+  pub fn load_symbols(&mut self, syms: &Symbols, infinitives: &[(PredSymId, &'a str)]) {
     for (kind, s) in syms {
-      push1(s.as_bytes(), TokenKind::Symbol(*kind))
+      assert!(self.tokens.insert(s.as_bytes().to_owned(), TokenKind::Symbol(*kind)).is_none())
+    }
+    for &(n, s) in infinitives {
+      assert!(self
+        .tokens
+        .insert(s.as_bytes().to_owned(), TokenKind::Symbol(SymbolKind::Pred(n)))
+        .is_none())
     }
   }
 
@@ -213,6 +219,7 @@ impl<'a> Scanner<'a> {
   }
 
   fn undo(&mut self, tok: Token<'a>) {
+    // vprintln!("undo <- {tok:?}, {:?}, {:?}", self.lookahead, self.lookahead2);
     assert!(self.lookahead2.is_none());
     self.lookahead2 = self.lookahead.take();
     self.lookahead = Some(tok)
@@ -237,31 +244,34 @@ impl<'a> Scanner<'a> {
     'slice_phrase: loop {
       if let Some(end) = self.phrase_end {
         let ident_end = (self.data[self.pos..end].iter())
-          .position(|&c| c.is_ascii_alphanumeric() || (self.allow_underscore && c == b'_'))
+          .position(|&c| !(c.is_ascii_alphanumeric() || (self.allow_underscore && c == b'_')))
           .map_or(end, |len| self.pos + len);
         let pos = self.pos();
         let (tok_end, kind) = 'tok: {
           if let Some(subtrie) = self.tokens.get_ancestor(&self.data[self.pos..end]) {
-            let len = subtrie.prefix().as_bytes().len();
-            let tok_end = self.pos + len;
-            if tok_end >= ident_end {
-              let tok = subtrie.value().unwrap();
-              if let TokenKind::Dollar(_) = tok {
-                let num_end = (self.data[self.pos + 1..end].iter())
-                  .position(|&c| c.is_ascii_digit())
-                  .map_or(end, |len| self.pos + 1 + len);
-                let str = // Safety: it is valid UTF8
-                  unsafe { std::str::from_utf8_unchecked(&self.data[self.pos + 1..num_end]) };
-                if let Ok(n) = str.parse() {
-                  break 'tok (tok_end, TokenKind::Dollar(n))
+            let len = subtrie.key().unwrap().len();
+            let tok = subtrie.value().unwrap();
+            if let TokenKind::Dollar(_) = tok {
+              let num_end = (self.data[self.pos + 1..end].iter())
+                .position(|&c| !c.is_ascii_digit())
+                .map_or(end, |len| self.pos + 1 + len);
+              // Safety: it is valid UTF8
+              let str = unsafe { std::str::from_utf8_unchecked(&self.data[self.pos + 1..num_end]) };
+              if let Ok(n) = str.parse() {
+                if num_end >= ident_end {
+                  break 'tok (num_end, TokenKind::Dollar(n))
                 }
               }
-              break 'tok (tok_end, *tok)
+            } else {
+              let tok_end = self.pos + len;
+              if tok_end >= ident_end {
+                break 'tok (tok_end, *tok)
+              }
             }
           }
           if ident_end > self.pos {
             let tok = if (b'1'..=b'9').contains(&self.data[self.pos])
-              && self.data[self.pos + 1..end].iter().all(|c| c.is_ascii_digit())
+              && self.data[self.pos + 1..ident_end].iter().all(|c| c.is_ascii_digit())
             {
               // Safety: it is valid UTF8
               let str = unsafe { std::str::from_utf8_unchecked(&self.data[self.pos..ident_end]) };
@@ -286,7 +296,9 @@ impl<'a> Scanner<'a> {
         return Token { spelling, pos, kind }
       }
       loop {
-        let Some(&c) = self.data.get(self.pos) else { return Token { spelling: "", pos: self.pos(), kind: TokenKind::Eof } };
+        let Some(&c) = self.data.get(self.pos) else {
+          return Token { spelling: "", pos: self.pos(), kind: TokenKind::Eof }
+        };
         if c == b' ' {
           self.pos += 1;
           continue
@@ -316,21 +328,24 @@ impl<'a> Scanner<'a> {
           }
           self.pos += 2;
           match memchr::memchr(b'\n', &self.data[self.pos..]) {
-            Some(x) => self.pos += x,
+            Some(x) => self.pos += x + 1,
             None => self.pos = self.data.len(),
           }
           self.line += 1;
           self.line_start = self.pos;
           continue
         }
-        let end = memchr::memrchr3_iter(b' ', b'\n', b':', &self.data[self.pos..])
+        let end = memchr::memchr3_iter(b' ', b'\n', b':', &self.data[self.pos..])
           .map(|i| self.pos + i)
-          .find(|&i| c != b':' || self.data.get(i + 1) == Some(&b':'))
+          .find(|&i| self.data[i] != b':' || self.data.get(i + 1) == Some(&b':'))
           .unwrap_or(self.data.len());
+        // vprintln!("phrase = {:?}", std::str::from_utf8(&self.data[self.pos..end]).unwrap());
+        // crate::set_verbose(self.line >= 402);
         self.phrase_end = Some(end);
         continue 'slice_phrase
       }
     }
+    // vprintln!("next = {tok:?}\n{:?}", backtrace::Backtrace::new());
   }
 
   fn next_if(&mut self, f: impl FnOnce(&Token<'a>) -> bool) -> Option<Token<'a>> {
@@ -340,6 +355,7 @@ impl<'a> Scanner<'a> {
     None
   }
 
+  #[track_caller]
   fn accept(&mut self, kind: impl Into<TokenKind>) -> Token<'a> {
     let kind = kind.into();
     let tok = self.next();
@@ -352,19 +368,52 @@ impl<'a> Scanner<'a> {
   }
 }
 
-fn mk_func(pos: Position, name: &str, args: Vec<Term>) -> Box<Term> {
-  Box::new(Term::PrivFunc { pos, kind: VarKind::Unknown, var: 0, spelling: name.to_owned(), args })
-}
-
 pub struct Parser<'a> {
   pub scan: Scanner<'a>,
-  articles: HashMap<Article, ArticleId>,
+  pub art: Article,
+  pub articles: HashMap<Article, ArticleId>,
   sch: (HashMap<&'a str, SchId>, SchId),
+  pub formats: IdxVec<FormatId, Format>,
+  max_mode_args: HashMap<ModeSymId, u8>,
+  max_struct_args: HashMap<StructSymId, u8>,
+  max_pred_rhs: HashMap<PredSymId, u8>,
 }
 
 impl<'a> Parser<'a> {
-  pub fn new(data: &'a [u8]) -> Self {
-    Self { scan: Scanner::new(data), articles: Default::default(), sch: Default::default() }
+  pub fn new(art: Article, data: &'a [u8]) -> Self {
+    Self {
+      scan: Scanner::new(data),
+      art,
+      articles: Default::default(),
+      sch: Default::default(),
+      formats: Default::default(),
+      max_mode_args: Default::default(),
+      max_struct_args: Default::default(),
+      max_pred_rhs: Default::default(),
+    }
+  }
+
+  pub fn read_format(&mut self, fmt: &Format) {
+    match fmt {
+      Format::Mode(fmt) => {
+        let max = self.max_mode_args.entry(fmt.sym).or_default();
+        *max = (*max).max(fmt.args)
+      }
+      Format::Struct(fmt) => {
+        let max = self.max_struct_args.entry(fmt.sym).or_default();
+        *max = (*max).max(fmt.args)
+      }
+      Format::Pred(fmt) => {
+        let max = self.max_pred_rhs.entry(fmt.sym).or_default();
+        *max = (*max).max(fmt.right)
+      }
+      _ => {}
+    }
+  }
+
+  pub fn push_format(&mut self, fmt: Format) {
+    self.read_format(&fmt);
+    self.formats.push(fmt);
   }
 
   fn parse_article(tok: Token<'a>) -> Article {
@@ -376,6 +425,10 @@ impl<'a> Parser<'a> {
   }
 
   pub fn parse_env(&mut self, dirs: &mut Directives) {
+    dirs.0[DirectiveKind::Vocabularies].push((Position::default(), Article::HIDDEN));
+    dirs.0[DirectiveKind::Notations].push((Position::default(), Article::HIDDEN));
+    dirs.0[DirectiveKind::Constructors].push((Position::default(), Article::HIDDEN));
+    dirs.0[DirectiveKind::Requirements].push((Position::default(), Article::HIDDEN));
     self.scan.accept(Keyword::Environ);
     loop {
       let tok = self.scan.next();
@@ -395,10 +448,6 @@ impl<'a> Parser<'a> {
       }
     }
     self.scan.allow_underscore = false
-  }
-
-  pub fn set_articles(&mut self, articles: &mut HashMap<Article, ArticleId>) {
-    std::mem::swap(&mut self.articles, articles)
   }
 
   fn parse_variable(&mut self) -> Variable {
@@ -436,6 +485,18 @@ impl<'a> Parser<'a> {
     self.separated(Keyword::Comma, f)
   }
 
+  fn comma_separated_upto<T>(&mut self, mut max: u8, mut f: impl FnMut(&mut Self) -> T) -> Vec<T> {
+    let mut out = vec![];
+    loop {
+      out.push(f(self));
+      max -= 1;
+      if max == 0 || !self.scan.try_accept(Keyword::Comma) {
+        break
+      }
+    }
+    out
+  }
+
   fn parse_where(&mut self) -> Vec<BinderGroup> {
     let mut out = vec![];
     loop {
@@ -464,11 +525,16 @@ impl<'a> Parser<'a> {
       }
       TokenKind::Ident =>
         if self.scan.try_accept(TokenKind::LPAREN) {
-          if self.scan.try_accept(TokenKind::RPAREN) {
-            mk_func(tok.pos, tok.spelling, vec![])
-          } else {
-            mk_func(tok.pos, tok.spelling, self.parse_terms())
-          }
+          let args =
+            if self.scan.peek().kind == TokenKind::RPAREN { vec![] } else { self.parse_terms() };
+          self.scan.accept(TokenKind::RPAREN);
+          Box::new(Term::PrivFunc {
+            pos: tok.pos,
+            kind: VarKind::Unknown,
+            var: 0,
+            spelling: tok.spelling.to_owned(),
+            args,
+          })
         } else {
           Box::new(Term::Simple {
             pos: tok.pos,
@@ -498,9 +564,15 @@ impl<'a> Parser<'a> {
           && matches!(tok2.kind, TokenKind::Keyword(Keyword::Colon | Keyword::Where))
         {
           let scope = Box::new({ args }.pop().unwrap());
-          let vars = self.parse_where();
-          self.scan.accept(Keyword::Colon);
+          let vars;
+          if tok2.kind == Keyword::Where.into() {
+            vars = self.parse_where();
+            self.scan.accept(Keyword::Colon);
+          } else {
+            vars = vec![]
+          }
           let compr = Some(self.parse_formula());
+          self.scan.accept(TokenKind::RBRACE);
           Box::new(Term::Fraenkel { pos: tok.pos, vars, scope, compr })
         } else {
           let lsym = (lsym, tok.spelling.to_owned());
@@ -546,8 +618,10 @@ impl<'a> Parser<'a> {
     })
   }
 
+  /// if max_out is Some(n), then at most n results will be returned at paren level 0
+  /// (unless n = 0 in which case 1 return is still possible)
   fn parse_func_rhs(
-    &mut self, paren: &mut u32, allow_comma: bool, mut lhs: Vec<Term>,
+    &mut self, paren: &mut u32, mut max_out: Option<u8>, mut lhs: Vec<Term>,
   ) -> Vec<Term> {
     loop {
       match self.scan.peek().kind {
@@ -559,7 +633,10 @@ impl<'a> Parser<'a> {
             args = self.parse_terms();
             self.scan.accept(TokenKind::RPAREN);
           } else {
-            args = vec![*self.parse_term_hi().unwrap()]
+            args = match self.parse_term_hi() {
+              Some(tm) => vec![*tm],
+              None => vec![],
+            }
           }
           let left = lhs.len() as u8;
           lhs.append(&mut args);
@@ -570,7 +647,10 @@ impl<'a> Parser<'a> {
           let ty = self.parse_type();
           lhs = vec![Term::Qua { pos: tok.pos, term: Box::new(lhs.pop().unwrap()), ty }]
         }
-        TokenKind::Keyword(Keyword::Comma) if allow_comma || *paren > 0 => {
+        TokenKind::Keyword(Keyword::Comma)
+          if !lhs.is_empty()
+            && (*paren > 0 || max_out.as_mut().map_or(true, |n| *n > 1 && (*n -= 1, true).1)) =>
+        {
           self.scan.next();
           lhs.push(*self.parse_term());
         }
@@ -596,13 +676,15 @@ impl<'a> Parser<'a> {
     out
   }
 
-  fn parse_terms_lo_or_radix_type(&mut self, allow_type: bool) -> Result<Vec<Term>, Box<Type>> {
+  fn parse_terms_lo_or_radix_type(
+    &mut self, upto: Option<u8>, allow_type: bool,
+  ) -> Result<Vec<Term>, Box<Type>> {
     self.with_parens(|this, paren| {
       let lhs = match this.parse_term_hi() {
         Some(tm) => vec![*tm],
         None => vec![],
       };
-      let args = this.parse_func_rhs(paren, true, lhs);
+      let args = this.parse_func_rhs(paren, upto, lhs);
       if allow_type && args.is_empty() {
         if let Some(ty) = this.parse_radix_type() {
           return Err(ty)
@@ -621,7 +703,7 @@ impl<'a> Parser<'a> {
     let mut attrs = vec![];
     loop {
       let non = self.scan.next_if(|tok| tok.kind == Keyword::Non.into());
-      let args = match self.parse_terms_lo_or_radix_type(allow_type) {
+      let args = match self.parse_terms_lo_or_radix_type(None, allow_type && non.is_none()) {
         Ok(args) => args,
         Err(ty) => {
           if let Some(non) = non {
@@ -653,7 +735,7 @@ impl<'a> Parser<'a> {
         Some(tm) => vec![*tm],
         None => vec![],
       };
-      let out = this.parse_func_rhs(paren, false, lhs);
+      let out = this.parse_func_rhs(paren, Some(0), lhs);
       assert!(out.len() == 1, "{:?}: expected functor symbol", this.scan.peek().pos);
       Box::new({ out }.pop().unwrap())
     })
@@ -664,7 +746,7 @@ impl<'a> Parser<'a> {
       Some(tm) => vec![*tm],
       None => vec![],
     };
-    let args = self.parse_func_rhs(paren, true, lhs);
+    let args = self.parse_func_rhs(paren, None, lhs);
     let is =
       if args.len() == 1 { self.scan.next_if(|tok| tok.kind == Keyword::Is.into()) } else { None };
     if let Some(tok) = is {
@@ -694,10 +776,14 @@ impl<'a> Parser<'a> {
             };
             (false, sym)
           }
-          _ => break lhs.unwrap_or_else(|_| panic!("{:?}: expected predicate symbol", tok.pos)),
+          _ => {
+            self.scan.undo(tok);
+            break lhs.unwrap_or_else(|_| panic!("{:?}: expected predicate symbol", tok.pos))
+          }
         };
+        let mut right =
+          self.parse_terms_lo_or_radix_type(Some(self.max_pred_rhs[&sym]), false).unwrap();
         let sym = (sym, tok.spelling.to_owned());
-        let mut right = self.parse_terms_lo_or_radix_type(false).unwrap();
         lhs = Ok(match lhs {
           Err(mut args) => {
             let left = args.len().try_into().expect("too many arguments");
@@ -749,6 +835,18 @@ impl<'a> Parser<'a> {
       TokenKind::Keyword(Keyword::Thesis) => Box::new(Formula::Thesis { pos: tok.pos }),
       TokenKind::Keyword(Keyword::Not) =>
         Box::new(Formula::Not { pos: tok.pos, f: self.parse_formula_lhs() }),
+      TokenKind::Ident if self.scan.try_accept(TokenKind::LBRACK) => {
+        let args =
+          if self.scan.peek().kind == TokenKind::RBRACK { vec![] } else { self.parse_terms() };
+        self.scan.accept(TokenKind::RBRACK);
+        Box::new(Formula::PrivPred {
+          pos: tok.pos,
+          kind: VarKind::Unknown,
+          var: 0,
+          spelling: tok.spelling.to_owned(),
+          args,
+        })
+      }
       _ => {
         self.scan.undo(tok);
         self.parse_atomic_formula(&mut paren)
@@ -818,24 +916,29 @@ impl<'a> Parser<'a> {
       let tok = this.scan.next();
       match tok.kind {
         TokenKind::Symbol(SymbolKind::Mode(sym)) => {
+          let max = this.max_mode_args[&sym];
           let sym = (sym, tok.spelling.to_owned());
-          let args = if this.scan.try_accept(Keyword::Of) {
-            this.comma_separated(|this| *this.parse_term())
+          let args = if max > 0 && this.scan.try_accept(Keyword::Of) {
+            this.comma_separated_upto(max, |this| *this.parse_term())
           } else {
             vec![]
           };
           Some(Box::new(Type::Mode { pos: tok.pos, sym, args }))
         }
         TokenKind::Symbol(SymbolKind::Struct(sym)) => {
+          let max = this.max_struct_args[&sym];
           let sym = (sym, tok.spelling.to_owned());
-          let args = if this.scan.try_accept(Keyword::Over) {
-            this.comma_separated(|this| *this.parse_term())
+          let args = if max > 0 && this.scan.try_accept(Keyword::Over) {
+            this.comma_separated_upto(max, |this| *this.parse_term())
           } else {
             vec![]
           };
           Some(Box::new(Type::Struct { pos: tok.pos, sym, args }))
         }
-        _ if *paren == 0 => None,
+        _ if *paren == 0 => {
+          this.scan.undo(tok);
+          None
+        }
         _ => panic!("{:?}: expected type", tok.pos),
       }
     })
@@ -843,14 +946,20 @@ impl<'a> Parser<'a> {
 
   fn parse_type(&mut self) -> Box<Type> {
     let (attrs, ty) = self.parse_attrs_or_type_or_term(true, false).unwrap();
-    let mut ty = ty.expect("expected type");
+    let mut ty = ty.unwrap_or_else(|| panic!("{:?}: expected type", self.scan.peek().pos));
     if !attrs.is_empty() {
       ty = Box::new(Type::Cluster { pos: attrs[0].pos(), attrs, ty })
     }
     ty
   }
 
-  fn parse_types(&mut self) -> Vec<Type> { self.comma_separated(|this| *this.parse_type()) }
+  fn parse_types(&mut self) -> Vec<Type> {
+    if matches!(self.scan.peek().kind, TokenKind::RBRACK | TokenKind::RPAREN) {
+      vec![]
+    } else {
+      self.comma_separated(|this| *this.parse_type())
+    }
+  }
 
   fn parse_proposition(&mut self) -> Proposition {
     Proposition { label: self.parse_label(), f: *self.parse_formula() }
@@ -878,14 +987,26 @@ impl<'a> Parser<'a> {
         let art = *this.articles.get(&Self::parse_article(id)).unwrap_or_else(|| {
           panic!("article not found, perhaps you forgot 'theorems {}'", id.spelling)
         });
-        if this.scan.try_accept(Keyword::Def) {
+        let mut refs = vec![];
+        loop {
+          refs.push(if this.scan.try_accept(Keyword::Def) {
+            let tok = this.scan.next();
+            let TokenKind::Number(n) = tok.kind else { panic!("{:?}: expected numeral", tok.pos) };
+            let id = DefId(n.checked_sub(1).expect("expected nonzero numeral"));
+            RefFragment::Def { pos: tok.pos, id }
+          } else {
+            let tok = this.scan.next();
+            let TokenKind::Number(n) = tok.kind else { panic!("{:?}: expected numeral", tok.pos) };
+            let id = ThmId(n.checked_sub(1).expect("expected nonzero numeral"));
+            RefFragment::Thm { pos: tok.pos, id }
+          });
           let tok = this.scan.next();
-          let TokenKind::Number(n) = tok.kind else { panic!("expected numeral") };
-          ReferenceKind::Def((art, DefId(n.checked_sub(1).expect("expected nonzero numeral"))))
-        } else {
-          let tok = this.scan.next();
-          let TokenKind::Number(n) = tok.kind else { panic!("expected numeral") };
-          ReferenceKind::Thm((art, ThmId(n.checked_sub(1).expect("expected nonzero numeral"))))
+          if tok.kind != TokenKind::Keyword(Keyword::Comma)
+            || this.scan.peek().kind == TokenKind::Ident
+          {
+            this.scan.undo(tok);
+            break ReferenceKind::Global(art, refs)
+          }
         }
       } else {
         ReferenceKind::UnresolvedPriv(id.spelling.to_owned())
@@ -975,7 +1096,6 @@ impl<'a> Parser<'a> {
     self.scan.accept(Keyword::Colon);
     let concl = *self.parse_formula();
     let prems = if self.scan.try_accept(Keyword::Provided) {
-      self.scan.next();
       self.separated(Keyword::And, |this| this.parse_proposition())
     } else {
       vec![]
@@ -985,20 +1105,24 @@ impl<'a> Parser<'a> {
     self.scan.accept(Keyword::Semicolon);
     let id = self.sch.1.fresh();
     let sym = sym.map(|sym| {
-      assert!(self.sch.0.insert(sym, id).is_none(), "scheme name already used");
+      self.sch.0.insert(sym, id);
       sym.to_owned()
     });
     let head = SchemeHead { sym, nr: SchId(0), groups, concl, prems };
     Box::new(SchemeBlock { end, head, items })
   }
 
-  fn parse_params(&mut self) -> Vec<Variable> {
+  fn parse_params(&mut self, must_paren: bool) -> Vec<Variable> {
     if self.scan.try_accept(TokenKind::LPAREN) {
       let args = self.comma_separated(|this| this.parse_variable());
       self.scan.accept(TokenKind::RPAREN);
       args
     } else if self.scan.peek().kind == TokenKind::Ident {
-      vec![self.parse_variable()]
+      if must_paren {
+        vec![self.parse_variable()]
+      } else {
+        self.comma_separated(|this| this.parse_variable())
+      }
     } else {
       vec![]
     }
@@ -1007,10 +1131,10 @@ impl<'a> Parser<'a> {
   fn parse_pattern_rhs(&mut self, pos: Position, paren: bool, mut args: Vec<Variable>) -> Pattern {
     let tok = self.scan.next();
     match tok.kind {
-      TokenKind::Symbol(SymbolKind::Func(sym)) if paren || args.len() == 1 => {
+      TokenKind::Symbol(SymbolKind::Func(sym)) if paren || args.len() <= 1 => {
         let sym = (sym, tok.spelling.to_owned());
         let left = args.len().try_into().expect("too many arguments");
-        args.append(&mut self.parse_params());
+        args.append(&mut self.parse_params(true));
         Pattern::Func(Box::new(PatternFunc::Func { pos, sym, left, args }))
       }
       TokenKind::Symbol(SymbolKind::LeftBrk(lsym)) if args.is_empty() => {
@@ -1062,9 +1186,12 @@ impl<'a> Parser<'a> {
       TokenKind::Ident => {
         let id = Variable { pos: tok.pos, id: 0, var: None, spelling: tok.spelling.to_owned() };
         if self.scan.try_accept(Keyword::Is) {
-          let args = self.parse_params();
+          let mut args = self.parse_params(false);
+          args.push(id);
           let tok = self.scan.next();
-          let TokenKind::Symbol(SymbolKind::Attr(n)) = tok.kind else { panic!("expected attr symbol") };
+          let TokenKind::Symbol(SymbolKind::Attr(n)) = tok.kind else {
+            panic!("{:?}: expected attr symbol", tok.pos)
+          };
           Pattern::Attr(Box::new(PatternAttr {
             pos: tok.pos,
             sym: (n, tok.spelling.to_owned()),
@@ -1144,6 +1271,12 @@ impl<'a> Parser<'a> {
     self.scan.accept(Keyword::Semicolon);
     let (conds, corr) = self.parse_corr_conds();
     let props = self.parse_properties();
+    match &kind {
+      DefinitionKind::Func { pat, .. } => self.push_format(Format::Func(pat.to_format())),
+      DefinitionKind::Pred { pat, .. } => self.push_format(Format::Pred(pat.to_format())),
+      DefinitionKind::Mode { pat, .. } => self.push_format(Format::Mode(pat.to_format())),
+      DefinitionKind::Attr { pat, .. } => self.push_format(Format::Attr(pat.to_format())),
+    }
     ItemKind::Definition(Box::new(Definition { redef, kind, conds, corr, props }))
   }
 
@@ -1163,18 +1296,18 @@ impl<'a> Parser<'a> {
     (vars, conds)
   }
 
-  fn parse_then(&mut self, tok: &mut Token<'a>) -> Option<Position> {
+  fn parse_then(&mut self) -> Option<Position> {
+    let tok = self.scan.peek();
     if let TokenKind::Keyword(Keyword::Then) = tok.kind {
-      let pos = tok.pos;
-      *tok = self.scan.next();
-      Some(pos)
+      Some(self.scan.next().pos)
     } else {
       None
     }
   }
 
-  fn parse_stmt(&mut self, link: Option<Position>, tok: Token<'a>) -> Statement {
+  fn parse_stmt(&mut self, link: Option<Position>) -> Statement {
     let label = self.parse_label();
+    let tok = self.scan.next();
     match tok.kind {
       TokenKind::Keyword(Keyword::Now) => {
         Self::assert_no_link(link);
@@ -1182,6 +1315,7 @@ impl<'a> Parser<'a> {
         Statement::Now { end, label, items }
       }
       _ => {
+        self.scan.undo(tok);
         let prop = Box::new(Proposition { label, f: *self.parse_formula() });
         if let Some(tok) = self.scan.next_if(|tok| tok.kind == Keyword::Proof.into()) {
           Self::assert_no_link(link);
@@ -1206,8 +1340,9 @@ impl<'a> Parser<'a> {
     }
   }
 
-  fn parse_stmt_item(&mut self, mut tok: Token<'a>) -> ItemKind {
-    let link = self.parse_then(&mut tok);
+  fn parse_stmt_item(&mut self) -> ItemKind {
+    let link = self.parse_then();
+    let tok = self.scan.next();
     match tok.kind {
       TokenKind::Keyword(Keyword::DefFunc) => {
         Self::assert_no_link(link);
@@ -1229,7 +1364,7 @@ impl<'a> Parser<'a> {
         let value = self.parse_formula();
         ItemKind::DefPred { var, tys, value }
       }
-      TokenKind::Keyword(Keyword::Set) => {
+      TokenKind::SET => {
         Self::assert_no_link(link);
         ItemKind::Set(self.comma_separated(|this| {
           let var = Box::new(this.parse_variable());
@@ -1254,7 +1389,10 @@ impl<'a> Parser<'a> {
         let (vars, conds) = self.parse_choice();
         ItemKind::Consider { vars, conds, just: Box::new(self.parse_simple_justification(link)) }
       }
-      _ => ItemKind::Statement(self.parse_stmt(link, tok)),
+      _ => {
+        self.scan.undo(tok);
+        ItemKind::Statement(self.parse_stmt(link))
+      }
     }
   }
 
@@ -1289,6 +1427,7 @@ impl<'a> Parser<'a> {
       let hyp = Box::new(self.parse_assumption(tok.pos));
       self.scan.accept(Keyword::Semicolon);
       let (items, end) = self.parse_proof();
+      self.scan.accept(Keyword::Semicolon);
       blocks.push(CaseBlock { end, hyp, items })
     };
     let kind = casekind.unwrap_or_else(|| panic!("{:?}: no cases", pos));
@@ -1324,14 +1463,10 @@ impl<'a> Parser<'a> {
           let (items, end) = self.parse_proof();
           ItemKind::Thus(Statement::Now { end, label: None, items })
         }
-        TokenKind::Keyword(Keyword::Hence) => {
-          let tok2 = self.scan.next();
-          ItemKind::Thus(self.parse_stmt(Some(tok.pos), tok2))
-        }
+        TokenKind::Keyword(Keyword::Hence) => ItemKind::Thus(self.parse_stmt(Some(tok.pos))),
         TokenKind::Keyword(Keyword::Thus) => {
-          let mut tok = self.scan.next();
-          let link = self.parse_then(&mut tok);
-          ItemKind::Thus(self.parse_stmt(link, tok))
+          let link = self.parse_then();
+          ItemKind::Thus(self.parse_stmt(link))
         }
         TokenKind::Keyword(Keyword::Then) if self.scan.peek().kind == Keyword::Per.into() => {
           let pos = self.scan.next().pos;
@@ -1348,13 +1483,25 @@ impl<'a> Parser<'a> {
 
   fn parse_block_item(&mut self, pos: Position, tok: Token<'a>) -> ItemKind {
     match tok.kind {
-      TokenKind::Keyword(Keyword::Let) => ItemKind::Let { vars: self.parse_binders() },
+      TokenKind::Keyword(Keyword::Let) => {
+        let vars = self.parse_binders();
+        let conds = if self.scan.try_accept(Keyword::Such) {
+          self.scan.accept(Keyword::That);
+          self.separated(Keyword::And, |this| this.parse_proposition())
+        } else {
+          vec![]
+        };
+        ItemKind::Let { vars, conds }
+      }
       TokenKind::Keyword(Keyword::Given) => {
         let (vars, conds) = self.parse_choice();
         ItemKind::Given { vars, conds }
       }
       TokenKind::Keyword(Keyword::Assume) => ItemKind::Assume(self.parse_assumption(pos)),
-      _ => self.parse_stmt_item(tok),
+      _ => {
+        self.scan.undo(tok);
+        self.parse_stmt_item()
+      }
     }
   }
 
@@ -1440,19 +1587,37 @@ impl<'a> Parser<'a> {
           });
           self.scan.accept(Keyword::AggrRightBrk);
           self.scan.accept(Keyword::Semicolon);
+          self.push_format(Format::SubAggr(pat.to_subaggr_format()));
+          self.push_format(Format::Struct(pat.to_mode_format()));
+          self.push_format(Format::Aggr(pat.to_aggr_format(fields.len())));
+          for group in &fields {
+            group.vars.iter().for_each(|f| self.push_format(Format::Sel(f.sym.0)))
+          }
           ItemKind::DefStruct(Box::new(DefStruct { parents, pat, fields }))
         }
         (TokenKind::Keyword(Keyword::Synonym | Keyword::Antonym), BlockKind::Notation) => {
           let pos = tok.kind == TokenKind::Keyword(Keyword::Synonym);
-          let lhs = self.parse_pattern();
+          let new = self.parse_pattern();
           self.scan.accept(Keyword::For);
-          let rhs = self.parse_pattern();
+          let orig = self.parse_pattern();
           self.scan.accept(Keyword::Semicolon);
-          ItemKind::PatternRedef(match (lhs, rhs) {
-            (Pattern::Pred(new), Pattern::Pred(orig)) => PatternRedef::Pred { new, orig, pos },
-            (Pattern::Func(new), Pattern::Func(orig)) if !pos => PatternRedef::Func { new, orig },
-            (Pattern::Mode(new), Pattern::Mode(orig)) if !pos => PatternRedef::Mode { new, orig },
-            (Pattern::Attr(new), Pattern::Attr(orig)) => PatternRedef::Attr { new, orig, pos },
+          ItemKind::PatternRedef(match (new, orig) {
+            (Pattern::Pred(new), Pattern::Pred(orig)) => {
+              self.push_format(Format::Pred(new.to_format()));
+              PatternRedef::Pred { new, orig, pos }
+            }
+            (Pattern::Func(new), Pattern::Func(orig)) if pos => {
+              self.push_format(Format::Func(new.to_format()));
+              PatternRedef::Func { new, orig }
+            }
+            (Pattern::Mode(new), Pattern::Mode(orig)) if pos => {
+              self.push_format(Format::Mode(new.to_format()));
+              PatternRedef::Mode { new, orig }
+            }
+            (Pattern::Attr(new), Pattern::Attr(orig)) => {
+              self.push_format(Format::Attr(new.to_format()));
+              PatternRedef::Attr { new, orig, pos }
+            }
             (Pattern::Func(_), Pattern::Func(_)) | (Pattern::Mode(_), Pattern::Mode(_)) =>
               panic!("{:?}: 'antonym' not allowed here", start),
             (_, rhs) => panic!("{:?}: pattern type mismatch", rhs.pos()),
@@ -1533,6 +1698,7 @@ impl<'a> Parser<'a> {
       };
       items.push(Item { pos: start, kind })
     };
+    self.scan.accept(Keyword::Semicolon);
     ItemKind::Block { end, kind, items }
   }
 
@@ -1564,7 +1730,8 @@ impl<'a> Parser<'a> {
         },
         TokenKind::Eof => return items,
         _ => {
-          let kind = self.parse_stmt_item(tok);
+          self.scan.undo(tok);
+          let kind = self.parse_stmt_item();
           self.scan.accept(Keyword::Semicolon);
           kind
         }

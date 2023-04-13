@@ -442,7 +442,7 @@ impl MizPath {
     }
     r.parse_constructors_body(buf, Some(&mut aco.constrs));
     assert!(matches!(r.read_event(buf), Event::Eof));
-    assert_eq!(aco.accum[0].0.as_str(), "hidden");
+    assert_eq!(aco.accum[0].0, Article::HIDDEN);
     Ok(())
   }
 

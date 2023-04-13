@@ -53,7 +53,7 @@ impl MizPath {
     let data;
     let mut parser = if cfg.parser_enabled {
       data = self.read_miz().unwrap();
-      Some(Box::new(MizParser::new(&data)))
+      Some(Box::new(MizParser::new(self.art, &data)))
     } else {
       None
     };
@@ -100,12 +100,14 @@ impl MizPath {
     }
     let symbols = v.accom.as_deref_mut().map(|accom| {
       let mut symbols = Default::default();
-      accom.accom_symbols(mml_vct, &mut symbols, &mut v.lc.formatter.formats.priority);
-      if cfg.checker_enabled {
+      let mut inf = parser.as_ref().map(|_| Default::default());
+      let priority = &mut v.lc.formatter.formats.priority;
+      accom.accom_symbols(mml_vct, &mut symbols, priority, inf.as_mut());
+      if cfg.checker_enabled || cfg.parser_enabled {
         accom.accom_articles()
       }
       if let Some(parser) = &mut parser {
-        parser.scan.load_symbols(&symbols);
+        parser.scan.load_symbols(&symbols, &inf.unwrap());
       }
       symbols
     });
@@ -116,7 +118,14 @@ impl MizPath {
       v.formats.extend(v.lc.formatter.formats.formats.enum_iter().map(|(id, f)| (*f, id)));
     }
     if let Some(accom) = &mut v.accom {
-      accom.accom_notations(&mut v.formats, None, &mut notations).unwrap();
+      if let Some(parser) = &mut parser {
+        let mut fmts = Default::default();
+        accom.accom_notations(&mut Default::default(), Some(&mut fmts), &mut notations).unwrap();
+        fmts.formats.0.iter().for_each(|fmt| parser.read_format(fmt));
+        parser.formats = fmts.formats;
+      } else {
+        accom.accom_notations(&mut v.formats, None, &mut notations).unwrap();
+      }
     } else {
       self.read_eno(&mut notations).unwrap();
     }
@@ -318,6 +327,10 @@ impl MizPath {
           eprintln!("art {ar:?}:sch {nr:?} = {sch:?}");
         }
       }
+    }
+
+    if let (Some(accom), Some(parser)) = (&mut v.accom, &mut parser) {
+      std::mem::swap(&mut parser.articles, &mut accom.articles)
     }
 
     f(&mut v, parser.as_deref_mut());

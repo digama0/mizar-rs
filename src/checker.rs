@@ -298,7 +298,7 @@ impl Expand<'_> {
       }
       Formula::FlexAnd { nat, le, terms, scope } =>
         if self.lc.bound_var.is_empty() {
-          *f = Formula::mk_and_with(|conjs| {
+          *f = Formula::mk_and_with(move |conjs| {
             {
               let mut epf = ExpandPrivFunc(&self.g.constrs, self.lc);
               let terms2 = (*terms).visit_cloned(&mut epf);

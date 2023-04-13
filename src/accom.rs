@@ -186,8 +186,9 @@ impl VisitMut for RenameConstr<'_> {
 
 impl Accomodator {
   /// ProcessVocabularies
-  pub fn accom_symbols(
-    &mut self, mml_vct: &[u8], syms: &mut Symbols, priority: &mut Vec<(PriorityKind, u32)>,
+  pub fn accom_symbols<'a>(
+    &mut self, mml_vct: &'a [u8], syms: &mut Symbols, priority: &mut Vec<(PriorityKind, u32)>,
+    mut infinitives: Option<&mut Vec<(PredSymId, &'a str)>>,
   ) {
     for &(_, art) in &self.dirs.0[DirectiveKind::Vocabularies] {
       let mut voc = Default::default();
@@ -216,6 +217,10 @@ impl Accomodator {
             priority.push((PriorityKind::RightBrk(RightBrkSymId(n)), DEFAULT_PRIO)),
           SymbolDataKind::Func { prio } =>
             priority.push((PriorityKind::Functor(FuncSymId(n)), prio)),
+          SymbolDataKind::Pred { infinitive: Some(inf) } =>
+            if let Some(infs) = &mut infinitives {
+              infs.push((PredSymId(n), inf))
+            },
           _ => {}
         }
         syms.push(((c, n).into(), token.to_owned()))
