@@ -447,7 +447,7 @@ impl MizWriter {
         w.with(b"Properties", attrs, |w| {
           for prop in (0..PropertyKind::LENGTH).map(PropertyKind::from_usize) {
             if c.properties.properties.get(prop) {
-              w.with0(prop.name(), |_| {})
+              w.with0(prop.to_upper(), |_| {})
             }
           }
         })

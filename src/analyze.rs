@@ -1,5 +1,6 @@
 use crate::ast::{CaseKind, FormulaBinder, FormulaBinop, Pragma, ReservedId, VarKind};
 use crate::export::Exporter;
+use crate::parser::MizParser;
 use crate::reader::Reader;
 use crate::types::{PatternKindClass as PKC, *};
 use crate::*;
@@ -16,6 +17,7 @@ pub struct Analyzer<'a> {
   sch_pred_args: IdxVec<SchPredId, Box<[Type]>>,
   thesis: Option<Box<Formula>>,
   thesis_stack: Vec<Option<Box<Formula>>>,
+  label_names: IdxVec<LabelId, Option<String>>,
   reserved: IdxVec<ReservedId, Type>,
   defthms: DefId,
   pub export: Exporter,
@@ -29,7 +31,7 @@ impl<'a> std::ops::DerefMut for Analyzer<'a> {
 }
 
 impl Reader {
-  pub fn run_analyzer(&mut self, path: &MizPath) {
+  pub fn run_analyzer(&mut self, path: &MizPath, parser: Option<&mut MizParser<'_>>) {
     if !self.g.cfg.analyzer_enabled {
       panic!("analyzer is not enabled")
     }
@@ -42,6 +44,7 @@ impl Reader {
       sch_pred_args: Default::default(),
       thesis: None,
       thesis_stack: vec![],
+      label_names: Default::default(),
       reserved: Default::default(),
       defthms: Default::default(),
       export: Default::default(),
@@ -57,8 +60,14 @@ impl Reader {
       elab.export.reductions_base = elab.reductions.len() as u32;
       elab.export.properties_base = elab.properties.len() as u32;
     }
-    let r = path.open_msx().unwrap().parse_items();
-    // println!("parsed {:?}, {} items", path.0, r.len());
+    let r = if let Some(parser) = parser {
+      let r = parser.parse_items();
+      println!("parsed {:?}, {} items", path.art, r.len());
+      return // TODO
+    } else {
+      path.open_msx().unwrap().parse_items()
+    };
+    // println!("parsed {:?}, {} items", path.art, r.len());
     for (i, it) in r.iter().enumerate() {
       if let Some(n) = elab.g.cfg.first_verbose_top_item {
         set_verbose(i >= n);
@@ -104,25 +113,37 @@ struct Scope {
 impl Analyzer<'_> {
   fn open_scope(&mut self, push_label: bool, copy_thesis: bool) -> Scope {
     self.thesis_stack.push(if copy_thesis { self.thesis.clone() } else { self.thesis.take() });
+    if push_label {
+      self.label_names.push(None);
+    }
     Scope { sc: self.r.open_scope(push_label), priv_preds: self.priv_pred.len() }
   }
 
   fn close_scope(&mut self, sc: Scope, check_for_local_const: bool) -> Descope {
     self.priv_func_args.0.truncate(sc.sc.priv_funcs);
     self.priv_pred.0.truncate(sc.priv_preds);
+    self.label_names.0.truncate(sc.sc.labels);
     self.thesis = self.thesis_stack.pop().unwrap();
     self.r.close_scope(sc.sc, check_for_local_const)
   }
 
   fn scope<R: Visitable<Descope>>(
-    &mut self, label: Option<LabelId>, copy_thesis: bool, check_for_local_const: bool,
+    &mut self, push_label: bool, copy_thesis: bool, check_for_local_const: bool,
     f: impl FnOnce(&mut Self) -> R,
   ) -> R {
-    let sc = self.open_scope(label.is_some(), copy_thesis);
+    let sc = self.open_scope(push_label, copy_thesis);
     let mut r = f(self);
     let mut dsc = self.close_scope(sc, check_for_local_const);
     r.visit(&mut dsc);
     r
+  }
+
+  pub fn push_prop(&mut self, label: Option<(LabelId, String)>, prop: Formula) {
+    let label = label.map(|(id, name)| {
+      assert_eq!(id, self.label_names.push(Some(name)));
+      id
+    });
+    self.r.push_prop(label, prop);
   }
 
   fn item_header(&mut self, it: &ast::Item, s: &str) {
@@ -159,17 +180,18 @@ impl Analyzer<'_> {
       ast::ItemKind::Block { end, kind, items } => {
         let mut br = BlockReader::new(*kind, &self.lc);
         let check = matches!(kind, BlockKind::Definition | BlockKind::Registration);
-        self.scope(None, false, check, |this| br.elab_proof(this, items, *end));
+        self.scope(false, false, check, |this| br.elab_proof(this, items, *end));
         br.after_scope(self)
       }
-      ast::ItemKind::SchemeBlock(it) => self.scope(None, false, false, |this| this.elab_scheme(it)),
+      ast::ItemKind::SchemeBlock(it) =>
+        self.scope(false, false, false, |this| this.elab_scheme(it)),
       ast::ItemKind::Theorem { prop, just } => {
         let f = self.elab_formula(&prop.f, true);
         Exportable.visit_formula(&f);
         if self.g.cfg.analyzer_full {
           let f = f.visit_cloned(&mut self.r.intern_const());
-          let label = prop.label.as_ref().map(|l| l.id.0);
-          self.elab_justification(label, &f, just);
+          let label = prop.label.as_ref().map(|l| l.id.clone());
+          self.elab_justification(label.is_some(), &f, just);
           self.push_prop(label, f)
         } else {
           self.skip_justification(just)
@@ -178,16 +200,18 @@ impl Analyzer<'_> {
           self.export.theorems.push(Theorem { kind: TheoremKind::Thm, stmt: f })
         }
       }
-      ast::ItemKind::Reservation(it) => {
+      ast::ItemKind::Reservation(its) => {
         self.lc.term_cache.get_mut().open_scope();
         assert!(self.lc.bound_var.is_empty());
-        for ty in it.tys.as_deref().unwrap() {
-          let ty = self.elab_type(ty);
-          self.lc.bound_var.push(ty);
+        for it in its {
+          for ty in it.tys.as_deref().unwrap() {
+            let ty = self.elab_type(ty);
+            self.lc.bound_var.push(ty);
+          }
+          let ty = self.elab_type(&it.ty);
+          Exportable.visit_type(&ty);
+          self.reserved.push(ty);
         }
-        let ty = self.elab_type(&it.ty);
-        Exportable.visit_type(&ty);
-        self.reserved.push(ty);
         self.lc.bound_var.0.clear();
         self.lc.term_cache.get_mut().close_scope();
       }
@@ -232,7 +256,7 @@ impl Analyzer<'_> {
     let prems = prems.iter().map(|prop| self.elab_proposition(prop, true)).collect::<Box<[_]>>();
     let thesis = self.elab_intern_formula(concl, true);
     if self.g.cfg.analyzer_full {
-      self.elab_proof(None, &thesis, items, *end);
+      self.elab_proof(false, &thesis, items, *end);
     }
     let primary: Box<[_]> = self.lc.sch_func_ty.0.drain(..).collect();
     let mut sch = Scheme { sch_funcs: primary, prems, thesis };
@@ -260,11 +284,12 @@ impl Analyzer<'_> {
       _ => {}
     }
     match &it.kind {
-      ast::ItemKind::Set { value, .. } => {
-        let term = self.elab_intern_term(value);
-        let ty = term.get_type_uncached(&self.g, &self.lc);
-        self.lc.fixed_var.push(FixedVar { ty, def: Some((Box::new(term), true)) });
-      }
+      ast::ItemKind::Set(decls) =>
+        for ast::SetDecl { value, .. } in decls {
+          let term = self.elab_intern_term(value);
+          let ty = term.get_type_uncached(&self.g, &self.lc);
+          self.lc.fixed_var.push(FixedVar { ty, def: Some((Box::new(term), true)) });
+        },
       ast::ItemKind::DefFunc { tys, value, .. } => {
         self.lc.term_cache.get_mut().open_scope();
         self.elab_intern_push_locus_tys(tys);
@@ -293,7 +318,7 @@ impl Analyzer<'_> {
               self.lc.fixed_var.push(FixedVar { ty: ty.clone(), def: Some((tm, false)) });
             }
           });
-          self.elab_justification(None, &f, just)
+          self.elab_justification(false, &f, just)
         } else {
           for var in vars {
             let ast::ReconsiderVar::Equality { tm, .. } = var else { unreachable!() };
@@ -315,14 +340,14 @@ impl Analyzer<'_> {
             for prop in conds {
               let f = self.elab_formula(&prop.f, true);
               f.clone().append_conjuncts_to(conjs);
-              to_push.push((prop.label.as_ref().map(|l| l.id.0), f))
+              to_push.push((prop.label.as_ref().map(|l| l.id.clone()), f))
             }
           })
           .mk_neg();
           let end = self.lc.fixed_var.len();
           self.lc.mk_forall(start..end, istart, false, &mut f);
           f.visit(&mut self.intern_const());
-          self.elab_justification(None, &f.mk_neg(), just);
+          self.elab_justification(false, &f.mk_neg(), just);
           for (label, mut f) in to_push {
             f.visit(&mut self.intern_const());
             self.push_prop(label, f);
@@ -369,8 +394,8 @@ impl Analyzer<'_> {
     match stmt {
       ast::Statement::Proposition { prop, just } => {
         let f = self.elab_intern_formula(&prop.f, true);
-        let label = prop.label.as_ref().map(|l| l.id.0);
-        self.elab_justification(label, &f, just);
+        let label = prop.label.as_ref().map(|l| l.id.clone());
+        self.elab_justification(label.is_some(), &f, just);
         self.push_prop(label, f.clone());
         f
       }
@@ -378,15 +403,15 @@ impl Analyzer<'_> {
         if let Formula::Pred { nr, args } = self.elab_intern_formula(&prop.f, true) {
           if let (nr, [lhs, rhs]) = Formula::adjust_pred(nr, &args, Some(&self.g.constrs)) {
             if self.g.reqs.equals_to() == Some(nr) {
-              self.elab_justification(None, &self.g.reqs.mk_eq(lhs.clone(), rhs.clone()), just);
+              self.elab_justification(false, &self.g.reqs.mk_eq(lhs.clone(), rhs.clone()), just);
               let mut mid = rhs.clone();
               for ast::IterStep { rhs, just, .. } in steps {
                 let rhs = self.elab_intern_term(rhs);
-                self.elab_justification(None, &self.g.reqs.mk_eq(mid, rhs.clone()), just);
+                self.elab_justification(false, &self.g.reqs.mk_eq(mid, rhs.clone()), just);
                 mid = rhs;
               }
               let f = self.g.reqs.mk_eq(lhs.clone(), mid);
-              self.push_prop(prop.label.as_ref().map(|l| l.id.0), f.clone());
+              self.push_prop(prop.label.as_ref().map(|l| l.id.clone()), f.clone());
               return f
             }
           }
@@ -394,8 +419,8 @@ impl Analyzer<'_> {
         panic!("not an equality")
       }
       ast::Statement::Now { end, label, items } => {
-        let label = label.as_ref().map(|l| l.id.0);
-        let f = self.scope(label, false, true, |this| {
+        let label = label.as_ref().map(|l| l.id.clone());
+        let f = self.scope(label.is_some(), false, true, |this| {
           ReconstructThesis { stack: vec![ProofStep::Break(true)] }.elab_proof(this, items, *end)
         });
         self.push_prop(label, f.clone());
@@ -415,10 +440,8 @@ impl Analyzer<'_> {
     }
   }
 
-  fn elab_proof(
-    &mut self, label: Option<LabelId>, thesis: &Formula, items: &[ast::Item], end: Position,
-  ) {
-    self.scope(label, false, false, |this| {
+  fn elab_proof(&mut self, push_label: bool, thesis: &Formula, items: &[ast::Item], end: Position) {
+    self.scope(push_label, false, false, |this| {
       this.thesis = Some(Box::new(thesis.clone()));
       WithThesis.elab_proof(this, items, end)
     })
@@ -445,14 +468,27 @@ impl Analyzer<'_> {
   fn elab_proposition(&mut self, prop: &ast::Proposition, quotable: bool) -> Formula {
     let f = self.elab_intern_formula(&prop.f, true);
     if quotable && self.g.cfg.analyzer_full {
-      self.push_prop(prop.label.as_ref().map(|l| l.id.0), f.clone());
+      self.push_prop(prop.label.as_ref().map(|l| l.id.clone()), f.clone());
     }
     f
   }
 
-  fn elab_justification(
-    &mut self, label: Option<LabelId>, thesis: &Formula, just: &ast::Justification,
-  ) {
+  fn elab_reference(&mut self, r: &ast::Reference) -> Reference {
+    let kind = match r.kind {
+      // The label cannot be `None` because that only occurs in the spurious anonymous
+      // reference added in MSM, which we strip
+      ast::ReferenceKind::Priv(id) => ReferenceKind::Priv(id.unwrap()),
+      ast::ReferenceKind::UnresolvedPriv(ref name) => {
+        let lab = self.label_names.enum_iter().rev().find(|p| p.1.as_deref() == Some(name));
+        ReferenceKind::Priv(lab.expect("label not found").0)
+      }
+      ast::ReferenceKind::Thm(id) => ReferenceKind::Thm(id),
+      ast::ReferenceKind::Def(id) => ReferenceKind::Def(id),
+    };
+    Reference { pos: r.pos, kind }
+  }
+
+  fn elab_justification(&mut self, push_label: bool, thesis: &Formula, just: &ast::Justification) {
     debug_assert!(self.g.cfg.analyzer_full);
     match just {
       &ast::Justification::Inference { pos, ref kind, ref refs } => {
@@ -462,11 +498,11 @@ impl Analyzer<'_> {
             &ast::InferenceKind::From { sch } => InferenceKind::From { sch },
           },
           pos,
-          refs: refs.clone(),
+          refs: refs.iter().map(|r| self.elab_reference(r)).collect(),
         };
         self.r.read_inference(thesis, &it)
       }
-      ast::Justification::Block { pos, items } => self.elab_proof(label, thesis, items, pos.1),
+      ast::Justification::Block { pos, items } => self.elab_proof(push_label, thesis, items, pos.1),
     }
   }
 
@@ -483,16 +519,18 @@ impl Analyzer<'_> {
       for cond in conds {
         let mut thesis = cc.0[cond.kind].take().unwrap();
         thesis.visit(&mut self.intern_const());
-        self.elab_justification(None, &thesis, &cond.just);
+        self.elab_justification(false, &thesis, &cond.just);
       }
       if let Some(corr) = corr {
         let mut thesis = Formula::mk_and_with(|conjs| {
-          for &kind in &corr.conds {
-            cc.0[kind].take().unwrap().append_conjuncts_to(conjs);
+          for (_, stmt) in &mut cc.0 {
+            if let Some(stmt) = stmt.take() {
+              stmt.append_conjuncts_to(conjs);
+            }
           }
         });
         thesis.visit(&mut self.intern_const());
-        self.elab_justification(None, &thesis, &corr.just);
+        self.elab_justification(false, &thesis, &corr.just);
       }
       assert!(cc.0.iter().all(|p| p.1.is_none()));
     }
@@ -1241,14 +1279,29 @@ impl Analyzer<'_> {
     self.lc.bound_var.push(dom);
   }
 
-  fn elab_forall(&mut self, var: &ast::BinderGroup, scope: &ast::Formula, pos: bool) -> Formula {
+  fn elab_forall(
+    &mut self, vars: &[ast::BinderGroup], st: Option<&ast::Formula>, scope: &ast::Formula,
+    pos: bool,
+  ) -> Formula {
     self.lc.term_cache.get_mut().open_scope();
-    assert!(!var.vars.is_empty());
-    let dom = self.elab_type(var.ty.as_deref().unwrap());
-    self.push_many_bound(dom, var.vars.len());
-    let mut scope = self.elab_formula(scope, pos);
-    for _ in 0..var.vars.len() {
-      scope = Formula::forall(self.lc.bound_var.0.pop().unwrap(), scope)
+    for var in vars {
+      assert!(!var.vars.is_empty());
+      let dom = self.elab_type(var.ty.as_deref().unwrap());
+      self.push_many_bound(dom, var.vars.len());
+    }
+    let mut scope = if let Some(st) = st {
+      Formula::mk_and_with(|conjs| {
+        self.elab_formula(st, true).append_conjuncts_to(conjs);
+        self.elab_formula(scope, !pos).append_conjuncts_to(conjs);
+      })
+      .mk_neg()
+    } else {
+      self.elab_formula(scope, pos)
+    };
+    for var in vars {
+      for _ in 0..var.vars.len() {
+        scope = Formula::forall(self.lc.bound_var.0.pop().unwrap(), scope)
+      }
     }
     self.lc.term_cache.get_mut().close_scope();
     scope
@@ -1270,10 +1323,11 @@ impl Analyzer<'_> {
         self.elab_and(f1, f2, true, false).maybe_neg(!pos),
       ast::Formula::Binop { kind: FormulaBinop::Iff, f1, f2, .. } =>
         self.elab_formula(f1, true).mk_iff(self.elab_formula(f2, true)).maybe_neg(pos),
-      ast::Formula::Pred { pred, .. } => {
+      ast::Formula::Pred(pred) => {
         let args = self.elab_terms_qua(&pred.args);
         let right = args.len() as u8 - pred.left;
-        self.elab_pred(FormatPred { sym: pred.sym.0, left: pred.left, right }, args.into(), pos)
+        let fmt = FormatPred { sym: pred.sym.0, left: pred.left, right };
+        self.elab_pred(fmt, args.into(), pred.positive == pos)
       }
       ast::Formula::ChainPred { first, rest, .. } => {
         let mut args = self.elab_terms_qua(&first.args).into_vec();
@@ -1283,12 +1337,14 @@ impl Analyzer<'_> {
           for rhs in rest {
             let mut mid: Vec<_> = args[left as usize..].into();
             let right = mid.len() as u8;
-            self.elab_pred(FormatPred { sym, left, right }, args, true).append_conjuncts_to(conjs);
+            let fmt = FormatPred { sym, left, right };
+            self.elab_pred(fmt, args, rhs.positive).append_conjuncts_to(conjs);
             mid.extend(rhs.right.iter().map(|t| self.elab_term_qua(t)));
             (args, sym, left) = (mid, rhs.sym.0, right);
           }
           let right = args.len() as u8 - left;
-          self.elab_pred(FormatPred { sym, left, right }, args, true).append_conjuncts_to(conjs);
+          let fmt = FormatPred { sym, left, right };
+          self.elab_pred(fmt, args, first.positive).append_conjuncts_to(conjs);
         })
         .maybe_neg(pos)
       }
@@ -1313,22 +1369,22 @@ impl Analyzer<'_> {
           _ => unreachable!(),
         }
       }
-      ast::Formula::Attr { term, attrs, .. } => {
+      ast::Formula::Attr { positive, term, attrs, .. } => {
         let term = self.elab_term_qua(term);
         Formula::mk_and_with(|conjs| {
           for attr in attrs {
             self.elab_is_attr(attr, true, &term).append_conjuncts_to(conjs)
           }
         })
-        .maybe_neg(pos)
+        .maybe_neg(*positive == pos)
       }
-      ast::Formula::Is { term, ty, .. } =>
+      ast::Formula::Is { positive, term, ty, .. } =>
         Formula::Is { term: Box::new(self.elab_term(term)), ty: Box::new(self.elab_type(ty)) }
-          .maybe_neg(pos),
-      ast::Formula::Binder { kind: FormulaBinder::ForAll, var, scope, .. } =>
-        self.elab_forall(var, scope, true).maybe_neg(pos),
-      ast::Formula::Binder { kind: FormulaBinder::Exists, var, scope, .. } =>
-        self.elab_forall(var, scope, false).maybe_neg(!pos),
+          .maybe_neg(*positive == pos),
+      ast::Formula::Binder { kind: FormulaBinder::ForAll, vars, st, scope, .. } =>
+        self.elab_forall(vars, st.as_deref(), scope, true).maybe_neg(pos),
+      ast::Formula::Binder { kind: FormulaBinder::Exists, vars, st, scope, .. } =>
+        self.elab_forall(vars, st.as_deref(), scope, false).maybe_neg(!pos),
       ast::Formula::False { .. } => Formula::True.maybe_neg(!pos),
       ast::Formula::Thesis { pos: loc } => self
         .thesis
@@ -1869,7 +1925,7 @@ impl<'a> PropertiesBuilder<'a> {
           (PropertyKind::Abstractness, _) => unreachable!(),
           (k, tgt) => panic!("property {k:?} is not applicable to {tgt:?}"),
         };
-        elab.elab_justification(None, &thesis, &prop.just);
+        elab.elab_justification(false, &thesis, &prop.just);
       } else {
         elab.skip_justification(&prop.just);
       }
@@ -1958,10 +2014,12 @@ trait ReadProof {
     }
     // eprintln!("[{:?}] thesis = {:?}", it.pos, elab.thesis);
     match &it.kind {
-      ast::ItemKind::Let { var } => {
+      ast::ItemKind::Let { vars } => {
         let n = elab.lc.fixed_var.len();
         let istart = elab.lc.infer_const.get_mut().len() as u32;
-        elab.elab_fixed_vars(var);
+        for var in vars {
+          elab.elab_fixed_vars(var);
+        }
         self.intro(elab, n, istart)
       }
       ast::ItemKind::Assume(asm) => {
@@ -1982,16 +2040,17 @@ trait ReadProof {
         });
         self.given(elab, n, istart, f);
       }
-      ast::ItemKind::Take { var: None, term } => {
-        let term = elab.elab_intern_term(term.as_deref().unwrap());
-        self.take(elab, term)
-      }
-      ast::ItemKind::Take { var: Some(_), term } => {
-        let term = elab.elab_intern_term(term.as_deref().unwrap());
-        let ty = term.get_type(&elab.g, &elab.lc, false);
-        let v = elab.lc.fixed_var.push(FixedVar { ty, def: Some((Box::new(term), false)) });
-        self.take_as_var(elab, v)
-      }
+      ast::ItemKind::Take(its) =>
+        for ast::TakeDecl { var, term } in its {
+          let term = elab.elab_intern_term(term);
+          if var.is_some() {
+            let ty = term.get_type(&elab.g, &elab.lc, false);
+            let v = elab.lc.fixed_var.push(FixedVar { ty, def: Some((Box::new(term), false)) });
+            self.take_as_var(elab, v)
+          } else {
+            self.take(elab, term)
+          }
+        },
       ast::ItemKind::Thus(stmt) =>
         if elab.g.cfg.analyzer_full {
           let f = elab.elab_stmt(stmt);
@@ -2003,7 +2062,7 @@ trait ReadProof {
         let mut iter = self.new_cases(elab);
         let f = Formula::mk_and_with(|disjs| {
           for bl in blocks {
-            let (case, o) = elab.scope(None, true, false, |elab| {
+            let (case, o) = elab.scope(false, true, false, |elab| {
               let case = Formula::mk_and_with(|conjs| {
                 for prop in bl.hyp.conds() {
                   elab.elab_proposition(prop, true).append_conjuncts_to(conjs);
@@ -2017,14 +2076,14 @@ trait ReadProof {
           }
           self.end_cases(elab, iter);
         });
-        elab.elab_justification(None, &f.mk_neg(), just);
+        elab.elab_justification(false, &f.mk_neg(), just);
         return false
       }
       ast::ItemKind::PerCases { just, kind: CaseKind::Suppose, blocks } => {
         let f = Formula::mk_and_with(|disjs| {
           let mut recv = self.new_supposes(elab);
           for bl in blocks {
-            let (case, o) = elab.scope(None, true, false, |elab| {
+            let (case, o) = elab.scope(false, true, false, |elab| {
               let case = Formula::mk_and_with(|conjs| {
                 for prop in bl.hyp.conds() {
                   elab.elab_proposition(prop, true).append_conjuncts_to(conjs);
@@ -2038,7 +2097,7 @@ trait ReadProof {
           }
           self.end_supposes(elab, recv)
         });
-        elab.elab_justification(None, &f.mk_neg(), just);
+        elab.elab_justification(false, &f.mk_neg(), just);
         return false
       }
       _ => elab.elab_stmt_item(it),
@@ -2546,7 +2605,7 @@ impl VisitMut for MakeSelector<'_> {
 struct PendingDef {
   kind: ConstrKind,
   df: Box<Definiens>,
-  label: Option<LabelId>,
+  label: Option<(LabelId, String)>,
   thm: Box<Formula>,
 }
 
@@ -2826,7 +2885,7 @@ impl BlockReader {
         assumptions: self.assums(),
         value,
       });
-      let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.0);
+      let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.clone());
       self.defs.push(Some(PendingDef { kind: ConstrKind::Func(n), df, label, thm }));
     }
     let pat = Pattern { kind: PatternKind::Func(n), fmt, primary, visible, pos: true };
@@ -2895,7 +2954,7 @@ impl BlockReader {
       elab.push_constr(ConstrKind::Pred(n));
     }
     if let Some(value) = value {
-      let DefValue::Formula(mut value) = value else { unreachable!() };
+      let DefValue::Formula(mut value) = value else { panic!("expected formula") };
       self.to_locus(elab, |l| value.visit(l));
       let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect();
       let mut f = value.defthm_for(&elab.g, &Formula::Pred { nr: n, args: formals });
@@ -2911,7 +2970,7 @@ impl BlockReader {
         assumptions: self.assums(),
         value: DefValue::Formula(value),
       });
-      let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.0);
+      let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.clone());
       self.defs.push(Some(PendingDef { kind: ConstrKind::Pred(n), df, label, thm }));
     }
     let pat = Pattern { kind: PatternKind::Pred(n), fmt, primary, visible, pos };
@@ -2990,7 +3049,7 @@ impl BlockReader {
           }
         }
         if !it.redef {
-          let Some(DefValue::Formula(value)) = &value else { panic!() };
+          let Some(DefValue::Formula(value)) = &value else { panic!("expected formula") };
           cc.0[CorrCondKind::Existence] = Some(value.mk_existence(&it_type));
           properties.kind = PropertyDeclKind::Mode(value);
         }
@@ -3018,7 +3077,7 @@ impl BlockReader {
           elab.push_constr(ConstrKind::Mode(n));
         }
         if let Some(value) = value {
-          let DefValue::Formula(mut value) = value else { unreachable!() };
+          let DefValue::Formula(mut value) = value else { panic!("expected formula") };
           self.to_locus(elab, |l| value.visit(l));
           let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect_vec();
           let mut it_type2 = (*it_type).clone();
@@ -3046,7 +3105,7 @@ impl BlockReader {
             assumptions: self.assums(),
             value: DefValue::Formula(value),
           });
-          let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.0);
+          let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.clone());
           self.defs.push(Some(PendingDef { kind: ConstrKind::Mode(n), df, label, thm }));
         }
         let pat = Pattern { kind: PatternKind::Mode(n), fmt, primary, visible, pos: true };
@@ -3108,7 +3167,7 @@ impl BlockReader {
       elab.push_constr(ConstrKind::Attr(n));
     }
     if let Some(value) = value {
-      let DefValue::Formula(mut value) = value else { unreachable!() };
+      let DefValue::Formula(mut value) = value else { panic!("expected formula") };
       self.to_locus(elab, |l| value.visit(l));
       let formals = (superfluous..self.primary.len() as u8).map(LocusId).map(Term::Locus).collect();
       let mut f =
@@ -3125,7 +3184,7 @@ impl BlockReader {
         assumptions: self.assums(),
         value: DefValue::Formula(value),
       });
-      let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.0);
+      let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.clone());
       self.defs.push(Some(PendingDef { kind: ConstrKind::Attr(n), df, label, thm }));
     }
     let pat = Pattern { kind: PatternKind::Attr(n), fmt, primary, visible, pos };
@@ -3135,7 +3194,6 @@ impl BlockReader {
   }
 
   fn elab_struct_def(&mut self, elab: &mut Analyzer, it: &ast::DefStruct) {
-    elab.elab_corr_conds(CorrConds::new(), &it.conds, &it.corr);
     let mut parents: Box<[_]> = it.parents.iter().map(|ty| elab.elab_type(ty)).collect();
     let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect_vec();
     let struct_primary: Box<[_]> = self.primary.0.iter().cloned().collect();
@@ -3625,7 +3683,7 @@ impl BlockReader {
         )),
       ));
       property.visit(&mut elab.intern_const());
-      elab.elab_justification(None, &property, just);
+      elab.elab_justification(false, &property, just);
     }
     self.to_locus(elab, |l| ty.visit(l));
     CheckAccess::with(&primary, |occ| occ.visit_type(&ty));

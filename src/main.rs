@@ -2960,6 +2960,13 @@ impl MizPath {
     File::open(path)
   }
 
+  fn read_miz(&self) -> io::Result<Vec<u8>> {
+    let mut path = self.mml();
+    path.set_extension("miz");
+    // eprintln!("opening {}", path.to_str().unwrap());
+    std::fs::read(path)
+  }
+
   fn create(&self, new_prel: bool, ext: &str) -> io::Result<File> {
     let mut path = self.prel(new_prel);
     path.set_extension(ext);
@@ -3034,6 +3041,7 @@ pub struct Config {
   pub dump_formatter: bool,
 
   pub accom_enabled: bool,
+  pub parser_enabled: bool,
   pub analyzer_enabled: bool,
   pub analyzer_full: bool,
   pub checker_enabled: bool,
@@ -3108,6 +3116,7 @@ fn main() {
     dump_formatter: false,
 
     accom_enabled: true,
+    parser_enabled: true,
     analyzer_enabled: true,
     analyzer_full: true,
     checker_enabled: true,
@@ -3139,6 +3148,7 @@ fn main() {
   // let path = MizPath(Article::from_bytes(b"TEST"), "../test/text/test".into());
   // path.with_reader(&cfg, |v| v.run_checker(&path));
   // print_stats_and_exit(cfg.parallelism);
+  cfg.parser_enabled = std::env::var("PARSER").is_ok();
   cfg.analyzer_enabled = std::env::var("NO_ANALYZER").is_err();
   cfg.analyzer_full = cfg.analyzer_enabled;
   cfg.checker_enabled = std::env::var("NO_CHECKER").is_err();
@@ -3146,6 +3156,7 @@ fn main() {
   cfg.verify_export = std::env::var("VERIFY_EXPORT").is_ok();
   cfg.xml_export = std::env::var("XML_EXPORT").is_ok();
   cfg.exporter_enabled = std::env::var("NO_EXPORT").is_err();
+  cfg.accom_enabled |= cfg.parser_enabled; // parser needs accom
   cfg.analyzer_enabled |= cfg.exporter_enabled; // exporter needs (quick) analyzer
   cfg.analyzer_full |= cfg.checker_enabled; // checker needs analyzer_full (if analyzer is used)
   cfg.one_item = std::env::var("ONE_ITEM").is_ok();
@@ -3226,9 +3237,9 @@ fn main() {
               }
               // println!("{}", String::from_utf8(output.stdout).unwrap());
             } else if cfg.analyzer_enabled {
-              path.with_reader(cfg, mml_vct, &mut |v| v.run_analyzer(&path));
+              path.with_reader(cfg, mml_vct, &mut |v, p| v.run_analyzer(&path, p));
             } else if cfg.checker_enabled {
-              path.with_reader(cfg, mml_vct, &mut |v| v.run_checker(&path));
+              path.with_reader(cfg, mml_vct, &mut |v, _| v.run_checker(&path));
             }
           }) {
             println!("error: {i}: {s} panicked");

@@ -1,5 +1,6 @@
 use crate::accom::Accomodator;
 use crate::checker::Checker;
+use crate::parser::MizParser;
 use crate::types::*;
 use crate::*;
 
@@ -45,10 +46,23 @@ impl WithGlobalLocal for Reader {
 }
 
 impl MizPath {
-  pub fn with_reader(&self, cfg: &Config, mml_vct: &[u8], f: &mut dyn FnMut(&mut Reader)) {
+  pub fn with_reader(
+    &self, cfg: &Config, mml_vct: &[u8], f: &mut dyn FnMut(&mut Reader, Option<&mut MizParser<'_>>),
+  ) {
     let mut accom = cfg.accom_enabled.then(Box::<Accomodator>::default);
+    let data;
+    let mut parser = if cfg.parser_enabled {
+      data = self.read_miz().unwrap();
+      Some(Box::new(MizParser::new(&data)))
+    } else {
+      None
+    };
     if let Some(accom) = &mut accom {
-      self.read_evl(&mut accom.dirs).unwrap();
+      if let Some(parser) = &mut parser {
+        parser.parse_env(&mut accom.dirs)
+      } else {
+        self.read_evl(&mut accom.dirs).unwrap();
+      }
     }
 
     // MizPBlockObj.InitPrepData
@@ -89,6 +103,9 @@ impl MizPath {
       accom.accom_symbols(mml_vct, &mut symbols, &mut v.lc.formatter.formats.priority);
       if cfg.checker_enabled {
         accom.accom_articles()
+      }
+      if let Some(parser) = &mut parser {
+        parser.scan.load_symbols(&symbols);
       }
       symbols
     });
@@ -303,7 +320,7 @@ impl MizPath {
       }
     }
 
-    f(&mut v);
+    f(&mut v, parser.as_deref_mut());
 
     LocalContext::end_stash(old);
   }
@@ -894,9 +911,7 @@ impl Reader {
       return
     }
     let refs = it.refs.iter().map(|r| match r.kind {
-      // The label cannot be `None` because that only occurs in the spurious anonymous
-      // reference added in MSM, which we strip
-      ReferenceKind::Priv(lab) => &self.props[self.labels[lab.unwrap()].unwrap()],
+      ReferenceKind::Priv(lab) => &self.props[self.labels[lab].unwrap()],
       ReferenceKind::Thm(thm) => &self.libs.thm[&thm],
       ReferenceKind::Def(def) => &self.libs.def[&def],
     });

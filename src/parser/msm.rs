@@ -2,9 +2,8 @@
 use super::XmlReader;
 use crate::ast::*;
 use crate::types::{
-  ArticleId, AttrSymId, CancelKind, ConstId, DefId, FuncSymId, LabelId, LeftBrkSymId, LocusId,
-  ModeSymId, Position, PredSymId, PropertyKind, Reference, ReferenceKind, RightBrkSymId, SchId,
-  SelSymId, StructSymId, ThmId,
+  ArticleId, AttrSymId, ConstId, DefId, FuncSymId, LabelId, LeftBrkSymId, LocusId, ModeSymId,
+  Position, PredSymId, PropertyKind, RightBrkSymId, SchId, SelSymId, StructSymId, ThmId,
 };
 use crate::{types, MizPath};
 use enum_map::Enum;
@@ -82,7 +81,6 @@ impl ItemKind {
   fn corr_mut(&mut self) -> Option<(&mut Vec<CorrCond>, &mut Option<Correctness>)> {
     match self {
       ItemKind::Definition(it) => Some((&mut it.conds, &mut it.corr)),
-      ItemKind::DefStruct(it) => Some((&mut it.conds, &mut it.corr)),
       ItemKind::Cluster(it) => Some((&mut it.conds, &mut it.corr)),
       ItemKind::IdentifyFunc(it) => Some((&mut it.conds, &mut it.corr)),
       ItemKind::Reduction(it) => Some((&mut it.conds, &mut it.corr)),
@@ -409,11 +407,10 @@ impl MsmParser {
       }
       b"Scheme-Head" => {
         let e = self.r.read_start(&mut self.buf, Some(b"Scheme"));
-        let (mut sym, mut spelling, mut nr) = <_>::default();
+        let (mut spelling, mut nr) = <_>::default();
         for attr in e.attributes().map(Result::unwrap) {
           match attr.key {
             b"nr" => nr = SchId(self.r.get_attr::<u32>(&attr.value) - 1),
-            b"idnr" => sym = self.r.get_attr(&attr.value),
             b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
             _ => {}
           }
@@ -449,8 +446,8 @@ impl MsmParser {
         } else {
           end_tag = true;
         }
-        let body = SchemeHead { sym: (sym, spelling), nr, groups, concl, prems };
-        ItemKind::SchemeHead(Box::new(body))
+        let sym = if spelling.is_empty() { None } else { Some(spelling) };
+        ItemKind::SchemeHead(Box::new(SchemeHead { sym, nr, groups, concl, prems }))
       }
       b"Theorem-Item" => ItemKind::Theorem {
         prop: self.parse_proposition().unwrap(),
@@ -471,7 +468,7 @@ impl MsmParser {
         } else {
           None
         };
-        ItemKind::Reservation(Box::new(Reservation { vars, tys, ty, fvars }))
+        ItemKind::Reservation(vec![Reservation { vars, tys, ty, fvars }])
       }
       b"Section-Pragma" => ItemKind::Section,
       b"Choice-Statement" => {
@@ -507,9 +504,11 @@ impl MsmParser {
         tys: self.parse_types(),
         value: self.parse_formula(),
       },
-      b"Constant-Definition" =>
-        ItemKind::Set { var: self.parse_variable().unwrap(), value: self.parse_term().unwrap() },
-      b"Generalization" | b"Loci-Declaration" => ItemKind::Let { var: self.parse_binder() },
+      b"Constant-Definition" => ItemKind::Set(vec![SetDecl {
+        var: self.parse_variable().unwrap(),
+        value: self.parse_term().unwrap(),
+      }]),
+      b"Generalization" | b"Loci-Declaration" => ItemKind::Let { vars: vec![*self.parse_binder()] },
       b"Existential-Assumption" => {
         let mut vars = vec![];
         let conds = loop {
@@ -532,7 +531,7 @@ impl MsmParser {
           }
         }
         end_tag = true;
-        ItemKind::Take { var, term }
+        ItemKind::Take(vec![TakeDecl { var, term: term.unwrap() }])
       }
       b"Per-Cases" => ItemKind::PerCasesHead(self.parse_justification()),
       b"Regular-Statement" => {
@@ -577,15 +576,14 @@ impl MsmParser {
       }
       b"Correctness" => {
         self.r.read_start(&mut self.buf, Some(b"CorrectnessConditions"));
-        let mut conds = vec![];
-        while let Ok(e) = self.r.try_read_start(&mut self.buf, Some(b"Correctness")) {
-          conds
-            .push((*e.try_get_attribute(b"condition").unwrap().unwrap().value).try_into().unwrap());
+        // let mut conds = vec![];
+        while let Ok(_e) = self.r.try_read_start(&mut self.buf, Some(b"Correctness")) {
+          // conds.push((*e.try_get_attribute(b"condition").unwrap().unwrap().value).try_into().unwrap());
           self.r.end_tag(&mut self.buf);
         }
         let corr = items.last_mut().and_then(|it| it.kind.corr_mut()).unwrap().1;
         assert!(corr.is_none());
-        *corr = Some(Correctness { pos, conds, just: *self.parse_justification() });
+        *corr = Some(Correctness { pos, just: *self.parse_justification() });
         self.r.end_tag(&mut self.buf);
         return true
       }
@@ -703,7 +701,7 @@ impl MsmParser {
           fields.push(FieldGroup { pos, vars, ty: *ty })
         }
         let pat = PatternStruct { sym: (sym, spelling), args };
-        ItemKind::DefStruct(Box::new(DefStruct { parents, fields, pat, conds: vec![], corr: None }))
+        ItemKind::DefStruct(Box::new(DefStruct { parents, fields, pat }))
       }
       b"Pred-Synonym" => {
         let Pattern::Pred(orig) = self.parse_pattern() else { panic!("expected pred pattern") };
@@ -769,7 +767,7 @@ impl MsmParser {
           }
         }
         end_tag = true;
-        let id = IdentifyFunc { lhs: *p2, rhs: *p1, eqs, conds: vec![], corr: None };
+        let id = IdentifyFunc { lhs: p2, rhs: p1, eqs, conds: vec![], corr: None };
         ItemKind::IdentifyFunc(Box::new(id))
       }
       b"Property-Registration" => {
@@ -780,32 +778,12 @@ impl MsmParser {
         }
       }
       b"Reduction" => ItemKind::Reduction(Box::new(Reduction {
-        to: *self.parse_term().unwrap(),
-        from: *self.parse_term().unwrap(),
+        to: self.parse_term().unwrap(),
+        from: self.parse_term().unwrap(),
         conds: vec![],
         corr: None,
       })),
-      b"Pragma" => {
-        let spelling = spelling.unwrap();
-        let parse_num = |s: &str| {
-          if s.is_empty() {
-            1
-          } else {
-            s.trim().parse::<u32>().unwrap()
-          }
-        };
-        ItemKind::Pragma(if let Some(s) = spelling.strip_prefix("$CD") {
-          Pragma::Canceled(CancelKind::Def, parse_num(s))
-        } else if let Some(s) = spelling.strip_prefix("$CT") {
-          Pragma::Canceled(CancelKind::Thm, parse_num(s))
-        } else if let Some(s) = spelling.strip_prefix("$CS") {
-          Pragma::Canceled(CancelKind::Sch, parse_num(s))
-        } else if let Some(s) = spelling.strip_prefix("$N") {
-          Pragma::ThmDesc(s.trim_start().to_owned())
-        } else {
-          Pragma::Other(spelling)
-        })
-      }
+      b"Pragma" => ItemKind::Pragma(spelling.unwrap().into()),
       _ => panic!("unrecognized item kind"),
     };
     if !end_tag {
@@ -1331,13 +1309,15 @@ impl MsmParser {
             let left = args.len().try_into().unwrap();
             self.r.read_start(&mut self.buf, Some(b"Arguments"));
             args.extend(std::iter::from_fn(|| self.parse_term().map(|t| *t)));
-            let pred = Pred { sym: (sym, spelling), left, args };
-            Elem::Formula(Box::new(Formula::Pred { pos, pred }))
+            let pred = Box::new(Pred { pos, positive: true, sym: (sym, spelling), left, args });
+            Elem::Formula(Box::new(Formula::Pred(pred)))
           }
           b"RightSideOf-Predicative-Formula" => {
-            let (mut sym, mut spelling) = <_>::default();
+            let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
             for attr in e.attributes().map(Result::unwrap) {
               match attr.key {
+                b"line" => pos.line = self.r.get_attr(&attr.value),
+                b"col" => pos.col = self.r.get_attr(&attr.value),
                 b"nr" => sym = PredSymId(self.r.get_attr::<u32>(&attr.value) - 1),
                 b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
                 _ => {}
@@ -1345,12 +1325,19 @@ impl MsmParser {
             }
             self.r.read_start(&mut self.buf, Some(b"Arguments"));
             let right = self.parse_terms();
-            Elem::PredRhs(Box::new(PredRhs { sym: (sym, spelling), right }))
+            Elem::PredRhs(Box::new(PredRhs { pos, positive: true, sym: (sym, spelling), right }))
           }
           b"Multi-Predicative-Formula" => {
             let pos = self.r.get_pos(&e);
             let first = match *self.parse_formula() {
-              Formula::Pred { pred, .. } => pred,
+              Formula::Not { f, .. } => match *f {
+                Formula::Pred(mut pred) => {
+                  pred.positive = !pred.positive;
+                  pred
+                }
+                _ => panic!("expected predicate"),
+              },
+              Formula::Pred(pred) => pred,
               _ => panic!("expected predicate"),
             };
             let mut rest = vec![];
@@ -1382,24 +1369,26 @@ impl MsmParser {
           }
           b"Attributive-Formula" => Elem::Formula(Box::new(Formula::Attr {
             pos: self.r.get_pos(&e),
+            positive: true,
             term: self.parse_term().unwrap(),
             attrs: self.parse_attrs(),
           })),
           b"Qualifying-Formula" => Elem::Formula(Box::new(Formula::Is {
             pos: self.r.get_pos(&e),
+            positive: true,
             term: self.parse_term().unwrap(),
             ty: self.parse_type().unwrap(),
           })),
           b"Universal-Quantifier-Formula" => {
             let pos = self.r.get_pos(&e);
-            let (var, scope) = (self.parse_binder(), self.parse_formula());
-            let f = Formula::Binder { kind: FormulaBinder::ForAll, pos, var, scope };
+            let (vars, scope) = (vec![*self.parse_binder()], self.parse_formula());
+            let f = Formula::Binder { kind: FormulaBinder::ForAll, pos, vars, st: None, scope };
             Elem::Formula(Box::new(f))
           }
           b"Existential-Quantifier-Formula" => {
             let pos = self.r.get_pos(&e);
-            let (var, scope) = (self.parse_binder(), self.parse_formula());
-            let f = Formula::Binder { kind: FormulaBinder::Exists, pos, var, scope };
+            let (vars, scope) = (vec![*self.parse_binder()], self.parse_formula());
+            let f = Formula::Binder { kind: FormulaBinder::Exists, pos, vars, st: None, scope };
             Elem::Formula(Box::new(f))
           }
           b"Thesis" => Elem::Formula(Box::new(Formula::Thesis { pos: self.r.get_pos(&e) })),

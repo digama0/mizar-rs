@@ -1001,8 +1001,9 @@ impl<V: VisitMut> Visitable<V> for Attr {
   fn visit(&mut self, v: &mut V) { self.args.visit(v) }
 }
 
+pub const MAX_ARTICLE_LEN: usize = 8;
 #[derive(Hash, Copy, Clone, Default, PartialEq, Eq)]
-pub struct Article([u8; 8]);
+pub struct Article([u8; MAX_ARTICLE_LEN]);
 
 impl std::fmt::Debug for Article {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1015,12 +1016,12 @@ impl std::fmt::Display for Article {
 }
 impl Article {
   pub fn from_lower(s: &[u8]) -> Article {
-    let mut arr = [0; 8];
+    let mut arr = [0; MAX_ARTICLE_LEN];
     arr[..s.len()].copy_from_slice(s);
     Article(arr)
   }
   pub fn from_upper(s: &[u8]) -> Article {
-    let mut arr = [0; 8];
+    let mut arr = [0; MAX_ARTICLE_LEN];
     arr[..s.len()].copy_from_slice(s);
     std::str::from_utf8_mut(&mut arr[..s.len()]).unwrap().make_ascii_lowercase();
     Article(arr)
@@ -1036,9 +1037,14 @@ macro_rules! mk_property_kind {
       $($(#[$attr])* $id,)*
     }
     impl $ty {
-      pub fn name(self) -> &'static [u8] {
+      pub fn to_upper(self) -> &'static [u8] {
         match self {
           $(Self::$id => $upper,)*
+        }
+      }
+      pub fn to_lower(self) -> &'static [u8] {
+        match self {
+          $(Self::$id => $lower,)*
         }
       }
     }
@@ -1835,7 +1841,7 @@ pub enum InferenceKind {
 
 #[derive(Debug, Clone, Copy)]
 pub enum ReferenceKind {
-  Priv(Option<LabelId>),
+  Priv(LabelId),
   Thm(ThmRef),
   Def(DefRef),
 }
@@ -2024,7 +2030,7 @@ pub enum Registration {
   Property { kind: Property, prop: Proposition, just: Justification },
 }
 
-#[derive(Clone, Copy, Debug, Enum)]
+#[derive(Clone, Copy, Debug, Enum, PartialEq, Eq)]
 pub enum CorrCondKind {
   Coherence,
   Compatibility,
@@ -2032,6 +2038,19 @@ pub enum CorrCondKind {
   Existence,
   Uniqueness,
   Reducibility,
+}
+
+impl CorrCondKind {
+  pub fn name(self) -> &'static [u8] {
+    match self {
+      CorrCondKind::Coherence => b"coherence",
+      CorrCondKind::Compatibility => b"compatibility",
+      CorrCondKind::Consistency => b"consistency",
+      CorrCondKind::Existence => b"existence",
+      CorrCondKind::Uniqueness => b"uniqueness",
+      CorrCondKind::Reducibility => b"reducibility",
+    }
+  }
 }
 
 impl TryFrom<&[u8]> for CorrCondKind {
@@ -2213,12 +2232,29 @@ mk_id! {
   StructSymId(u32),
   SelSymId(u32),
 }
+
+impl ModeSymId {
+  pub const SET: Self = Self(0); // set
+}
+impl PredSymId {
+  pub const EQUAL: Self = Self(0); // =
+}
+impl LeftBrkSymId {
+  pub const LBRACK: Self = Self(0); // [
+  pub const LBRACE: Self = Self(1); // {
+  pub const LPAREN: Self = Self(2); // (
+}
+impl RightBrkSymId {
+  pub const RBRACK: Self = Self(0); // ]
+  pub const RBRACE: Self = Self(1); // }
+  pub const RPAREN: Self = Self(2); // )
+}
 impl AttrSymId {
   // The "strict" (a.k.a "not abstract") builtin attribute
   pub const STRICT: Self = Self(0);
 }
 
-#[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum SymbolKind {
   Func(FuncSymId),
   LeftBrk(LeftBrkSymId),
@@ -2576,7 +2612,7 @@ pub struct DepSchemes {
   pub sch: Vec<Option<Scheme>>,
 }
 
-#[derive(Clone, Copy, Debug, Enum)]
+#[derive(Clone, Copy, Debug, Enum, PartialEq, Eq)]
 pub enum DirectiveKind {
   Vocabularies,
   Notations,
