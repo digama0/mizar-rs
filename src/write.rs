@@ -540,7 +540,7 @@ impl MizWriter {
       Term::Numeral(n) => self.with_attr(b"Num", |w| w.attr_str(b"nr", *n)),
       Term::Locus(n) => self.with_attr(b"LocusVar", |w| w.attr_str(b"nr", n.0 + 1)),
       Term::Bound(n) => self.with_attr(b"Var", |w| w.attr_str(b"nr", n.0 + 1)),
-      Term::Constant(n) => self.with_attr(b"Const", |w| w.attr_str(b"nr", n.0 + 1)),
+      Term::Const(n) => self.with_attr(b"Const", |w| w.attr_str(b"nr", n.0 + 1)),
       Term::SchFunc { nr, args } => self.write_func(b"Func", b'F', nr.0, args),
       Term::Aggregate { nr, args } => self.write_func(b"Func", b'G', nr.0, args),
       Term::PrivFunc { nr, args, value } => {

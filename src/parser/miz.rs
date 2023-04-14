@@ -1,7 +1,7 @@
-use crate::ast::*;
+use crate::ast::{SchRef, *};
 use crate::types::{
   Article, ArticleId, BlockKind, CorrCondKind, DefId, DirectiveKind, Directives, Format, FormatId,
-  Idx, IdxVec, LeftBrkSymId, LocusId, ModeSymId, Position, PredSymId, PropertyKind, RightBrkSymId,
+  IdxVec, LeftBrkSymId, LocusId, ModeSymId, Position, PredSymId, PropertyKind, RightBrkSymId,
   SchId, StructSymId, SymbolKind, Symbols, ThmId, MAX_ARTICLE_LEN,
 };
 use enum_map::Enum;
@@ -372,8 +372,8 @@ pub struct Parser<'a> {
   pub scan: Scanner<'a>,
   pub art: Article,
   pub articles: HashMap<Article, ArticleId>,
-  sch: (HashMap<&'a str, SchId>, SchId),
   pub formats: IdxVec<FormatId, Format>,
+  allow_internal_selector: bool,
   max_mode_args: HashMap<ModeSymId, u8>,
   max_struct_args: HashMap<StructSymId, u8>,
   max_pred_rhs: HashMap<PredSymId, u8>,
@@ -385,8 +385,8 @@ impl<'a> Parser<'a> {
       scan: Scanner::new(data),
       art,
       articles: Default::default(),
-      sch: Default::default(),
       formats: Default::default(),
+      allow_internal_selector: false,
       max_mode_args: Default::default(),
       max_struct_args: Default::default(),
       max_pred_rhs: Default::default(),
@@ -452,7 +452,7 @@ impl<'a> Parser<'a> {
 
   fn parse_variable(&mut self) -> Variable {
     let tok = self.scan.accept(TokenKind::Ident);
-    Variable { pos: tok.pos, id: 0, var: None, spelling: tok.spelling.to_owned() }
+    Variable { pos: tok.pos, var: None, spelling: tok.spelling.to_owned() }
   }
 
   fn parse_label(&mut self) -> Option<Box<Label>> {
@@ -462,7 +462,7 @@ impl<'a> Parser<'a> {
     let tok = self.scan.next();
     if matches!(self.scan.peek().kind, TokenKind::Keyword(Keyword::Colon)) {
       self.scan.next();
-      Some(Box::new(Label { pos: tok.pos, id: (Default::default(), tok.spelling.to_owned()) }))
+      Some(Box::new(Label { pos: tok.pos, id: (None, tok.spelling.to_owned()) }))
     } else {
       self.scan.undo(tok);
       None
@@ -530,19 +530,12 @@ impl<'a> Parser<'a> {
           self.scan.accept(TokenKind::RPAREN);
           Box::new(Term::PrivFunc {
             pos: tok.pos,
-            kind: VarKind::Unknown,
-            var: 0,
+            kind: None,
             spelling: tok.spelling.to_owned(),
             args,
           })
         } else {
-          Box::new(Term::Simple {
-            pos: tok.pos,
-            kind: VarKind::Unknown,
-            var: 0,
-            spelling: tok.spelling.to_owned(),
-            origin: VarKind::Unknown,
-          })
+          Box::new(Term::Var { pos: tok.pos, kind: None, spelling: tok.spelling.to_owned() })
         },
       TokenKind::Number(value) => Box::new(Term::Numeral { pos: tok.pos, value }),
       TokenKind::Keyword(Keyword::It) => Box::new(Term::It { pos: tok.pos }),
@@ -591,7 +584,8 @@ impl<'a> Parser<'a> {
             if self.scan.try_accept(Keyword::Of) {
               Box::new(Term::Selector { pos: tok.pos, sym, arg: self.parse_term() })
             } else {
-              Box::new(Term::InternalSelector { pos: tok.pos, sym, id: Default::default() })
+              assert!(self.allow_internal_selector, "{:?}: expected 'of'", self.scan.next().pos);
+              Box::new(Term::InternalSelector { pos: tok.pos, sym, id: None })
             }
           }
           TokenKind::Symbol(SymbolKind::Struct(sym)) if self.scan.try_accept(Keyword::Of) => {
@@ -841,8 +835,7 @@ impl<'a> Parser<'a> {
         self.scan.accept(TokenKind::RBRACK);
         Box::new(Formula::PrivPred {
           pos: tok.pos,
-          kind: VarKind::Unknown,
-          var: 0,
+          kind: None,
           spelling: tok.spelling.to_owned(),
           args,
         })
@@ -1032,11 +1025,9 @@ impl<'a> Parser<'a> {
           this.scan.accept(Keyword::Sch);
           let tok = this.scan.next();
           let TokenKind::Number(n) = tok.kind else { panic!("expected numeral") };
-          (art, SchId(n.checked_sub(1).expect("expected nonzero numeral")))
+          SchRef::Resolved(art, SchId(n.checked_sub(1).expect("expected nonzero numeral")))
         } else {
-          let sch = *(this.sch.0.get(id.spelling))
-            .unwrap_or_else(|| panic!("local scheme '{}' not found", id.spelling));
-          (ArticleId::SELF, sch)
+          SchRef::UnresolvedPriv(id.spelling.to_owned())
         };
         let mut refs = vec![];
         if this.scan.try_accept(TokenKind::LPAREN) {
@@ -1055,7 +1046,7 @@ impl<'a> Parser<'a> {
   fn parse_justification(&mut self, link: Option<Position>) -> Justification {
     if let Some(tok) = self.scan.next_if(|tok| tok.kind == Keyword::Proof.into()) {
       Self::assert_no_link(link);
-      let (items, end) = self.parse_proof();
+      let (items, end) = self.parse_proof(false);
       Justification::Block { pos: (tok.pos, end), items }
     } else {
       self.parse_simple_justification(link)
@@ -1069,8 +1060,8 @@ impl<'a> Parser<'a> {
   }
 
   fn parse_scheme(&mut self) -> Box<SchemeBlock> {
-    let sym =
-      (self.scan.next_if(|tok| matches!(tok.kind, TokenKind::Ident))).map(|tok| tok.spelling);
+    let sym = (self.scan.next_if(|tok| matches!(tok.kind, TokenKind::Ident)))
+      .map(|tok| tok.spelling.to_owned());
     self.scan.accept(TokenKind::LBRACE);
     let groups = self.comma_separated(|this| {
       let pos = this.scan.peek().pos;
@@ -1101,15 +1092,9 @@ impl<'a> Parser<'a> {
       vec![]
     };
     self.scan.accept(Keyword::Proof);
-    let (items, end) = self.parse_proof();
+    let (items, end) = self.parse_proof(false);
     self.scan.accept(Keyword::Semicolon);
-    let id = self.sch.1.fresh();
-    let sym = sym.map(|sym| {
-      self.sch.0.insert(sym, id);
-      sym.to_owned()
-    });
-    let head = SchemeHead { sym, nr: SchId(0), groups, concl, prems };
-    Box::new(SchemeBlock { end, head, items })
+    Box::new(SchemeBlock { end, head: SchemeHead { sym, nr: None, groups, concl, prems }, items })
   }
 
   fn parse_params(&mut self, must_paren: bool) -> Vec<Variable> {
@@ -1184,7 +1169,7 @@ impl<'a> Parser<'a> {
         self.parse_pattern_rhs(tok.pos, true, args)
       }
       TokenKind::Ident => {
-        let id = Variable { pos: tok.pos, id: 0, var: None, spelling: tok.spelling.to_owned() };
+        let id = Variable { pos: tok.pos, var: None, spelling: tok.spelling.to_owned() };
         if self.scan.try_accept(Keyword::Is) {
           let mut args = self.parse_params(false);
           args.push(id);
@@ -1311,7 +1296,7 @@ impl<'a> Parser<'a> {
     match tok.kind {
       TokenKind::Keyword(Keyword::Now) => {
         Self::assert_no_link(link);
-        let (items, end) = self.parse_proof();
+        let (items, end) = self.parse_proof(true);
         Statement::Now { end, label, items }
       }
       _ => {
@@ -1319,7 +1304,7 @@ impl<'a> Parser<'a> {
         let prop = Box::new(Proposition { label, f: *self.parse_formula() });
         if let Some(tok) = self.scan.next_if(|tok| tok.kind == Keyword::Proof.into()) {
           Self::assert_no_link(link);
-          let (items, end) = self.parse_proof();
+          let (items, end) = self.parse_proof(false);
           let just = Box::new(Justification::Block { pos: (tok.pos, end), items });
           Statement::Proposition { prop, just }
         } else {
@@ -1406,7 +1391,7 @@ impl<'a> Parser<'a> {
   }
 
   fn parse_per_cases(
-    &mut self, link: Option<Position>, pos: Position, items: &mut Vec<Item>,
+    &mut self, diffuse: bool, link: Option<Position>, pos: Position, items: &mut Vec<Item>,
   ) -> Position {
     self.scan.accept(Keyword::Cases);
     let just = Box::new(self.parse_simple_justification(link));
@@ -1426,7 +1411,7 @@ impl<'a> Parser<'a> {
       }
       let hyp = Box::new(self.parse_assumption(tok.pos));
       self.scan.accept(Keyword::Semicolon);
-      let (items, end) = self.parse_proof();
+      let (items, end) = self.parse_proof(diffuse);
       self.scan.accept(Keyword::Semicolon);
       blocks.push(CaseBlock { end, hyp, items })
     };
@@ -1435,32 +1420,36 @@ impl<'a> Parser<'a> {
     end
   }
 
-  fn parse_proof(&mut self) -> (Vec<Item>, Position) {
+  fn parse_proof(&mut self, diffuse: bool) -> (Vec<Item>, Position) {
     let mut items = vec![];
     let end = loop {
       let tok = self.scan.next();
       let kind = match tok.kind {
         TokenKind::Keyword(Keyword::End) => break tok.end(),
         TokenKind::Keyword(Keyword::Take) => ItemKind::Take(self.comma_separated(|this| {
-          let mut var = None;
           if matches!(this.scan.peek().kind, TokenKind::Ident) {
             let tok = this.scan.next();
-            if matches!(this.scan.peek().kind, TokenKind::EQUAL) {
-              this.scan.next();
-              var = Some(Box::new(Variable {
-                pos: tok.pos,
-                id: 0,
-                var: None,
-                spelling: tok.spelling.to_owned(),
-              }))
+            let lookahead = this.scan.peek().kind;
+            if matches!(lookahead, TokenKind::EQUAL)
+              || diffuse
+                && matches!(lookahead, TokenKind::Keyword(Keyword::Comma | Keyword::Semicolon))
+            {
+              let var =
+                Box::new(Variable { pos: tok.pos, var: None, spelling: tok.spelling.to_owned() });
+              return if matches!(lookahead, TokenKind::EQUAL) {
+                this.scan.next();
+                TakeDecl { var: Some(var), term: this.parse_term() }
+              } else {
+                TakeDecl { term: Box::new(var.to_term()), var: Some(var) }
+              }
             } else {
               this.scan.undo(tok);
             }
           }
-          TakeDecl { var, term: this.parse_term() }
+          TakeDecl { var: None, term: this.parse_term() }
         })),
         TokenKind::Keyword(Keyword::Hereby) => {
-          let (items, end) = self.parse_proof();
+          let (items, end) = self.parse_proof(true);
           ItemKind::Thus(Statement::Now { end, label: None, items })
         }
         TokenKind::Keyword(Keyword::Hence) => ItemKind::Thus(self.parse_stmt(Some(tok.pos))),
@@ -1470,9 +1459,10 @@ impl<'a> Parser<'a> {
         }
         TokenKind::Keyword(Keyword::Then) if self.scan.peek().kind == Keyword::Per.into() => {
           let pos = self.scan.next().pos;
-          break self.parse_per_cases(Some(tok.pos), pos, &mut items)
+          break self.parse_per_cases(diffuse, Some(tok.pos), pos, &mut items)
         }
-        TokenKind::Keyword(Keyword::Per) => break self.parse_per_cases(None, tok.pos, &mut items),
+        TokenKind::Keyword(Keyword::Per) =>
+          break self.parse_per_cases(diffuse, None, tok.pos, &mut items),
         _ => self.parse_block_item(tok.pos, tok),
       };
       self.scan.accept(Keyword::Semicolon);
@@ -1573,6 +1563,7 @@ impl<'a> Parser<'a> {
           };
           let pat = PatternStruct { sym: (sym, tok.spelling.to_owned()), args };
           self.scan.accept(Keyword::AggrLeftBrk);
+          self.allow_internal_selector = true;
           let fields = self.comma_separated(|this| {
             let pos = this.scan.peek().pos;
             let vars = this.comma_separated(|this| {
@@ -1587,6 +1578,7 @@ impl<'a> Parser<'a> {
           });
           self.scan.accept(Keyword::AggrRightBrk);
           self.scan.accept(Keyword::Semicolon);
+          self.allow_internal_selector = false;
           self.push_format(Format::SubAggr(pat.to_subaggr_format()));
           self.push_format(Format::Struct(pat.to_mode_format()));
           self.push_format(Format::Aggr(pat.to_aggr_format(fields.len())));

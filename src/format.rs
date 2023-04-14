@@ -242,7 +242,7 @@ impl<'a> Pretty<'a> {
     match tm {
       Term::Locus(nr) => self.text(format!("a{}", nr.0)),
       Term::Bound(nr) => self.text(format!("b{}", nr.0 + lift)),
-      Term::Constant(nr) => self.text(format!("c{}", nr.0)),
+      Term::Const(nr) => self.text(format!("c{}", nr.0)),
       Term::EqClass(nr) => self.text(format!("e{}", nr.0)),
       Term::EqMark(nr) => {
         if let Some(lc) = self.lc {

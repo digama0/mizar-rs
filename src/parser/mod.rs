@@ -1346,7 +1346,7 @@ impl MizReader<'_> {
         }
         b"LocusVar" => Elem::Term(Term::Locus(LocusId(parse_var!() as u8 - 1))),
         b"Var" => Elem::Term(Term::Bound(BoundId(parse_var!() - 1))),
-        b"Const" => Elem::Term(Term::Constant(ConstId(parse_var!() - 1))),
+        b"Const" => Elem::Term(Term::Const(ConstId(parse_var!() - 1))),
         // b"InfConst" => Elem::Term(Term::Infer { nr: InferId(parse_var!() - 1) }),
         // b"FreeVar" => Elem::Term(Term::FreeVar { nr: parse_var!() - 1 }),
         b"Num" => Elem::Term(Term::Numeral(parse_var!())),

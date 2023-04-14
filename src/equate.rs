@@ -462,7 +462,7 @@ impl VisitMut for Y<'_, '_> {
         _ => unreachable!("already marked"),
       },
       Term::Locus(_)
-      | Term::Constant(_)
+      | Term::Const(_)
       | Term::FreeVar(_)
       | Term::Numeral(_)
       | Term::Qua { .. }
@@ -577,7 +577,7 @@ impl Equalizer<'_> {
         Ok(fi)
       }
       Term::Fraenkel { ref mut args, ref mut scope, ref mut compr } => {
-        self.y(|y| {
+        self.y(move |y| {
           for ty in &mut **args {
             y.visit_type(ty);
             y.push_bound(ty);
@@ -592,7 +592,7 @@ impl Equalizer<'_> {
         self.y(|y| y.visit_type(ty))?;
         Ok(self.yy_binder(term, fi, |c| &mut c.choice))
       }
-      Term::Infer(_) | Term::Constant(_) => Ok(fi),
+      Term::Infer(_) | Term::Const(_) => Ok(fi),
       Term::Locus(_)
       | Term::Bound(_)
       | Term::EqClass(_)

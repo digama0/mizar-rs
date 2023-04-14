@@ -1,4 +1,6 @@
-use crate::ast::{CaseKind, FormulaBinder, FormulaBinop, Pragma, ReservedId, VarKind};
+use crate::ast::{
+  CaseKind, FormulaBinder, FormulaBinop, Pragma, PrivFuncKind, PrivPredKind, ReservedId, VarKind,
+};
 use crate::export::Exporter;
 use crate::parser::MizParser;
 use crate::reader::Reader;
@@ -15,6 +17,7 @@ pub struct Analyzer<'a> {
   priv_func_args: IdxVec<PrivPredId, Box<[Type]>>,
   priv_pred: IdxVec<PrivPredId, (Box<[Type]>, Box<Formula>)>,
   sch_pred_args: IdxVec<SchPredId, Box<[Type]>>,
+  sch_names: (HashMap<String, SchId>, SchId),
   thesis: Option<Box<Formula>>,
   thesis_stack: Vec<Option<Box<Formula>>>,
   label_names: IdxVec<LabelId, Option<String>>,
@@ -42,6 +45,7 @@ impl Reader {
       priv_func_args: Default::default(),
       priv_pred: Default::default(),
       sch_pred_args: Default::default(),
+      sch_names: Default::default(),
       thesis: None,
       thesis_stack: vec![],
       label_names: Default::default(),
@@ -62,11 +66,13 @@ impl Reader {
     }
     let r = if let Some(parser) = &mut parser {
       parser.parse_items()
+    } else if elab.g.cfg.nameck_enabled {
+      path.open_wsx().unwrap().parse_items()
     } else {
       path.open_msx().unwrap().parse_items()
     };
     // println!("parsed {:?}, {} items", path.art, r.len());
-    if parser.is_some() {
+    if elab.g.cfg.nameck_enabled {
       return // TODO
     }
     for (i, it) in r.iter().enumerate() {
@@ -139,9 +145,12 @@ impl Analyzer<'_> {
     r
   }
 
-  pub fn push_prop(&mut self, label: Option<(LabelId, String)>, prop: Formula) {
-    let label = label.map(|(id, name)| {
-      assert_eq!(id, self.label_names.push(Some(name)));
+  pub fn push_prop(&mut self, label: Option<(Option<LabelId>, String)>, prop: Formula) {
+    let label = label.map(|(id2, name)| {
+      let id = self.label_names.push(Some(name));
+      if let Some(id2) = id2 {
+        assert_eq!(id, id2)
+      }
       id
     });
     self.r.push_prop(label, prop);
@@ -226,7 +235,7 @@ impl Analyzer<'_> {
   }
 
   fn elab_scheme(&mut self, ast::SchemeBlock { end, head, items }: &ast::SchemeBlock) {
-    let ast::SchemeHead { nr, groups, concl, prems, .. } = head;
+    let ast::SchemeHead { sym, nr, groups, concl, prems } = head;
     assert!(self.sch_func_args.is_empty());
     assert!(self.sch_pred_args.is_empty());
     assert!(self.lc.sch_func_ty.is_empty());
@@ -268,9 +277,18 @@ impl Analyzer<'_> {
     self.lc.infer_const.get_mut().truncate(infer_consts);
     self.sch_func_args.0.clear();
     self.sch_pred_args.0.clear();
-    self.libs.sch.insert((ArticleId::SELF, *nr), sch);
+    let id = self.sch_names.1.fresh();
+    if let Some(sym) = sym {
+      if self.g.cfg.nameck_enabled {
+        self.sch_names.0.insert(sym.clone(), id);
+      }
+    }
+    if let Some(nr) = *nr {
+      assert_eq!(nr, id)
+    }
+    self.libs.sch.insert((ArticleId::SELF, id), sch);
     if self.g.cfg.exporter_enabled {
-      self.export.schemes.push(Some(*nr))
+      self.export.schemes.push(Some(id))
     }
   }
 
@@ -509,7 +527,13 @@ impl Analyzer<'_> {
         let it = Inference {
           kind: match kind {
             ast::InferenceKind::By { link } => InferenceKind::By { linked: link.is_some() },
-            &ast::InferenceKind::From { sch } => InferenceKind::From { sch },
+            &ast::InferenceKind::From { sch: ast::SchRef::Resolved(art, id) } =>
+              InferenceKind::From { sch: (art, id) },
+            ast::InferenceKind::From { sch: ast::SchRef::UnresolvedPriv(name) } => {
+              let sch = *(self.sch_names.0.get(&**name))
+                .unwrap_or_else(|| panic!("local scheme '{}' not found", name));
+              InferenceKind::From { sch: (ArticleId::SELF, sch) }
+            }
           },
           pos,
           refs: self.elab_references(refs),
@@ -636,16 +660,15 @@ impl Analyzer<'_> {
     vprintln!("elab_term {tm:?}");
     let res = (|| match *tm {
       ast::Term::Placeholder { nr, .. } => Term::Locus(nr),
-      ast::Term::Simple { kind, var, .. } => match kind {
-        VarKind::Bound => Term::Bound(BoundId(var)),
-        VarKind::Const | VarKind::DefConst => {
-          if let Some((ref def, true)) = self.lc.fixed_var[ConstId(var)].def {
+      ast::Term::Var { kind, .. } => match kind {
+        Some(VarKind::Bound(nr)) => Term::Bound(nr),
+        Some(VarKind::Const(nr)) =>
+          if let Some((ref def, true)) = self.lc.fixed_var[nr].def {
             let depth = self.lc.bound_var.len() as u32;
             (**def).visit_cloned(&mut OnVarMut(|v| *v += depth))
           } else {
-            Term::Constant(ConstId(var))
-          }
-        }
+            Term::Const(nr)
+          },
         _ => unreachable!(),
       },
       ast::Term::Numeral { value, .. } => Term::Numeral(value),
@@ -657,11 +680,10 @@ impl Analyzer<'_> {
         FormatFunc::Bracket { lsym: lsym.0, rsym: rsym.0, args: args.len() as u8 },
         args,
       ),
-      ast::Term::PrivFunc { kind, var, ref args, .. } => {
+      ast::Term::PrivFunc { kind, ref args, .. } => {
         let mut args = self.elab_terms_qua(args);
         match kind {
-          VarKind::PrivFunc => {
-            let nr = PrivFuncId(var);
+          Some(PrivFuncKind::PrivFunc(nr)) => {
             let def = &self.lc.priv_func[nr];
             assert!(agrees(&self.g, &self.lc, &args, &def.primary));
             args.iter_mut().for_each(|t| t.strip_qua_mut());
@@ -670,8 +692,7 @@ impl Analyzer<'_> {
             let value = def.value.visit_cloned(&mut inst);
             Term::PrivFunc { nr, args, value }
           }
-          VarKind::SchFunc => {
-            let nr = SchFuncId(var);
+          Some(PrivFuncKind::SchFunc(nr)) => {
             assert!(agrees(&self.g, &self.lc, &args, &self.sch_func_args[nr]));
             args.iter_mut().for_each(|t| t.strip_qua_mut());
             Term::SchFunc { nr, args }
@@ -729,7 +750,7 @@ impl Analyzer<'_> {
       }
       ast::Term::InternalSelector { id, .. } => {
         // only occurs inside elab_struct_def, ensured by parser
-        Term::Constant(id)
+        Term::Const(id.unwrap())
       }
       ast::Term::The { ref ty, .. } => Term::The { ty: Box::new(self.elab_type(ty)) },
       ast::Term::Fraenkel { ref vars, ref scope, ref compr, .. } => {
@@ -985,7 +1006,7 @@ impl Analyzer<'_> {
         use Term::*;
         let res = match (t1, t2) {
           (Bound(BoundId(n1)), Bound(BoundId(n2)))
-          | (Constant(ConstId(n1)), Constant(ConstId(n2)))
+          | (Const(ConstId(n1)), Const(ConstId(n2)))
           | (Numeral(n1), Numeral(n2)) => Self::bool(n1 == n2),
           (Infer(InferId(n1)), Infer(InferId(n2))) if n1 == n2 => Self::bool(true),
           (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) =>
@@ -1362,11 +1383,10 @@ impl Analyzer<'_> {
         })
         .maybe_neg(pos)
       }
-      ast::Formula::PrivPred { kind, var, args, .. } => {
+      ast::Formula::PrivPred { kind, args, .. } => {
         let mut args = self.elab_terms_qua(args);
-        match kind {
-          VarKind::PrivPred => {
-            let nr = PrivPredId(*var);
+        match *kind {
+          Some(PrivPredKind::PrivPred(nr)) => {
             let (ty, value) = &self.priv_pred[nr];
             assert!(agrees(&self.g, &self.lc, &args, ty));
             args.iter_mut().for_each(|t| t.strip_qua_mut());
@@ -1374,8 +1394,7 @@ impl Analyzer<'_> {
             let value = value.visit_cloned(&mut Inst::new(&self.g.constrs, &self.lc, &args, base));
             Formula::PrivPred { nr, args, value }.maybe_neg(pos)
           }
-          VarKind::SchPred => {
-            let nr = SchPredId(*var);
+          Some(PrivPredKind::SchPred(nr)) => {
             assert!(agrees(&self.g, &self.lc, &args, &self.sch_pred_args[nr]));
             args.iter_mut().for_each(|t| t.strip_qua_mut());
             Formula::SchPred { nr, args }.maybe_neg(pos)
@@ -1587,7 +1606,7 @@ impl Analyzer<'_> {
     &self, start: usize, widenable: bool, up: bool, f: &mut (bool, Box<Formula>),
   ) {
     for v in (start..self.lc.fixed_var.len()).map(ConstId::from_usize) {
-      self.inst_forall(&Term::Constant(v), widenable, up, f)
+      self.inst_forall(&Term::Const(v), widenable, up, f)
     }
   }
 
@@ -1731,19 +1750,15 @@ impl Iterator for UnfoldConjIter {
   }
 }
 
-struct InstReservation<'a>(&'a [(VarKind, u32)]);
+struct InstReservation<'a>(&'a [VarKind]);
 
 impl VisitMut for InstReservation<'_> {
   fn visit_term(&mut self, tm: &mut Term) {
     match *tm {
-      Term::Bound(nr) => {
-        let (kind, nr) = self.0[nr.0 as usize];
-        match kind {
-          VarKind::Bound => *tm = Term::Bound(BoundId(nr)),
-          VarKind::Const | VarKind::DefConst => *tm = Term::Constant(ConstId(nr)),
-          _ => unreachable!(),
-        }
-      }
+      Term::Bound(nr) => match self.0[nr.0 as usize] {
+        VarKind::Bound(nr) => *tm = Term::Bound(nr),
+        VarKind::Const(nr) => *tm = Term::Const(nr),
+      },
       _ => self.super_visit_term(tm),
     }
   }
@@ -1773,7 +1788,7 @@ impl<const N: usize> VisitMut for InstN<N> {
   fn visit_term(&mut self, tm: &mut Term) {
     match *tm {
       Term::Bound(ref mut nr) => nr.0 += self.lift,
-      Term::Constant(c) =>
+      Term::Const(c) =>
         for i in 0..N {
           if c == self.from[i] {
             *tm = Term::Bound(self.to[i]);
@@ -1871,7 +1886,7 @@ impl<'a> PropertiesBuilder<'a> {
             if let Some((nr, args2)) = t {
               let term = |tgt| {
                 let inst = &mut InstN::new(args, 2, 0, tgt);
-                let args = args2.iter().map(|&c| Term::Constant(c).visit_cloned(inst)).collect();
+                let args = args2.iter().map(|&c| Term::Const(c).visit_cloned(inst)).collect();
                 Term::Functor { nr, args }
               };
               Formula::forall(
@@ -1957,7 +1972,7 @@ struct Exportable;
 impl Visit for Exportable {
   fn visit_term(&mut self, tm: &Term) {
     match tm {
-      Term::Constant(_) => panic!("local constant in exportable item"),
+      Term::Const(_) => panic!("local constant in exportable item"),
       Term::PrivFunc { .. } => panic!("private function in exportable item"),
       _ => self.super_visit_term(tm),
     }
@@ -1993,7 +2008,7 @@ trait ReadProof {
 
   /// Changes the thesis from `ex x st P(x)` to `P(v)`,
   /// where `v` is the last `fixed_var` to be introduced
-  fn take_as_var(&mut self, elab: &mut Analyzer, v: ConstId) { self.take(elab, Term::Constant(v)); }
+  fn take_as_var(&mut self, elab: &mut Analyzer, v: ConstId) { self.take(elab, Term::Const(v)); }
 
   /// Changes the thesis from `conjs & rest` to `rest`
   fn thus(&mut self, elab: &mut Analyzer, conjs: Vec<Formula>);
@@ -2171,7 +2186,7 @@ impl VisitMut for AbstractLocus {
   fn visit_term(&mut self, tm: &mut Term) {
     match tm {
       Term::Bound(n) => n.0 += self.0,
-      Term::Constant(_) => panic!("unexpected local constant"),
+      Term::Const(_) => panic!("unexpected local constant"),
       Term::Locus(LocusId(n)) => *tm = Term::Bound(BoundId(*n as _)),
       Term::It => panic!("unexpected 'it'"),
       _ => self.super_visit_term(tm),
@@ -2585,7 +2600,7 @@ impl VisitMut for ToLocus<'_> {
   fn visit_term(&mut self, tm: &mut Term) {
     loop {
       match *tm {
-        Term::Constant(c) => *tm = Term::Locus(self.get(c)),
+        Term::Const(c) => *tm = Term::Locus(self.get(c)),
         Term::Infer(n) => {
           *tm = self.infer_const[n].def.clone();
           continue
@@ -2607,13 +2622,13 @@ struct MakeSelector<'a> {
 
 impl VisitMut for MakeSelector<'_> {
   fn visit_term(&mut self, tm: &mut Term) {
-    if let Term::Constant(c) = tm {
+    if let Term::Const(c) = tm {
       if let Some(i) = c.0.checked_sub(self.fixed_vars) {
         *tm = match self.terms[i as usize] {
           Ok(ref t) => (**t).clone(),
           Err(nr) => Term::Selector {
             nr,
-            args: (0..=self.base).map(|i| Term::Constant(self.to_const[LocusId(i)])).collect(),
+            args: (0..=self.base).map(|i| Term::Const(self.to_const[LocusId(i)])).collect(),
           },
         }
       }
@@ -2626,7 +2641,7 @@ impl VisitMut for MakeSelector<'_> {
 struct PendingDef {
   kind: ConstrKind,
   df: Box<Definiens>,
-  label: Option<(LabelId, String)>,
+  label: Option<(Option<LabelId>, String)>,
   thm: Box<Formula>,
 }
 
@@ -2776,7 +2791,7 @@ impl BlockReader {
       if let Some(mut tm) = tm.as_deref() {
         loop {
           match *tm {
-            Term::Constant(c) if self.locus(c) == i => continue 'next,
+            Term::Const(c) if self.locus(c) == i => continue 'next,
             Term::Infer(n) => tm = &ic[n].def,
             _ => break,
           }
@@ -2797,7 +2812,7 @@ impl BlockReader {
     let mut properties = PropertiesBuilder::new(&visible);
     let (redefines, superfluous, it_type);
     if it.redef {
-      let args: Box<[_]> = pat.args().iter().map(|v| Term::Constant(v.var())).collect();
+      let args: Box<[_]> = pat.args().iter().map(|v| Term::Const(v.var())).collect();
       let pat = elab.notations[PKC::Func].iter().rev().find(|pat| {
         pat.fmt == fmt
           && !matches!(pat.kind, PatternKind::Func(nr)
@@ -2811,7 +2826,7 @@ impl BlockReader {
       (redefines, superfluous) = (Some(nr), (self.primary.len() - c.primary.len()) as u8);
       properties.props = c.properties.offset(superfluous);
       let args2: Box<[_]> =
-        self.to_const.0[superfluous as usize..].iter().map(|c| Term::Constant(*c)).collect();
+        self.to_const.0[superfluous as usize..].iter().map(|c| Term::Const(*c)).collect();
       let mut inst = Inst::new(&elab.g.constrs, &elab.lc, &args2, 0);
       it_type = elab.elab_spec(spec, &c.ty.visit_cloned(&mut inst));
       if spec.is_some() {
@@ -2828,7 +2843,7 @@ impl BlockReader {
       cc.0[CorrCondKind::Consistency] = value.mk_consistency(&elab.g, Some(&it_type));
       if let Some(nr) = redefines {
         let args =
-          self.to_const.0[superfluous as usize..].iter().map(|c| Term::Constant(*c)).collect();
+          self.to_const.0[superfluous as usize..].iter().map(|c| Term::Const(*c)).collect();
         let defined = Term::Functor { nr, args }.it_eq(&elab.g);
         cc.0[CorrCondKind::Compatibility] =
           Some(value.mk_compatibility(&elab.g, Some(&it_type), &defined));
@@ -2926,7 +2941,7 @@ impl BlockReader {
     let mut properties = PropertiesBuilder::new(&visible);
     let (redefines, superfluous, pos);
     if it.redef {
-      let args: Box<[_]> = pat.args.iter().map(|v| Term::Constant(v.var())).collect();
+      let args: Box<[_]> = pat.args.iter().map(|v| Term::Const(v.var())).collect();
       let pat = elab.notations[PKC::Pred].iter().rev().find(|pat| {
         pat.fmt == fmt
           && !matches!(pat.kind, PatternKind::Pred(nr)
@@ -2948,14 +2963,13 @@ impl BlockReader {
       cc.0[CorrCondKind::Consistency] = value.mk_consistency(&elab.g, None);
       if let Some(nr) = redefines {
         let args =
-          self.to_const.0[superfluous as usize..].iter().map(|c| Term::Constant(*c)).collect();
+          self.to_const.0[superfluous as usize..].iter().map(|c| Term::Const(*c)).collect();
         cc.0[CorrCondKind::Compatibility] =
           Some(value.mk_compatibility(&elab.g, None, &Formula::Pred { nr, args }));
       }
       properties.formula = Some(value.as_formula(&elab.g))
     } else if let Some(nr) = redefines {
-      let args =
-        self.to_const.0[superfluous as usize..].iter().map(|c| Term::Constant(*c)).collect();
+      let args = self.to_const.0[superfluous as usize..].iter().map(|c| Term::Const(*c)).collect();
       properties.formula = Some(Box::new(Formula::Pred { nr, args }))
     }
     elab.elab_corr_conds(cc, &it.conds, &it.corr);
@@ -3024,7 +3038,7 @@ impl BlockReader {
       ast::DefModeKind::Standard { spec, def } => {
         let (redefines, superfluous, it_type);
         if it.redef {
-          let args: Box<[_]> = pat.args.iter().map(|v| Term::Constant(v.var())).collect();
+          let args: Box<[_]> = pat.args.iter().map(|v| Term::Const(v.var())).collect();
           let pat = elab.notations[PKC::Mode].iter().rev().find(|pat| {
             pat.fmt == fmt
               && !matches!(pat.kind, PatternKind::Mode(nr)
@@ -3040,7 +3054,7 @@ impl BlockReader {
             properties.props.set(PropertyKind::Sethood)
           }
           let args2: Vec<_> =
-            self.to_const.0[superfluous as usize..].iter().map(|c| Term::Constant(*c)).collect();
+            self.to_const.0[superfluous as usize..].iter().map(|c| Term::Const(*c)).collect();
           let tgt = c.ty.visit_cloned(&mut Inst::new(&elab.g.constrs, &elab.lc, &args2, 0));
           it_type = elab.elab_spec(spec.as_deref(), &tgt);
           if spec.is_some() {
@@ -3058,7 +3072,7 @@ impl BlockReader {
           cc.0[CorrCondKind::Consistency] = value.mk_consistency(&elab.g, Some(&it_type));
           if let Some(nr) = redefines {
             let args =
-              self.to_const.0[superfluous as usize..].iter().map(|c| Term::Constant(*c)).collect();
+              self.to_const.0[superfluous as usize..].iter().map(|c| Term::Const(*c)).collect();
             let ty = Box::new(Type {
               kind: TypeKind::Mode(nr),
               attrs: (Attrs::EMPTY, it_type.attrs.1.clone()),
@@ -3146,7 +3160,7 @@ impl BlockReader {
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     let visible: Box<[_]> = pat.args.iter().map(|v| self.locus(v.var())).collect();
     let (redefines, superfluous, pos) = if it.redef {
-      let args: Box<[_]> = pat.args.iter().map(|v| Term::Constant(v.var())).collect();
+      let args: Box<[_]> = pat.args.iter().map(|v| Term::Const(v.var())).collect();
       let pat = elab.notations[PKC::Attr].iter().rev().find(|pat| {
         pat.fmt == fmt
           && !matches!(pat.kind, PatternKind::Attr(nr)
@@ -3166,7 +3180,7 @@ impl BlockReader {
       cc.0[CorrCondKind::Consistency] = value.mk_consistency(&elab.g, None);
       if let Some(nr) = redefines {
         let args =
-          self.to_const.0[superfluous as usize..].iter().map(|c| Term::Constant(*c)).collect();
+          self.to_const.0[superfluous as usize..].iter().map(|c| Term::Const(*c)).collect();
         cc.0[CorrCondKind::Compatibility] =
           Some(value.mk_compatibility(&elab.g, None, &Formula::Attr { nr, args }));
       }
@@ -3295,8 +3309,7 @@ impl BlockReader {
       field_fmt.push(fmt);
       ty.visit(&mut mk_sel);
       let mut iter = parents.iter().zip(&mut prefixes).filter_map(|(parent, fields)| {
-        let arg =
-          Term::Constant(elab.lc.fixed_var.push(FixedVar { ty: parent.clone(), def: None }));
+        let arg = Term::Const(elab.lc.fixed_var.push(FixedVar { ty: parent.clone(), def: None }));
         for pat in elab.notations[PKC::Sel].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&elab.g, &elab.lc, std::slice::from_ref(&arg)) {
@@ -3569,7 +3582,7 @@ impl BlockReader {
   ) -> PatternFuncResult {
     let fmt = elab.formats[&Format::Func(pat.to_format())];
     let visible: Box<[_]> = pat.args().iter().map(|v| self.locus(v.var())).collect();
-    let args: Box<[_]> = pat.args().iter().map(|v| Term::Constant(v.var())).collect();
+    let args: Box<[_]> = pat.args().iter().map(|v| Term::Const(v.var())).collect();
     for pat in elab.notations[PKC::Func].iter().rev() {
       if pat.fmt == fmt {
         if let Some(subst) = pat.check_types(&elab.g, &elab.lc, &args) {
@@ -3629,7 +3642,7 @@ impl BlockReader {
       self.to_locus(elab, |l| (lhs_pat.args.visit_cloned(l), rhs_pat.args.visit_cloned(l)));
     let f = Formula::mk_and_with(|conjs| {
       conjs.extend(
-        eq_args.iter().map(|&(c1, c2)| elab.g.reqs.mk_eq(Term::Constant(c1), Term::Constant(c2))),
+        eq_args.iter().map(|&(c1, c2)| elab.g.reqs.mk_eq(Term::Const(c1), Term::Const(c2))),
       );
       let f = elab.g.reqs.mk_eq(
         Term::Functor { nr: lhs_pat.nr, args: lhs_pat.args },
@@ -3651,7 +3664,7 @@ impl BlockReader {
     fn is_ssubterm(ctx: &mut EqCtx<'_>, sup: &Term, sub: &Term) -> bool {
       use Term::*;
       match sup {
-        Numeral(_) | Locus(_) | Bound(_) | Constant(_) | Infer(_) => ().eq_term(ctx, sup, sub),
+        Numeral(_) | Locus(_) | Bound(_) | Const(_) | Infer(_) => ().eq_term(ctx, sup, sub),
         PrivFunc { value, .. } => is_ssubterm(ctx, value, sub),
         Functor { args, .. }
         | SchFunc { args, .. }
@@ -3717,7 +3730,7 @@ impl BlockReader {
     let fmt_orig = elab.formats[&Format::Pred(orig.to_format())];
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     CheckAccess::with(&primary, |occ| orig.args.iter().for_each(|v| occ.set(self.locus(v.var()))));
-    let args: Box<[_]> = orig.args.iter().map(|v| Term::Constant(v.var())).collect();
+    let args: Box<[_]> = orig.args.iter().map(|v| Term::Const(v.var())).collect();
     let pat = elab.notations[PKC::Pred].iter().rev().find(|pat| {
       pat.fmt == fmt_orig
         && !matches!(pat.kind, PatternKind::Pred(nr)
@@ -3748,7 +3761,7 @@ impl BlockReader {
     CheckAccess::with(&primary, |occ| {
       orig.args().iter().for_each(|v| occ.set(self.locus(v.var())))
     });
-    let args: Box<[_]> = orig.args().iter().map(|v| Term::Constant(v.var())).collect();
+    let args: Box<[_]> = orig.args().iter().map(|v| Term::Const(v.var())).collect();
     let pat = elab.notations[PKC::Func].iter().rev().find(|pat| {
       pat.fmt == fmt_orig
         && !matches!(pat.kind, PatternKind::Func(nr)
@@ -3777,7 +3790,7 @@ impl BlockReader {
     let fmt_orig = elab.formats[&Format::Mode(orig.to_format())];
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     CheckAccess::with(&primary, |occ| orig.args.iter().for_each(|v| occ.set(self.locus(v.var()))));
-    let args: Box<[_]> = orig.args.iter().map(|v| Term::Constant(v.var())).collect();
+    let args: Box<[_]> = orig.args.iter().map(|v| Term::Const(v.var())).collect();
     let pat = elab.notations[PKC::Mode].iter().rev().find(|pat| {
       pat.fmt == fmt_orig
         && !matches!(pat.kind, PatternKind::Mode(nr)
@@ -3806,7 +3819,7 @@ impl BlockReader {
     let fmt_orig = elab.formats[&Format::Attr(orig.to_format())];
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     CheckAccess::with(&primary, |occ| orig.args.iter().for_each(|v| occ.set(self.locus(v.var()))));
-    let args: Box<[_]> = orig.args.iter().map(|v| Term::Constant(v.var())).collect();
+    let args: Box<[_]> = orig.args.iter().map(|v| Term::Const(v.var())).collect();
     let pat = elab.notations[PKC::Attr].iter().rev().find(|pat| {
       pat.fmt == fmt_orig
         && !matches!(pat.kind, PatternKind::Attr(nr)

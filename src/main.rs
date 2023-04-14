@@ -351,7 +351,7 @@ impl Term {
       Term::discr(this).cmp(&Term::discr(other)).then_with(|| match (this, other) {
         (Locus(LocusId(n1)), Locus(LocusId(n2))) => n1.cmp(n2),
         (Bound(BoundId(n1)), Bound(BoundId(n2)))
-        | (Constant(ConstId(n1)), Constant(ConstId(n2)))
+        | (Const(ConstId(n1)), Const(ConstId(n2)))
         | (Infer(InferId(n1)), Infer(InferId(n2)))
         | (FreeVar(FVarId(n1)), FreeVar(FVarId(n2)))
         | (EqClass(EqClassId(n1)), EqClass(EqClassId(n2)))
@@ -792,7 +792,7 @@ trait Equate {
       (&Locus(nr), _) if self.locus_var_left(ctx, nr, t2) => true,
       (&Locus(n1), &Locus(n2)) if self.eq_locus_var(ctx, n1, n2) => true,
       (Bound(n1), Bound(n2)) => n1.0 + ctx.lift1 == n2.0 + ctx.lift2,
-      (Constant(ConstId(n1)), Constant(ConstId(n2)))
+      (Const(ConstId(n1)), Const(ConstId(n2)))
       | (FreeVar(FVarId(n1)), FreeVar(FVarId(n2)))
       | (Numeral(n1), Numeral(n2)) => n1 == n2,
       (EqClass(EqClassId(n1)), EqClass(EqClassId(n2)))
@@ -1070,7 +1070,7 @@ macro_rules! mk_visit {
         match tm {
           Term::Locus(_)
           | Term::Bound(_)
-          | Term::Constant(_)
+          | Term::Const(_)
           | Term::EqClass(_)
           | Term::EqMark(_)
           | Term::Infer(_)
@@ -1459,7 +1459,7 @@ impl Term {
   fn get_type_uncached(&self, g: &Global, lc: &LocalContext) -> Type {
     let ty = match *self {
       Term::Bound(nr) => lc.bound_var[nr].clone(),
-      Term::Constant(nr) => {
+      Term::Const(nr) => {
         let base = lc.bound_var.len() as u32;
         lc.fixed_var[nr].ty.visit_cloned(&mut OnVarMut(|nr| *nr += base))
       }
@@ -2465,7 +2465,7 @@ impl VisitMut for InternConst<'_> {
     // vprintln!("InternConst {foo} @ {} <- {tm:?}", self.depth);
     match tm {
       Term::Locus(_) | Term::Bound(_) => self.only_constants = false,
-      &mut Term::Constant(nr) => {
+      &mut Term::Const(nr) => {
         let mut eq = None;
         if let Some((ref fv, _)) = self.lc.fixed_var[nr].def {
           let mut fv = (**fv).visit_cloned(&mut ExpandPrivFunc(&self.g.constrs, self.lc));
@@ -2592,7 +2592,7 @@ impl VisitMut for Descope {
   fn visit_term(&mut self, tm: &mut Term) {
     loop {
       match *tm {
-        Term::Constant(c) => assert!(c.0 < self.num_consts, "nongeneralizable variable"),
+        Term::Const(c) => assert!(c.0 < self.num_consts, "nongeneralizable variable"),
         Term::Infer(ref mut nr) =>
           if let Some(i) = nr.0.checked_sub(self.infer_const) {
             if let Some(nr2) = self.remap.get(nr) {
@@ -2745,7 +2745,7 @@ impl LocalContext {
             fn visit_term(&mut self, tm: &Term) {
               self.super_visit_term(tm);
               match tm {
-                Term::Constant(nr) => self.found |= nr.0 >= self.num_consts,
+                Term::Const(nr) => self.found |= nr.0 >= self.num_consts,
                 Term::Infer(nr) => self.found |= self.has_local_const.contains(nr),
                 _ => {}
               }
@@ -2841,7 +2841,7 @@ impl VisitMut for Abstract<'_> {
   fn visit_term(&mut self, tm: &mut Term) {
     match tm {
       Term::Bound(nr) => nr.0 += self.lift,
-      Term::Constant(nr) if nr.0 >= self.base => {
+      Term::Const(nr) if nr.0 >= self.base => {
         let i = nr.0 - self.base;
         assert!(i < self.lift, "invalid local constant in thesis");
         *tm = Term::Bound(BoundId(i))
@@ -3042,6 +3042,7 @@ pub struct Config {
 
   pub accom_enabled: bool,
   pub parser_enabled: bool,
+  pub nameck_enabled: bool,
   pub analyzer_enabled: bool,
   pub analyzer_full: bool,
   pub checker_enabled: bool,
@@ -3117,6 +3118,7 @@ fn main() {
 
     accom_enabled: true,
     parser_enabled: true,
+    nameck_enabled: true,
     analyzer_enabled: true,
     analyzer_full: true,
     checker_enabled: true,
@@ -3149,6 +3151,7 @@ fn main() {
   // path.with_reader(&cfg, |v| v.run_checker(&path));
   // print_stats_and_exit(cfg.parallelism);
   cfg.parser_enabled = std::env::var("PARSER").is_ok();
+  cfg.nameck_enabled = std::env::var("NAME_CHECK").is_ok();
   cfg.analyzer_enabled = std::env::var("NO_ANALYZER").is_err();
   cfg.analyzer_full = cfg.analyzer_enabled;
   cfg.checker_enabled = std::env::var("NO_CHECKER").is_err();
@@ -3157,6 +3160,7 @@ fn main() {
   cfg.xml_export = std::env::var("XML_EXPORT").is_ok();
   cfg.exporter_enabled = std::env::var("NO_EXPORT").is_err();
   cfg.accom_enabled |= cfg.parser_enabled; // parser needs accom
+  cfg.nameck_enabled |= cfg.parser_enabled; // parser needs nameck
   cfg.analyzer_enabled |= cfg.exporter_enabled; // exporter needs (quick) analyzer
   cfg.analyzer_full |= cfg.checker_enabled; // checker needs analyzer_full (if analyzer is used)
   cfg.one_item = std::env::var("ONE_ITEM").is_ok();

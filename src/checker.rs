@@ -511,7 +511,7 @@ pub trait Open {
 struct OpenAsConst<'a, 'b>(&'b mut Checker<'a>);
 
 impl Open for OpenAsConst<'_, '_> {
-  fn mk_var(n: u32) -> Term { Term::Constant(ConstId(n)) }
+  fn mk_var(n: u32) -> Term { Term::Const(ConstId(n)) }
   fn base(&self) -> u32 { self.0.lc.fixed_var.len() as u32 }
   fn new_var(&mut self, mut ty: Type) {
     ty.visit(&mut self.0.intern_const());
@@ -1000,7 +1000,7 @@ impl<'a> SchemeCtx<'a> {
         },
       (Locus(LocusId(n1)), Locus(LocusId(n2))) => n1 == n2,
       (Bound(BoundId(n1)), Bound(BoundId(n2)))
-      | (Constant(ConstId(n1)), Constant(ConstId(n2)))
+      | (Const(ConstId(n1)), Const(ConstId(n2)))
       | (FreeVar(FVarId(n1)), FreeVar(FVarId(n2)))
       | (Numeral(n1), Numeral(n2)) => n1 == n2,
       (Infer(InferId(n1)), Infer(InferId(n2))) if n1 == n2 => true,

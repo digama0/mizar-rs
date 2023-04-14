@@ -1,12 +1,9 @@
 use crate::mk_id;
 use crate::types::*;
-use enum_map::Enum;
 
 #[derive(Debug, Default)]
 pub struct Variable {
   pub pos: Position,
-  /// 'idnr' attribute, LocusObj.nVarId, VariableObj.nIdent
-  pub id: u32,
   /// 'varnr' attribute, MSLocusObj.nVarNr, MSVariableObj.nVarNr
   pub var: Option<ConstId>,
   pub spelling: String,
@@ -14,23 +11,22 @@ pub struct Variable {
 
 impl Variable {
   pub fn var(&self) -> ConstId { self.var.unwrap() }
+
+  pub fn to_term(&self) -> Term {
+    Term::Var { pos: self.pos, kind: self.var.map(VarKind::Const), spelling: self.spelling.clone() }
+  }
 }
 
-#[derive(Copy, Clone, Debug, Enum)]
+#[derive(Copy, Clone, Debug)]
 pub enum VarKind {
-  Unknown,
-  Free,
-  Reserved,
-  Bound,
-  Const,
-  DefConst,
-  SchFunc,
-  PrivFunc,
-  SchPred,
-  PrivPred,
+  Bound(BoundId),
+  Const(ConstId),
 }
-impl Default for VarKind {
-  fn default() -> Self { Self::Unknown }
+
+#[derive(Copy, Clone, Debug)]
+pub enum PrivFuncKind {
+  PrivFunc(PrivFuncId),
+  SchFunc(SchFuncId),
 }
 
 #[derive(Debug)]
@@ -43,17 +39,14 @@ pub enum Term {
     pos: Position,
     value: u32,
   },
-  Simple {
+  Var {
     pos: Position,
-    kind: VarKind,
-    var: u32,
+    kind: Option<VarKind>,
     spelling: String,
-    origin: VarKind,
   },
   PrivFunc {
     pos: Position,
-    kind: VarKind,
-    var: u32,
+    kind: Option<PrivFuncKind>,
     spelling: String,
     args: Vec<Term>,
   },
@@ -87,7 +80,7 @@ pub enum Term {
   InternalSelector {
     pos: Position,
     sym: (SelSymId, String),
-    id: ConstId,
+    id: Option<ConstId>,
   },
   Qua {
     pos: Position,
@@ -113,7 +106,7 @@ impl Term {
     match self {
       Term::Placeholder { pos, .. }
       | Term::Numeral { pos, .. }
-      | Term::Simple { pos, .. }
+      | Term::Var { pos, .. }
       | Term::PrivFunc { pos, .. }
       | Term::Infix { pos, .. }
       | Term::Bracket { pos, .. }
@@ -138,7 +131,7 @@ pub enum Type {
   Mode { pos: Position, sym: (ModeSymId, String), args: Vec<Term> },
   Struct { pos: Position, sym: (StructSymId, String), args: Vec<Term> },
   Cluster { pos: Position, attrs: Vec<Attr>, ty: Box<Type> },
-  Reservation { pos: Position, nr: Option<ReservedId>, subst: Vec<(VarKind, u32)> },
+  Reservation { pos: Position, nr: Option<ReservedId>, subst: Vec<VarKind> },
 }
 impl Type {
   pub fn pos(&self) -> Position {
@@ -149,6 +142,12 @@ impl Type {
       | Type::Reservation { pos, .. } => *pos,
     }
   }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum PrivPredKind {
+  PrivPred(PrivPredId),
+  SchPred(SchPredId),
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -204,8 +203,7 @@ pub enum Formula {
   },
   PrivPred {
     pos: Position,
-    kind: VarKind,
-    var: u32,
+    kind: Option<PrivPredKind>,
     spelling: String,
     args: Vec<Term>,
   },
@@ -256,6 +254,12 @@ impl Formula {
 pub struct Proposition {
   pub label: Option<Box<Label>>,
   pub f: Formula,
+}
+
+#[derive(Debug)]
+pub enum SchRef {
+  Resolved(ArticleId, SchId),
+  UnresolvedPriv(String),
 }
 
 #[derive(Debug)]
@@ -506,7 +510,7 @@ pub enum ClusterDeclKind {
 #[derive(Debug)]
 pub struct Label {
   pub pos: Position,
-  pub id: (LabelId, String),
+  pub id: (Option<LabelId>, String),
 }
 
 #[derive(Debug)]
@@ -592,7 +596,7 @@ pub struct Property {
 #[derive(Debug)]
 pub struct SchemeHead {
   pub sym: Option<String>,
-  pub nr: SchId,
+  pub nr: Option<SchId>,
   pub groups: Vec<SchemeBinderGroup>,
   pub concl: Formula,
   pub prems: Vec<Proposition>,

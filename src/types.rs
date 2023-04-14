@@ -611,7 +611,7 @@ pub enum Term {
   /// Bound var numbers are shifted from mizar to start at 0
   Bound(BoundId),
   /// Constant numbers are shifted from mizar to start at 0
-  Constant(ConstId),
+  Const(ConstId),
   /// ikEqConst: This is used by the equalizer, it is not read in
   EqClass(EqClassId),
   /// Not in mizar. Used for term sharing in the equalizer
@@ -705,7 +705,7 @@ impl Term {
     match self {
       Term::Locus(_) => b'A',
       Term::Bound(_) => b'B',
-      Term::Constant(_) => b'C',
+      Term::Const(_) => b'C',
       Term::Infer(_) => b'D',
       Term::EqClass(..) => b'E',
       Term::EqMark(_) => b'M', // NEW

@@ -1,9 +1,10 @@
 #![warn(unused)]
 use super::XmlReader;
-use crate::ast::*;
+use crate::ast::{SchRef, *};
 use crate::types::{
-  ArticleId, AttrSymId, ConstId, DefId, FuncSymId, LabelId, LeftBrkSymId, LocusId, ModeSymId,
-  Position, PredSymId, PropertyKind, RightBrkSymId, SchId, SelSymId, StructSymId, ThmId,
+  ArticleId, AttrSymId, BoundId, ConstId, DefId, FuncSymId, LabelId, LeftBrkSymId, LocusId,
+  ModeSymId, Position, PredSymId, PrivFuncId, PrivPredId, PropertyKind, RightBrkSymId, SchFuncId,
+  SchId, SchPredId, SelSymId, StructSymId, ThmId,
 };
 use crate::{types, MizPath};
 use enum_map::Enum;
@@ -30,7 +31,24 @@ impl MizPath {
   }
 }
 
-impl std::str::FromStr for VarKind {
+#[derive(Copy, Clone, Debug, Enum)]
+pub enum IdentKind {
+  Unknown,
+  Free,
+  Reserved,
+  Bound,
+  Const,
+  DefConst,
+  SchFunc,
+  PrivFunc,
+  SchPred,
+  PrivPred,
+}
+impl Default for IdentKind {
+  fn default() -> Self { Self::Unknown }
+}
+
+impl std::str::FromStr for IdentKind {
   type Err = ();
   fn from_str(s: &str) -> Result<Self, Self::Err> {
     match s {
@@ -136,10 +154,9 @@ impl XmlReader {
       match attr.key {
         b"line" => v.pos.line = self.get_attr(&attr.value),
         b"col" => v.pos.col = self.get_attr(&attr.value),
-        b"idnr" => v.id = self.get_attr::<u32>(&attr.value) - 1,
         b"varnr" => v.var = self.get_attr::<u32>(&attr.value).checked_sub(1).map(ConstId),
         b"spelling" => v.spelling = self.get_attr_unescaped(&attr.value),
-        // TODO: origin, kind, serialnr, varnr
+        // omitted: origin, kind, serialnr, idnr
         _ => {}
       }
     }
@@ -168,19 +185,23 @@ impl MsmParser {
     std::iter::from_fn(|| self.parse_variable().map(|v| *v)).collect()
   }
 
-  fn parse_substitution(&mut self) -> Vec<(VarKind, u32)> {
+  fn parse_substitution(&mut self) -> Vec<VarKind> {
     std::iter::from_fn(|| {
       let e = self.r.try_read_start(&mut self.buf, Some(b"Substitution")).ok()?;
       let (mut y1, mut y2) = <_>::default();
       for attr in e.attributes().map(Result::unwrap) {
         match attr.key {
-          b"y1" => y1 = VarKind::from_usize(self.r.get_attr::<usize>(&attr.value) + 1),
+          b"y1" => y1 = IdentKind::from_usize(self.r.get_attr::<usize>(&attr.value) + 1),
           b"y2" => y2 = self.r.get_attr::<u32>(&attr.value) - 1,
           _ => {}
         }
       }
       self.r.end_tag(&mut self.buf);
-      Some((y1, y2))
+      Some(match y1 {
+        IdentKind::Bound => VarKind::Bound(BoundId(y2)),
+        IdentKind::Const | IdentKind::DefConst => VarKind::Const(ConstId(y2)),
+        _ => unreachable!(),
+      })
     })
     .collect()
   }
@@ -410,7 +431,7 @@ impl MsmParser {
         let (mut spelling, mut nr) = <_>::default();
         for attr in e.attributes().map(Result::unwrap) {
           match attr.key {
-            b"nr" => nr = SchId(self.r.get_attr::<u32>(&attr.value) - 1),
+            b"nr" => nr = Some(SchId(self.r.get_attr::<u32>(&attr.value) - 1)),
             b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
             _ => {}
           }
@@ -532,7 +553,8 @@ impl MsmParser {
           }
         }
         end_tag = true;
-        ItemKind::Take(vec![TakeDecl { var, term: term.unwrap() }])
+        let term = term.unwrap_or_else(|| Box::new(var.as_deref().unwrap().to_term()));
+        ItemKind::Take(vec![TakeDecl { var, term }])
       }
       b"Per-Cases" => ItemKind::PerCasesHead(self.parse_justification()),
       b"Regular-Statement" => {
@@ -861,7 +883,7 @@ impl MsmParser {
             return Elem::Inference(pos, InferenceKind::By { link }, refs)
           }
           b"Scheme-Justification" => {
-            let (mut pos, (mut art, mut sch, mut id)) = <(Position, _)>::default();
+            let (mut pos, (mut art, mut sch, mut id, mut spelling)) = <(Position, _)>::default();
             for attr in e.attributes().map(Result::unwrap) {
               match attr.key {
                 b"line" => pos.line = self.r.get_attr(&attr.value),
@@ -869,6 +891,7 @@ impl MsmParser {
                 b"nr" => art = self.r.get_attr(&attr.value),
                 b"idnr" => id = self.r.get_attr::<u32>(&attr.value),
                 b"schnr" => sch = self.r.get_attr::<u32>(&attr.value),
+                b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
                 _ => {}
               }
             }
@@ -880,7 +903,14 @@ impl MsmParser {
                 _ => panic!("unexpected element"),
               }
             }
-            let sch = (ArticleId(art), SchId(if art == 0 { sch - 1 } else { id - 1 }));
+            let sch = if art == ArticleId::SELF {
+              match sch.checked_sub(1) {
+                Some(sch) => SchRef::Resolved(art, SchId(sch)),
+                None => SchRef::UnresolvedPriv(spelling),
+              }
+            } else {
+              SchRef::Resolved(art, SchId(id - 1))
+            };
             return Elem::Inference(pos, InferenceKind::From { sch }, refs)
           }
           b"Implicitly-Qualified-Segment" => {
@@ -982,19 +1012,23 @@ impl MsmParser {
               match attr.key {
                 b"line" => pos.line = self.r.get_attr(&attr.value),
                 b"col" => pos.col = self.r.get_attr(&attr.value),
-                b"labelnr" => id = self.r.get_attr::<u32>(&attr.value).checked_sub(1),
+                b"labelnr" => id = self.r.get_attr::<u32>(&attr.value).checked_sub(1).map(LabelId),
                 b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
                 _ => {}
               }
             }
-            Elem::Label(id.map(|id| Box::new(Label { pos, id: (LabelId(id), spelling) })))
+            Elem::Label((!spelling.is_empty()).then(|| Box::new(Label { pos, id: (id, spelling) })))
           }
           b"Link" => Elem::Link(self.r.get_pos(&e)),
           b"Local-Reference" => {
             let pos = self.r.get_pos(&e);
-            let lab =
-              self.r.get_attr::<u32>(&e.try_get_attribute(b"labelnr").unwrap().unwrap().value);
-            let kind = ReferenceKind::Priv(lab.checked_sub(1).map(LabelId));
+            let kind = if self.msm {
+              let attr = e.try_get_attribute(b"labelnr").unwrap().unwrap();
+              ReferenceKind::Priv(self.r.get_attr::<u32>(&attr.value).checked_sub(1).map(LabelId))
+            } else {
+              let attr = e.try_get_attribute(b"spelling").unwrap().unwrap();
+              ReferenceKind::UnresolvedPriv(self.r.get_attr_unescaped(&attr.value))
+            };
             Elem::Reference(Reference { pos, kind })
           }
           b"Theorem-Reference" => {
@@ -1058,40 +1092,52 @@ impl MsmParser {
             Elem::Term(Box::new(Term::Numeral { pos, value }))
           }
           b"Simple-Term" => {
-            let (mut pos, (mut kind, mut var, mut spelling, mut origin)) =
-              <(Position, _)>::default();
+            let (mut pos, (mut kind, mut var, mut spelling)) = <(Position, _)>::default();
             for attr in e.attributes().map(Result::unwrap) {
               match attr.key {
                 b"line" => pos.line = self.r.get_attr(&attr.value),
                 b"col" => pos.col = self.r.get_attr(&attr.value),
                 // b"idnr" => sym = self.r.get_attr::<u32>(&attr.value) - 1,
                 b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
-                b"origin" => origin = self.r.get_attr(&attr.value),
+                // b"origin" => origin = self.r.get_attr(&attr.value),
                 b"kind" => kind = self.r.get_attr(&attr.value),
                 // b"serialnr" => serial = self.r.get_attr(&attr.value),
                 b"varnr" => var = self.r.get_attr::<u32>(&attr.value) - 1,
                 _ => {}
               }
             }
-            let term = Term::Simple { pos, kind, var, spelling, origin };
+            let kind = match kind {
+              IdentKind::Unknown => None,
+              IdentKind::Free => panic!("{pos:?}: unresolved free variable"),
+              IdentKind::Bound => Some(VarKind::Bound(BoundId(var))),
+              IdentKind::Const | IdentKind::DefConst => Some(VarKind::Const(ConstId(var))),
+              _ => unreachable!(),
+            };
+            let term = Term::Var { pos, kind, spelling };
             Elem::Term(Box::new(term))
           }
           b"Private-Functor-Term" => {
-            let (mut pos, (mut kind, mut var, mut spelling)) = <(Position, _)>::default();
+            let (mut pos, (mut shape, mut var, mut spelling)) = <(Position, _)>::default();
             for attr in e.attributes().map(Result::unwrap) {
               match attr.key {
                 b"line" => pos.line = self.r.get_attr(&attr.value),
                 b"col" => pos.col = self.r.get_attr(&attr.value),
                 // b"idnr" => id = self.r.get_attr::<u32>(&attr.value) - 1,
                 b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
-                b"shape" => kind = self.r.get_attr(&attr.value),
+                b"shape" => shape = self.r.get_attr(&attr.value),
                 // b"serialnr" => serial = self.r.get_attr(&attr.value),
                 b"nr" => var = self.r.get_attr::<u32>(&attr.value) - 1,
                 _ => {}
               }
             }
             let args = self.parse_terms();
-            let term = Term::PrivFunc { pos, kind, var, spelling, args };
+            let kind = match shape {
+              IdentKind::Unknown => None,
+              IdentKind::PrivFunc => Some(PrivFuncKind::PrivFunc(PrivFuncId(var))),
+              IdentKind::SchFunc => Some(PrivFuncKind::SchFunc(SchFuncId(var))),
+              _ => unreachable!(),
+            };
+            let term = Term::PrivFunc { pos, kind, spelling, args };
             return Elem::Term(Box::new(term))
           }
           b"Infix-Term" => {
@@ -1175,7 +1221,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value),
                 b"col" => pos.col = self.r.get_attr(&attr.value),
                 b"nr" => sym = SelSymId(self.r.get_attr::<u32>(&attr.value) - 1),
-                b"varnr" => id = ConstId(self.r.get_attr::<u32>(&attr.value) - 1),
+                b"varnr" => id = self.r.get_attr::<u32>(&attr.value).checked_sub(1).map(ConstId),
                 b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
                 _ => {}
               }
@@ -1354,21 +1400,26 @@ impl MsmParser {
             return Elem::Formula(Box::new(Formula::ChainPred { pos, first, rest }))
           }
           b"Private-Predicate-Formula" => {
-            let (mut pos, (mut kind, mut var, mut spelling)) = <(Position, _)>::default();
+            let (mut pos, (mut shape, mut var, mut spelling)) = <(Position, _)>::default();
             for attr in e.attributes().map(Result::unwrap) {
               match attr.key {
                 b"line" => pos.line = self.r.get_attr(&attr.value),
                 b"col" => pos.col = self.r.get_attr(&attr.value),
                 // b"idnr" => id = self.r.get_attr::<u32>(&attr.value) - 1,
                 b"spelling" => spelling = self.r.get_attr_unescaped(&attr.value),
-                b"shape" => kind = self.r.get_attr(&attr.value),
+                b"shape" => shape = self.r.get_attr(&attr.value),
                 b"nr" => var = self.r.get_attr::<u32>(&attr.value) - 1,
                 _ => {}
               }
             }
             let args = self.parse_terms();
-            let f = Formula::PrivPred { pos, kind, var, spelling, args };
-            return Elem::Formula(Box::new(f))
+            let kind = match shape {
+              IdentKind::Unknown => None,
+              IdentKind::PrivPred => Some(PrivPredKind::PrivPred(PrivPredId(var))),
+              IdentKind::SchPred => Some(PrivPredKind::SchPred(SchPredId(var))),
+              _ => unreachable!(),
+            };
+            return Elem::Formula(Box::new(Formula::PrivPred { pos, kind, spelling, args }))
           }
           b"Attributive-Formula" => Elem::Formula(Box::new(Formula::Attr {
             pos: self.r.get_pos(&e),
