@@ -2642,7 +2642,7 @@ impl<V: VisitMut> Visitable<V> for Assignment {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct FuncDef {
   primary: Box<[Type]>,
   ty: Box<Type>,
@@ -3080,10 +3080,11 @@ pub struct Config {
 }
 
 const DEBUG: bool = cfg!(debug_assertions);
+const COUNT_SKIPPED_ITEMS: bool = false;
 
 impl FormatterConfig {
   const DEFAULT: Self = Self {
-    enable_formatter: false,
+    enable_formatter: true,
     show_infer: true,
     show_only_infer: false,
     show_priv: false,

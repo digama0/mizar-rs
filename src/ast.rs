@@ -1,19 +1,25 @@
 use crate::mk_id;
 use crate::types::*;
+use std::rc::Rc;
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Variable {
   pub pos: Position,
   /// 'varnr' attribute, MSLocusObj.nVarNr, MSVariableObj.nVarNr
   pub var: Option<ConstId>,
-  pub spelling: String,
+  pub spelling: Rc<str>,
 }
 
 impl Variable {
-  pub fn var(&self) -> ConstId { self.var.unwrap() }
+  #[track_caller]
+  pub fn var(&self) -> ConstId { self.var.expect("variable is not resolved") }
 
   pub fn to_term(&self) -> Term {
-    Term::Var { pos: self.pos, kind: self.var.map(VarKind::Const), spelling: self.spelling.clone() }
+    Term::Var {
+      pos: self.pos,
+      kind: self.var.map(VarKind::Const),
+      spelling: (*self.spelling).into(),
+    }
   }
 }
 
@@ -21,6 +27,7 @@ impl Variable {
 pub enum VarKind {
   Bound(BoundId),
   Const(ConstId),
+  Reserved(ReservedId),
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -47,7 +54,7 @@ pub enum Term {
   PrivFunc {
     pos: Position,
     kind: Option<PrivFuncKind>,
-    spelling: String,
+    spelling: Rc<str>,
     args: Vec<Term>,
   },
   Infix {
@@ -96,6 +103,7 @@ pub enum Term {
     vars: Vec<BinderGroup>,
     scope: Box<Term>,
     compr: Option<Box<Formula>>,
+    nameck: Option<Box<crate::analyze::FraenkelNameckResult>>,
   },
   It {
     pos: Position,
@@ -124,6 +132,7 @@ impl Term {
 
 mk_id! {
   ReservedId(u32),
+  ResGroupId(u32),
 }
 
 #[derive(Debug)]
@@ -131,7 +140,7 @@ pub enum Type {
   Mode { pos: Position, sym: (ModeSymId, String), args: Vec<Term> },
   Struct { pos: Position, sym: (StructSymId, String), args: Vec<Term> },
   Cluster { pos: Position, attrs: Vec<Attr>, ty: Box<Type> },
-  Reservation { pos: Position, nr: Option<ReservedId>, subst: Vec<VarKind> },
+  Reservation { pos: Position, group: ResGroupId, subst: Vec<VarKind> },
 }
 impl Type {
   pub fn pos(&self) -> Position {
@@ -204,7 +213,7 @@ pub enum Formula {
   PrivPred {
     pos: Position,
     kind: Option<PrivPredKind>,
-    spelling: String,
+    spelling: Rc<str>,
     args: Vec<Term>,
   },
   Attr {
@@ -301,6 +310,7 @@ pub enum SchemeBinderGroup {
 #[derive(Debug)]
 pub struct BinderGroup {
   pub vars: Vec<Variable>,
+  // The vars list must be length 1 when this is None
   pub ty: Option<Box<Type>>,
 }
 
@@ -377,6 +387,10 @@ impl PatternFunc {
     pos
   }
   pub fn args(&self) -> &[Variable] {
+    let (PatternFunc::Func { args, .. } | PatternFunc::Bracket { args, .. }) = self;
+    args
+  }
+  pub fn args_mut(&mut self) -> &mut [Variable] {
     let (PatternFunc::Func { args, .. } | PatternFunc::Bracket { args, .. }) = self;
     args
   }
@@ -510,7 +524,7 @@ pub enum ClusterDeclKind {
 #[derive(Debug)]
 pub struct Label {
   pub pos: Position,
-  pub id: (Option<LabelId>, String),
+  pub id: (Option<LabelId>, Rc<str>),
 }
 
 #[derive(Debug)]
@@ -519,9 +533,9 @@ pub enum Assumption {
   Collective { pos: Position, conds: Vec<Proposition> },
 }
 impl Assumption {
-  pub fn conds(&self) -> &[Proposition] {
+  pub fn conds(&mut self) -> &mut [Proposition] {
     match self {
-      Assumption::Single { prop, .. } => std::slice::from_ref(prop),
+      Assumption::Single { prop, .. } => std::slice::from_mut(prop),
       Assumption::Collective { conds, .. } => conds,
     }
   }
@@ -595,7 +609,7 @@ pub struct Property {
 
 #[derive(Debug)]
 pub struct SchemeHead {
-  pub sym: Option<String>,
+  pub sym: Option<Rc<str>>,
   pub nr: Option<SchId>,
   pub groups: Vec<SchemeBinderGroup>,
   pub concl: Formula,
@@ -613,14 +627,18 @@ pub struct SchemeBlock {
 pub struct Reservation {
   pub vars: Vec<Variable>,
   pub tys: Option<Vec<Type>>,
-  pub fvars: Option<Vec<u32>>,
+  pub fvars: Option<IdxVec<BoundId, ReservedId>>,
   pub ty: Box<Type>,
 }
 
 #[derive(Debug)]
 pub struct Definition {
-  pub redef: bool,
   pub kind: DefinitionKind,
+  pub body: DefinitionBody,
+}
+#[derive(Debug)]
+pub struct DefinitionBody {
+  pub redef: bool,
   pub conds: Vec<CorrCond>,
   pub corr: Option<Correctness>,
   pub props: Vec<Property>,

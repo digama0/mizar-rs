@@ -181,15 +181,18 @@ impl<I, T> Default for IdxVec<I, T> {
 
 impl<I: Idx, T> Index<I> for IdxVec<I, T> {
   type Output = T;
+  #[track_caller]
   fn index(&self, index: I) -> &Self::Output { &self.0[I::into_usize(index)] }
 }
 
 impl<I: Idx, T> IndexMut<I> for IdxVec<I, T> {
+  #[track_caller]
   fn index_mut(&mut self, index: I) -> &mut Self::Output { &mut self.0[I::into_usize(index)] }
 }
 
 impl<I: Idx, T> Index<Range<I>> for IdxVec<I, T> {
   type Output = [T];
+  #[track_caller]
   fn index(&self, r: Range<I>) -> &Self::Output {
     &self.0[I::into_usize(r.start)..I::into_usize(r.end)]
   }

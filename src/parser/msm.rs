@@ -2,7 +2,7 @@
 use super::XmlReader;
 use crate::ast::{SchRef, *};
 use crate::types::{
-  ArticleId, AttrSymId, BoundId, ConstId, DefId, FuncSymId, LabelId, LeftBrkSymId, LocusId,
+  ArticleId, AttrSymId, BoundId, ConstId, DefId, FuncSymId, IdxVec, LabelId, LeftBrkSymId, LocusId,
   ModeSymId, Position, PredSymId, PrivFuncId, PrivPredId, PropertyKind, RightBrkSymId, SchFuncId,
   SchId, SchPredId, SelSymId, StructSymId, ThmId,
 };
@@ -33,7 +33,6 @@ impl MizPath {
 
 #[derive(Copy, Clone, Debug, Enum)]
 pub enum IdentKind {
-  Unknown,
   Free,
   Reserved,
   Bound,
@@ -45,7 +44,7 @@ pub enum IdentKind {
   PrivPred,
 }
 impl Default for IdentKind {
-  fn default() -> Self { Self::Unknown }
+  fn default() -> Self { Self::Free }
 }
 
 impl std::str::FromStr for IdentKind {
@@ -98,7 +97,7 @@ struct Block {
 impl ItemKind {
   fn corr_mut(&mut self) -> Option<(&mut Vec<CorrCond>, &mut Option<Correctness>)> {
     match self {
-      ItemKind::Definition(it) => Some((&mut it.conds, &mut it.corr)),
+      ItemKind::Definition(it) => Some((&mut it.body.conds, &mut it.body.corr)),
       ItemKind::Cluster(it) => Some((&mut it.conds, &mut it.corr)),
       ItemKind::IdentifyFunc(it) => Some((&mut it.conds, &mut it.corr)),
       ItemKind::Reduction(it) => Some((&mut it.conds, &mut it.corr)),
@@ -108,7 +107,7 @@ impl ItemKind {
 
   fn property_mut(&mut self) -> Option<&mut Vec<Property>> {
     match self {
-      ItemKind::Definition(it) => Some(&mut it.props),
+      ItemKind::Definition(it) => Some(&mut it.body.props),
       _ => None,
     }
   }
@@ -149,18 +148,18 @@ enum Elem {
 
 impl XmlReader {
   fn parse_variable_attrs(&mut self, e: &BytesStart<'_>) -> Box<Variable> {
-    let mut v = Box::<Variable>::default();
+    let (mut pos, mut var, mut spelling) = <(Position, _, String)>::default();
     for attr in e.attributes().map(Result::unwrap) {
       match attr.key {
-        b"line" => v.pos.line = self.get_attr(&attr.value),
-        b"col" => v.pos.col = self.get_attr(&attr.value),
-        b"varnr" => v.var = self.get_attr::<u32>(&attr.value).checked_sub(1).map(ConstId),
-        b"spelling" => v.spelling = self.get_attr_unescaped(&attr.value),
+        b"line" => pos.line = self.get_attr(&attr.value),
+        b"col" => pos.col = self.get_attr(&attr.value),
+        b"varnr" => var = self.get_attr::<u32>(&attr.value).checked_sub(1).map(ConstId),
+        b"spelling" => spelling = self.get_attr_unescaped(&attr.value),
         // omitted: origin, kind, serialnr, idnr
         _ => {}
       }
     }
-    v
+    Box::new(Variable { pos, var, spelling: spelling.into() })
   }
 }
 
@@ -191,7 +190,7 @@ impl MsmParser {
       let (mut y1, mut y2) = <_>::default();
       for attr in e.attributes().map(Result::unwrap) {
         match attr.key {
-          b"y1" => y1 = IdentKind::from_usize(self.r.get_attr::<usize>(&attr.value) + 1),
+          b"y1" => y1 = IdentKind::from_usize(self.r.get_attr::<usize>(&attr.value)),
           b"y2" => y2 = self.r.get_attr::<u32>(&attr.value) - 1,
           _ => {}
         }
@@ -467,7 +466,7 @@ impl MsmParser {
         } else {
           end_tag = true;
         }
-        let sym = if spelling.is_empty() { None } else { Some(spelling) };
+        let sym = if spelling.is_empty() { None } else { Some(spelling.into()) };
         ItemKind::SchemeHead(Box::new(SchemeHead { sym, nr, groups, concl, prems }))
       }
       b"Theorem-Item" => ItemKind::Theorem {
@@ -479,9 +478,10 @@ impl MsmParser {
         let tys = if self.msm { Some(self.parse_types()) } else { None };
         let ty = self.parse_type().unwrap();
         let fvars = if self.msm {
-          let mut out: Vec<u32> = vec![];
+          let mut out = IdxVec::default();
           while let Ok(e) = self.r.try_read_start(&mut self.buf, Some(b"SetMember")) {
-            out.push(self.r.get_attr(&e.try_get_attribute(b"x").unwrap().unwrap().value));
+            let id = self.r.get_attr::<u32>(&e.try_get_attribute(b"x").unwrap().unwrap().value);
+            out.push(ReservedId(id - 1));
             self.r.end_tag(&mut self.buf);
           }
           end_tag = true;
@@ -640,8 +640,8 @@ impl MsmParser {
         };
         self.r.end_tag(&mut self.buf);
         let kind = DefinitionKind::Mode { pat, kind };
-        let def = Definition { redef, kind, conds: vec![], corr: None, props: vec![] };
-        ItemKind::Definition(Box::new(def))
+        let body = DefinitionBody { redef, conds: vec![], corr: None, props: vec![] };
+        ItemKind::Definition(Box::new(Definition { kind, body }))
       }
       b"Attribute-Definition" => {
         let (redef, pat) = match self.parse_elem() {
@@ -653,8 +653,8 @@ impl MsmParser {
         let def = self.parse_definiens();
         end_tag = def.is_none();
         let kind = DefinitionKind::Attr { pat, def };
-        let def = Definition { redef, kind, conds: vec![], corr: None, props: vec![] };
-        ItemKind::Definition(Box::new(def))
+        let body = DefinitionBody { redef, conds: vec![], corr: None, props: vec![] };
+        ItemKind::Definition(Box::new(Definition { kind, body }))
       }
       b"Predicate-Definition" => {
         let (redef, pat) = match self.parse_elem() {
@@ -666,8 +666,8 @@ impl MsmParser {
         let def = self.parse_definiens();
         end_tag = def.is_none();
         let kind = DefinitionKind::Pred { pat, def };
-        let def = Definition { redef, kind, conds: vec![], corr: None, props: vec![] };
-        ItemKind::Definition(Box::new(def))
+        let body = DefinitionBody { redef, conds: vec![], corr: None, props: vec![] };
+        ItemKind::Definition(Box::new(Definition { kind, body }))
       }
       b"Functor-Definition" => {
         let shape = match &*shape {
@@ -692,8 +692,8 @@ impl MsmParser {
         let shape2 = def.as_ref().map(|d| matches!(d.kind, DefValue::Term(_)));
         assert_eq!(shape, shape2, "unexpected shape");
         let kind = DefinitionKind::Func { pat, spec, def };
-        let def = Definition { redef, kind, conds: vec![], corr: None, props: vec![] };
-        ItemKind::Definition(Box::new(def))
+        let body = DefinitionBody { redef, conds: vec![], corr: None, props: vec![] };
+        ItemKind::Definition(Box::new(Definition { kind, body }))
       }
       b"Structure-Definition" => {
         self.r.read_start(&mut self.buf, Some(b"Ancestors"));
@@ -779,8 +779,8 @@ impl MsmParser {
         ItemKind::Cluster(Box::new(Cluster { kind, conds: vec![], corr: None }))
       }
       b"Identify" => {
-        let Pattern::Func(p1) = self.parse_pattern() else { panic!("expected a functor pattern") };
-        let Pattern::Func(p2) = self.parse_pattern() else { panic!("expected a functor pattern") };
+        let Pattern::Func(rhs) = self.parse_pattern() else { panic!("expected a functor pattern") };
+        let Pattern::Func(lhs) = self.parse_pattern() else { panic!("expected a functor pattern") };
         let mut eqs = vec![];
         loop {
           match self.parse_elem() {
@@ -790,7 +790,7 @@ impl MsmParser {
           }
         }
         end_tag = true;
-        let id = IdentifyFunc { lhs: p2, rhs: p1, eqs, conds: vec![], corr: None };
+        let id = IdentifyFunc { lhs, rhs, eqs, conds: vec![], corr: None };
         ItemKind::IdentifyFunc(Box::new(id))
       }
       b"Property-Registration" => {
@@ -800,12 +800,11 @@ impl MsmParser {
           just: self.parse_justification(),
         }
       }
-      b"Reduction" => ItemKind::Reduction(Box::new(Reduction {
-        to: self.parse_term().unwrap(),
-        from: self.parse_term().unwrap(),
-        conds: vec![],
-        corr: None,
-      })),
+      b"Reduction" => {
+        let (t1, t2) = (self.parse_term().unwrap(), self.parse_term().unwrap());
+        let (from, to) = if self.msm { (t2, t1) } else { (t1, t2) }; // Yes, this is silly
+        ItemKind::Reduction(Box::new(Reduction { from, to, conds: vec![], corr: None }))
+      }
       b"Pragma" => ItemKind::Pragma(spelling.unwrap().into()),
       _ => panic!("unrecognized item kind"),
     };
@@ -914,12 +913,13 @@ impl MsmParser {
             return Elem::Inference(pos, InferenceKind::From { sch }, refs)
           }
           b"Implicitly-Qualified-Segment" => {
-            let nr = (e.try_get_attribute(b"nr").unwrap())
-              .map(|attr| ReservedId(self.r.get_attr::<u32>(&attr.value) - 1));
+            let nr =
+              e.try_get_attribute(b"nr").unwrap().map(|attr| self.r.get_attr::<u32>(&attr.value));
             let var = self.parse_variable().unwrap();
             let pos = var.pos;
             let ty = if self.msm {
-              Some(Box::new(Type::Reservation { pos, nr, subst: self.parse_substitution() }))
+              let group = ResGroupId(nr.unwrap() - 1);
+              Some(Box::new(Type::Reservation { pos, group, subst: self.parse_substitution() }))
             } else {
               self.r.end_tag(&mut self.buf);
               None
@@ -1017,7 +1017,9 @@ impl MsmParser {
                 _ => {}
               }
             }
-            Elem::Label((!spelling.is_empty()).then(|| Box::new(Label { pos, id: (id, spelling) })))
+            Elem::Label(
+              (!spelling.is_empty()).then(|| Box::new(Label { pos, id: (id, spelling.into()) })),
+            )
           }
           b"Link" => Elem::Link(self.r.get_pos(&e)),
           b"Local-Reference" => {
@@ -1107,8 +1109,7 @@ impl MsmParser {
               }
             }
             let kind = match kind {
-              IdentKind::Unknown => None,
-              IdentKind::Free => panic!("{pos:?}: unresolved free variable"),
+              IdentKind::Free => None,
               IdentKind::Bound => Some(VarKind::Bound(BoundId(var))),
               IdentKind::Const | IdentKind::DefConst => Some(VarKind::Const(ConstId(var))),
               _ => unreachable!(),
@@ -1130,9 +1131,9 @@ impl MsmParser {
                 _ => {}
               }
             }
-            let args = self.parse_terms();
+            let (spelling, args) = (spelling.into(), self.parse_terms());
             let kind = match shape {
-              IdentKind::Unknown => None,
+              IdentKind::Free => None,
               IdentKind::PrivFunc => Some(PrivFuncKind::PrivFunc(PrivFuncId(var))),
               IdentKind::SchFunc => Some(PrivFuncKind::SchFunc(SchFuncId(var))),
               _ => unreachable!(),
@@ -1249,7 +1250,7 @@ impl MsmParser {
                 _ => panic!("expected <Conditions>"),
               }
             };
-            Elem::Term(Box::new(Term::Fraenkel { pos, vars, scope, compr: None }))
+            Elem::Term(Box::new(Term::Fraenkel { pos, vars, scope, compr: None, nameck: None }))
           }
           b"Fraenkel-Term" => {
             let pos = self.r.get_pos(&e);
@@ -1262,7 +1263,7 @@ impl MsmParser {
               }
             };
             let compr = Some(self.parse_formula());
-            Elem::Term(Box::new(Term::Fraenkel { pos, vars, scope, compr }))
+            Elem::Term(Box::new(Term::Fraenkel { pos, vars, scope, compr, nameck: None }))
           }
           b"it-Term" => {
             let pos = self.r.get_pos(&e);
@@ -1302,17 +1303,17 @@ impl MsmParser {
             ty: self.parse_type().unwrap(),
           })),
           b"ReservedDscr-Type" if self.msm => {
-            let (mut pos, mut nr) = <(Position, _)>::default();
+            let (mut pos, mut group) = <(Position, _)>::default();
             for attr in e.attributes().map(Result::unwrap) {
               match attr.key {
                 b"line" => pos.line = self.r.get_attr(&attr.value),
                 b"col" => pos.col = self.r.get_attr(&attr.value),
-                b"nr" => nr = Some(ReservedId(self.r.get_attr::<u32>(&attr.value) - 1)),
+                b"nr" => group = ResGroupId(self.r.get_attr::<u32>(&attr.value) - 1),
                 _ => {}
               }
             }
             let subst = self.parse_substitution();
-            return Elem::Type(Box::new(Type::Reservation { pos, nr, subst }))
+            return Elem::Type(Box::new(Type::Reservation { pos, group, subst }))
           }
           b"Negated-Formula" => {
             let pos = self.r.get_pos(&e);
@@ -1412,9 +1413,9 @@ impl MsmParser {
                 _ => {}
               }
             }
-            let args = self.parse_terms();
+            let (spelling, args) = (spelling.into(), self.parse_terms());
             let kind = match shape {
-              IdentKind::Unknown => None,
+              IdentKind::Free => None,
               IdentKind::PrivPred => Some(PrivPredKind::PrivPred(PrivPredId(var))),
               IdentKind::SchPred => Some(PrivPredKind::SchPred(SchPredId(var))),
               _ => unreachable!(),

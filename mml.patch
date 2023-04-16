@@ -277,6 +277,10 @@
 -holds IT2().s.y = x iff P[s,x,y];
 +holds IT2().s.y = x iff P[s,x,y]
 +proof
+--- mml/msafree5.miz
++++ mml/msafree5.miz
+@@ -5466,0 +5467 @@
++  g for Translation of Free(S,X),s1,s2,
 --- mml/nat_1.miz
 +++ mml/nat_1.miz
 @@ -1025 +1025,2 @@
@@ -496,6 +500,12 @@
 @@ -28 +28 @@
 - requirements SUBSET, REAL;
 + requirements BOOLE, SUBSET, REAL;
+--- mml/trees_a.miz
++++ mml/trees_a.miz
+@@ -416,0 +417 @@
++  for P holds
+@@ -421,0 +423 @@
++  let P;
 --- mml/wellset1.miz
 +++ mml/wellset1.miz
 @@ -94 +94,2 @@

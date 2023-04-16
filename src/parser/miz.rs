@@ -452,7 +452,7 @@ impl<'a> Parser<'a> {
 
   fn parse_variable(&mut self) -> Variable {
     let tok = self.scan.accept(TokenKind::Ident);
-    Variable { pos: tok.pos, var: None, spelling: tok.spelling.to_owned() }
+    Variable { pos: tok.pos, var: None, spelling: tok.spelling.into() }
   }
 
   fn parse_label(&mut self) -> Option<Box<Label>> {
@@ -462,7 +462,7 @@ impl<'a> Parser<'a> {
     let tok = self.scan.next();
     if matches!(self.scan.peek().kind, TokenKind::Keyword(Keyword::Colon)) {
       self.scan.next();
-      Some(Box::new(Label { pos: tok.pos, id: (None, tok.spelling.to_owned()) }))
+      Some(Box::new(Label { pos: tok.pos, id: (None, tok.spelling.into()) }))
     } else {
       self.scan.undo(tok);
       None
@@ -497,22 +497,6 @@ impl<'a> Parser<'a> {
     out
   }
 
-  fn parse_where(&mut self) -> Vec<BinderGroup> {
-    let mut out = vec![];
-    loop {
-      let vars = self.comma_separated(|this| this.parse_variable());
-      let ty = (self.scan)
-        .next_if(|tok| matches!(tok.kind, TokenKind::Keyword(Keyword::Is | Keyword::Are)))
-        .map(|_| self.parse_type());
-      out.push(BinderGroup { vars, ty });
-      if !matches!(self.scan.peek().kind, TokenKind::Keyword(Keyword::Where | Keyword::Comma)) {
-        break
-      }
-      self.scan.next();
-    }
-    out
-  }
-
   fn parse_terms(&mut self) -> Vec<Term> { self.comma_separated(|this| *this.parse_term()) }
 
   fn parse_term_hi(&mut self) -> Option<Box<Term>> {
@@ -528,12 +512,7 @@ impl<'a> Parser<'a> {
           let args =
             if self.scan.peek().kind == TokenKind::RPAREN { vec![] } else { self.parse_terms() };
           self.scan.accept(TokenKind::RPAREN);
-          Box::new(Term::PrivFunc {
-            pos: tok.pos,
-            kind: None,
-            spelling: tok.spelling.to_owned(),
-            args,
-          })
+          Box::new(Term::PrivFunc { pos: tok.pos, kind: None, spelling: tok.spelling.into(), args })
         } else {
           Box::new(Term::Var { pos: tok.pos, kind: None, spelling: tok.spelling.to_owned() })
         },
@@ -566,7 +545,7 @@ impl<'a> Parser<'a> {
           }
           let compr = Some(self.parse_formula());
           self.scan.accept(TokenKind::RBRACE);
-          Box::new(Term::Fraenkel { pos: tok.pos, vars, scope, compr })
+          Box::new(Term::Fraenkel { pos: tok.pos, vars, scope, compr, nameck: None })
         } else {
           let lsym = (lsym, tok.spelling.to_owned());
           let TokenKind::Symbol(SymbolKind::RightBrk(rsym)) = tok2.kind else {
@@ -597,7 +576,7 @@ impl<'a> Parser<'a> {
             let scope = self.parse_term();
             let vars =
               if self.scan.try_accept(Keyword::Where) { self.parse_where() } else { vec![] };
-            Box::new(Term::Fraenkel { pos: tok.pos, vars, scope, compr: None })
+            Box::new(Term::Fraenkel { pos: tok.pos, vars, scope, compr: None, nameck: None })
           }
           _ => {
             self.scan.undo(tok2);
@@ -836,7 +815,7 @@ impl<'a> Parser<'a> {
         Box::new(Formula::PrivPred {
           pos: tok.pos,
           kind: None,
-          spelling: tok.spelling.to_owned(),
+          spelling: tok.spelling.into(),
           args,
         })
       }
@@ -1061,7 +1040,7 @@ impl<'a> Parser<'a> {
 
   fn parse_scheme(&mut self) -> Box<SchemeBlock> {
     let sym = (self.scan.next_if(|tok| matches!(tok.kind, TokenKind::Ident)))
-      .map(|tok| tok.spelling.to_owned());
+      .map(|tok| tok.spelling.into());
     self.scan.accept(TokenKind::LBRACE);
     let groups = self.comma_separated(|this| {
       let pos = this.scan.peek().pos;
@@ -1169,7 +1148,7 @@ impl<'a> Parser<'a> {
         self.parse_pattern_rhs(tok.pos, true, args)
       }
       TokenKind::Ident => {
-        let id = Variable { pos: tok.pos, var: None, spelling: tok.spelling.to_owned() };
+        let id = Variable { pos: tok.pos, var: None, spelling: tok.spelling.into() };
         if self.scan.try_accept(Keyword::Is) {
           let mut args = self.parse_params(false);
           args.push(id);
@@ -1262,15 +1241,39 @@ impl<'a> Parser<'a> {
       DefinitionKind::Mode { pat, .. } => self.push_format(Format::Mode(pat.to_format())),
       DefinitionKind::Attr { pat, .. } => self.push_format(Format::Attr(pat.to_format())),
     }
-    ItemKind::Definition(Box::new(Definition { redef, kind, conds, corr, props }))
+    let body = DefinitionBody { redef, conds, corr, props };
+    ItemKind::Definition(Box::new(Definition { kind, body }))
+  }
+
+  fn parse_binders_gen(
+    &mut self, is: impl Fn(TokenKind) -> bool, more: impl Fn(TokenKind) -> bool,
+  ) -> Vec<BinderGroup> {
+    let mut out = vec![];
+    loop {
+      let vars = self.comma_separated(|this| this.parse_variable());
+      let ty = (self.scan).next_if(|tok| is(tok.kind)).map(|_| self.parse_type());
+      if ty.is_some() {
+        out.push(BinderGroup { vars, ty });
+      } else {
+        out.extend(vars.into_iter().map(|var| BinderGroup { vars: vec![var], ty: None }));
+      }
+      if !more(self.scan.peek().kind) {
+        break
+      }
+      self.scan.next();
+    }
+    out
   }
 
   fn parse_binders(&mut self) -> Vec<BinderGroup> {
-    self.comma_separated(|this| {
-      let vars = this.comma_separated(|this| this.parse_variable());
-      let ty = this.scan.try_accept(Keyword::Be).then(|| this.parse_type());
-      BinderGroup { vars, ty }
-    })
+    self.parse_binders_gen(|k| k == Keyword::Be.into(), |k| k == Keyword::Comma.into())
+  }
+
+  fn parse_where(&mut self) -> Vec<BinderGroup> {
+    self.parse_binders_gen(
+      |k| matches!(k, TokenKind::Keyword(Keyword::Is | Keyword::Are)),
+      |k| matches!(k, TokenKind::Keyword(Keyword::Where | Keyword::Comma)),
+    )
   }
 
   fn parse_choice(&mut self) -> (Vec<BinderGroup>, Vec<Proposition>) {
@@ -1435,7 +1438,7 @@ impl<'a> Parser<'a> {
                 && matches!(lookahead, TokenKind::Keyword(Keyword::Comma | Keyword::Semicolon))
             {
               let var =
-                Box::new(Variable { pos: tok.pos, var: None, spelling: tok.spelling.to_owned() });
+                Box::new(Variable { pos: tok.pos, var: None, spelling: tok.spelling.into() });
               return if matches!(lookahead, TokenKind::EQUAL) {
                 this.scan.next();
                 TakeDecl { var: Some(var), term: this.parse_term() }
