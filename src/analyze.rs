@@ -18,8 +18,6 @@ struct NameLookup {
   var: im::HashMap<Rc<str>, VarKind>,
   func: im::HashMap<(Rc<str>, u32), PrivFuncKind>,
   pred: im::HashMap<(Rc<str>, u32), PrivPredKind>,
-  /// does not contain VarKind::Reserved
-  reserved: im::HashMap<ReservedId, (VarKind, u32)>,
 }
 
 #[derive(Debug)]
@@ -43,9 +41,9 @@ pub struct Analyzer<'a> {
   lookup: Rc<NameLookup>,
   reserved: IdxVec<ReservedId, (Rc<str>, ResGroupId)>,
   res_groups: IdxVec<ResGroupId, ResGroup>,
-  reserved_lookup: HashMap<Rc<str>, ReservedId>,
+  reserved_by_name: HashMap<Rc<str>, ReservedId>,
   /// does not contain VarKind::Reserved
-  apply_reserved: im::HashMap<ReservedId, VarKind>,
+  reserved_lookup: im::HashMap<ReservedId, VarKind>,
   reserved_extra_depth: u32,
   /// Only used for fraenkel terms. (i, len) means that BVs above i are lifted by len;
   /// all lifts are applied cumulatively.
@@ -81,8 +79,8 @@ impl Reader {
       label_names: Default::default(),
       reserved: Default::default(),
       res_groups: Default::default(),
+      reserved_by_name: Default::default(),
       reserved_lookup: Default::default(),
-      apply_reserved: Default::default(),
       reserved_extra_depth: 0,
       reserved_more_insertion: vec![],
       internal_selectors: Default::default(),
@@ -149,6 +147,7 @@ struct Scope {
   sc: crate::reader::Scope,
   priv_preds: usize,
   lookup: Rc<NameLookup>,
+  reserved: im::HashMap<ReservedId, VarKind>,
 }
 
 impl Analyzer<'_> {
@@ -161,6 +160,7 @@ impl Analyzer<'_> {
       sc: self.r.open_scope(push_label),
       priv_preds: self.priv_pred.len(),
       lookup: self.lookup.clone(),
+      reserved: self.reserved_lookup.clone(),
     }
   }
 
@@ -170,7 +170,7 @@ impl Analyzer<'_> {
     self.label_names.0.truncate(sc.sc.labels);
     self.thesis = self.thesis_stack.pop().unwrap();
     self.lookup = sc.lookup;
-    self.apply_reserved.clear();
+    self.reserved_lookup = sc.reserved;
     self.r.close_scope(sc.sc, check_for_local_const)
   }
 
@@ -244,17 +244,15 @@ impl Analyzer<'_> {
       ast::ItemKind::SchemeBlock(it) =>
         self.scope(false, false, false, |this| this.elab_scheme(it)),
       ast::ItemKind::Theorem { prop, just } => {
-        let (f, reset) = self.elab_formula_forall_reserved_no_reset(&mut prop.f, true);
+        let (f, block) = self.elab_formula_forall_reserved(&mut prop.f, true);
         Exportable.visit_formula(&f);
         if self.g.cfg.analyzer_full {
           let f = f.visit_cloned(&mut self.r.intern_const());
           let label = prop.label.as_ref().map(|l| l.id.clone());
-          self.elab_justification_intro_reserved(label.is_some(), &f, just, reset);
+          self.elab_justification_intro_reserved(label.is_some(), &f, just, block);
           self.push_prop(label, f)
         } else if COUNT_SKIPPED_ITEMS {
-          self.skip_justification(just, reset);
-        } else {
-          reset.reset(self);
+          self.skip_justification(just, block);
         }
         assert!(self.reserved_extra_depth == 0);
         if self.g.cfg.exporter_enabled {
@@ -265,11 +263,13 @@ impl Analyzer<'_> {
         self.lc.term_cache.get_mut().open_scope();
         assert!(self.lc.bound_var.is_empty());
         for it in its {
+          let ty;
           let fvars = if let Some(tys) = &it.tys {
             for ty in tys {
               let ty = self.elab_type(ty);
               self.lc.bound_var.push(ty);
             }
+            ty = self.elab_type(&it.ty);
             if self.g.cfg.nameck_enabled {
               it.fvars.clone()
             } else {
@@ -277,27 +277,29 @@ impl Analyzer<'_> {
             }
           } else {
             assert!(self.g.cfg.nameck_enabled);
+            let orig_lookup = self.reserved_lookup.clone();
             let fvars = self.collect_reserved(|cr| cr.visit_type(&mut it.ty));
             self.reserved_extra_depth = fvars.len() as u32;
-            for &var in &fvars.0 {
+            for &var in &fvars {
               let entry = &self.res_groups[self.reserved[var].1];
               let fvars2 = entry.fvars.as_ref().unwrap();
               let mut ty = entry.ty.clone();
               ty.visit(&mut InstReservation(self, |i| VarKind::Reserved(fvars2[i])));
               let i = self.lc.bound_var.push(ty);
-              self.apply_reserved.insert(var, VarKind::Bound(i));
+              self.reserved_lookup.insert(var, VarKind::Bound(i));
             }
-            Some(fvars)
+            ty = self.elab_type(&it.ty);
+            self.reserved_extra_depth = 0;
+            self.reserved_lookup = orig_lookup;
+            Some(IdxVec::from(fvars))
           };
-          let ty = self.elab_type(&it.ty);
-          ReserveBlock::default().reset(self);
           self.lc.bound_var.0.clear();
           Exportable.visit_type(&ty);
           let group = self.res_groups.push(ResGroup { ty, fvars });
           for v in &it.vars {
             let i = self.reserved.push((v.spelling.clone(), group));
             if self.g.cfg.nameck_enabled {
-              self.reserved_lookup.insert(v.spelling.clone(), i);
+              self.reserved_by_name.insert(v.spelling.clone(), i);
             }
           }
         }
@@ -364,12 +366,10 @@ impl Analyzer<'_> {
     let prems = (prems.iter_mut())
       .map(|prop| self.elab_proposition_forall_reserved(prop, true))
       .collect::<Box<[_]>>();
-    let (mut thesis, reset) = self.elab_formula_forall_reserved_no_reset(concl, true);
+    let (mut thesis, block) = self.elab_formula_forall_reserved(concl, true);
     thesis.visit(&mut self.r.intern_const());
     if self.g.cfg.analyzer_full {
-      self.elab_proof_intro_reserved(false, &thesis, items, *end, reset)
-    } else {
-      reset.reset(self)
+      self.elab_proof_intro_reserved(false, &thesis, items, *end, block)
     }
     let primary: Box<[_]> = self.lc.sch_func_ty.0.drain(..).collect();
     let mut sch = Scheme { sch_funcs: primary, prems, thesis };
@@ -568,10 +568,10 @@ impl Analyzer<'_> {
     debug_assert!(self.g.cfg.analyzer_full);
     match stmt {
       ast::Statement::Proposition { prop, just } => {
-        let (mut f, reset) = self.elab_formula_forall_reserved_no_reset(&mut prop.f, true);
+        let (mut f, block) = self.elab_formula_forall_reserved(&mut prop.f, true);
         f.visit(&mut self.r.intern_const());
         let label = prop.label.as_ref().map(|l| l.id.clone());
-        self.elab_justification_intro_reserved(label.is_some(), &f, just, reset);
+        self.elab_justification_intro_reserved(label.is_some(), &f, just, block);
         self.push_prop(label, f.clone());
         f
       }
@@ -656,23 +656,23 @@ impl Analyzer<'_> {
       self.lc.fixed_var.push(FixedVar { ty, def: None });
     } else {
       assert!(vars.len() == 1);
-      let Some(&nr) = self.reserved_lookup.get(&*vars[0].spelling) else {
+      let Some(&nr) = self.reserved_by_name.get(&*vars[0].spelling) else {
         panic!("{:?}: variable missing type", vars[0].pos)
       };
       let ResGroup { ty, fvars } = &self.res_groups[self.reserved[nr].1];
       let subst = (fvars.as_ref().unwrap().0.iter())
         .map(|&i| {
-          *self.lookup.reserved.get(&i).unwrap_or_else(|| {
+          *self.reserved_lookup.get(&i).unwrap_or_else(|| {
             panic!("{:?}: cannot introduce reserved variable here", vars[0].pos);
           })
         })
         .collect_vec();
       let mut ty = ty.clone();
       if !subst.is_empty() {
-        InstReservation(self, |i| subst[i.0 as usize].0).visit_type(&mut ty)
+        InstReservation(self, |i| subst[i.0 as usize]).visit_type(&mut ty)
       }
       let c = self.lc.fixed_var.push(FixedVar { ty, def: None });
-      Rc::make_mut(&mut self.lookup).reserved.insert(nr, (VarKind::Const(c), 0));
+      self.reserved_lookup.insert(nr, VarKind::Const(c));
     }
     if self.g.cfg.nameck_enabled {
       let lookup = Rc::make_mut(&mut self.lookup);
@@ -740,12 +740,11 @@ impl Analyzer<'_> {
 
   fn elab_justification_intro_reserved(
     &mut self, push_label: bool, thesis: &Formula, just: &mut ast::Justification,
-    reset: ReserveBlock,
+    block: ReserveBlock,
   ) {
     debug_assert!(self.g.cfg.analyzer_full);
     match just {
       &mut ast::Justification::Inference { pos, ref kind, ref refs } => {
-        reset.reset(self);
         let it = Inference {
           kind: match kind {
             ast::InferenceKind::By { link } => InferenceKind::By { linked: link.is_some() },
@@ -763,15 +762,13 @@ impl Analyzer<'_> {
         self.r.read_inference(thesis, &it)
       }
       ast::Justification::Block { pos, items } =>
-        self.elab_proof_intro_reserved(push_label, thesis, items, pos.1, reset),
+        self.elab_proof_intro_reserved(push_label, thesis, items, pos.1, block),
     }
   }
 
-  fn skip_justification(&mut self, just: &mut ast::Justification, reset: ReserveBlock) {
+  fn skip_justification(&mut self, just: &mut ast::Justification, block: ReserveBlock) {
     if let ast::Justification::Block { items, .. } = just {
-      self.skip_items(items, reset)
-    } else {
-      reset.reset(self)
+      self.skip_items(items, block)
     }
   }
 
@@ -811,7 +808,7 @@ impl Analyzer<'_> {
   ) -> DefCase<U> {
     let case = f(self, &mut def.case);
     let it_type = self.lc.it_type.take(); // can't use 'it' inside the guard
-    let guard = self.elab_formula_forall_reserved(&mut def.guard, true);
+    let guard = self.elab_formula_forall_reserved(&mut def.guard, true).0;
     self.lc.it_type = it_type;
     DefCase { case, guard }
   }
@@ -834,7 +831,7 @@ impl Analyzer<'_> {
         res
       }
       ast::DefValue::Formula(body) => DefValue::Formula(
-        self.elab_def_body(body, |this, f| this.elab_formula_forall_reserved(f, pos)),
+        self.elab_def_body(body, |this, f| this.elab_formula_forall_reserved(f, pos).0),
       ),
     }
   }
@@ -916,7 +913,7 @@ impl Analyzer<'_> {
     match kind {
       VarKind::Bound(nr) => Term::Bound(self.map_bound(nr)),
       VarKind::Const(nr) => self.elab_const(nr),
-      VarKind::Reserved(n) => match self.apply_reserved[&n] {
+      VarKind::Reserved(n) => match self.reserved_lookup[&n] {
         VarKind::Bound(nr) => Term::Bound(nr),
         VarKind::Const(nr) => self.elab_const(nr),
         VarKind::Reserved(_) => unreachable!(),
@@ -933,7 +930,7 @@ impl Analyzer<'_> {
         match kind {
           VarKind::Bound(_) => unreachable!(),
           VarKind::Const(nr) => break nr,
-          VarKind::Reserved(n) => kind = self.apply_reserved[&n],
+          VarKind::Reserved(n) => kind = self.reserved_lookup[&n],
         }
       }
     })
@@ -943,10 +940,10 @@ impl Analyzer<'_> {
     let mut vars = vec![];
     for (&k, &(kind, _)) in &scope.reserved {
       let kind = self.map_var_kind(kind);
-      self.apply_reserved.entry(k).or_insert(kind);
+      self.reserved_lookup.entry(k).or_insert(kind);
     }
     for (&k, &bound) in &scope.uses {
-      if !bound && !self.apply_reserved.contains_key(&k) {
+      if !bound && !self.reserved_lookup.contains_key(&k) {
         vars.push(k)
       }
     }
@@ -960,7 +957,7 @@ impl Analyzer<'_> {
     self.lc.term_cache.get_mut().open_scope();
     let orig_len = self.lc.bound_var.len();
     let more_insertion_len = self.reserved_more_insertion.len();
-    let scope_info = (self.lookup.clone(), self.apply_reserved.clone(), self.reserved_extra_depth);
+    let scope_info = (self.lookup.clone(), self.reserved_lookup.clone(), self.reserved_extra_depth);
     if let Some(nameck) = nameck {
       self.push_nameck_scope(&nameck.scope, |this, dom| {
         assert!(dom.is_set(&this.g, &this.lc, &this.properties))
@@ -984,7 +981,7 @@ impl Analyzer<'_> {
       }
     }
     let args = self.lc.bound_var.0.split_off(orig_len).into();
-    (self.lookup, self.apply_reserved, self.reserved_extra_depth) = scope_info;
+    (self.lookup, self.reserved_lookup, self.reserved_extra_depth) = scope_info;
     self.reserved_more_insertion.truncate(more_insertion_len);
     self.lc.term_cache.get_mut().close_scope();
     Term::Fraenkel { args, scope, compr }
@@ -1786,7 +1783,7 @@ impl Analyzer<'_> {
   }
 
   fn elab_intern_formula_forall_reserved(&mut self, f: &mut ast::Formula, pos: bool) -> Formula {
-    let mut f = self.elab_formula_forall_reserved(f, pos);
+    let mut f = self.elab_formula_forall_reserved(f, pos).0;
     f.visit(&mut self.r.intern_const());
     f
   }
@@ -2333,56 +2330,45 @@ impl Visit for Exportable {
   }
 }
 
-/// This type represents that `elab.reserved_extra_depth` is nonzero because of some
-/// recently collected reserved variables in a term. This can be resolved either by calling `reset`
-/// to ignore the variables, or `intro` to add a block of implicit `let` statements
+/// This type represents a list of reserved variables auto-generalized by
+/// `elab_formula_forall_reserved`. Using `intro` adds a block of implicit `let` statements
 /// corresponding to the collected variables (this is done for theorems and statements followed
 /// by a `proof` block).
 #[derive(Default)]
-#[must_use = "don't forget to call reset"]
-struct ReserveBlock(IdxVec<BoundId, ReservedId>);
+struct ReserveBlock(Vec<ReservedId>);
 
 impl ReserveBlock {
-  fn reset(self, elab: &mut Analyzer<'_>) {
-    elab.reserved_extra_depth = 0;
-    elab.apply_reserved.clear();
-  }
-
   fn intro(self, elab: &mut Analyzer<'_>) {
-    assert_eq!(self.0.len() as u32, elab.reserved_extra_depth);
-    if elab.reserved_extra_depth != 0 {
-      elab.items += elab.reserved_extra_depth as usize;
+    if !self.0.is_empty() {
+      elab.items += self.0.len();
       let mut thesis = elab.thesis.take().expect("must be called in a proof block");
       let mut inst = InstConst { depth: 0, base: elab.lc.fixed_var.len() as u32 };
       let lookup = Rc::make_mut(&mut elab.lookup);
-      for &nr in &self.0 .0 {
+      for &nr in &self.0 {
         let Formula::ForAll { mut dom, scope } = *thesis else { unreachable!() };
         if inst.depth != 0 {
           inst.visit_type(&mut dom);
         }
         let c = elab.r.lc.fixed_var.push(FixedVar { ty: *dom, def: None });
-        lookup.reserved.insert(nr, (VarKind::Const(c), 0));
+        elab.reserved_lookup.insert(nr, VarKind::Const(c));
         lookup.var.insert(elab.reserved[nr].0.clone(), VarKind::Const(c));
         thesis = scope;
         inst.depth += 1;
       }
       inst.visit_formula(&mut thesis);
       elab.thesis = Some(thesis);
-      self.reset(elab)
     }
   }
 
   fn skip_intro(self, elab: &mut Analyzer<'_>) {
-    assert_eq!(self.0.len() as u32, elab.reserved_extra_depth);
-    if elab.reserved_extra_depth != 0 {
-      elab.items += elab.reserved_extra_depth as usize;
+    if !self.0.is_empty() {
+      elab.items += self.0.len();
       let lookup = Rc::make_mut(&mut elab.lookup);
-      for &nr in &self.0 .0 {
+      for &nr in &self.0 {
         let c = elab.r.lc.fixed_var.push(FixedVar { ty: Type::default(), def: None });
-        lookup.reserved.insert(nr, (VarKind::Const(c), 0));
+        elab.reserved_lookup.insert(nr, VarKind::Const(c));
         lookup.var.insert(elab.reserved[nr].0.clone(), VarKind::Const(c));
       }
-      self.reset(elab)
     }
   }
 }
@@ -2404,7 +2390,11 @@ pub struct FraenkelNameckResult {
 struct CollectReserved<'a> {
   reserved: &'a IdxVec<ReservedId, (Rc<str>, ResGroupId)>,
   res_groups: &'a IdxVec<ResGroupId, ResGroup>,
-  reserved_lookup: &'a HashMap<Rc<str>, ReservedId>,
+  reserved_by_name: &'a HashMap<Rc<str>, ReservedId>,
+  /// does not contain VarKind::Reserved
+  reserved_lookup: &'a im::HashMap<ReservedId, VarKind>,
+  /// does not contain VarKind::Reserved
+  local_lookup: im::HashMap<ReservedId, (VarKind, u32)>,
   uses: im::OrdMap<ReservedId, bool>,
   lookup: Rc<NameLookup>,
   depth: BoundId,
@@ -2412,31 +2402,27 @@ struct CollectReserved<'a> {
 }
 
 impl Analyzer<'_> {
-  fn collect_reserved(
-    &mut self, f: impl FnOnce(&mut CollectReserved<'_>),
-  ) -> IdxVec<BoundId, ReservedId> {
+  fn collect_reserved(&mut self, f: impl FnOnce(&mut CollectReserved<'_>)) -> Vec<ReservedId> {
     if !self.g.cfg.nameck_enabled {
-      return IdxVec::default()
+      return vec![]
     }
     assert!(self.lc.bound_var.is_empty());
     let mut cr = CollectReserved {
       reserved: &self.reserved,
       res_groups: &self.res_groups,
+      reserved_by_name: &self.reserved_by_name,
       reserved_lookup: &self.reserved_lookup,
       uses: Default::default(),
       lookup: self.lookup.clone(),
+      local_lookup: Default::default(),
       depth: Default::default(),
-      level: 1,
+      level: 0,
     };
     f(&mut cr);
-    let mut vars = IdxVec::default();
-    for (&k, &(kind, _)) in &self.lookup.reserved {
-      let kind = self.map_var_kind(kind);
-      self.apply_reserved.entry(k).or_insert(kind);
-    }
+    let mut vars = vec![];
     for (&k, &bound) in &cr.uses {
-      if !bound && !self.apply_reserved.contains_key(&k) {
-        vars.0.push(k)
+      if !bound && !self.reserved_lookup.contains_key(&k) {
+        vars.push(k)
       }
     }
     vars
@@ -2477,7 +2463,7 @@ impl Analyzer<'_> {
         ty.visit(&mut InstReservation(self, |i| VarKind::Reserved(fvars[i])));
         check(self, &ty);
         let i = self.lc.bound_var.push(ty);
-        self.apply_reserved.insert(v, VarKind::Bound(i));
+        self.reserved_lookup.insert(v, VarKind::Bound(i));
       }
       let len = fvars.len() as u32;
       if inner {
@@ -2488,26 +2474,23 @@ impl Analyzer<'_> {
     }
   }
 
-  fn elab_formula_forall_reserved(&mut self, f: &mut ast::Formula, pos: bool) -> Formula {
-    let (f, reset) = self.elab_formula_forall_reserved_no_reset(f, pos);
-    reset.reset(self);
-    f
-  }
-
-  fn elab_formula_forall_reserved_no_reset(
+  fn elab_formula_forall_reserved(
     &mut self, f: &mut ast::Formula, pos: bool,
   ) -> (Formula, ReserveBlock) {
     let fvars = self.collect_reserved(|cr| cr.visit_formula(f));
     if fvars.is_empty() {
-      return (self.elab_formula(f, pos), ReserveBlock(fvars))
+      return (self.elab_formula(f, pos), ReserveBlock::default())
     }
     assert!(self.lc.bound_var.is_empty());
     self.lc.term_cache.get_mut().open_scope();
-    self.push_bound_reserved(&fvars.0, false, |_, _| {});
+    let lookup = self.reserved_lookup.clone();
+    self.push_bound_reserved(&fvars, false, |_, _| {});
     let mut f2 = self.elab_formula(f, pos);
     for ty in self.lc.bound_var.0.drain(..).rev() {
       f2 = Formula::ForAll { dom: Box::new(ty), scope: Box::new(f2) }
     }
+    self.reserved_extra_depth = 0;
+    self.reserved_lookup = lookup;
     self.lc.term_cache.get_mut().close_scope();
     (f2, ReserveBlock(fvars))
   }
@@ -2516,12 +2499,12 @@ impl Analyzer<'_> {
 impl CollectReserved<'_> {
   fn use_reserved(&mut self, pos: Position, n: ReservedId) {
     for &m in &self.res_groups[self.reserved[n].1].fvars.as_ref().unwrap().0 {
-      if let Some(k) = self.lookup.reserved.get(&m) {
+      if let Some(k) = self.local_lookup.get(&m) {
         assert!(
           k.1 < self.level,
           "{pos:?}: can't use reserved variable because it would result in an invalid type"
         )
-      } else {
+      } else if !self.reserved_lookup.contains_key(&m) {
         self.uses.insert(m, false);
       }
     }
@@ -2553,14 +2536,17 @@ impl CollectReserved<'_> {
         }
       } else {
         assert!(vars.len() == 1);
-        let Some(&i) = self.reserved_lookup.get(&*vars[0].spelling) else {
+        let Some(&i) = self.reserved_by_name.get(&*vars[0].spelling) else {
           panic!("{:?}: variable missing type", vars[0].pos)
         };
         let group = self.reserved[i].1;
         let subst = (self.res_groups[group].fvars.as_ref().unwrap().0.iter())
-          .map(|&i| match self.lookup.reserved.get(&i) {
-            Some(&(kind, _)) => kind,
-            None => {
+          .map(|&i| {
+            if let Some(&(kind, _)) = self.local_lookup.get(&i) {
+              kind
+            } else if let Some(&kind) = self.reserved_lookup.get(&i) {
+              kind
+            } else {
               self.use_reserved(vars[0].pos, i);
               VarKind::Reserved(i)
             }
@@ -2568,19 +2554,16 @@ impl CollectReserved<'_> {
           .collect_vec();
         *ty = Some(Box::new(ast::Type::Reservation { pos: vars[0].pos, group, subst }));
         let v = self.depth.fresh();
-        let lookup = Rc::make_mut(&mut self.lookup);
-        lookup.var.insert(vars[0].spelling.clone(), VarKind::Bound(v));
-        lookup.reserved.insert(i, (VarKind::Bound(v), self.level));
+        Rc::make_mut(&mut self.lookup).var.insert(vars[0].spelling.clone(), VarKind::Bound(v));
+        self.local_lookup.insert(i, (VarKind::Bound(v), self.level));
       }
     }
   }
 
   fn scope(&mut self, f: impl FnOnce(&mut Self)) {
-    let lookup = self.lookup.clone();
-    let depth = self.depth;
+    let sc = (self.lookup.clone(), self.local_lookup.clone(), self.depth);
     f(self);
-    self.lookup = lookup;
-    self.depth = depth;
+    (self.lookup, self.local_lookup, self.depth) = sc;
   }
 
   fn visit_term(&mut self, tm: &mut ast::Term) {
@@ -2588,7 +2571,7 @@ impl CollectReserved<'_> {
       ast::Term::Var { pos, kind, ref spelling } =>
         if kind.is_none() {
           let Some(kind2) = self.lookup.var.get(&**spelling).copied()
-            .or_else(|| Some(VarKind::Reserved(*self.reserved_lookup.get(&**spelling)?)))
+            .or_else(|| Some(VarKind::Reserved(*self.reserved_by_name.get(&**spelling)?)))
           else { panic!("{pos:?}: unresolved variable '{spelling}'") };
           if let VarKind::Reserved(n) = kind2 {
             self.use_reserved(*pos, n)
@@ -2612,11 +2595,11 @@ impl CollectReserved<'_> {
       ast::Term::Fraenkel { vars, scope, compr, nameck, .. } => self.scope(|this| {
         this.push_bound(vars);
         let orig = std::mem::take(&mut this.uses);
-        let scope_reserved = this.lookup.reserved.clone();
+        let scope_reserved = this.local_lookup.clone();
         this.level += 1;
         this.visit_term(scope);
         let mut scope_uses = std::mem::take(&mut this.uses);
-        let compr_reserved = this.lookup.reserved.clone();
+        let compr_reserved = this.local_lookup.clone();
         if let Some(f) = compr {
           this.visit_formula(f)
         }
