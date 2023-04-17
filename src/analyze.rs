@@ -443,34 +443,26 @@ impl Analyzer<'_> {
       }
       ast::ItemKind::Reconsider { vars, ty, just } => {
         let ty = self.elab_intern_type_no_reserve(ty);
-        if self.g.cfg.analyzer_full {
-          let f = Formula::mk_and_with(|conjs| {
-            for var in vars {
-              let ast::ReconsiderVar::Equality { var, tm } = var else { unreachable!() };
-              let tm = Box::new(self.elab_intern_term_no_reserve(tm));
-              conjs.push(Formula::Is { term: tm.clone(), ty: Box::new(ty.clone()) });
-              let c = self.lc.fixed_var.push(FixedVar { ty: ty.clone(), def: Some((tm, false)) });
-              if self.g.cfg.nameck_enabled {
-                Rc::make_mut(&mut self.lookup).var.insert(var.spelling.clone(), VarKind::Const(c));
-              }
-            }
-          });
+        let mut conjs = self.g.cfg.analyzer_full.then(Vec::new);
+        for var in vars {
+          if let ast::ReconsiderVar::Var(v) = var {
+            *var = ast::ReconsiderVar::Equality { var: v.clone(), tm: v.to_term() }
+          }
+          let ast::ReconsiderVar::Equality { var, tm } = var else { unreachable!() };
+          let tm = Box::new(self.elab_intern_term_no_reserve(tm));
+          if let Some(conjs) = &mut conjs {
+            conjs.push(Formula::Is { term: tm.clone(), ty: Box::new(ty.clone()) });
+          }
+          let c = self.lc.fixed_var.push(FixedVar { ty: ty.clone(), def: Some((tm, false)) });
+          if self.g.cfg.nameck_enabled {
+            Rc::make_mut(&mut self.lookup).var.insert(var.spelling.clone(), VarKind::Const(c));
+          }
+        }
+        if let Some(conjs) = conjs {
+          let f = Formula::mk_and(conjs);
           self.elab_justification(false, &f, just)
-        } else {
-          for var in vars {
-            if let ast::ReconsiderVar::Var(v) = var {
-              *var = ast::ReconsiderVar::Equality { var: v.clone(), tm: v.to_term() }
-            }
-            let ast::ReconsiderVar::Equality { var, tm } = var else { unreachable!() };
-            let tm = Box::new(self.elab_intern_term_no_reserve(tm));
-            let c = self.lc.fixed_var.push(FixedVar { ty: ty.clone(), def: Some((tm, false)) });
-            if self.g.cfg.nameck_enabled {
-              Rc::make_mut(&mut self.lookup).var.insert(var.spelling.clone(), VarKind::Const(c));
-            }
-          }
-          if COUNT_SKIPPED_ITEMS {
-            self.skip_justification(just, <_>::default())
-          }
+        } else if COUNT_SKIPPED_ITEMS {
+          self.skip_justification(just, <_>::default())
         }
       }
       ast::ItemKind::Consider { vars, conds, just } => {
@@ -483,7 +475,7 @@ impl Analyzer<'_> {
           let mut to_push = vec![];
           let mut f = Formula::mk_and_with(|conjs| {
             for prop in conds {
-              let f = self.elab_formula(&prop.f, true);
+              let f = self.elab_formula_forall_reserved(&mut prop.f, true).0;
               f.clone().append_conjuncts_to(conjs);
               to_push.push((prop.label.as_ref().map(|l| l.id.clone()), f))
             }
@@ -2406,6 +2398,13 @@ impl Analyzer<'_> {
     if !self.g.cfg.nameck_enabled {
       return vec![]
     }
+    // for (i, (name, gp)) in self.reserved.enum_iter() {
+    //   eprintln!(
+    //     "{name}[{i:?}]{}: {:?}",
+    //     if self.reserved_by_name.get(name) == Some(&i) { "!" } else { "" },
+    //     self.res_groups[*gp]
+    //   );
+    // }
     assert!(self.lc.bound_var.is_empty());
     let mut cr = CollectReserved {
       reserved: &self.reserved,
@@ -2771,9 +2770,12 @@ trait ReadProof {
       ast::ItemKind::Take(its) =>
         for ast::TakeDecl { var, term } in its {
           let term = elab.elab_intern_term_no_reserve(term);
-          if var.is_some() {
+          if let Some(var) = var {
             let ty = term.get_type(&elab.g, &elab.lc, false);
             let v = elab.lc.fixed_var.push(FixedVar { ty, def: Some((Box::new(term), false)) });
+            if elab.g.cfg.nameck_enabled {
+              Rc::make_mut(&mut elab.lookup).var.insert(var.spelling.clone(), VarKind::Const(v));
+            }
             self.take_as_var(elab, v)
           } else {
             self.take(elab, term)

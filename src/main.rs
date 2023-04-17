@@ -3152,7 +3152,7 @@ fn main() {
   // path.with_reader(&cfg, |v| v.run_checker(&path));
   // print_stats_and_exit(cfg.parallelism);
   cfg.parser_enabled = std::env::var("PARSER").is_ok();
-  cfg.nameck_enabled = std::env::var("NAME_CHECK").is_ok();
+  cfg.nameck_enabled = std::env::var("NO_NAME_CHECK").is_err();
   cfg.analyzer_enabled = std::env::var("NO_ANALYZER").is_err();
   cfg.analyzer_full = cfg.analyzer_enabled;
   cfg.checker_enabled = std::env::var("NO_CHECKER").is_err();

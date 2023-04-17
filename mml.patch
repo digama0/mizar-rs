@@ -164,9 +164,36 @@
 +proof
 --- mml/gtarski3.miz
 +++ mml/gtarski3.miz
+@@ -1964,2 +1964,2 @@
+-                  A,B for Subset of S,
+-        a,b,c,p,q,r,s for POINT of S;
++                    A,B for Subset of S,
++        a,b,c,p,q,r,s,x for POINT of S;
 @@ -3164 +3164 @@
 -::$ 7.25 Satz
 +::$N 7.25 Satz
+--- mml/gtarski4.miz
++++ mml/gtarski4.miz
+@@ -817,5 +817,5 @@
+-reserve S                 for non empty
+-                            satisfying_Lower_Dimension_Axiom
+-                            satisfying_Tarski-model
+-                            TarskiGeometryStruct,
+-        a,b,c,p,q,x,y,z,t for POINT of S;
++reserve S                    for non empty
++                               satisfying_Lower_Dimension_Axiom
++                               satisfying_Tarski-model
++                               TarskiGeometryStruct,
++        a,b,c,c9,p,q,x,y,z,t for POINT of S;
+--- mml/hilb10_3.miz
++++ mml/hilb10_3.miz
+@@ -709 +709,2 @@
+-    for i1,i2,i3,i4,i5 holds {p: P[p.i1,p.i2,F(p.i3,p.i4,p.i5),p.i3,p.i4,p.i5]}
++    for n,i1,i2,i3,i4,i5 holds
++      {p: P[p.i1,p.i2,F(p.i3,p.i4,p.i5),p.i3,p.i4,p.i5]}
+@@ -784 +785 @@
+-    for i1,i2,i3,i4,i5 holds {p: P[p.i1,p.i2,F(p.i3,p.i4,p.i5)]}
++    for n,i1,i2,i3,i4,i5 holds {p: P[p.i1,p.i2,F(p.i3,p.i4,p.i5)]}
 --- mml/hilb10_4.miz
 +++ mml/hilb10_4.miz
 @@ -35 +35 @@
@@ -214,6 +241,11 @@
 @@ -31 +31 @@
 - requirements REAL, NUMERALS, SUBSET, ARITHM;
 + requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
+--- mml/latwal_1.miz
++++ mml/latwal_1.miz
+@@ -1160 +1160 @@
+- reserve v0,v1,v2 for Element of L;
++ reserve v0,v1,v2,v100,v101,v102 for Element of L;
 --- mml/l_hospit.miz
 +++ mml/l_hospit.miz
 @@ -30 +30 @@
@@ -376,6 +408,11 @@
 @@ -25 +25 @@
 - requirements REAL, NUMERALS, SUBSET, ARITHM;
 + requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
+--- mml/ramsey_1.miz
++++ mml/ramsey_1.miz
+@@ -1406 +1406 @@
+-  BinInd2 { P[Nat,Nat] } : P[m,n]
++  BinInd2 { P[Nat,Nat] } : for n,m holds P[m,n]
 --- mml/realset1.miz
 +++ mml/realset1.miz
 @@ -23 +23 @@
@@ -399,6 +436,10 @@
 -A3: len p() > 0 & len q() > 0 & p().len p() = q().1;
 +A3: len p() > 0 & len q() > 0 & p().len p() = q().1
 +proof
+--- mml/robbins5.miz
++++ mml/robbins5.miz
+@@ -1830,0 +1831 @@
++ reserve v1,v0 for Element of L;
 --- mml/roughs_3.miz
 +++ mml/roughs_3.miz
 @@ -100 +100,2 @@
