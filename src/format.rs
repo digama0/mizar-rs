@@ -156,6 +156,7 @@ impl Pretty<'_> {
   fn with_lc<R>(lc: Option<&LocalContext>, f: impl for<'b> FnOnce(&'b Pretty<'b>) -> R) -> R {
     let arena = Arena::new();
     let cfg = lc.map_or(&FormatterConfig::DEFAULT, |lc| &lc.formatter.cfg);
+    let lc = lc.filter(|_| cfg.enable_formatter);
     f(&Pretty { lc, cfg, arena: &arena, comma: arena.text(",").append(arena.line()) })
   }
 
@@ -172,6 +173,8 @@ impl<'a> std::ops::Deref for Pretty<'a> {
 type Doc<'a> = DocBuilder<'a, Arena<'a>>;
 
 impl<'a> Pretty<'a> {
+  fn depth(&self) -> u32 { self.lc.map_or(0, |lc| lc.bound_var.len() as u32) }
+
   fn commas(&self, docs: impl IntoIterator<Item = Doc<'a>>) -> Doc<'a> {
     self.intersperse(docs, self.comma.clone()).nest(2).group()
   }
@@ -595,26 +598,26 @@ impl<'a> Pretty<'a> {
 
 impl std::fmt::Debug for Term {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.term(false, self, 0, 0).nest(2).render_fmt(100, f))
+    Pretty::with(|p| p.term(false, self, p.depth(), 0).nest(2).render_fmt(100, f))
   }
 }
 impl std::fmt::Debug for Formula {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.formula(false, true, self, 0, 0).nest(2).render_fmt(100, f))
+    Pretty::with(|p| p.formula(false, true, self, p.depth(), 0).nest(2).render_fmt(100, f))
   }
 }
 impl std::fmt::Debug for Attr {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.attr(self, false, 0, 0).nest(2).render_fmt(100, f))
+    Pretty::with(|p| p.attr(self, false, p.depth(), 0).nest(2).render_fmt(100, f))
   }
 }
 impl std::fmt::Debug for Attrs {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.attrs(self, false, 0, 0).nest(2).render_fmt(100, f))
+    Pretty::with(|p| p.attrs(self, false, p.depth(), 0).nest(2).render_fmt(100, f))
   }
 }
 impl std::fmt::Debug for Type {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.ty(self, 0, 0).nest(2).render_fmt(100, f))
+    Pretty::with(|p| p.ty(self, p.depth(), 0).nest(2).render_fmt(100, f))
   }
 }

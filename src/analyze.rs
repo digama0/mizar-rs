@@ -258,7 +258,7 @@ impl Analyzer<'_> {
         }
         assert!(self.reserved_extra_depth == 0);
         if self.g.cfg.exporter_enabled {
-          self.export.theorems.push(Theorem { kind: TheoremKind::Thm, stmt: f })
+          self.export.theorems.push(Theorem { pos: it.pos, kind: TheoremKind::Thm, stmt: f })
         }
       }
       ast::ItemKind::Reservation(its) => {
@@ -303,7 +303,7 @@ impl Analyzer<'_> {
         }
         self.lc.term_cache.get_mut().close_scope();
       }
-      &mut ast::ItemKind::Pragma(Pragma::Canceled(k, n)) => self.elab_canceled(k, n),
+      &mut ast::ItemKind::Pragma(Pragma::Canceled(k, n)) => self.elab_canceled(it.pos, k, n),
       ast::ItemKind::Pragma(Pragma::ThmDesc(_)) => self.items -= 1,
       // This is intentionally stricter than necessary to ensure that MML has no weird
       // pragmas. The line below should be uncommented to allow pragmas for general use.
@@ -839,21 +839,27 @@ impl Analyzer<'_> {
     }
   }
 
-  fn elab_canceled(&mut self, kind: CancelKind, n: u32) {
+  fn elab_canceled(&mut self, pos: Position, kind: CancelKind, n: u32) {
     self.items += n as usize - 1;
     match kind {
       CancelKind::Def => {
         // canceled defs outside a block don't create a DefTheorem, so they don't increment self.defthms
         // self.defthms.0 += n;
         if self.g.cfg.exporter_enabled {
-          (self.export.theorems)
-            .extend((0..n).map(|_| Theorem { kind: TheoremKind::CanceledDef, stmt: Formula::True }))
+          self.export.theorems.extend((0..n).map(|_| Theorem {
+            pos,
+            kind: TheoremKind::CanceledDef,
+            stmt: Formula::True,
+          }))
         }
       }
       CancelKind::Thm =>
         if self.g.cfg.exporter_enabled {
-          (self.export.theorems)
-            .extend((0..n).map(|_| Theorem { kind: TheoremKind::CanceledThm, stmt: Formula::True }))
+          self.export.theorems.extend((0..n).map(|_| Theorem {
+            pos,
+            kind: TheoremKind::CanceledThm,
+            stmt: Formula::True,
+          }))
         },
       CancelKind::Sch => {
         if self.g.cfg.exporter_enabled {
@@ -941,9 +947,9 @@ impl Analyzer<'_> {
     }
     for (&k, &bound) in &scope.uses {
       if !bound && !self.apply_reserved.contains_key(&k) {
-          vars.push(k)
-        }
+        vars.push(k)
       }
+    }
     self.push_bound_reserved(&vars, true, check)
   }
 
@@ -2430,9 +2436,9 @@ impl Analyzer<'_> {
     }
     for (&k, &bound) in &cr.uses {
       if !bound && !self.apply_reserved.contains_key(&k) {
-          vars.0.push(k)
-        }
+        vars.0.push(k)
       }
+    }
     vars
   }
 
@@ -3359,7 +3365,7 @@ struct BlockReader {
   to_const: IdxVec<LocusId, ConstId>,
   primary: IdxVec<LocusId, Type>,
   assums: Vec<ReconstructAssum>,
-  defs: Vec<Option<PendingDef>>,
+  defs: Vec<(Position, Option<PendingDef>)>,
   needs_round_up: bool,
 }
 
@@ -3432,7 +3438,7 @@ impl BlockReader {
 
   fn after_scope(self, elab: &mut Analyzer) {
     elab.notations.iter_mut().for_each(|nota| nota.1.up());
-    for def in self.defs {
+    for (pos, def) in self.defs {
       if let Some(PendingDef { kind, df, label, thm }) = def {
         elab.r.read_definiens(&df);
         if elab.g.cfg.analyzer_full {
@@ -3440,10 +3446,14 @@ impl BlockReader {
           elab.push_prop(label, thm2);
         }
         if elab.g.cfg.exporter_enabled {
-          elab.export.theorems.push(Theorem { kind: TheoremKind::Def(kind), stmt: *thm })
+          elab.export.theorems.push(Theorem { pos, kind: TheoremKind::Def(kind), stmt: *thm })
         }
       } else if elab.g.cfg.exporter_enabled {
-        elab.export.theorems.push(Theorem { kind: TheoremKind::CanceledDef, stmt: Formula::True })
+        elab.export.theorems.push(Theorem {
+          pos,
+          kind: TheoremKind::CanceledDef,
+          stmt: Formula::True,
+        })
       }
     }
   }
@@ -3506,8 +3516,8 @@ impl BlockReader {
   }
 
   fn elab_func_def(
-    &mut self, elab: &mut Analyzer, pat: &mut ast::PatternFunc, it: &mut ast::DefinitionBody,
-    spec: Option<&ast::Type>, def: &mut Option<Box<ast::Definiens>>,
+    &mut self, elab: &mut Analyzer, loc: Position, pat: &mut ast::PatternFunc,
+    it: &mut ast::DefinitionBody, spec: Option<&ast::Type>, def: &mut Option<Box<ast::Definiens>>,
   ) {
     let fmt = elab.formats[&Format::Func(pat.to_format())];
     let mut cc = CorrConds::new();
@@ -3627,7 +3637,7 @@ impl BlockReader {
         value,
       });
       let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.clone());
-      self.defs.push(Some(PendingDef { kind: ConstrKind::Func(n), df, label, thm }));
+      self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Func(n), df, label, thm })));
     }
     let pat = Pattern { kind: PatternKind::Func(n), fmt, primary, visible, pos: true };
     pat.check_access();
@@ -3636,8 +3646,8 @@ impl BlockReader {
   }
 
   fn elab_pred_def(
-    &mut self, elab: &mut Analyzer, pat: &mut ast::PatternPred, it: &mut ast::DefinitionBody,
-    def: &mut Option<Box<ast::Definiens>>,
+    &mut self, elab: &mut Analyzer, loc: Position, pat: &mut ast::PatternPred,
+    it: &mut ast::DefinitionBody, def: &mut Option<Box<ast::Definiens>>,
   ) {
     let fmt = elab.formats[&Format::Pred(pat.to_format())];
     let mut cc = CorrConds::new();
@@ -3712,7 +3722,7 @@ impl BlockReader {
         value: DefValue::Formula(value),
       });
       let label = def.as_deref_mut().unwrap().label.as_ref().map(|l| l.id.clone());
-      self.defs.push(Some(PendingDef { kind: ConstrKind::Pred(n), df, label, thm }));
+      self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Pred(n), df, label, thm })));
     }
     let pat = Pattern { kind: PatternKind::Pred(n), fmt, primary, visible, pos };
     pat.check_access();
@@ -3721,8 +3731,8 @@ impl BlockReader {
   }
 
   fn elab_mode_def(
-    &mut self, elab: &mut Analyzer, pat: &mut ast::PatternMode, kind: &mut ast::DefModeKind,
-    it: &mut ast::DefinitionBody,
+    &mut self, elab: &mut Analyzer, loc: Position, pat: &mut ast::PatternMode,
+    kind: &mut ast::DefModeKind, it: &mut ast::DefinitionBody,
   ) {
     let fmt = elab.formats[&Format::Mode(pat.to_format())];
     let mut cc = CorrConds::new();
@@ -3848,7 +3858,7 @@ impl BlockReader {
             value: DefValue::Formula(value),
           });
           let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.clone());
-          self.defs.push(Some(PendingDef { kind: ConstrKind::Mode(n), df, label, thm }));
+          self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Mode(n), df, label, thm })));
         }
         let pat = Pattern { kind: PatternKind::Mode(n), fmt, primary, visible, pos: true };
         pat.check_access();
@@ -3859,8 +3869,8 @@ impl BlockReader {
   }
 
   fn elab_attr_def(
-    &mut self, elab: &mut Analyzer, pat: &mut ast::PatternAttr, it: &mut ast::DefinitionBody,
-    mut def: Option<&mut ast::Definiens>,
+    &mut self, elab: &mut Analyzer, loc: Position, pat: &mut ast::PatternAttr,
+    it: &mut ast::DefinitionBody, mut def: Option<&mut ast::Definiens>,
   ) {
     let fmt = elab.formats[&Format::Attr(pat.to_format())];
     let mut cc = CorrConds::new();
@@ -3928,7 +3938,7 @@ impl BlockReader {
         value: DefValue::Formula(value),
       });
       let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.clone());
-      self.defs.push(Some(PendingDef { kind: ConstrKind::Attr(n), df, label, thm }));
+      self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Attr(n), df, label, thm })));
     }
     let pat = Pattern { kind: PatternKind::Attr(n), fmt, primary, visible, pos };
     pat.check_access();
@@ -4566,11 +4576,11 @@ impl BlockReader {
     elab.r.notations[PKC::Attr].push_ext(pat)
   }
 
-  fn elab_canceled_def(&mut self, elab: &mut Analyzer, n: u32) {
+  fn elab_canceled_def(&mut self, elab: &mut Analyzer, loc: Position, n: u32) {
     elab.items += n as usize - 1;
     elab.defthms.0 += n;
     if elab.g.cfg.exporter_enabled {
-      self.defs.extend((0..n).map(|_| None))
+      self.defs.extend((0..n).map(|_| (loc, None)))
     }
   }
 }
@@ -4648,14 +4658,15 @@ impl ReadProof for BlockReader {
       _ => {}
     }
     match (self.kind, &mut it.kind) {
-      (BlockKind::Definition, ast::ItemKind::Definition(it)) => match &mut it.kind {
+      (BlockKind::Definition, ast::ItemKind::Definition(df)) => match &mut df.kind {
         ast::DefinitionKind::Func { pat, spec, def } =>
-          self.elab_func_def(elab, pat, &mut it.body, spec.as_deref(), def),
-        ast::DefinitionKind::Pred { pat, def } => self.elab_pred_def(elab, pat, &mut it.body, def),
+          self.elab_func_def(elab, it.pos, pat, &mut df.body, spec.as_deref(), def),
+        ast::DefinitionKind::Pred { pat, def } =>
+          self.elab_pred_def(elab, it.pos, pat, &mut df.body, def),
         ast::DefinitionKind::Mode { pat, kind } =>
-          self.elab_mode_def(elab, pat, kind, &mut it.body),
+          self.elab_mode_def(elab, it.pos, pat, kind, &mut df.body),
         ast::DefinitionKind::Attr { pat, def } =>
-          self.elab_attr_def(elab, pat, &mut it.body, def.as_deref_mut()),
+          self.elab_attr_def(elab, it.pos, pat, &mut df.body, def.as_deref_mut()),
       },
       (BlockKind::Definition, ast::ItemKind::DefStruct(it)) => self.elab_struct_def(elab, it),
       (BlockKind::Notation, ast::ItemKind::PatternRedef(it)) => match it {
@@ -4680,7 +4691,7 @@ impl ReadProof for BlockReader {
       (BlockKind::Registration, ast::ItemKind::SethoodRegistration { ty, just }) =>
         self.elab_sethood_registration(elab, ty, just),
       (BlockKind::Definition, &mut ast::ItemKind::Pragma(Pragma::Canceled(CancelKind::Def, n))) =>
-        self.elab_canceled_def(elab, n),
+        self.elab_canceled_def(elab, it.pos, n),
       (
         BlockKind::Registration | BlockKind::Definition,
         ast::ItemKind::Pragma(Pragma::ThmDesc(_)),

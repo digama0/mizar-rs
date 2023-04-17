@@ -673,7 +673,7 @@ impl MizPath {
         },
         _ => panic!("unknown theorem kind"),
       };
-      thms.thm.push(Theorem { kind, stmt });
+      thms.thm.push(Theorem { pos: Position::default(), kind, stmt });
     }
     assert!(matches!(r.read_event(buf), Event::Eof));
     Ok(true)

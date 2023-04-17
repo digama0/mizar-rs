@@ -1811,10 +1811,15 @@ impl<V: VisitMut> Visitable<V> for Libraries {
   }
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, Eq)]
 pub struct Position {
   pub line: u32,
   pub col: u32,
+}
+
+impl PartialEq for Position {
+  /// When used in export verification, we don't compare positions
+  fn eq(&self, _: &Self) -> bool { true }
 }
 
 impl std::fmt::Debug for Position {
@@ -2594,6 +2599,7 @@ impl<V: VisitMut> Visitable<V> for TheoremKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Theorem {
+  pub pos: Position,
   pub kind: TheoremKind,
   pub stmt: Formula,
 }

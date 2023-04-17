@@ -212,6 +212,8 @@ impl AccumConstructors {
 
 impl Analyzer<'_> {
   pub fn export(&mut self) {
+    // This file deals with expressions after renumbering, so the formatter is liable to panic
+    self.r.lc.formatter.cfg.enable_formatter = false;
     let ep = &mut ExportPrep {
       ctx: Some(&self.r.g.constrs),
       lc: &self.r.lc,

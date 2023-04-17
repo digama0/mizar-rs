@@ -267,7 +267,7 @@ impl MizPath {
     let mut w = self.create_xml(new_prel, "the").unwrap();
     w.with0(b"Theorems", |w| {
       w.write_signature(sig);
-      for Theorem { kind, stmt } in thm {
+      for Theorem { pos: _, kind, stmt } in thm {
         let attrs = |w: &mut Elem| {
           let k = match kind {
             TheoremKind::Thm | TheoremKind::CanceledThm => b'T',

@@ -3092,7 +3092,7 @@ impl FormatterConfig {
     show_invisible: true,
     show_orig: true,
     upper_clusters: false,
-    both_clusters: true,
+    both_clusters: false,
     negation_sugar: true,
   };
 }
