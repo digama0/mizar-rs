@@ -170,6 +170,7 @@ impl Analyzer<'_> {
     self.label_names.0.truncate(sc.sc.labels);
     self.thesis = self.thesis_stack.pop().unwrap();
     self.lookup = sc.lookup;
+    self.apply_reserved.clear();
     self.r.close_scope(sc.sc, check_for_local_const)
   }
 
@@ -934,15 +935,15 @@ impl Analyzer<'_> {
 
   fn push_nameck_scope(&mut self, scope: &NameckScope, check: impl FnMut(&mut Self, &Type)) {
     let mut vars = vec![];
-    for &k in &scope.uses {
-      if let im::hashmap::Entry::Vacant(e) = self.apply_reserved.entry(k) {
-        if let Some(&(kind, _)) = scope.reserved.get(&k) {
-          e.insert(kind);
-        } else {
+    for (&k, &(kind, _)) in &scope.reserved {
+      let kind = self.map_var_kind(kind);
+      self.apply_reserved.entry(k).or_insert(kind);
+    }
+    for (&k, &bound) in &scope.uses {
+      if !bound && !self.apply_reserved.contains_key(&k) {
           vars.push(k)
         }
       }
-    }
     self.push_bound_reserved(&vars, true, check)
   }
 
@@ -2382,7 +2383,7 @@ impl ReserveBlock {
 
 #[derive(Clone, Debug)]
 pub struct NameckScope {
-  uses: im::OrdSet<ReservedId>,
+  uses: im::OrdMap<ReservedId, bool>,
   reserved: im::HashMap<ReservedId, (VarKind, u32)>,
 }
 
@@ -2398,7 +2399,7 @@ struct CollectReserved<'a> {
   reserved: &'a IdxVec<ReservedId, (Rc<str>, ResGroupId)>,
   res_groups: &'a IdxVec<ResGroupId, ResGroup>,
   reserved_lookup: &'a HashMap<Rc<str>, ReservedId>,
-  uses: im::OrdSet<ReservedId>,
+  uses: im::OrdMap<ReservedId, bool>,
   lookup: Rc<NameLookup>,
   depth: BoundId,
   level: u32,
@@ -2423,15 +2424,15 @@ impl Analyzer<'_> {
     };
     f(&mut cr);
     let mut vars = IdxVec::default();
-    for &k in &cr.uses {
-      if let im::hashmap::Entry::Vacant(e) = self.apply_reserved.entry(k) {
-        if let Some(&(kind, _)) = self.lookup.reserved.get(&k) {
-          e.insert(kind);
-        } else {
+    for (&k, &(kind, _)) in &self.lookup.reserved {
+      let kind = self.map_var_kind(kind);
+      self.apply_reserved.entry(k).or_insert(kind);
+    }
+    for (&k, &bound) in &cr.uses {
+      if !bound && !self.apply_reserved.contains_key(&k) {
           vars.0.push(k)
         }
       }
-    }
     vars
   }
 
@@ -2449,6 +2450,14 @@ impl Analyzer<'_> {
     }
     // eprintln!("{i:?}");
     i
+  }
+
+  fn map_var_kind(&self, kind: VarKind) -> VarKind {
+    match kind {
+      VarKind::Bound(i) => VarKind::Bound(self.map_bound(i)),
+      VarKind::Reserved(_) => unreachable!(),
+      kind => kind,
+    }
   }
 
   fn push_bound_reserved(
@@ -2501,12 +2510,31 @@ impl Analyzer<'_> {
 impl CollectReserved<'_> {
   fn use_reserved(&mut self, pos: Position, n: ReservedId) {
     for &m in &self.res_groups[self.reserved[n].1].fvars.as_ref().unwrap().0 {
-      if self.lookup.reserved.get(&m).map_or(false, |k| k.1 >= self.level) {
-        panic!("{pos:?}: can't use reserved variable because it would result in an invalid type")
+      if let Some(k) = self.lookup.reserved.get(&m) {
+        assert!(
+          k.1 < self.level,
+          "{pos:?}: can't use reserved variable because it would result in an invalid type"
+        )
+      } else {
+        self.uses.insert(m, false);
       }
-      self.uses.insert(m);
     }
-    self.uses.insert(n);
+    self.uses.insert(n, false);
+  }
+
+  fn merge_bound_uses(
+    uses: &mut im::OrdMap<ReservedId, bool>, bound: &im::OrdMap<ReservedId, bool>,
+  ) {
+    for (&k, _) in bound {
+      match uses.entry(k) {
+        im::ordmap::Entry::Occupied(mut e) => {
+          e.insert(false);
+        }
+        im::ordmap::Entry::Vacant(e) => {
+          e.insert(true);
+        }
+      }
+    }
   }
 
   fn push_bound(&mut self, vars: &mut [ast::BinderGroup]) {
@@ -2581,14 +2609,16 @@ impl CollectReserved<'_> {
         let scope_reserved = this.lookup.reserved.clone();
         this.level += 1;
         this.visit_term(scope);
-        let scope_uses = std::mem::take(&mut this.uses);
+        let mut scope_uses = std::mem::take(&mut this.uses);
         let compr_reserved = this.lookup.reserved.clone();
         if let Some(f) = compr {
           this.visit_formula(f)
         }
         this.level -= 1;
         let compr_uses = std::mem::replace(&mut this.uses, orig);
-        if !scope_uses.is_empty() || !compr_uses.is_empty() {
+        Self::merge_bound_uses(&mut scope_uses, &compr_uses);
+        Self::merge_bound_uses(&mut this.uses, &scope_uses);
+        if !scope_uses.is_empty() {
           *nameck = Some(Box::new(FraenkelNameckResult {
             scope: NameckScope { uses: scope_uses, reserved: scope_reserved },
             compr: NameckScope { uses: compr_uses, reserved: compr_reserved },
