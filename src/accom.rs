@@ -1,6 +1,6 @@
 use crate::types::*;
 use crate::{mk_id, CmpStyle, MizPath, VisitMut};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::io;
 
 mk_id! {
@@ -21,18 +21,25 @@ impl VocBuilder {
     i
   }
 
-  fn get_or_push(&mut self, art: Article, val: &SymbolsBase) -> (VocId, bool) {
+  fn get_or_push(&mut self, art: Article, val: &SymbolsBase) -> VocId {
     let res = self.voc.enum_iter().find(|p| p.1 .0 == art);
     if let Some((i, (_, val2))) = res {
       assert_eq!(*self.hi(i) - val2, *val);
-      (i, true)
+      i
     } else {
-      (self.push(art, val), false)
+      self.push(art, val)
     }
   }
 
   fn hi(&self, id: VocId) -> &SymbolsBase {
     self.voc.get(VocId(id.0 + 1)).map_or(&self.base, |(_, base)| base)
+  }
+
+  fn truncate(&mut self, len: usize) {
+    if self.voc.len() > len {
+      self.base = self.voc.0[len].1;
+      self.voc.0.truncate(len)
+    }
   }
 }
 
@@ -303,40 +310,43 @@ impl Accomodator {
     Ok(())
   }
 
-  /// ProcessNotations
+  /// ProcessNotation
   pub fn accom_notations(
-    &mut self, fmt_map: &mut BTreeMap<Format, FormatId>, mut fmts: Option<&mut Formats>,
+    &mut self, fmt_map: &mut HashMap<Format, FormatId>, mut fmts: Option<&mut Formats>,
     pats: &mut Vec<Pattern>,
   ) -> io::Result<()> {
     if let Some(fmts) = &mut fmts {
-      assert_eq!(fmts.formats.push(Format::Attr(FormatAttr::STRICT)), FormatId::STRICT)
+      assert_eq!(fmts.formats.push(Format::Attr(FormatAttr::STRICT)), FormatId::STRICT);
+      fmt_map.insert(Format::Attr(FormatAttr::STRICT), FormatId::STRICT);
     }
     for &(_, art) in &self.dirs.0[DirectiveKind::Notations] {
+      let dict_len = self.dict.voc.len();
       let mut dno = Default::default();
       assert!(MizPath::new(art.as_str()).read_dno(false, &mut dno)?);
       let mut s_rename = RenameSymbol::default();
       for &(art, ref val) in &dno.vocs.0 {
-        let (i, old) = self.dict.get_or_push(art, val);
-        s_rename.push(val, &self.dict.voc[i].1, old);
+        let i = self.dict.get_or_push(art, val);
+        s_rename.push(val, &self.dict.voc[i].1, i.0 < dict_len as u32);
       }
-      let len = self.sig.sig.len();
+      let sig_len = self.sig.sig.len();
       let mut rename = self.sig.rename(&dno.sig, None);
       for Pattern { mut kind, mut fmt, mut primary, visible, pos } in dno.pats {
         fmt.visit_mut(|k, c| s_rename.apply(k, c));
         if s_rename.ok() {
-          kind.visit(&mut rename);
-          primary.visit(&mut rename);
-          if rename.ok() {
-            if let Some(fmt) = match &mut fmts {
-              Some(fmts) => Some(*fmt_map.entry(fmt).or_insert_with(|| fmts.formats.push(fmt))),
-              None => fmt_map.get(&fmt).copied(),
-            } {
+          if let Some(fmt) = match &mut fmts {
+            Some(fmts) => Some(*fmt_map.entry(fmt).or_insert_with(|| fmts.formats.push(fmt))),
+            None => fmt_map.get(&fmt).copied(),
+          } {
+            kind.visit(&mut rename);
+            primary.visit(&mut rename);
+            if rename.ok() {
               pats.push(Pattern { kind, fmt, primary, visible, pos })
             }
           }
         }
       }
-      self.sig.truncate(len);
+      self.dict.truncate(dict_len);
+      self.sig.truncate(sig_len);
     }
     pats.sort_by_key(|pat| pat.kind.class() as u8);
     Ok(())

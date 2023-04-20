@@ -255,12 +255,7 @@ impl Analyzer<'_> {
 
     // validating .dfr
     {
-      let format_base = {
-        let mut f = Default::default();
-        self.path.read_formats("frm", &mut f).unwrap();
-        f.formats.len()
-      };
-      let mut dfr1 = self.lc.formatter.formats.formats.0[format_base..].to_owned();
+      let mut dfr1 = self.lc.formatter.formats.formats.0[self.formats_base..].to_owned();
       let nonempty = !dfr1.is_empty();
       let (mut marked_vocs, mut vocs2, mut dfr2) = Default::default();
       if self.g.cfg.verify_export {

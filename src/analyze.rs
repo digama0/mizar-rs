@@ -62,8 +62,22 @@ impl<'a> std::ops::DerefMut for Analyzer<'a> {
 
 impl Reader {
   pub fn run_analyzer(&mut self, path: &MizPath, mut parser: Option<&mut MizParser<'_>>) {
+    let mut items;
+    if let Some(parser) = &mut parser {
+      // parser.formats is empty, formatter.formats has .frm
+      parser.formats = std::mem::take(&mut self.lc.formatter.formats.formats);
+      parser.format_lookup = std::mem::take(&mut self.formats);
+      items = parser.parse_items();
+      // move .frx formats back to formatter
+      self.lc.formatter.formats.formats = std::mem::take(&mut parser.formats);
+      self.formats = std::mem::take(&mut parser.format_lookup);
+    } else if self.g.cfg.nameck_enabled {
+      items = path.open_wsx().unwrap().parse_items()
+    } else {
+      items = path.open_msx().unwrap().parse_items()
+    }
     if !self.g.cfg.analyzer_enabled {
-      panic!("analyzer is not enabled")
+      return
     }
     let mut elab = Analyzer {
       r: self,
@@ -98,15 +112,7 @@ impl Reader {
       elab.export.reductions_base = elab.reductions.len() as u32;
       elab.export.properties_base = elab.properties.len() as u32;
     }
-    let mut r = if let Some(parser) = &mut parser {
-      parser.parse_items()
-    } else if elab.g.cfg.nameck_enabled {
-      path.open_wsx().unwrap().parse_items()
-    } else {
-      path.open_msx().unwrap().parse_items()
-    };
-    // println!("parsed {:?}, {} items", path.art, r.len());
-    for (i, it) in r.iter_mut().enumerate() {
+    for (i, it) in items.iter_mut().enumerate() {
       if let Some(n) = elab.g.cfg.first_verbose_top_item {
         set_verbose(i >= n);
       }
@@ -262,6 +268,7 @@ impl Analyzer<'_> {
       ast::ItemKind::Reservation(its) => {
         self.lc.term_cache.get_mut().open_scope();
         assert!(self.lc.bound_var.is_empty());
+        self.items += its.len() - 1;
         for it in its {
           let ty;
           let fvars = if let Some(tys) = &it.tys {
@@ -506,8 +513,14 @@ impl Analyzer<'_> {
   fn skip_item(&mut self, it: &mut ast::Item) {
     self.items += 1;
     match &mut it.kind {
-      ast::ItemKind::Let { vars, .. } | ast::ItemKind::Given { vars, .. } =>
-        self.skip_fixed_vars(vars),
+      ast::ItemKind::Let { vars, conds } => {
+        self.items += vars.len() - 1;
+        if !conds.is_empty() {
+          self.items += 1;
+        }
+        self.skip_fixed_vars(vars)
+      }
+      ast::ItemKind::Given { vars, .. } => self.skip_fixed_vars(vars),
       ast::ItemKind::Take(decl) =>
         if self.g.cfg.nameck_enabled {
           for d in decl {
@@ -932,7 +945,7 @@ impl Analyzer<'_> {
     let mut vars = vec![];
     for (&k, &(kind, _)) in &scope.reserved {
       let kind = self.map_var_kind(kind);
-      self.reserved_lookup.entry(k).or_insert(kind);
+      self.reserved_lookup.insert(k, kind);
     }
     for (&k, &bound) in &scope.uses {
       if !bound && !self.reserved_lookup.contains_key(&k) {
@@ -2733,6 +2746,10 @@ trait ReadProof {
     // eprintln!("[{:?}] thesis = {:?}", it.pos, elab.thesis);
     match &mut it.kind {
       ast::ItemKind::Let { vars, conds } => {
+        elab.items += vars.len() - 1;
+        if !conds.is_empty() {
+          elab.items += 1;
+        }
         let n = elab.lc.fixed_var.len();
         let istart = elab.lc.infer_const.get_mut().len() as u32;
         for var in vars {
@@ -2767,7 +2784,8 @@ trait ReadProof {
         });
         self.given(elab, n, istart, f);
       }
-      ast::ItemKind::Take(its) =>
+      ast::ItemKind::Take(its) => {
+        elab.items += its.len() - 1;
         for ast::TakeDecl { var, term } in its {
           let term = elab.elab_intern_term_no_reserve(term);
           if let Some(var) = var {
@@ -2780,7 +2798,8 @@ trait ReadProof {
           } else {
             self.take(elab, term)
           }
-        },
+        }
+      }
       ast::ItemKind::Thus(stmt) =>
         if elab.g.cfg.analyzer_full {
           let f = elab.elab_stmt(stmt);

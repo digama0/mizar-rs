@@ -2330,23 +2330,23 @@ impl SymbolKind {
 
 pub type Symbols = Vec<(SymbolKind, String)>;
 
-#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct FormatAggr {
   pub sym: StructSymId,
   pub args: u8,
 }
 
-#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct FormatStruct {
   pub sym: StructSymId,
   pub args: u8,
 }
-#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct FormatMode {
   pub sym: ModeSymId,
   pub args: u8,
 }
-#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct FormatAttr {
   pub sym: AttrSymId,
   pub args: u8,
@@ -2356,20 +2356,20 @@ impl FormatAttr {
   pub const STRICT: Self = Self { sym: AttrSymId::STRICT, args: 1 };
 }
 
-#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum FormatFunc {
   Func { sym: FuncSymId, left: u8, right: u8 },
   Bracket { lsym: LeftBrkSymId, rsym: RightBrkSymId, args: u8 },
 }
 
-#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct FormatPred {
   pub sym: PredSymId,
   pub left: u8,
   pub right: u8,
 }
 
-#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum Format {
   Aggr(FormatAggr),
   SubAggr(StructSymId),
@@ -2421,7 +2421,7 @@ impl Format {
   }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum PriorityKind {
   Functor(FuncSymId),
   LeftBrk(LeftBrkSymId),

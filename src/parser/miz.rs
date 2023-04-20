@@ -1,8 +1,9 @@
 use crate::ast::{SchRef, *};
 use crate::types::{
-  Article, ArticleId, BlockKind, CorrCondKind, DefId, DirectiveKind, Directives, Format, FormatId,
-  IdxVec, LeftBrkSymId, LocusId, ModeSymId, Position, PredSymId, PropertyKind, RightBrkSymId,
-  SchId, StructSymId, SymbolKind, Symbols, ThmId, MAX_ARTICLE_LEN,
+  Article, ArticleId, BlockKind, CorrCondKind, DefId, DirectiveKind, Directives, Format,
+  FormatFunc, FormatId, FuncSymId, IdxVec, LeftBrkSymId, LocusId, ModeSymId, Position, PredSymId,
+  PriorityKind, PropertyKind, RightBrkSymId, SchId, StructSymId, SymbolKind, Symbols, ThmId,
+  MAX_ARTICLE_LEN,
 };
 use enum_map::Enum;
 use radix_trie::{Trie, TrieCommon};
@@ -160,7 +161,7 @@ impl<'a> Token<'a> {
   }
 }
 
-pub struct Scanner<'a> {
+struct Scanner<'a> {
   data: &'a [u8],
   line: u32,
   line_start: usize,
@@ -202,7 +203,7 @@ impl<'a> Scanner<'a> {
     }
   }
 
-  pub fn load_symbols(&mut self, syms: &Symbols, infinitives: &[(PredSymId, &'a str)]) {
+  fn load_symbols(&mut self, syms: &Symbols, infinitives: &[(PredSymId, &'a str)]) {
     for (kind, s) in syms {
       assert!(self.tokens.insert(s.as_bytes().to_owned(), TokenKind::Symbol(*kind)).is_none())
     }
@@ -369,7 +370,7 @@ impl<'a> Scanner<'a> {
 }
 
 pub struct Parser<'a> {
-  pub scan: Scanner<'a>,
+  scan: Scanner<'a>,
   pub art: Article,
   pub articles: HashMap<Article, ArticleId>,
   pub formats: IdxVec<FormatId, Format>,
@@ -377,6 +378,8 @@ pub struct Parser<'a> {
   max_mode_args: HashMap<ModeSymId, u8>,
   max_struct_args: HashMap<StructSymId, u8>,
   max_pred_rhs: HashMap<PredSymId, u8>,
+  func_prio: HashMap<FuncSymId, u32>,
+  pub format_lookup: HashMap<Format, FormatId>,
 }
 
 impl<'a> Parser<'a> {
@@ -390,6 +393,8 @@ impl<'a> Parser<'a> {
       max_mode_args: Default::default(),
       max_struct_args: Default::default(),
       max_pred_rhs: Default::default(),
+      func_prio: Default::default(),
+      format_lookup: Default::default(),
     }
   }
 
@@ -411,9 +416,23 @@ impl<'a> Parser<'a> {
     }
   }
 
-  pub fn push_format(&mut self, fmt: Format) {
-    self.read_format(&fmt);
-    self.formats.push(fmt);
+  pub fn load_symbols(
+    &mut self, syms: &Symbols, infinitives: &[(PredSymId, &'a str)], prio: &[(PriorityKind, u32)],
+  ) {
+    self.scan.load_symbols(syms, infinitives);
+    for &(kind, value) in prio {
+      if let PriorityKind::Functor(sym) = kind {
+        self.func_prio.insert(sym, value);
+      }
+    }
+  }
+
+  pub fn push_format(&mut self, _pos: Position, fmt: Format) {
+    if let std::collections::hash_map::Entry::Vacant(e) = self.format_lookup.entry(fmt) {
+      let id = self.formats.push(fmt);
+      e.insert(id);
+      self.read_format(&fmt);
+    }
   }
 
   fn parse_article(tok: Token<'a>) -> Article {
@@ -590,7 +609,181 @@ impl<'a> Parser<'a> {
       }
     })
   }
+}
 
+#[derive(Debug)]
+struct TermElem<'a> {
+  lhs: Vec<Term>,
+  pos: Position,
+  sym: (FuncSymId, &'a str),
+  prio: u32,
+  parent: usize,
+  to_right: bool,
+}
+
+#[derive(Debug)]
+struct LongTermBuilder<'a> {
+  stack: Vec<TermElem<'a>>,
+  rhs: Vec<Term>,
+  fast_path: Result<(), Position>,
+}
+
+impl<'a> LongTermBuilder<'a> {
+  fn new(rhs: Vec<Term>) -> Self { Self { stack: vec![], rhs, fast_path: Ok(()) } }
+
+  fn push(&mut self, p: &Parser<'a>, tok: Token<'a>, args: Vec<Term>) {
+    let TokenKind::Symbol(SymbolKind::Func(sym)) = tok.kind else { unreachable!() };
+    let prio = p.func_prio[&sym];
+    let lhs = std::mem::replace(&mut self.rhs, args);
+    let mut right = lhs.len() as u8;
+    let mut parent = self.stack.len();
+    if self.fast_path.is_ok() {
+      while parent != 0 {
+        let elem = &self.stack[parent - 1];
+        if elem.prio < prio {
+          break
+        }
+        let left = if parent - 1 == elem.parent { elem.lhs.len() as u8 } else { 1 };
+        let fmt = FormatFunc::Func { sym: elem.sym.0, left, right };
+        if !p.format_lookup.contains_key(&Format::Func(fmt)) {
+          self.fast_path = Err(elem.pos);
+          break
+        }
+        parent = elem.parent;
+        right = 1;
+      }
+    }
+    let sym = (sym, tok.spelling);
+    self.stack.push(TermElem { lhs, pos: tok.pos, sym, prio, parent, to_right: true });
+  }
+
+  fn accum_left(stack: &mut [TermElem<'a>], lo: usize, mut hi: usize, rhs: &mut Vec<Term>) {
+    while lo < hi {
+      let i = hi - 1;
+      let TermElem { ref mut lhs, pos, sym, parent, .. } = stack[i];
+      let mut args = std::mem::take(lhs);
+      let left = args.len() as u8;
+      args.append(rhs);
+      rhs.push(Term::Infix { pos, sym: (sym.0, sym.1.to_owned()), left, args });
+      hi = parent
+    }
+  }
+
+  fn valid(&self, p: &Parser<'a>, i: usize) -> bool {
+    let sym = self.stack[i].sym.0;
+    let left = if self.stack[i].to_right { self.stack[i].lhs.len() as u8 } else { 1 };
+    let right = if self.stack.get(i + 1).map_or(false, |elem| elem.to_right) {
+      1
+    } else {
+      self.stack.get(i + 1).map_or(&self.rhs, |elem| &elem.lhs).len() as u8
+    };
+    p.format_lookup.contains_key(&Format::Func(FormatFunc::Func { sym, left, right }))
+  }
+
+  fn rebalance(&mut self, p: &Parser) {
+    for k in 1..self.stack.len() {
+      self.stack[k].to_right = self.stack[k - 1].prio < self.stack[k].prio;
+    }
+    let assert = |ok: bool, pos: Position| assert!(ok, "{pos:?}: failed to parse infix expression");
+    let mut bl = if self.valid(p, 0) {
+      0
+    } else {
+      self.stack[1].to_right ^= true;
+      assert(self.valid(p, 0), self.stack[0].pos);
+      1
+    };
+    'next: for k in 1..self.stack.len() - 1 {
+      if !self.valid(p, k) {
+        self.stack[k + 1].to_right ^= true;
+        if !self.valid(p, k) {
+          assert(bl != k, self.stack[k].pos);
+          self.stack[k + 1].to_right ^= true;
+          self.stack[k].to_right ^= true;
+          let bl2 = if self.valid(p, k) {
+            k
+          } else {
+            self.stack[k + 1].to_right ^= true;
+            assert(self.valid(p, k), self.stack[k].pos);
+            k + 1
+          };
+          for j in (bl + 1..k).rev() {
+            if self.valid(p, j) {
+              continue 'next
+            }
+            self.stack[j].to_right ^= true;
+            assert(self.valid(p, j), self.stack[k].pos);
+          }
+          assert(self.valid(p, bl), self.stack[k].pos);
+          bl = bl2;
+        }
+      }
+    }
+    for j in (bl + 1..self.stack.len()).rev() {
+      if self.valid(p, j) {
+        return
+      }
+      self.stack[j].to_right ^= true;
+      assert(self.valid(p, j), self.stack.last().unwrap().pos);
+    }
+    assert(self.valid(p, bl), self.stack.last().unwrap().pos);
+  }
+
+  #[cold]
+  fn slow_path(&mut self, p: &Parser<'a>) {
+    self.rebalance(p);
+    for i in 1..self.stack.len() {
+      let mut parent = i;
+      if !self.stack[i].to_right {
+        parent = self.stack[i - 1].parent;
+        while parent != 0 {
+          let elem = &self.stack[parent - 1];
+          if elem.prio < self.stack[i].prio {
+            break
+          }
+          parent = elem.parent;
+        }
+      }
+      self.stack[i].parent = parent;
+    }
+    for i in 0..self.stack.len() {
+      assert!(self.stack[i].to_right == (self.stack[i].parent == i));
+    }
+  }
+
+  fn finish(mut self, p: &Parser<'a>) -> Vec<Term> {
+    if self.fast_path.is_ok() {
+      let mut parent = self.stack.len();
+      let mut right = self.rhs.len() as u8;
+      while parent != 0 {
+        let elem = &self.stack[parent - 1];
+        let left = if parent - 1 == elem.parent { elem.lhs.len() as u8 } else { 1 };
+        let fmt = FormatFunc::Func { sym: elem.sym.0, left, right };
+        if !p.format_lookup.contains_key(&Format::Func(fmt)) {
+          self.fast_path = Err(elem.pos);
+          break
+        }
+        parent = elem.parent;
+        right = 1;
+      }
+    }
+    if self.fast_path.is_err() {
+      assert!(self.stack.len() > 1, "{:?}: failed to parse infix expression", self.stack[0].pos);
+      self.slow_path(p)
+    }
+    for i in 0..self.stack.len() {
+      let lo = self.stack[i].parent;
+      if lo < i {
+        let [stack @ .., rhs] = &mut self.stack[..i + 1] else { unreachable!() };
+        Self::accum_left(stack, lo, i, &mut rhs.lhs);
+      }
+    }
+    let hi = self.stack.len();
+    Self::accum_left(&mut self.stack, 0, hi, &mut self.rhs);
+    self.rhs
+  }
+}
+
+impl<'a> Parser<'a> {
   /// if max_out is Some(n), then at most n results will be returned at paren level 0
   /// (unless n = 0 in which case 1 return is still possible)
   fn parse_func_rhs(
@@ -598,22 +791,26 @@ impl<'a> Parser<'a> {
   ) -> Vec<Term> {
     loop {
       match self.scan.peek().kind {
-        TokenKind::Symbol(SymbolKind::Func(sym)) => {
-          let tok = self.scan.next();
-          let sym = (sym, tok.spelling.to_owned());
-          let mut args;
-          if self.scan.try_accept(TokenKind::LPAREN) {
-            args = self.parse_terms();
-            self.scan.accept(TokenKind::RPAREN);
-          } else {
-            args = match self.parse_term_hi() {
-              Some(tm) => vec![*tm],
-              None => vec![],
+        TokenKind::Symbol(SymbolKind::Func(_)) => {
+          let mut lterm = LongTermBuilder::new(lhs);
+          loop {
+            let tok = self.scan.next();
+            let args;
+            if self.scan.try_accept(TokenKind::LPAREN) {
+              args = self.parse_terms();
+              self.scan.accept(TokenKind::RPAREN);
+            } else {
+              args = match self.parse_term_hi() {
+                Some(tm) => vec![*tm],
+                None => vec![],
+              }
+            }
+            lterm.push(self, tok, args);
+            if !matches!(self.scan.peek().kind, TokenKind::Symbol(SymbolKind::Func(_))) {
+              break
             }
           }
-          let left = lhs.len() as u8;
-          lhs.append(&mut args);
-          lhs = vec![Term::Infix { pos: tok.pos, sym, left, args: lhs }]
+          lhs = lterm.finish(self);
         }
         TokenKind::Keyword(Keyword::Qua) if lhs.len() == 1 => {
           let tok = self.scan.next();
@@ -1235,11 +1432,20 @@ impl<'a> Parser<'a> {
     self.scan.accept(Keyword::Semicolon);
     let (conds, corr) = self.parse_corr_conds();
     let props = self.parse_properties();
-    match &kind {
-      DefinitionKind::Func { pat, .. } => self.push_format(Format::Func(pat.to_format())),
-      DefinitionKind::Pred { pat, .. } => self.push_format(Format::Pred(pat.to_format())),
-      DefinitionKind::Mode { pat, .. } => self.push_format(Format::Mode(pat.to_format())),
-      DefinitionKind::Attr { pat, .. } => self.push_format(Format::Attr(pat.to_format())),
+    let fmt = match &kind {
+      DefinitionKind::Func { pat, .. } => Format::Func(pat.to_format()),
+      DefinitionKind::Pred { pat, .. } => Format::Pred(pat.to_format()),
+      DefinitionKind::Mode { pat, .. } => Format::Mode(pat.to_format()),
+      DefinitionKind::Attr { pat, .. } => Format::Attr(pat.to_format()),
+    };
+    if redef {
+      assert!(
+        self.format_lookup.contains_key(&fmt),
+        "{:?}: unknown format for redeclaration",
+        kind.pos()
+      )
+    } else {
+      self.push_format(kind.pos(), fmt)
     }
     let body = DefinitionBody { redef, conds, corr, props };
     ItemKind::Definition(Box::new(Definition { kind, body }))
@@ -1506,7 +1712,8 @@ impl<'a> Parser<'a> {
       let redef = match tok.kind {
         TokenKind::Keyword(Keyword::End) => break tok.end(),
         TokenKind::Pragma => {
-          items.push(Item { pos: start, kind: ItemKind::Pragma(tok.spelling.to_owned().into()) });
+          let pragma = tok.spelling[2..].parse().unwrap();
+          items.push(Item { pos: start, kind: ItemKind::Pragma(pragma) });
           continue
         }
         TokenKind::Keyword(Keyword::Redefine) => {
@@ -1557,7 +1764,7 @@ impl<'a> Parser<'a> {
           }
           let tok = self.scan.next();
           let TokenKind::Symbol(SymbolKind::Struct(sym)) = tok.kind else {
-            panic!("expected a struct symbol")
+            panic!("{:?}: expected a struct symbol", tok.pos)
           };
           let args = if self.scan.try_accept(Keyword::Over) {
             self.comma_separated(|this| this.parse_variable())
@@ -1567,27 +1774,29 @@ impl<'a> Parser<'a> {
           let pat = PatternStruct { sym: (sym, tok.spelling.to_owned()), args };
           self.scan.accept(Keyword::AggrLeftBrk);
           self.allow_internal_selector = true;
+          let mut num_fields = 0;
           let fields = self.comma_separated(|this| {
             let pos = this.scan.peek().pos;
             let vars = this.comma_separated(|this| {
               let tok = this.scan.next();
               let TokenKind::Symbol(SymbolKind::Sel(sym)) = tok.kind else {
-                panic!("expected a selector symbol")
+                panic!("{:?}: expected a selector symbol", tok.pos)
               };
               Field { pos, sym: (sym, tok.spelling.to_owned()) }
             });
+            num_fields += vars.len();
             this.scan.accept(Keyword::Arrow);
             FieldGroup { pos, vars, ty: *this.parse_type() }
           });
           self.scan.accept(Keyword::AggrRightBrk);
           self.scan.accept(Keyword::Semicolon);
           self.allow_internal_selector = false;
-          self.push_format(Format::SubAggr(pat.to_subaggr_format()));
-          self.push_format(Format::Struct(pat.to_mode_format()));
-          self.push_format(Format::Aggr(pat.to_aggr_format(fields.len())));
+          self.push_format(tok.pos, Format::SubAggr(pat.to_subaggr_format()));
+          self.push_format(tok.pos, Format::Struct(pat.to_mode_format()));
           for group in &fields {
-            group.vars.iter().for_each(|f| self.push_format(Format::Sel(f.sym.0)))
+            group.vars.iter().for_each(|f| self.push_format(f.pos, Format::Sel(f.sym.0)))
           }
+          self.push_format(tok.pos, Format::Aggr(pat.to_aggr_format(num_fields)));
           ItemKind::DefStruct(Box::new(DefStruct { parents, pat, fields }))
         }
         (TokenKind::Keyword(Keyword::Synonym | Keyword::Antonym), BlockKind::Notation) => {
@@ -1598,19 +1807,19 @@ impl<'a> Parser<'a> {
           self.scan.accept(Keyword::Semicolon);
           ItemKind::PatternRedef(match (new, orig) {
             (Pattern::Pred(new), Pattern::Pred(orig)) => {
-              self.push_format(Format::Pred(new.to_format()));
+              self.push_format(new.pos, Format::Pred(new.to_format()));
               PatternRedef::Pred { new, orig, pos }
             }
             (Pattern::Func(new), Pattern::Func(orig)) if pos => {
-              self.push_format(Format::Func(new.to_format()));
+              self.push_format(new.pos(), Format::Func(new.to_format()));
               PatternRedef::Func { new, orig }
             }
             (Pattern::Mode(new), Pattern::Mode(orig)) if pos => {
-              self.push_format(Format::Mode(new.to_format()));
+              self.push_format(new.pos, Format::Mode(new.to_format()));
               PatternRedef::Mode { new, orig }
             }
             (Pattern::Attr(new), Pattern::Attr(orig)) => {
-              self.push_format(Format::Attr(new.to_format()));
+              self.push_format(new.pos, Format::Attr(new.to_format()));
               PatternRedef::Attr { new, orig, pos }
             }
             (Pattern::Func(_), Pattern::Func(_)) | (Pattern::Mode(_), Pattern::Mode(_)) =>
@@ -1712,7 +1921,7 @@ impl<'a> Parser<'a> {
     loop {
       let tok = self.scan.next();
       let kind = match tok.kind {
-        TokenKind::Pragma => ItemKind::Pragma(tok.spelling.to_owned().into()),
+        TokenKind::Pragma => ItemKind::Pragma(tok.spelling[2..].parse().unwrap()),
         TokenKind::Keyword(Keyword::Begin) => ItemKind::Section,
         TokenKind::Keyword(Keyword::Scheme) => ItemKind::SchemeBlock(self.parse_scheme()),
         TokenKind::Keyword(Keyword::Definition) => self.parse_block(BlockKind::Definition),

@@ -805,7 +805,7 @@ impl MsmParser {
         let (from, to) = if self.msm { (t2, t1) } else { (t1, t2) }; // Yes, this is silly
         ItemKind::Reduction(Box::new(Reduction { from, to, conds: vec![], corr: None }))
       }
-      b"Pragma" => ItemKind::Pragma(spelling.unwrap().into()),
+      b"Pragma" => ItemKind::Pragma(spelling.unwrap().parse().unwrap()),
       _ => panic!("unrecognized item kind"),
     };
     if !end_tag {

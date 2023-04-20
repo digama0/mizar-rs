@@ -3076,7 +3076,6 @@ pub struct Config {
   pub one_item: bool,
   pub first_verbose_checker: Option<usize>,
   pub skip_to_verbose: bool,
-  pub parallelism: usize,
 }
 
 const DEBUG: bool = cfg!(debug_assertions);
@@ -3085,7 +3084,7 @@ const COUNT_SKIPPED_ITEMS: bool = false;
 impl FormatterConfig {
   const DEFAULT: Self = Self {
     enable_formatter: true,
-    show_infer: true,
+    show_infer: false,
     show_only_infer: false,
     show_priv: false,
     show_marks: true,
@@ -3139,19 +3138,16 @@ fn main() {
     one_item: false,
     first_verbose_checker: None,
     skip_to_verbose: DEBUG,
-
-    parallelism: if DEBUG || ONE_FILE { 1 } else { 8 },
   };
 
   const FIRST_FILE: usize = 0;
   const LAST_FILE: Option<usize> = None; //Some(11);
-  const ONE_FILE: bool = DEBUG;
 
   // set_verbose(true);
   // let path = MizPath(Article::from_bytes(b"TEST"), "../test/text/test".into());
   // path.with_reader(&cfg, |v| v.run_checker(&path));
   // print_stats_and_exit(cfg.parallelism);
-  cfg.parser_enabled = std::env::var("PARSER").is_ok();
+  cfg.parser_enabled = std::env::var("NO_PARSER").is_err();
   cfg.nameck_enabled = std::env::var("NO_NAME_CHECK").is_err();
   cfg.analyzer_enabled = std::env::var("NO_ANALYZER").is_err();
   cfg.analyzer_full = cfg.analyzer_enabled;
@@ -3162,19 +3158,22 @@ fn main() {
   cfg.exporter_enabled = std::env::var("NO_EXPORT").is_err();
   cfg.accom_enabled |= cfg.parser_enabled; // parser needs accom
   cfg.nameck_enabled |= cfg.parser_enabled; // parser needs nameck
-  cfg.analyzer_enabled |= cfg.exporter_enabled; // exporter needs (quick) analyzer
   cfg.analyzer_full |= cfg.checker_enabled; // checker needs analyzer_full (if analyzer is used)
   cfg.one_item = std::env::var("ONE_ITEM").is_ok();
   cfg.cache_prel = !cfg.one_item && std::env::var("NO_CACHE").is_err();
   cfg.exporter_enabled &= cfg.xml_export || cfg.verify_export || cfg.cache_prel;
+  cfg.analyzer_enabled |= cfg.exporter_enabled; // exporter needs (quick) analyzer
   let orig_mizar = std::env::var("ORIG_MIZAR").is_ok();
   let dep_order = std::env::var("DEP_ORDER").is_ok();
+  let one_file = DEBUG || std::env::var("ONE_FILE").is_ok();
+  let parallelism = if DEBUG || one_file { 1 } else { 8 };
+  cfg.panic_on_fail |= std::env::var("PANIC_ON_FAIL").is_ok();
   let mut args = std::env::args().skip(1);
   let first_file = args.next().and_then(|s| s.parse().ok()).unwrap_or(FIRST_FILE);
   if let Some(n) = args.next().and_then(|s| s.parse().ok()) {
     cfg.first_verbose_item = Some(n)
   }
-  ctrlc::set_handler(move || print_stats_and_exit(cfg.parallelism))
+  ctrlc::set_handler(move || print_stats_and_exit(parallelism))
     .expect("Error setting Ctrl-C handler");
   let file = std::fs::read_to_string("miz/mizshare/mml.lar").unwrap();
   let mml_vct =
@@ -3183,7 +3182,7 @@ fn main() {
     cache::init_cache(file.lines().enumerate().map(|(i, x)| (x, dep_order && i >= first_file)))
   }
   let jobs = &Mutex::new(file.lines().enumerate().skip(first_file).collect_vec().into_iter());
-  let running = &*std::iter::repeat_with(|| RwLock::new(None)).take(cfg.parallelism).collect_vec();
+  let running = &*std::iter::repeat_with(|| RwLock::new(None)).take(parallelism).collect_vec();
   let refresh_status_line = |mut msg: String| {
     use std::fmt::Write;
     for j in running {
@@ -3241,7 +3240,7 @@ fn main() {
                 panic!("mizar verifier failed")
               }
               // println!("{}", String::from_utf8(output.stdout).unwrap());
-            } else if cfg.analyzer_enabled {
+            } else if cfg.parser_enabled || cfg.analyzer_enabled {
               path.with_reader(cfg, mml_vct, &mut |v, p| v.run_analyzer(&path, p));
             } else if cfg.checker_enabled {
               path.with_reader(cfg, mml_vct, &mut |v, _| v.run_checker(&path));
@@ -3257,7 +3256,7 @@ fn main() {
             "{:w$}\r{i:4}: {s:8} in {:.3}s\n",
             "",
             start.elapsed().as_secs_f32(),
-            w = cfg.parallelism * 11,
+            w = parallelism * 11,
           );
 
           // let items = path.open_wsx().unwrap().parse_items();
@@ -3265,7 +3264,7 @@ fn main() {
           // path.open_msx().unwrap().parse_items();
           // println!("parsed {s}, {} msx items", items.len());
 
-          if ONE_FILE || LAST_FILE == Some(i) {
+          if one_file || LAST_FILE == Some(i) {
             break
           }
         }
@@ -3275,5 +3274,5 @@ fn main() {
     }
   });
   // std::thread::sleep(std::time::Duration::from_secs(60 * 60));
-  print_stats_and_exit(cfg.parallelism);
+  print_stats_and_exit(parallelism);
 }

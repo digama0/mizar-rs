@@ -1,6 +1,7 @@
 use crate::mk_id;
 use crate::types::*;
 use std::rc::Rc;
+use std::str::FromStr;
 
 #[derive(Clone, Debug)]
 pub struct Variable {
@@ -588,6 +589,19 @@ pub enum DefinitionKind {
   Attr { pat: Box<PatternAttr>, def: Option<Box<Definiens>> },
 }
 
+impl DefinitionKind {
+  pub fn pos(&self) -> Position {
+    match self {
+      DefinitionKind::Func { pat, .. } => match **pat {
+        PatternFunc::Func { pos, .. } | PatternFunc::Bracket { pos, .. } => pos,
+      },
+      DefinitionKind::Pred { pat, .. } => pat.pos,
+      DefinitionKind::Mode { pat, .. } => pat.pos,
+      DefinitionKind::Attr { pat, .. } => pat.pos,
+    }
+  }
+}
+
 #[derive(Debug)]
 pub struct CorrCond {
   pub pos: Position,
@@ -691,8 +705,9 @@ pub enum Pragma {
   Other(String),
 }
 
-impl From<String> for Pragma {
-  fn from(spelling: String) -> Self {
+impl FromStr for Pragma {
+  type Err = std::convert::Infallible;
+  fn from_str(spelling: &str) -> Result<Self, Self::Err> {
     let parse_num = |s: &str| {
       if s.is_empty() {
         1
@@ -700,7 +715,7 @@ impl From<String> for Pragma {
         s.trim().parse::<u32>().unwrap()
       }
     };
-    if let Some(s) = spelling.strip_prefix("$CD") {
+    Ok(if let Some(s) = spelling.strip_prefix("$CD") {
       Pragma::Canceled(CancelKind::Def, parse_num(s))
     } else if let Some(s) = spelling.strip_prefix("$CT") {
       Pragma::Canceled(CancelKind::Thm, parse_num(s))
@@ -709,8 +724,8 @@ impl From<String> for Pragma {
     } else if let Some(s) = spelling.strip_prefix("$N") {
       Pragma::ThmDesc(s.trim_start().to_owned())
     } else {
-      Pragma::Other(spelling)
-    }
+      Pragma::Other(spelling.to_owned())
+    })
   }
 }
 

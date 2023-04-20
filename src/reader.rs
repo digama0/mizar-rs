@@ -17,7 +17,8 @@ pub struct Reader {
   treat_thm_as_axiom: bool,
   pub accom: Option<Box<Accomodator>>,
   /// gFormatsColl
-  pub formats: BTreeMap<Format, FormatId>,
+  pub formats: HashMap<Format, FormatId>,
+  pub formats_base: usize,
   /// Notat
   pub notations: EnumMap<PatternKindClass, ExtVec<Pattern>>,
   /// Definientia
@@ -107,12 +108,14 @@ impl MizPath {
         accom.accom_articles()
       }
       if let Some(parser) = &mut parser {
-        parser.scan.load_symbols(&symbols, &inf.unwrap());
+        parser.load_symbols(&symbols, &inf.unwrap(), priority);
       }
       symbols
     });
     let mut notations = Default::default();
-    if cfg.analyzer_enabled || v.lc.formatter.cfg.enable_formatter || cfg.exporter_enabled {
+    let needs_formats =
+      cfg.analyzer_enabled || v.lc.formatter.cfg.enable_formatter || cfg.exporter_enabled;
+    if needs_formats && !cfg.parser_enabled {
       v.lc.formatter.formats.priority.clear();
       self.read_formats("frx", &mut v.lc.formatter.formats).unwrap();
       v.formats.extend(v.lc.formatter.formats.formats.enum_iter().map(|(id, f)| (*f, id)));
@@ -120,20 +123,28 @@ impl MizPath {
     if let Some(accom) = &mut v.accom {
       if let Some(parser) = &mut parser {
         let mut fmts = Default::default();
-        accom.accom_notations(&mut Default::default(), Some(&mut fmts), &mut notations).unwrap();
+        let mut fmt_map = Default::default();
+        accom.accom_notations(&mut fmt_map, Some(&mut fmts), &mut notations).unwrap();
         fmts.formats.0.iter().for_each(|fmt| parser.read_format(fmt));
-        parser.formats = fmts.formats;
+        v.lc.formatter.formats.formats = fmts.formats;
+        v.formats.extend(v.lc.formatter.formats.formats.enum_iter().map(|(id, f)| (*f, id)));
       } else {
         accom.accom_notations(&mut v.formats, None, &mut notations).unwrap();
       }
     } else {
       self.read_eno(&mut notations).unwrap();
     }
+    if cfg.exporter_enabled {
+      v.formats_base = if cfg.parser_enabled {
+        v.lc.formatter.formats.formats.len()
+      } else {
+        let mut f = Default::default();
+        self.read_formats("frm", &mut f).unwrap();
+        f.formats.len()
+      }
+    }
     if cfg.dump_notations {
       notations.iter().for_each(|pat| eprintln!("{pat:?}"))
-    }
-    if !(v.lc.formatter.cfg.enable_formatter || cfg.exporter_enabled) {
-      std::mem::take(&mut v.lc.formatter.formats);
     }
     v.lc.formatter.init_symbols(self, symbols);
     v.lc.formatter.init();
@@ -364,6 +375,7 @@ impl Reader {
       treat_thm_as_axiom: matches!(article.as_str(), "tarski_0" | "tarski_a"),
       accom,
       formats: Default::default(),
+      formats_base: 0,
       notations: Default::default(),
       definitions: Default::default(),
       equalities: Default::default(),
@@ -483,9 +495,9 @@ impl Reader {
 
   /// Prepare
   pub fn run_checker(&mut self, path: &MizPath) {
-    let r = path.read_xml().unwrap();
+    let items = path.read_xml().unwrap();
     // println!("parsed {:?}, {} items", path.0, r.len());
-    for (i, it) in r.iter().enumerate() {
+    for (i, it) in items.iter().enumerate() {
       assert!(matches!(
         it,
         Item::AuxiliaryItem(_)
