@@ -192,6 +192,12 @@ impl VisitMut for RenameConstr<'_> {
 }
 
 impl Accomodator {
+  pub fn build_vocabularies(&self, vocs: &mut Vocabularies) {
+    for (i, &(art, ref lo)) in self.dict.voc.enum_iter() {
+      vocs.0.push((art, *self.dict.hi(i) - lo))
+    }
+  }
+
   /// ProcessVocabularies
   pub fn accom_symbols<'a>(
     &mut self, mml_vct: &'a [u8], syms: &mut Symbols, priority: &mut Vec<(PriorityKind, u32)>,

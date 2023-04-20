@@ -3165,6 +3165,10 @@ fn main() {
   cfg.analyzer_enabled |= cfg.exporter_enabled; // exporter needs (quick) analyzer
   let orig_mizar = std::env::var("ORIG_MIZAR").is_ok();
   let dep_order = std::env::var("DEP_ORDER").is_ok();
+  assert!(
+    !cfg.cache_prel || !dep_order || !cfg.verify_export,
+    "VERIFY_EXPORT and DEP_ORDER + CACHE are incompatible"
+  );
   let one_file = DEBUG || std::env::var("ONE_FILE").is_ok();
   let parallelism = if DEBUG || one_file { 1 } else { 8 };
   cfg.panic_on_fail |= std::env::var("PANIC_ON_FAIL").is_ok();

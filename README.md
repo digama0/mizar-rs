@@ -11,47 +11,36 @@ directory and apply the patch.
 ./download-mml.sh
 ```
 Alternatively you can symlink `miz/` to your local mizar installation.
-(In order to replicate the changes to `prel/`, you also need a patched version of
-Mizar itself; this version has been tested on commit
-[`2a51bf2`](https://github.com/digama0/mizar-system/commit/2a51bf2) of the Mizar system.)
 
-For testing the new checker on the MML, you need the `.xml` files for each mizar file,
-which is not distributed by default. The following command will run the (original)
-Mizar `accom` and `verifier -a` commands on everything, producing all the extra
-files needed for processing. (Hopefully soon it will only be necessary to run
-the parser to generate the `.msx` file, once the analyzer is tested and working.
-But if you want to use the new checker alone you will need to run the old analyzer
-because there are no plans for the new analyzer to generate `.xml` files.)
-Note that this takes a while: it uses [GNU parallel](https://www.gnu.org/software/parallel/)
-if available so you are encouraged to install that if you don't already have it.
+The first thing you will want to do is compile the `prel/` files which represent the
+the theory exports for each article. This breaks the dependencies between files and
+allows everything to be processed in parallel.
 ```shell
 $ time ./analyze-mml.sh
-Executed in   19.62 mins    fish           external
-   usr time   82.16 mins  530.00 micros   82.16 mins
-   sys time    1.49 mins  209.00 micros    1.49 mins
+Executed in   34.97 secs    fish           external
+   usr time  156.45 secs  462.00 micros  156.44 secs
+   sys time    3.04 secs   93.00 micros    3.04 secs
 ```
-After "unpacking" the MML grows to 12.7G, so beware if you are short on space.
 
 You can then test the checker on the MML. You should get a result like this:
 ```shell
 $ time cargo run --release
-   6: xfamily  in 0.002s
-   0: tarski   in 0.005s
-   2: boole    in 0.008s
-  10: subset   in 0.002s
+   6: xfamily  in 0.004s
+   2: boole    in 0.005s
+   0: tarski   in 0.006s
+  10: subset   in 0.006s
 ...
-1411: integr25 in 6.015s
-1406: integr24 in 17.168s
-1410: glib_015 in 12.777s
-1367: wallace1 in 78.498s
-1408: field_9  in 28.644s
-expected failure: 1
+1411: integr25 in 7.381s
+1406: integr24 in 17.492s
+1410: glib_015 in 15.041s
+1408: field_9  in 30.482s
+1367: wallace1 in 92.534s
 flex expansion bug: 6
-success: 1215273
+success: 1215274
 ________________________________________________________
-Executed in  702.38 secs    fish           external
-   usr time   81.93 mins  830.00 micros   81.93 mins
-   sys time    0.24 mins    0.00 micros    0.24 mins
+Executed in  755.23 secs    fish           external
+   usr time   88.83 mins  415.00 micros   88.83 mins
+   sys time    0.20 mins   78.00 micros    0.20 mins
 ```
 
 Here is a performance comparison of running the original Mizar checker vs the new `mizar-rs` checker on the entire MML, on 8 cores:

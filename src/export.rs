@@ -237,17 +237,16 @@ impl Analyzer<'_> {
       &arts2[..n]
     };
 
-    // loading .vcl
-    let (mut vocs1, mut aco) = <(_, AccumConstructors)>::default();
-    self.path.read_vcl(&mut vocs1).unwrap();
-
-    // loading .aco
+    // loading .vcl, .aco
+    let (mut vocs1, mut aco) = <(Vocabularies, AccumConstructors)>::default();
     if let Some(accom) = &mut self.r.accom {
+      accom.build_vocabularies(&mut vocs1);
       aco.accum = std::mem::take(&mut accom.sig.sig.0);
       aco.base = accom.sig.base;
       aco.constrs.extend(&self.g.constrs.upto(&aco.base));
       aco.constrs.visit(ep);
     } else {
+      self.path.read_vcl(&mut vocs1).unwrap();
       self.path.read_aco(&mut aco).unwrap();
     }
     assert_eq!(self.export.constrs_base, aco.constrs.len());

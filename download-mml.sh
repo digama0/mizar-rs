@@ -3,12 +3,10 @@ mkdir -p miz
 cd miz
 wget http://mizar.uwb.edu.pl/~softadm/current/mizar-8.1.11_5.68.1412-i386-linux.tar -O - \
   | tar -x
-for i in mizbin mizdoc mizshare; do
-  mkdir -p $i
-  cd $i && tar -xzf ../$i.tar.gz && cd ..
-  rm $i.tar.gz
-done
+mkdir -p mizshare
 cd mizshare
+tar -xzf ../mizshare.tar.gz
+rm ../mizshare.tar.gz
 patch -p0 < ../../mml.patch
 # for i in \
 #   realset1 seqfunc limfunc4 sin_cos6 fdiff_4 fdiff_6 fdiff_7 fdiff_8 \
