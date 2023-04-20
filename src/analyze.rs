@@ -313,7 +313,7 @@ impl Analyzer<'_> {
         self.lc.term_cache.get_mut().close_scope();
       }
       &mut ast::ItemKind::Pragma(Pragma::Canceled(k, n)) => self.elab_canceled(it.pos, k, n),
-      ast::ItemKind::Pragma(Pragma::ThmDesc(_)) => self.items -= 1,
+      ast::ItemKind::Pragma(Pragma::ThmDesc(_) | Pragma::Insert(_)) => self.items -= 1,
       // This is intentionally stricter than necessary to ensure that MML has no weird
       // pragmas. The line below should be uncommented to allow pragmas for general use.
       // ast::ItemKind::Pragma(Pragma::Other(_)) => self.items -= 1,

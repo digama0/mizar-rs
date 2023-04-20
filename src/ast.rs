@@ -702,6 +702,8 @@ pub enum Pragma {
   Canceled(CancelKind, u32),
   /// $N
   ThmDesc(String),
+  /// $INSERT
+  Insert(String),
   Other(String),
 }
 
@@ -723,6 +725,8 @@ impl FromStr for Pragma {
       Pragma::Canceled(CancelKind::Sch, parse_num(s))
     } else if let Some(s) = spelling.strip_prefix("$N") {
       Pragma::ThmDesc(s.trim_start().to_owned())
+    } else if let Some(s) = spelling.strip_prefix("$INSERT") {
+      Pragma::Insert(s.trim_start().to_owned())
     } else {
       Pragma::Other(spelling.to_owned())
     })

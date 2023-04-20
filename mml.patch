@@ -101,11 +101,15 @@
 @@ -30 +30 @@
 - requirements SUBSET, REAL, NUMERALS, ARITHM;
 + requirements BOOLE, SUBSET, REAL, NUMERALS, ARITHM;
---- mml/field_4.miz
-+++ mml/field_4.miz
-@@ -48 +48 @@
--      REALSET1, FIELD_2, FIELD_3;
-+      REALSET1, FIELD_1, FIELD_2, FIELD_3;
+--- mml/field_12.miz
++++ mml/field_12.miz
+@@ -3 +3 @@
+-:: 
++::
+@@ -810 +810,2 @@
+-A1:for n being Nat for x being Field ex y being Field st P[n,x,y];
++A1:for n being Nat for x being Field ex y being Field st P[n,x,y]
++proof
 --- mml/finseq_4.miz
 +++ mml/finseq_4.miz
 @@ -2410 +2410,2 @@
@@ -150,6 +154,11 @@
 @@ -32 +32 @@
 - requirements NUMERALS, REAL, SUBSET, ARITHM;
 + requirements BOOLE, NUMERALS, REAL, SUBSET, ARITHM;
+--- mml/fuzzy_7.miz
++++ mml/fuzzy_7.miz
+@@ -32 +32 @@
+- requirements NUMERALS, REAL, SUBSET, ARITHM;
++ requirements BOOLE, NUMERALS, REAL, SUBSET, ARITHM;
 --- mml/gobrd12.miz
 +++ mml/gobrd12.miz
 @@ -31 +31 @@
@@ -173,9 +182,6 @@
 -        a,b,c,p,q,r,s for POINT of S;
 +                    A,B for Subset of S,
 +        a,b,c,p,q,r,s,x for POINT of S;
-@@ -3164 +3164 @@
--::$ 7.25 Satz
-+::$N 7.25 Satz
 --- mml/gtarski4.miz
 +++ mml/gtarski4.miz
 @@ -817,5 +817,5 @@
@@ -206,6 +212,11 @@
 --- mml/hilb10_5.miz
 +++ mml/hilb10_5.miz
 @@ -44 +44 @@
+- requirements NUMERALS, SUBSET, ARITHM, REAL;
++ requirements BOOLE, NUMERALS, SUBSET, ARITHM, REAL;
+--- mml/hilb10_8.miz
++++ mml/hilb10_8.miz
+@@ -31 +31 @@
 - requirements NUMERALS, SUBSET, ARITHM, REAL;
 + requirements BOOLE, NUMERALS, SUBSET, ARITHM, REAL;
 --- mml/integr12.miz
@@ -329,10 +340,10 @@
 +proof
 --- mml/number02.miz
 +++ mml/number02.miz
-@@ -421 +421 @@
+@@ -409 +409 @@
 -  ex k st n = z*k+0 or ... or n = z*k+(z-1)
 +  ex k st n = z*k+(0 qua Nat) or ... or n = z*k+(z-1)
-@@ -446 +446 @@
+@@ -434 +434 @@
 -      take 0;
 +      take 0,n;
 --- mml/ordinal1.miz
@@ -516,10 +527,6 @@
 - {F(f(),i): i in dom f() & P[i]} is finite;
 + {F(f(),i): i in dom f() & P[i]} is finite
 +proof
---- mml/stacks_1.miz
-+++ mml/stacks_1.miz
-@@ -502 +501,0 @@
--::$H-
 --- mml/subset_1.miz
 +++ mml/subset_1.miz
 @@ -824 +824,2 @@
@@ -551,6 +558,11 @@
 -  ex B st for R being Relation holds R in B iff R in A() & P[R];
 +  ex B st for R being Relation holds R in B iff R in A() & P[R]
 +proof
+--- mml/xprimet1.miz
++++ mml/xprimet1.miz
+@@ -21 +21 @@
+- requirements REAL, NUMERALS, SUBSET, ARITHM;
++ requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
 --- mml/xxreal_2.miz
 +++ mml/xxreal_2.miz
 @@ -40 +40,2 @@
