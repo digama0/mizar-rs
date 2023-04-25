@@ -560,9 +560,3169 @@
 +proof
 --- mml/xprimet1.miz
 +++ mml/xprimet1.miz
-@@ -21 +21 @@
-- requirements REAL, NUMERALS, SUBSET, ARITHM;
-+ requirements BOOLE, REAL, NUMERALS, SUBSET, ARITHM;
+@@ -81 +81,2 @@
+-      hence thesis by XPRIMES0:6,NAT_1:9;
++      then p = 5 by XPRIMES0:6,NAT_1:9;
++      hence thesis;
+@@ -102,8 +103,3 @@
+-    suppose 7 <= p <= 7+1;
+-      hence thesis by XPRIMES0:8,NAT_1:9;
+-    end;
+-    suppose 8 <= p <= 8+1;
+-      hence thesis by XPRIMES0:8,9,NAT_1:9;
+-    end;
+-    suppose 9 <= p <= 9+1;
+-      hence thesis by XPRIMES0:9,10,NAT_1:9;
++    suppose 7 <= p <= 7+1 or 8 <= p <= 8+1 or 9 <= p <= 9+1;
++      then p = 7 by XPRIMES0:10,8,9,NAT_1:9;
++      hence thesis;
+@@ -153,8 +149,3 @@
+-    suppose 13 <= p <= 13+1;
+-      hence thesis by XPRIMES0:14,NAT_1:9;
+-    end;
+-    suppose 14 <= p <= 14+1;
+-      hence thesis by XPRIMES0:14,15,NAT_1:9;
+-    end;
+-    suppose 15 <= p <= 15+1;
+-      hence thesis by XPRIMES0:15,16,NAT_1:9;
++    suppose 13 <= p <= 13+1 or 14 <= p <= 14+1 or 15 <= p <= 15+1;
++      then p = 13 by XPRIMES0:14,15,16,NAT_1:9;
++      hence thesis;
+@@ -208,8 +199,3 @@
+-    suppose 19 <= p <= 19+1;
+-      hence thesis by XPRIMES0:20,NAT_1:9;
+-    end;
+-    suppose 20 <= p <= 20+1;
+-      hence thesis by XPRIMES0:20,21,NAT_1:9;
+-    end;
+-    suppose 21 <= p <= 21+1;
+-      hence thesis by XPRIMES0:21,22,NAT_1:9;
++    suppose 19 <= p <= 19+1 or 20 <= p <= 20+1 or 21 <= p <= 21+1;
++      then p = 19 by XPRIMES0:20,21,22,NAT_1:9;
++      hence thesis;
+@@ -240,14 +226,4 @@
+-    suppose 23 <= p <= 23+1;
+-      hence thesis by XPRIMES0:24,NAT_1:9;
+-    end;
+-    suppose 24 <= p <= 24+1;
+-      hence thesis by XPRIMES0:24,25,NAT_1:9;
+-    end;
+-    suppose 25 <= p <= 25+1;
+-      hence thesis by XPRIMES0:25,26,NAT_1:9;
+-    end;
+-    suppose 26 <= p <= 26+1;
+-      hence thesis by XPRIMES0:26,27,NAT_1:9;
+-    end;
+-    suppose 27 <= p <= 27+1;
+-      hence thesis by XPRIMES0:27,28,NAT_1:9;
++    suppose 23 <= p <= 23+1 or 24 <= p <= 24+1 or 25 <= p <= 25+1 or 
++      26 <= p <= 26+1 or 27 <= p <= 27+1;
++      then p = 23 by XPRIMES0:24,25,26,27,28,NAT_1:9;
++      hence thesis;
+@@ -304,14 +280,4 @@
+-    suppose 31 <= p <= 31+1;
+-      hence thesis by XPRIMES0:32,NAT_1:9;
+-    end;
+-    suppose 32 <= p <= 32+1;
+-      hence thesis by XPRIMES0:32,33,NAT_1:9;
+-    end;
+-    suppose 33 <= p <= 33+1;
+-      hence thesis by XPRIMES0:33,34,NAT_1:9;
+-    end;
+-    suppose 34 <= p <= 34+1;
+-      hence thesis by XPRIMES0:34,35,NAT_1:9;
+-    end;
+-    suppose 35 <= p <= 35+1;
+-      hence thesis by XPRIMES0:35,36,NAT_1:9;
++    suppose 31 <= p <= 31+1 or 32 <= p <= 32+1 or 33 <= p <= 33+1 or 
++      34 <= p <= 34+1 or 35 <= p <= 35+1;
++      then p = 31 by XPRIMES0:32,33,34,35,36,NAT_1:9;
++      hence thesis;
+@@ -342,8 +308,3 @@
+-    suppose 37 <= p <= 37+1;
+-      hence thesis by XPRIMES0:38,NAT_1:9;
+-    end;
+-    suppose 38 <= p <= 38+1;
+-      hence thesis by XPRIMES0:38,39,NAT_1:9;
+-    end;
+-    suppose 39 <= p <= 39+1;
+-      hence thesis by XPRIMES0:39,40,NAT_1:9;
++    suppose 37 <= p <= 37+1 or 38 <= p <= 38+1 or 39 <= p <= 39+1;
++      then p = 37 by XPRIMES0:38,39,40,NAT_1:9;
++      hence thesis;
+@@ -375 +336,2 @@
+-      hence thesis by XPRIMES0:42,NAT_1:9;
++      then p = 41 by XPRIMES0:42,NAT_1:9;
++      hence thesis;
+@@ -400,8 +362,3 @@
+-    suppose 43 <= p <= 43+1;
+-      hence thesis by XPRIMES0:44,NAT_1:9;
+-    end;
+-    suppose 44 <= p <= 44+1;
+-      hence thesis by XPRIMES0:44,45,NAT_1:9;
+-    end;
+-    suppose 45 <= p <= 45+1;
+-      hence thesis by XPRIMES0:45,46,NAT_1:9;
++    suppose 43 <= p <= 43+1 or 44 <= p <= 44+1 or 45 <= p <= 45+1;
++      then p = 43 by XPRIMES0:44,45,46,NAT_1:9;
++      hence thesis;
+@@ -433,14 +390,4 @@
+-    suppose 47 <= p <= 47+1;
+-      hence thesis by XPRIMES0:48,NAT_1:9;
+-    end;
+-    suppose 48 <= p <= 48+1;
+-      hence thesis by XPRIMES0:48,49,NAT_1:9;
+-    end;
+-    suppose 49 <= p <= 49+1;
+-      hence thesis by XPRIMES0:49,50,NAT_1:9;
+-    end;
+-    suppose 50 <= p <= 50+1;
+-      hence thesis by XPRIMES0:50,51,NAT_1:9;
+-    end;
+-    suppose 51 <= p <= 51+1;
+-      hence thesis by XPRIMES0:51,52,NAT_1:9;
++    suppose 47 <= p <= 47+1 or 48 <= p <= 48+1 or 49 <= p <= 49+1 or 
++      50 <= p <= 50+1 or 51 <= p <= 51+1;
++      then p = 47 by XPRIMES0:48,49,50,51,52,NAT_1:9;
++      hence thesis;
+@@ -473,14 +420,4 @@
+-    suppose 53 <= p <= 53+1;
+-      hence thesis by XPRIMES0:54,NAT_1:9;
+-    end;
+-    suppose 54 <= p <= 54+1;
+-      hence thesis by XPRIMES0:54,55,NAT_1:9;
+-    end;
+-    suppose 55 <= p <= 55+1;
+-      hence thesis by XPRIMES0:55,56,NAT_1:9;
+-    end;
+-    suppose 56 <= p <= 56+1;
+-      hence thesis by XPRIMES0:56,57,NAT_1:9;
+-    end;
+-    suppose 57 <= p <= 57+1;
+-      hence thesis by XPRIMES0:57,58,NAT_1:9;
++    suppose 53 <= p <= 53+1 or 54 <= p <= 54+1 or 55 <= p <= 55+1 or 
++      56 <= p <= 56+1 or 57 <= p <= 57+1;
++      then p = 53 by XPRIMES0:54,55,56,57,58,NAT_1:9;
++      hence thesis;
+@@ -514 +451,2 @@
+-      hence thesis by XPRIMES0:60,NAT_1:9;
++      then p = 59 by XPRIMES0:60,NAT_1:9;
++      hence thesis;
+@@ -541,14 +479,4 @@
+-    suppose 61 <= p <= 61+1;
+-      hence thesis by XPRIMES0:62,NAT_1:9;
+-    end;
+-    suppose 62 <= p <= 62+1;
+-      hence thesis by XPRIMES0:62,63,NAT_1:9;
+-    end;
+-    suppose 63 <= p <= 63+1;
+-      hence thesis by XPRIMES0:63,64,NAT_1:9;
+-    end;
+-    suppose 64 <= p <= 64+1;
+-      hence thesis by XPRIMES0:64,65,NAT_1:9;
+-    end;
+-    suppose 65 <= p <= 65+1;
+-      hence thesis by XPRIMES0:65,66,NAT_1:9;
++    suppose 61 <= p <= 61+1 or 62 <= p <= 62+1 or 63 <= p <= 63+1 or 
++      64 <= p <= 64+1 or 65 <= p <= 65+1;
++      then p = 61 by XPRIMES0:62,63,64,65,66,NAT_1:9;
++      hence thesis;
+@@ -581,8 +509,3 @@
+-    suppose 67 <= p <= 67+1;
+-      hence thesis by XPRIMES0:68,NAT_1:9;
+-    end;
+-    suppose 68 <= p <= 68+1;
+-      hence thesis by XPRIMES0:68,69,NAT_1:9;
+-    end;
+-    suppose 69 <= p <= 69+1;
+-      hence thesis by XPRIMES0:69,70,NAT_1:9;
++    suppose 67 <= p <= 67+1 or 68 <= p <= 68+1 or 69 <= p <= 69+1;
++      then p = 67 by XPRIMES0:68,69,70,NAT_1:9;
++      hence thesis;
+@@ -616 +539,2 @@
+-      hence thesis by XPRIMES0:72,NAT_1:9;
++      then p = 71 by XPRIMES0:72,NAT_1:9;
++      hence thesis;
+@@ -643,14 +567,4 @@
+-    suppose 73 <= p <= 73+1;
+-      hence thesis by XPRIMES0:74,NAT_1:9;
+-    end;
+-    suppose 74 <= p <= 74+1;
+-      hence thesis by XPRIMES0:74,75,NAT_1:9;
+-    end;
+-    suppose 75 <= p <= 75+1;
+-      hence thesis by XPRIMES0:75,76,NAT_1:9;
+-    end;
+-    suppose 76 <= p <= 76+1;
+-      hence thesis by XPRIMES0:76,77,NAT_1:9;
+-    end;
+-    suppose 77 <= p <= 77+1;
+-      hence thesis by XPRIMES0:77,78,NAT_1:9;
++    suppose 73 <= p <= 73+1 or 74 <= p <= 74+1 or 75 <= p <= 75+1 or 
++      76 <= p <= 76+1 or 77 <= p <= 77+1;
++      then p = 73 by XPRIMES0:74,75,76,77,78,NAT_1:9;
++      hence thesis;
+@@ -684,8 +598,3 @@
+-    suppose 79 <= p <= 79+1;
+-      hence thesis by XPRIMES0:80,NAT_1:9;
+-    end;
+-    suppose 80 <= p <= 80+1;
+-      hence thesis by XPRIMES0:80,81,NAT_1:9;
+-    end;
+-    suppose 81 <= p <= 81+1;
+-      hence thesis by XPRIMES0:81,82,NAT_1:9;
++    suppose 79 <= p <= 79+1 or 80 <= p <= 80+1 or 81 <= p <= 81+1;
++      then p = 79 by XPRIMES0:80,81,82,NAT_1:9;
++      hence thesis;
+@@ -720,14 +629,4 @@
+-    suppose 83 <= p <= 83+1;
+-      hence thesis by XPRIMES0:84,NAT_1:9;
+-    end;
+-    suppose 84 <= p <= 84+1;
+-      hence thesis by XPRIMES0:84,85,NAT_1:9;
+-    end;
+-    suppose 85 <= p <= 85+1;
+-      hence thesis by XPRIMES0:85,86,NAT_1:9;
+-    end;
+-    suppose 86 <= p <= 86+1;
+-      hence thesis by XPRIMES0:86,87,NAT_1:9;
+-    end;
+-    suppose 87 <= p <= 87+1;
+-      hence thesis by XPRIMES0:87,88,NAT_1:9;
++    suppose 83 <= p <= 83+1 or 84 <= p <= 84+1 or 85 <= p <= 85+1 or 
++      86 <= p <= 86+1 or 87 <= p <= 87+1;
++      then p = 83 by XPRIMES0:84,85,86,87,88,NAT_1:9;
++      hence thesis;
+@@ -762,20 +661,5 @@
+-    suppose 89 <= p <= 89+1;
+-      hence thesis by XPRIMES0:90,NAT_1:9;
+-    end;
+-    suppose 90 <= p <= 90+1;
+-      hence thesis by XPRIMES0:90,91,NAT_1:9;
+-    end;
+-    suppose 91 <= p <= 91+1;
+-      hence thesis by XPRIMES0:91,92,NAT_1:9;
+-    end;
+-    suppose 92 <= p <= 92+1;
+-      hence thesis by XPRIMES0:92,93,NAT_1:9;
+-    end;
+-    suppose 93 <= p <= 93+1;
+-      hence thesis by XPRIMES0:93,94,NAT_1:9;
+-    end;
+-    suppose 94 <= p <= 94+1;
+-      hence thesis by XPRIMES0:94,95,NAT_1:9;
+-    end;
+-    suppose 95 <= p <= 95+1;
+-      hence thesis by XPRIMES0:95,96,NAT_1:9;
++    suppose 89 <= p <= 89+1 or 90 <= p <= 90+1 or 91 <= p <= 91+1 or 
++      92 <= p <= 92+1 or 93 <= p <= 93+1 or 94 <= p <= 94+1 or 
++      95 <= p <= 95+1;
++      then p = 89 by XPRIMES0:90,91,92,93,94,95,96,NAT_1:9;
++      hence thesis;
+@@ -810,8 +694,3 @@
+-    suppose 97 <= p <= 97+1;
+-      hence thesis by XPRIMES0:98,NAT_1:9;
+-    end;
+-    suppose 98 <= p <= 98+1;
+-      hence thesis by XPRIMES0:98,99,NAT_1:9;
+-    end;
+-    suppose 99 <= p <= 99+1;
+-      hence thesis by XPRIMES0:99,100,NAT_1:9;
++    suppose 97 <= p <= 97+1 or 98 <= p <= 98+1 or 99 <= p <= 99+1;
++      then p = 97 by XPRIMES0:100,98,99,NAT_1:9;
++      hence thesis;
+@@ -847 +726,2 @@
+-      hence thesis by XPRIMES0:102,NAT_1:9;
++      then p = 101 by XPRIMES0:102,NAT_1:9;
++      hence thesis;
+@@ -876,8 +756,3 @@
+-    suppose 103 <= p <= 103+1;
+-      hence thesis by XPRIMES0:104,NAT_1:9;
+-    end;
+-    suppose 104 <= p <= 104+1;
+-      hence thesis by XPRIMES0:104,105,NAT_1:9;
+-    end;
+-    suppose 105 <= p <= 105+1;
+-      hence thesis by XPRIMES0:105,106,NAT_1:9;
++    suppose 103 <= p <= 103+1 or 104 <= p <= 104+1 or 105 <= p <= 105+1;
++      then p = 103 by XPRIMES0:104,105,106,NAT_1:9;
++      hence thesis;
+@@ -913 +788,2 @@
+-      hence thesis by XPRIMES0:108,NAT_1:9;
++      then p = 107 by XPRIMES0:108,NAT_1:9;
++      hence thesis;
+@@ -943,8 +819,3 @@
+-    suppose 109 <= p <= 109+1;
+-      hence thesis by XPRIMES0:110,NAT_1:9;
+-    end;
+-    suppose 110 <= p <= 110+1;
+-      hence thesis by XPRIMES0:110,111,NAT_1:9;
+-    end;
+-    suppose 111 <= p <= 111+1;
+-      hence thesis by XPRIMES0:111,112,NAT_1:9;
++    suppose 109 <= p <= 109+1 or 110 <= p <= 110+1 or 111 <= p <= 111+1;
++      then p = 109 by XPRIMES0:110,111,112,NAT_1:9;
++      hence thesis;
+@@ -982,40 +853,10 @@
+-      then per cases;
+-      suppose 113 <= p <= 113+1;
+-        hence thesis by XPRIMES0:114,NAT_1:9;
+-      end;
+-      suppose 114 <= p <= 114+1;
+-        hence thesis by XPRIMES0:114,115,NAT_1:9;
+-      end;
+-      suppose 115 <= p <= 115+1;
+-        hence thesis by XPRIMES0:115,116,NAT_1:9;
+-      end;
+-      suppose 116 <= p <= 116+1;
+-        hence thesis by XPRIMES0:116,117,NAT_1:9;
+-      end;
+-      suppose 117 <= p <= 117+1;
+-        hence thesis by XPRIMES0:117,118,NAT_1:9;
+-      end;
+-      suppose 118 <= p <= 118+1;
+-        hence thesis by XPRIMES0:118,119,NAT_1:9;
+-      end;
+-      suppose 119 <= p <= 119+1;
+-        hence thesis by XPRIMES0:119,120,NAT_1:9;
+-      end;
+-    end;
+-    suppose 120 <= p <= 120+1;
+-      hence thesis by XPRIMES0:120,121,NAT_1:9;
+-    end;
+-    suppose 121 <= p <= 121+1;
+-      hence thesis by XPRIMES0:121,122,NAT_1:9;
+-    end;
+-    suppose 122 <= p <= 122+1;
+-      hence thesis by XPRIMES0:122,123,NAT_1:9;
+-    end;
+-    suppose 123 <= p <= 123+1;
+-      hence thesis by XPRIMES0:123,124,NAT_1:9;
+-    end;
+-    suppose 124 <= p <= 124+1;
+-      hence thesis by XPRIMES0:124,125,NAT_1:9;
+-    end;
+-    suppose 125 <= p <= 125+1;
+-      hence thesis by XPRIMES0:125,126,NAT_1:9;
++      then 113 <= p <= 113+1 or 114 <= p <= 114+1 or 115 <= p <= 115+1 or 
++        116 <= p <= 116+1 or 117 <= p <= 117+1 or 118 <= p <= 118+1 or 
++        119 <= p <= 119+1;
++      then p = 113 by XPRIMES0:114,115,116,117,118,119,120,NAT_1:9;
++      hence thesis;
++    end;
++    suppose 120 <= p <= 120+1 or 121 <= p <= 121+1 or 122 <= p <= 122+1 or
++      123 <= p <= 123+1 or 124 <= p <= 124+1 or 125 <= p <= 125+1;
++      then contradiction by XPRIMES0:120,121,122,123,124,125,126,NAT_1:9;
++      hence thesis;
+@@ -1052,8 +893,3 @@
+-    suppose 127 <= p <= 127+1;
+-      hence thesis by XPRIMES0:128,NAT_1:9;
+-    end;
+-    suppose 128 <= p <= 128+1;
+-      hence thesis by XPRIMES0:128,129,NAT_1:9;
+-    end;
+-    suppose 129 <= p <= 129+1;
+-      hence thesis by XPRIMES0:129,130,NAT_1:9;
++    suppose 127 <= p <= 127+1 or 128 <= p <= 128+1 or 129 <= p <= 129+1;
++      then p = 127 by XPRIMES0:128,129,130,NAT_1:9;
++      hence thesis;
+@@ -1090,14 +926,4 @@
+-    suppose 131 <= p <= 131+1;
+-      hence thesis by XPRIMES0:132,NAT_1:9;
+-    end;
+-    suppose 132 <= p <= 132+1;
+-      hence thesis by XPRIMES0:132,133,NAT_1:9;
+-    end;
+-    suppose 133 <= p <= 133+1;
+-      hence thesis by XPRIMES0:133,134,NAT_1:9;
+-    end;
+-    suppose 134 <= p <= 134+1;
+-      hence thesis by XPRIMES0:134,135,NAT_1:9;
+-    end;
+-    suppose 135 <= p <= 135+1;
+-      hence thesis by XPRIMES0:135,136,NAT_1:9;
++    suppose 131 <= p <= 131+1 or 132 <= p <= 132+1 or 133 <= p <= 133+1 or 
++      134 <= p <= 134+1 or 135 <= p <= 135+1;
++      then p = 131 by XPRIMES0:132,133,134,135,136,NAT_1:9;
++      hence thesis;
+@@ -1135 +961,2 @@
+-      hence thesis by XPRIMES0:138,NAT_1:9;
++      then p = 137 by XPRIMES0:138,NAT_1:9;
++      hence thesis;
+@@ -1166,26 +993,5 @@
+-    suppose 139 <= p <= 139+1;
+-      hence thesis by XPRIMES0:140,NAT_1:9;
+-    end;
+-    suppose 140 <= p <= 140+1;
+-      hence thesis by XPRIMES0:140,141,NAT_1:9;
+-    end;
+-    suppose 141 <= p <= 141+1;
+-      hence thesis by XPRIMES0:141,142,NAT_1:9;
+-    end;
+-    suppose 142 <= p <= 142+1;
+-      hence thesis by XPRIMES0:142,143,NAT_1:9;
+-    end;
+-    suppose 143 <= p <= 143+1;
+-      hence thesis by XPRIMES0:143,144,NAT_1:9;
+-    end;
+-    suppose 144 <= p <= 144+1;
+-      hence thesis by XPRIMES0:144,145,NAT_1:9;
+-    end;
+-    suppose 145 <= p <= 145+1;
+-      hence thesis by XPRIMES0:145,146,NAT_1:9;
+-    end;
+-    suppose 146 <= p <= 146+1;
+-      hence thesis by XPRIMES0:146,147,NAT_1:9;
+-    end;
+-    suppose 147 <= p <= 147+1;
+-      hence thesis by XPRIMES0:147,148,NAT_1:9;
++    suppose 139 <= p <= 139+1 or 140 <= p <= 140+1 or 141 <= p <= 141+1 or 
++      142 <= p <= 142+1 or 143 <= p <= 143+1 or 144 <= p <= 144+1 or 
++      145 <= p <= 145+1 or 146 <= p <= 146+1 or 147 <= p <= 147+1;
++      then p = 139 by XPRIMES0:140,141,142,143,144,145,146,147,148,NAT_1:9;
++      hence thesis;
+@@ -1223 +1029,2 @@
+-      hence thesis by XPRIMES0:150,NAT_1:9;
++      then p = 149 by XPRIMES0:150,NAT_1:9;
++      hence thesis;
+@@ -1255,14 +1062,4 @@
+-    suppose 151 <= p <= 151+1;
+-      hence thesis by XPRIMES0:152,NAT_1:9;
+-    end;
+-    suppose 152 <= p <= 152+1;
+-      hence thesis by XPRIMES0:152,153,NAT_1:9;
+-    end;
+-    suppose 153 <= p <= 153+1;
+-      hence thesis by XPRIMES0:153,154,NAT_1:9;
+-    end;
+-    suppose 154 <= p <= 154+1;
+-      hence thesis by XPRIMES0:154,155,NAT_1:9;
+-    end;
+-    suppose 155 <= p <= 155+1;
+-      hence thesis by XPRIMES0:155,156,NAT_1:9;
++    suppose 151 <= p <= 151+1 or 152 <= p <= 152+1 or 153 <= p <= 153+1 or 
++      154 <= p <= 154+1 or 155 <= p <= 155+1;
++      then p = 151 by XPRIMES0:152,153,154,155,156,NAT_1:9;
++      hence thesis;
+@@ -1301,14 +1098,4 @@
+-    suppose 157 <= p <= 157+1;
+-      hence thesis by XPRIMES0:158,NAT_1:9;
+-    end;
+-    suppose 158 <= p <= 158+1;
+-      hence thesis by XPRIMES0:158,159,NAT_1:9;
+-    end;
+-    suppose 159 <= p <= 159+1;
+-      hence thesis by XPRIMES0:159,160,NAT_1:9;
+-    end;
+-    suppose 160 <= p <= 160+1;
+-      hence thesis by XPRIMES0:160,161,NAT_1:9;
+-    end;
+-    suppose 161 <= p <= 161+1;
+-      hence thesis by XPRIMES0:161,162,NAT_1:9;
++    suppose 157 <= p <= 157+1 or 158 <= p <= 158+1 or 159 <= p <= 159+1 or 
++      160 <= p <= 160+1 or 161 <= p <= 161+1;
++      then p = 157 by XPRIMES0:158,159,160,161,162,NAT_1:9;
++      hence thesis;
+@@ -1347,8 +1134,3 @@
+-    suppose 163 <= p <= 163+1;
+-      hence thesis by XPRIMES0:164,NAT_1:9;
+-    end;
+-    suppose 164 <= p <= 164+1;
+-      hence thesis by XPRIMES0:164,165,NAT_1:9;
+-    end;
+-    suppose 165 <= p <= 165+1;
+-      hence thesis by XPRIMES0:165,166,NAT_1:9;
++    suppose 163 <= p <= 163+1 or 164 <= p <= 164+1 or 165 <= p <= 165+1;
++      then p = 163 by XPRIMES0:164,165,166,NAT_1:9;
++      hence thesis;
+@@ -1387,14 +1169,4 @@
+-    suppose 167 <= p <= 167+1;
+-      hence thesis by XPRIMES0:168,NAT_1:9;
+-    end;
+-    suppose 168 <= p <= 168+1;
+-      hence thesis by XPRIMES0:168,169,NAT_1:9;
+-    end;
+-    suppose 169 <= p <= 169+1;
+-      hence thesis by XPRIMES0:169,170,NAT_1:9;
+-    end;
+-    suppose 170 <= p <= 170+1;
+-      hence thesis by XPRIMES0:170,171,NAT_1:9;
+-    end;
+-    suppose 171 <= p <= 171+1;
+-      hence thesis by XPRIMES0:171,172,NAT_1:9;
++    suppose 167 <= p <= 167+1 or 168 <= p <= 168+1 or 169 <= p <= 169+1 or 
++      170 <= p <= 170+1 or 171 <= p <= 171+1;
++      then p = 167 by XPRIMES0:168,169,170,171,172,NAT_1:9;
++      hence thesis;
+@@ -1433,14 +1205,4 @@
+-    suppose 173 <= p <= 173+1;
+-      hence thesis by XPRIMES0:174,NAT_1:9;
+-    end;
+-    suppose 174 <= p <= 174+1;
+-      hence thesis by XPRIMES0:174,175,NAT_1:9;
+-    end;
+-    suppose 175 <= p <= 175+1;
+-      hence thesis by XPRIMES0:175,176,NAT_1:9;
+-    end;
+-    suppose 176 <= p <= 176+1;
+-      hence thesis by XPRIMES0:176,177,NAT_1:9;
+-    end;
+-    suppose 177 <= p <= 177+1;
+-      hence thesis by XPRIMES0:177,178,NAT_1:9;
++    suppose 173 <= p <= 173+1 or 174 <= p <= 174+1 or 175 <= p <= 175+1 or 
++      176 <= p <= 176+1 or 177 <= p <= 177+1;
++      then p = 173 by XPRIMES0:174,175,176,177,178,NAT_1:9;
++      hence thesis;
+@@ -1480 +1242,2 @@
+-      hence thesis by XPRIMES0:180,NAT_1:9;
++      then p = 179 by XPRIMES0:180,NAT_1:9;
++      hence thesis;
+@@ -1513,26 +1276,5 @@
+-    suppose 181 <= p <= 181+1;
+-      hence thesis by XPRIMES0:182,NAT_1:9;
+-    end;
+-    suppose 182 <= p <= 182+1;
+-      hence thesis by XPRIMES0:182,183,NAT_1:9;
+-    end;
+-    suppose 183 <= p <= 183+1;
+-      hence thesis by XPRIMES0:183,184,NAT_1:9;
+-    end;
+-    suppose 184 <= p <= 184+1;
+-      hence thesis by XPRIMES0:184,185,NAT_1:9;
+-    end;
+-    suppose 185 <= p <= 185+1;
+-      hence thesis by XPRIMES0:185,186,NAT_1:9;
+-    end;
+-    suppose 186 <= p <= 186+1;
+-      hence thesis by XPRIMES0:186,187,NAT_1:9;
+-    end;
+-    suppose 187 <= p <= 187+1;
+-      hence thesis by XPRIMES0:187,188,NAT_1:9;
+-    end;
+-    suppose 188 <= p <= 188+1;
+-      hence thesis by XPRIMES0:188,189,NAT_1:9;
+-    end;
+-    suppose 189 <= p <= 189+1;
+-      hence thesis by XPRIMES0:189,190,NAT_1:9;
++    suppose 181 <= p <= 181+1 or 182 <= p <= 182+1 or 183 <= p <= 183+1 or 
++      184 <= p <= 184+1 or 185 <= p <= 185+1 or 186 <= p <= 186+1 or 
++      187 <= p <= 187+1 or 188 <= p <= 188+1 or 189 <= p <= 189+1;
++      then p = 181 by XPRIMES0:182,183,184,185,186,187,188,189,190,NAT_1:9;
++      hence thesis;
+@@ -1573 +1315,2 @@
+-      hence thesis by XPRIMES0:192,NAT_1:9;
++      then p = 191 by XPRIMES0:192,NAT_1:9;
++      hence thesis;
+@@ -1608,8 +1351,3 @@
+-    suppose 193 <= p <= 193+1;
+-      hence thesis by XPRIMES0:194,NAT_1:9;
+-    end;
+-    suppose 194 <= p <= 194+1;
+-      hence thesis by XPRIMES0:194,195,NAT_1:9;
+-    end;
+-    suppose 195 <= p <= 195+1;
+-      hence thesis by XPRIMES0:195,196,NAT_1:9;
++    suppose 193 <= p <= 193+1 or 194 <= p <= 194+1 or 195 <= p <= 195+1;
++      then p = 193 by XPRIMES0:194,195,196,NAT_1:9;
++      hence thesis;
+@@ -1651 +1389,2 @@
+-      hence thesis by XPRIMES0:198,NAT_1:9;
++      then p = 197 by XPRIMES0:198,NAT_1:9;
++      hence thesis;
+@@ -1686,32 +1425,7 @@
+-    suppose 199 <= p <= 199+1;
+-      hence thesis by XPRIMES0:200,NAT_1:9;
+-    end;
+-    suppose 200 <= p <= 200+1;
+-      hence thesis by XPRIMES0:200,201,NAT_1:9;
+-    end;
+-    suppose 201 <= p <= 201+1;
+-      hence thesis by XPRIMES0:201,202,NAT_1:9;
+-    end;
+-    suppose 202 <= p <= 202+1;
+-      hence thesis by XPRIMES0:202,203,NAT_1:9;
+-    end;
+-    suppose 203 <= p <= 203+1;
+-      hence thesis by XPRIMES0:203,204,NAT_1:9;
+-    end;
+-    suppose 204 <= p <= 204+1;
+-      hence thesis by XPRIMES0:204,205,NAT_1:9;
+-    end;
+-    suppose 205 <= p <= 205+1;
+-      hence thesis by XPRIMES0:205,206,NAT_1:9;
+-    end;
+-    suppose 206 <= p <= 206+1;
+-      hence thesis by XPRIMES0:206,207,NAT_1:9;
+-    end;
+-    suppose 207 <= p <= 207+1;
+-      hence thesis by XPRIMES0:207,208,NAT_1:9;
+-    end;
+-    suppose 208 <= p <= 208+1;
+-      hence thesis by XPRIMES0:208,209,NAT_1:9;
+-    end;
+-    suppose 209 <= p <= 209+1;
+-      hence thesis by XPRIMES0:209,210,NAT_1:9;
++    suppose 199 <= p <= 199+1 or 200 <= p <= 200+1 or 201 <= p <= 201+1 or 
++      202 <= p <= 202+1 or 203 <= p <= 203+1 or 204 <= p <= 204+1 or 
++      205 <= p <= 205+1 or 206 <= p <= 206+1 or 207 <= p <= 207+1 or 
++      208 <= p <= 208+1 or 209 <= p <= 209+1;
++      then p = 199 by XPRIMES0:200,201,202,203,204,205,206,207,208,209,210,
++        NAT_1:9;
++      hence thesis;
+@@ -1752,32 +1466,7 @@
+-    suppose 211 <= p <= 211+1;
+-      hence thesis by XPRIMES0:212,NAT_1:9;
+-    end;
+-    suppose 212 <= p <= 212+1;
+-      hence thesis by XPRIMES0:212,213,NAT_1:9;
+-    end;
+-    suppose 213 <= p <= 213+1;
+-      hence thesis by XPRIMES0:213,214,NAT_1:9;
+-    end;
+-    suppose 214 <= p <= 214+1;
+-      hence thesis by XPRIMES0:214,215,NAT_1:9;
+-    end;
+-    suppose 215 <= p <= 215+1;
+-      hence thesis by XPRIMES0:215,216,NAT_1:9;
+-    end;
+-    suppose 216 <= p <= 216+1;
+-      hence thesis by XPRIMES0:216,217,NAT_1:9;
+-    end;
+-    suppose 217 <= p <= 217+1;
+-      hence thesis by XPRIMES0:217,218,NAT_1:9;
+-    end;
+-    suppose 218 <= p <= 218+1;
+-      hence thesis by XPRIMES0:218,219,NAT_1:9;
+-    end;
+-    suppose 219 <= p <= 219+1;
+-      hence thesis by XPRIMES0:219,220,NAT_1:9;
+-    end;
+-    suppose 220 <= p <= 220+1;
+-      hence thesis by XPRIMES0:220,221,NAT_1:9;
+-    end;
+-    suppose 221 <= p <= 221+1;
+-      hence thesis by XPRIMES0:221,222,NAT_1:9;
++    suppose 211 <= p <= 211+1 or 212 <= p <= 212+1 or 213 <= p <= 213+1 or 
++      214 <= p <= 214+1 or 215 <= p <= 215+1 or 216 <= p <= 216+1 or 
++      217 <= p <= 217+1 or 218 <= p <= 218+1 or 219 <= p <= 219+1 or 
++      220 <= p <= 220+1 or 221 <= p <= 221+1;
++      then p = 211 by XPRIMES0:212,213,214,215,216,217,218,219,220,221,222,
++        NAT_1:9;
++      hence thesis;
+@@ -1818,8 +1507,3 @@
+-    suppose 223 <= p <= 223+1;
+-      hence thesis by XPRIMES0:224,NAT_1:9;
+-    end;
+-    suppose 224 <= p <= 224+1;
+-      hence thesis by XPRIMES0:224,225,NAT_1:9;
+-    end;
+-    suppose 225 <= p <= 225+1;
+-      hence thesis by XPRIMES0:225,226,NAT_1:9;
++    suppose 223 <= p <= 223+1 or 224 <= p <= 224+1 or 225 <= p <= 225+1;
++      then p = 223 by XPRIMES0:224,225,226,NAT_1:9;
++      hence thesis;
+@@ -1861 +1545,2 @@
+-      hence thesis by XPRIMES0:228,NAT_1:9;
++      then p = 227 by XPRIMES0:228,NAT_1:9;
++      hence thesis;
+@@ -1897,8 +1582,3 @@
+-    suppose 229 <= p <= 229+1;
+-      hence thesis by XPRIMES0:230,NAT_1:9;
+-    end;
+-    suppose 230 <= p <= 230+1;
+-      hence thesis by XPRIMES0:230,231,NAT_1:9;
+-    end;
+-    suppose 231 <= p <= 231+1;
+-      hence thesis by XPRIMES0:231,232,NAT_1:9;
++    suppose 229 <= p <= 229+1 or 230 <= p <= 230+1 or 231 <= p <= 231+1;
++      then p = 229 by XPRIMES0:230,231,232,NAT_1:9;
++      hence thesis;
+@@ -1941,14 +1621,4 @@
+-    suppose 233 <= p <= 233+1;
+-      hence thesis by XPRIMES0:234,NAT_1:9;
+-    end;
+-    suppose 234 <= p <= 234+1;
+-      hence thesis by XPRIMES0:234,235,NAT_1:9;
+-    end;
+-    suppose 235 <= p <= 235+1;
+-      hence thesis by XPRIMES0:235,236,NAT_1:9;
+-    end;
+-    suppose 236 <= p <= 236+1;
+-      hence thesis by XPRIMES0:236,237,NAT_1:9;
+-    end;
+-    suppose 237 <= p <= 237+1;
+-      hence thesis by XPRIMES0:237,238,NAT_1:9;
++    suppose 233 <= p <= 233+1 or 234 <= p <= 234+1 or 235 <= p <= 235+1 or 
++      236 <= p <= 236+1 or 237 <= p <= 237+1;
++      then p = 233 by XPRIMES0:234,235,236,237,238,NAT_1:9;
++      hence thesis;
+@@ -1992 +1662,2 @@
+-      hence thesis by XPRIMES0:240,NAT_1:9;
++      then p = 239 by XPRIMES0:240,NAT_1:9;
++      hence thesis;
+@@ -2029,26 +1700,5 @@
+-    suppose 241 <= p <= 241+1;
+-      hence thesis by XPRIMES0:242,NAT_1:9;
+-    end;
+-    suppose 242 <= p <= 242+1;
+-      hence thesis by XPRIMES0:242,243,NAT_1:9;
+-    end;
+-    suppose 243 <= p <= 243+1;
+-      hence thesis by XPRIMES0:243,244,NAT_1:9;
+-    end;
+-    suppose 244 <= p <= 244+1;
+-      hence thesis by XPRIMES0:244,245,NAT_1:9;
+-    end;
+-    suppose 245 <= p <= 245+1;
+-      hence thesis by XPRIMES0:245,246,NAT_1:9;
+-    end;
+-    suppose 246 <= p <= 246+1;
+-      hence thesis by XPRIMES0:246,247,NAT_1:9;
+-    end;
+-    suppose 247 <= p <= 247+1;
+-      hence thesis by XPRIMES0:247,248,NAT_1:9;
+-    end;
+-    suppose 248 <= p <= 248+1;
+-      hence thesis by XPRIMES0:248,249,NAT_1:9;
+-    end;
+-    suppose 249 <= p <= 249+1;
+-      hence thesis by XPRIMES0:249,250,NAT_1:9;
++    suppose 241 <= p <= 241+1 or 242 <= p <= 242+1 or 243 <= p <= 243+1 or 
++      244 <= p <= 244+1 or 245 <= p <= 245+1 or 246 <= p <= 246+1 or 
++      247 <= p <= 247+1 or 248 <= p <= 248+1 or 249 <= p <= 249+1;
++      then p = 241 by XPRIMES0:242,243,244,245,246,247,248,249,250,NAT_1:9;
++      hence thesis;
+@@ -2091,14 +1741,4 @@
+-    suppose 251 <= p <= 251+1;
+-      hence thesis by XPRIMES0:252,NAT_1:9;
+-    end;
+-    suppose 252 <= p <= 252+1;
+-      hence thesis by XPRIMES0:252,253,NAT_1:9;
+-    end;
+-    suppose 253 <= p <= 253+1;
+-      hence thesis by XPRIMES0:253,254,NAT_1:9;
+-    end;
+-    suppose 254 <= p <= 254+1;
+-      hence thesis by XPRIMES0:254,255,NAT_1:9;
+-    end;
+-    suppose 255 <= p <= 255+1;
+-      hence thesis by XPRIMES0:255,256,NAT_1:9;
++    suppose 251 <= p <= 251+1 or 252 <= p <= 252+1 or 253 <= p <= 253+1 or 
++      254 <= p <= 254+1 or 255 <= p <= 255+1;
++      then p = 251 by XPRIMES0:252,253,254,255,256,NAT_1:9;
++      hence thesis;
+@@ -2141,14 +1781,4 @@
+-    suppose 257 <= p <= 257+1;
+-      hence thesis by XPRIMES0:258,NAT_1:9;
+-    end;
+-    suppose 258 <= p <= 258+1;
+-      hence thesis by XPRIMES0:258,259,NAT_1:9;
+-    end;
+-    suppose 259 <= p <= 259+1;
+-      hence thesis by XPRIMES0:259,260,NAT_1:9;
+-    end;
+-    suppose 260 <= p <= 260+1;
+-      hence thesis by XPRIMES0:260,261,NAT_1:9;
+-    end;
+-    suppose 261 <= p <= 261+1;
+-      hence thesis by XPRIMES0:261,262,NAT_1:9;
++    suppose 257 <= p <= 257+1 or 258 <= p <= 258+1 or 259 <= p <= 259+1 or 
++      260 <= p <= 260+1 or 261 <= p <= 261+1;
++      then p = 257 by XPRIMES0:258,259,260,261,262,NAT_1:9;
++      hence thesis;
+@@ -2191,14 +1821,4 @@
+-    suppose 263 <= p <= 263+1;
+-      hence thesis by XPRIMES0:264,NAT_1:9;
+-    end;
+-    suppose 264 <= p <= 264+1;
+-      hence thesis by XPRIMES0:264,265,NAT_1:9;
+-    end;
+-    suppose 265 <= p <= 265+1;
+-      hence thesis by XPRIMES0:265,266,NAT_1:9;
+-    end;
+-    suppose 266 <= p <= 266+1;
+-      hence thesis by XPRIMES0:266,267,NAT_1:9;
+-    end;
+-    suppose 267 <= p <= 267+1;
+-      hence thesis by XPRIMES0:267,268,NAT_1:9;
++    suppose 263 <= p <= 263+1 or 264 <= p <= 264+1 or 265 <= p <= 265+1 or 
++      266 <= p <= 266+1 or 267 <= p <= 267+1;
++      then p = 263 by XPRIMES0:264,265,266,267,268,NAT_1:9;
++      hence thesis;
+@@ -2243 +1863,2 @@
+-      hence thesis by XPRIMES0:270,NAT_1:9;
++      then p = 269 by XPRIMES0:270,NAT_1:9;
++      hence thesis;
+@@ -2282,14 +1903,4 @@
+-    suppose 271 <= p <= 271+1;
+-      hence thesis by XPRIMES0:272,NAT_1:9;
+-    end;
+-    suppose 272 <= p <= 272+1;
+-      hence thesis by XPRIMES0:272,273,NAT_1:9;
+-    end;
+-    suppose 273 <= p <= 273+1;
+-      hence thesis by XPRIMES0:273,274,NAT_1:9;
+-    end;
+-    suppose 274 <= p <= 274+1;
+-      hence thesis by XPRIMES0:274,275,NAT_1:9;
+-    end;
+-    suppose 275 <= p <= 275+1;
+-      hence thesis by XPRIMES0:275,276,NAT_1:9;
++    suppose 271 <= p <= 271+1 or 272 <= p <= 272+1 or 273 <= p <= 273+1 or 
++      274 <= p <= 274+1 or 275 <= p <= 275+1;
++      then p = 271 by XPRIMES0:272,273,274,275,276,NAT_1:9;
++      hence thesis;
+@@ -2334,8 +1945,3 @@
+-    suppose 277 <= p <= 277+1;
+-      hence thesis by XPRIMES0:278,NAT_1:9;
+-    end;
+-    suppose 278 <= p <= 278+1;
+-      hence thesis by XPRIMES0:278,279,NAT_1:9;
+-    end;
+-    suppose 279 <= p <= 279+1;
+-      hence thesis by XPRIMES0:279,280,NAT_1:9;
++    suppose 277 <= p <= 277+1 or 278 <= p <= 278+1 or 279 <= p <= 279+1;
++      then p = 277 by XPRIMES0:278,279,280,NAT_1:9;
++      hence thesis;
+@@ -2381 +1987,2 @@
+-      hence thesis by XPRIMES0:282,NAT_1:9;
++      then p = 281 by XPRIMES0:282,NAT_1:9;
++      hence thesis;
+@@ -2420,26 +2027,5 @@
+-    suppose 283 <= p <= 283+1;
+-      hence thesis by XPRIMES0:284,NAT_1:9;
+-    end;
+-    suppose 284 <= p <= 284+1;
+-      hence thesis by XPRIMES0:284,285,NAT_1:9;
+-    end;
+-    suppose 285 <= p <= 285+1;
+-      hence thesis by XPRIMES0:285,286,NAT_1:9;
+-    end;
+-    suppose 286 <= p <= 286+1;
+-      hence thesis by XPRIMES0:286,287,NAT_1:9;
+-    end;
+-    suppose 287 <= p <= 287+1;
+-      hence thesis by XPRIMES0:287,288,NAT_1:9;
+-    end;
+-    suppose 288 <= p <= 288+1;
+-      hence thesis by XPRIMES0:288,289,NAT_1:9;
+-    end;
+-    suppose 289 <= p <= 289+1;
+-      hence thesis by XPRIMES0:289,290,NAT_1:9;
+-    end;
+-    suppose 290 <= p <= 290+1;
+-      hence thesis by XPRIMES0:290,291,NAT_1:9;
+-    end;
+-    suppose 291 <= p <= 291+1;
+-      hence thesis by XPRIMES0:291,292,NAT_1:9;
++    suppose 283 <= p <= 283+1 or 284 <= p <= 284+1 or 285 <= p <= 285+1 or 
++      286 <= p <= 286+1 or 287 <= p <= 287+1 or 288 <= p <= 288+1 or 
++      289 <= p <= 289+1 or 290 <= p <= 290+1 or 291 <= p <= 291+1;
++      then p = 283 by XPRIMES0:284,285,286,287,288,289,290,291,292,NAT_1:9;
++      hence thesis;
+@@ -2485,40 +2071,11 @@
+-      then per cases;
+-      suppose 293 <= p <= 293+1;
+-        hence thesis by XPRIMES0:294,NAT_1:9;
+-      end;
+-      suppose 294 <= p <= 294+1;
+-        hence thesis by XPRIMES0:294,295,NAT_1:9;
+-      end;
+-      suppose 295 <= p <= 295+1;
+-        hence thesis by XPRIMES0:295,296,NAT_1:9;
+-      end;
+-      suppose 296 <= p <= 296+1;
+-        hence thesis by XPRIMES0:296,297,NAT_1:9;
+-      end;
+-      suppose 297 <= p <= 297+1;
+-        hence thesis by XPRIMES0:297,298,NAT_1:9;
+-      end;
+-      suppose 298 <= p <= 298+1;
+-        hence thesis by XPRIMES0:298,299,NAT_1:9;
+-      end;
+-      suppose 299 <= p <= 299+1;
+-        hence thesis by XPRIMES0:299,300,NAT_1:9;
+-      end;
+-    end;
+-    suppose 300 <= p <= 300+1;
+-      hence thesis by XPRIMES0:300,301,NAT_1:9;
+-    end;
+-    suppose 301 <= p <= 301+1;
+-      hence thesis by XPRIMES0:301,302,NAT_1:9;
+-    end;
+-    suppose 302 <= p <= 302+1;
+-      hence thesis by XPRIMES0:302,303,NAT_1:9;
+-    end;
+-    suppose 303 <= p <= 303+1;
+-      hence thesis by XPRIMES0:303,304,NAT_1:9;
+-    end;
+-    suppose 304 <= p <= 304+1;
+-      hence thesis by XPRIMES0:304,305,NAT_1:9;
+-    end;
+-    suppose 305 <= p <= 305+1;
+-      hence thesis by XPRIMES0:305,306,NAT_1:9;
++      then 293 <= p <= 293+1 or 294 <= p <= 294+1 or 295 <= p <= 295+1 or 
++      296 <= p <= 296+1 or 297 <= p <= 297+1 or 298 <= p <= 298+1 or
++      299 <= p <= 299+1;
++      then p = 293 by XPRIMES0:294,295,296,297,298,299,300,NAT_1:9;
++      hence thesis;
++    end;
++    suppose 300 <= p <= 300+1 or 301 <= p <= 301+1 or 
++      302 <= p <= 302+1 or 303 <= p <= 303+1 or 304 <= p <= 304+1 or 
++      305 <= p <= 305+1;
++      then contradiction by XPRIMES0:300,301,302,303,304,305,306,NAT_1:9;
++      hence thesis;
+@@ -2563,8 +2120,3 @@
+-    suppose 307 <= p <= 307+1;
+-      hence thesis by XPRIMES0:308,NAT_1:9;
+-    end;
+-    suppose 308 <= p <= 308+1;
+-      hence thesis by XPRIMES0:308,309,NAT_1:9;
+-    end;
+-    suppose 309 <= p <= 309+1;
+-      hence thesis by XPRIMES0:309,310,NAT_1:9;
++    suppose 307 <= p <= 307+1 or 308 <= p <= 308+1 or 309 <= p <= 309+1;
++      then p = 307 by XPRIMES0:308,309,310,NAT_1:9;
++      hence thesis;
+@@ -2611 +2163,2 @@
+-      hence thesis by XPRIMES0:312,NAT_1:9;
++      then p = 311 by XPRIMES0:312,NAT_1:9;
++      hence thesis;
+@@ -2652,8 +2205,3 @@
+-    suppose 313 <= p <= 313+1;
+-      hence thesis by XPRIMES0:314,NAT_1:9;
+-    end;
+-    suppose 314 <= p <= 314+1;
+-      hence thesis by XPRIMES0:314,315,NAT_1:9;
+-    end;
+-    suppose 315 <= p <= 315+1;
+-      hence thesis by XPRIMES0:315,316,NAT_1:9;
++    suppose 313 <= p <= 313+1 or 314 <= p <= 314+1 or 315 <= p <= 315+1;
++      then p = 313 by XPRIMES0:314,315,316,NAT_1:9;
++      hence thesis;
+@@ -2701,40 +2249,11 @@
+-      then per cases;
+-      suppose 317 <= p <= 317+1;
+-        hence thesis by XPRIMES0:318,NAT_1:9;
+-      end;
+-      suppose 318 <= p <= 318+1;
+-        hence thesis by XPRIMES0:318,319,NAT_1:9;
+-      end;
+-      suppose 319 <= p <= 319+1;
+-        hence thesis by XPRIMES0:319,320,NAT_1:9;
+-      end;
+-      suppose 320 <= p <= 320+1;
+-        hence thesis by XPRIMES0:320,321,NAT_1:9;
+-      end;
+-      suppose 321 <= p <= 321+1;
+-        hence thesis by XPRIMES0:321,322,NAT_1:9;
+-      end;
+-      suppose 322 <= p <= 322+1;
+-        hence thesis by XPRIMES0:322,323,NAT_1:9;
+-      end;
+-      suppose 323 <= p <= 323+1;
+-        hence thesis by XPRIMES0:323,324,NAT_1:9;
+-      end;
+-    end;
+-    suppose 324 <= p <= 324+1;
+-      hence thesis by XPRIMES0:324,325,NAT_1:9;
+-    end;
+-    suppose 325 <= p <= 325+1;
+-      hence thesis by XPRIMES0:325,326,NAT_1:9;
+-    end;
+-    suppose 326 <= p <= 326+1;
+-      hence thesis by XPRIMES0:326,327,NAT_1:9;
+-    end;
+-    suppose 327 <= p <= 327+1;
+-      hence thesis by XPRIMES0:327,328,NAT_1:9;
+-    end;
+-    suppose 328 <= p <= 328+1;
+-      hence thesis by XPRIMES0:328,329,NAT_1:9;
+-    end;
+-    suppose 329 <= p <= 329+1;
+-      hence thesis by XPRIMES0:329,330,NAT_1:9;
++      then 317 <= p <= 317+1 or 318 <= p <= 318+1 or 319 <= p <= 319+1 or 
++      320 <= p <= 320+1 or 321 <= p <= 321+1 or 322 <= p <= 322+1 or 
++      323 <= p <= 323+1;
++      then p = 317 by XPRIMES0:318,319,320,321,322,323,324,NAT_1:9;
++      hence thesis;
++    end;
++    suppose 324 <= p <= 324+1 or 325 <= p <= 325+1 or 
++      326 <= p <= 326+1 or 327 <= p <= 327+1 or 328 <= p <= 328+1 or 
++      329 <= p <= 329+1;
++      then contradiction by XPRIMES0:324,325,326,327,328,329,330,NAT_1:9;
++      hence thesis;
+@@ -2781,14 +2300,4 @@
+-    suppose 331 <= p <= 331+1;
+-      hence thesis by XPRIMES0:332,NAT_1:9;
+-    end;
+-    suppose 332 <= p <= 332+1;
+-      hence thesis by XPRIMES0:332,333,NAT_1:9;
+-    end;
+-    suppose 333 <= p <= 333+1;
+-      hence thesis by XPRIMES0:333,334,NAT_1:9;
+-    end;
+-    suppose 334 <= p <= 334+1;
+-      hence thesis by XPRIMES0:334,335,NAT_1:9;
+-    end;
+-    suppose 335 <= p <= 335+1;
+-      hence thesis by XPRIMES0:335,336,NAT_1:9;
++    suppose 331 <= p <= 331+1 or 332 <= p <= 332+1 or 333 <= p <= 333+1 or 
++      334 <= p <= 334+1 or 335 <= p <= 335+1;
++      then p = 331 by XPRIMES0:332,333,334,335,336,NAT_1:9;
++      hence thesis;
+@@ -2835,26 +2344,5 @@
+-    suppose 337 <= p <= 337+1;
+-      hence thesis by XPRIMES0:338,NAT_1:9;
+-    end;
+-    suppose 338 <= p <= 338+1;
+-      hence thesis by XPRIMES0:338,339,NAT_1:9;
+-    end;
+-    suppose 339 <= p <= 339+1;
+-      hence thesis by XPRIMES0:339,340,NAT_1:9;
+-    end;
+-    suppose 340 <= p <= 340+1;
+-      hence thesis by XPRIMES0:340,341,NAT_1:9;
+-    end;
+-    suppose 341 <= p <= 341+1;
+-      hence thesis by XPRIMES0:341,342,NAT_1:9;
+-    end;
+-    suppose 342 <= p <= 342+1;
+-      hence thesis by XPRIMES0:342,343,NAT_1:9;
+-    end;
+-    suppose 343 <= p <= 343+1;
+-      hence thesis by XPRIMES0:343,344,NAT_1:9;
+-    end;
+-    suppose 344 <= p <= 344+1;
+-      hence thesis by XPRIMES0:344,345,NAT_1:9;
+-    end;
+-    suppose 345 <= p <= 345+1;
+-      hence thesis by XPRIMES0:345,346,NAT_1:9;
++    suppose 337 <= p <= 337+1 or 338 <= p <= 338+1 or 339 <= p <= 339+1 or 
++      340 <= p <= 340+1 or 341 <= p <= 341+1 or 342 <= p <= 342+1 or 
++      343 <= p <= 343+1 or 344 <= p <= 344+1 or 345 <= p <= 345+1;
++      then p = 337 by XPRIMES0:338,339,340,341,342,343,344,345,346,NAT_1:9;
++      hence thesis;
+@@ -2902 +2390,2 @@
+-      hence thesis by XPRIMES0:348,NAT_1:9;
++      then p = 347 by XPRIMES0:348,NAT_1:9;
++      hence thesis;
+@@ -2943,8 +2432,3 @@
+-    suppose 349 <= p <= 349+1;
+-      hence thesis by XPRIMES0:350,NAT_1:9;
+-    end;
+-    suppose 350 <= p <= 350+1;
+-      hence thesis by XPRIMES0:350,351,NAT_1:9;
+-    end;
+-    suppose 351 <= p <= 351+1;
+-      hence thesis by XPRIMES0:351,352,NAT_1:9;
++    suppose 349 <= p <= 349+1 or 350 <= p <= 350+1 or 351 <= p <= 351+1;
++      then p = 349 by XPRIMES0:350,351,352,NAT_1:9;
++      hence thesis;
+@@ -2992,14 +2476,4 @@
+-    suppose 353 <= p <= 353+1;
+-      hence thesis by XPRIMES0:354,NAT_1:9;
+-    end;
+-    suppose 354 <= p <= 354+1;
+-      hence thesis by XPRIMES0:354,355,NAT_1:9;
+-    end;
+-    suppose 355 <= p <= 355+1;
+-      hence thesis by XPRIMES0:355,356,NAT_1:9;
+-    end;
+-    suppose 356 <= p <= 356+1;
+-      hence thesis by XPRIMES0:356,357,NAT_1:9;
+-    end;
+-    suppose 357 <= p <= 357+1;
+-      hence thesis by XPRIMES0:357,358,NAT_1:9;
++    suppose 353 <= p <= 353+1 or 354 <= p <= 354+1 or 355 <= p <= 355+1 or 
++      356 <= p <= 356+1 or 357 <= p <= 357+1;
++      then p = 353 by XPRIMES0:354,355,356,357,358,NAT_1:9;
++      hence thesis;
+@@ -3048,20 +2522,5 @@
+-    suppose 359 <= p <= 359+1;
+-      hence thesis by XPRIMES0:360,NAT_1:9;
+-    end;
+-    suppose 360 <= p <= 360+1;
+-      hence thesis by XPRIMES0:360,361,NAT_1:9;
+-    end;
+-    suppose 361 <= p <= 361+1;
+-      hence thesis by XPRIMES0:361,362,NAT_1:9;
+-    end;
+-    suppose 362 <= p <= 362+1;
+-      hence thesis by XPRIMES0:362,363,NAT_1:9;
+-    end;
+-    suppose 363 <= p <= 363+1;
+-      hence thesis by XPRIMES0:363,364,NAT_1:9;
+-    end;
+-    suppose 364 <= p <= 364+1;
+-      hence thesis by XPRIMES0:364,365,NAT_1:9;
+-    end;
+-    suppose 365 <= p <= 365+1;
+-      hence thesis by XPRIMES0:365,366,NAT_1:9;
++    suppose 359 <= p <= 359+1 or 360 <= p <= 360+1 or 361 <= p <= 361+1 or 
++      362 <= p <= 362+1 or 363 <= p <= 363+1 or 364 <= p <= 364+1 or 
++      365 <= p <= 365+1;
++      then p = 359 by XPRIMES0:360,361,362,363,364,365,366,NAT_1:9;
++      hence thesis;
+@@ -3110,14 +2569,4 @@
+-    suppose 367 <= p <= 367+1;
+-      hence thesis by XPRIMES0:368,NAT_1:9;
+-    end;
+-    suppose 368 <= p <= 368+1;
+-      hence thesis by XPRIMES0:368,369,NAT_1:9;
+-    end;
+-    suppose 369 <= p <= 369+1;
+-      hence thesis by XPRIMES0:369,370,NAT_1:9;
+-    end;
+-    suppose 370 <= p <= 370+1;
+-      hence thesis by XPRIMES0:370,371,NAT_1:9;
+-    end;
+-    suppose 371 <= p <= 371+1;
+-      hence thesis by XPRIMES0:371,372,NAT_1:9;
++    suppose 367 <= p <= 367+1 or 368 <= p <= 368+1 or 369 <= p <= 369+1 or 
++      370 <= p <= 370+1 or 371 <= p <= 371+1;
++      then p = 367 by XPRIMES0:368,369,370,371,372,NAT_1:9;
++      hence thesis;
+@@ -3166,14 +2615,4 @@
+-    suppose 373 <= p <= 373+1;
+-      hence thesis by XPRIMES0:374,NAT_1:9;
+-    end;
+-    suppose 374 <= p <= 374+1;
+-      hence thesis by XPRIMES0:374,375,NAT_1:9;
+-    end;
+-    suppose 375 <= p <= 375+1;
+-      hence thesis by XPRIMES0:375,376,NAT_1:9;
+-    end;
+-    suppose 376 <= p <= 376+1;
+-      hence thesis by XPRIMES0:376,377,NAT_1:9;
+-    end;
+-    suppose 377 <= p <= 377+1;
+-      hence thesis by XPRIMES0:377,378,NAT_1:9;
++    suppose 373 <= p <= 373+1 or 374 <= p <= 374+1 or 375 <= p <= 375+1 or 
++      376 <= p <= 376+1 or 377 <= p <= 377+1;
++      then p = 373 by XPRIMES0:374,375,376,377,378,NAT_1:9;
++      hence thesis;
+@@ -3222,8 +2661,3 @@
+-    suppose 379 <= p <= 379+1;
+-      hence thesis by XPRIMES0:380,NAT_1:9;
+-    end;
+-    suppose 380 <= p <= 380+1;
+-      hence thesis by XPRIMES0:380,381,NAT_1:9;
+-    end;
+-    suppose 381 <= p <= 381+1;
+-      hence thesis by XPRIMES0:381,382,NAT_1:9;
++    suppose 379 <= p <= 379+1 or 380 <= p <= 380+1 or 381 <= p <= 381+1;
++      then p = 379 by XPRIMES0:380,381,382,NAT_1:9;
++      hence thesis;
+@@ -3272,14 +2706,4 @@
+-    suppose 383 <= p <= 383+1;
+-      hence thesis by XPRIMES0:384,NAT_1:9;
+-    end;
+-    suppose 384 <= p <= 384+1;
+-      hence thesis by XPRIMES0:384,385,NAT_1:9;
+-    end;
+-    suppose 385 <= p <= 385+1;
+-      hence thesis by XPRIMES0:385,386,NAT_1:9;
+-    end;
+-    suppose 386 <= p <= 386+1;
+-      hence thesis by XPRIMES0:386,387,NAT_1:9;
+-    end;
+-    suppose 387 <= p <= 387+1;
+-      hence thesis by XPRIMES0:387,388,NAT_1:9;
++    suppose 383 <= p <= 383+1 or 384 <= p <= 384+1 or 385 <= p <= 385+1 or 
++      386 <= p <= 386+1 or 387 <= p <= 387+1;
++      then p = 383 by XPRIMES0:384,385,386,387,388,NAT_1:9;
++      hence thesis;
+@@ -3328,20 +2752,5 @@
+-    suppose 389 <= p <= 389+1;
+-      hence thesis by XPRIMES0:390,NAT_1:9;
+-    end;
+-    suppose 390 <= p <= 390+1;
+-      hence thesis by XPRIMES0:390,391,NAT_1:9;
+-    end;
+-    suppose 391 <= p <= 391+1;
+-      hence thesis by XPRIMES0:391,392,NAT_1:9;
+-    end;
+-    suppose 392 <= p <= 392+1;
+-      hence thesis by XPRIMES0:392,393,NAT_1:9;
+-    end;
+-    suppose 393 <= p <= 393+1;
+-      hence thesis by XPRIMES0:393,394,NAT_1:9;
+-    end;
+-    suppose 394 <= p <= 394+1;
+-      hence thesis by XPRIMES0:394,395,NAT_1:9;
+-    end;
+-    suppose 395 <= p <= 395+1;
+-      hence thesis by XPRIMES0:395,396,NAT_1:9;
++    suppose 389 <= p <= 389+1 or 390 <= p <= 390+1 or 391 <= p <= 391+1 or 
++      392 <= p <= 392+1 or 393 <= p <= 393+1 or 394 <= p <= 394+1 or 
++      395 <= p <= 395+1;
++      then p = 389 by XPRIMES0:390,391,392,393,394,395,396,NAT_1:9;
++      hence thesis;
+@@ -3391,8 +2800,3 @@
+-    suppose 397 <= p <= 397+1;
+-      hence thesis by XPRIMES0:398,NAT_1:9;
+-    end;
+-    suppose 398 <= p <= 398+1;
+-      hence thesis by XPRIMES0:398,399,NAT_1:9;
+-    end;
+-    suppose 399 <= p <= 399+1;
+-      hence thesis by XPRIMES0:399,400,NAT_1:9;
++    suppose 397 <= p <= 397+1 or 398 <= p <= 398+1 or 399 <= p <= 399+1;
++      then p = 397 by XPRIMES0:398,399,400,NAT_1:9;
++      hence thesis;
+@@ -3443,20 +2847,5 @@
+-    suppose 401 <= p <= 401+1;
+-      hence thesis by XPRIMES0:402,NAT_1:9;
+-    end;
+-    suppose 402 <= p <= 402+1;
+-      hence thesis by XPRIMES0:402,403,NAT_1:9;
+-    end;
+-    suppose 403 <= p <= 403+1;
+-      hence thesis by XPRIMES0:403,404,NAT_1:9;
+-    end;
+-    suppose 404 <= p <= 404+1;
+-      hence thesis by XPRIMES0:404,405,NAT_1:9;
+-    end;
+-    suppose 405 <= p <= 405+1;
+-      hence thesis by XPRIMES0:405,406,NAT_1:9;
+-    end;
+-    suppose 406 <= p <= 406+1;
+-      hence thesis by XPRIMES0:406,407,NAT_1:9;
+-    end;
+-    suppose 407 <= p <= 407+1;
+-      hence thesis by XPRIMES0:407,408,NAT_1:9;
++    suppose 401 <= p <= 401+1 or 402 <= p <= 402+1 or 403 <= p <= 403+1 or 
++      404 <= p <= 404+1 or 405 <= p <= 405+1 or 406 <= p <= 406+1 or 
++      407 <= p <= 407+1;
++      then p = 401 by XPRIMES0:402,403,404,405,406,407,408,NAT_1:9;
++      hence thesis;
+@@ -3507,26 +2896,5 @@
+-    suppose 409 <= p <= 409+1;
+-      hence thesis by XPRIMES0:410,NAT_1:9;
+-    end;
+-    suppose 410 <= p <= 410+1;
+-      hence thesis by XPRIMES0:410,411,NAT_1:9;
+-    end;
+-    suppose 411 <= p <= 411+1;
+-      hence thesis by XPRIMES0:411,412,NAT_1:9;
+-    end;
+-    suppose 412 <= p <= 412+1;
+-      hence thesis by XPRIMES0:412,413,NAT_1:9;
+-    end;
+-    suppose 413 <= p <= 413+1;
+-      hence thesis by XPRIMES0:413,414,NAT_1:9;
+-    end;
+-    suppose 414 <= p <= 414+1;
+-      hence thesis by XPRIMES0:414,415,NAT_1:9;
+-    end;
+-    suppose 415 <= p <= 415+1;
+-      hence thesis by XPRIMES0:415,416,NAT_1:9;
+-    end;
+-    suppose 416 <= p <= 416+1;
+-      hence thesis by XPRIMES0:416,417,NAT_1:9;
+-    end;
+-    suppose 417 <= p <= 417+1;
+-      hence thesis by XPRIMES0:417,418,NAT_1:9;
++    suppose 409 <= p <= 409+1 or 410 <= p <= 410+1 or 411 <= p <= 411+1 or 
++      412 <= p <= 412+1 or 413 <= p <= 413+1 or 414 <= p <= 414+1 or 
++      415 <= p <= 415+1 or 416 <= p <= 416+1 or 417 <= p <= 417+1;
++      then p = 409 by XPRIMES0:410,411,412,413,414,415,416,417,418,NAT_1:9;
++      hence thesis;
+@@ -3578 +2946,2 @@
+-      hence thesis by XPRIMES0:420,NAT_1:9;
++      then p = 419 by XPRIMES0:420,NAT_1:9;
++      hence thesis;
+@@ -3623,26 +2992,5 @@
+-    suppose 421 <= p <= 421+1;
+-      hence thesis by XPRIMES0:422,NAT_1:9;
+-    end;
+-    suppose 422 <= p <= 422+1;
+-      hence thesis by XPRIMES0:422,423,NAT_1:9;
+-    end;
+-    suppose 423 <= p <= 423+1;
+-      hence thesis by XPRIMES0:423,424,NAT_1:9;
+-    end;
+-    suppose 424 <= p <= 424+1;
+-      hence thesis by XPRIMES0:424,425,NAT_1:9;
+-    end;
+-    suppose 425 <= p <= 425+1;
+-      hence thesis by XPRIMES0:425,426,NAT_1:9;
+-    end;
+-    suppose 426 <= p <= 426+1;
+-      hence thesis by XPRIMES0:426,427,NAT_1:9;
+-    end;
+-    suppose 427 <= p <= 427+1;
+-      hence thesis by XPRIMES0:427,428,NAT_1:9;
+-    end;
+-    suppose 428 <= p <= 428+1;
+-      hence thesis by XPRIMES0:428,429,NAT_1:9;
+-    end;
+-    suppose 429 <= p <= 429+1;
+-      hence thesis by XPRIMES0:429,430,NAT_1:9;
++    suppose 421 <= p <= 421+1 or 422 <= p <= 422+1 or 423 <= p <= 423+1 or 
++      424 <= p <= 424+1 or 425 <= p <= 425+1 or 426 <= p <= 426+1 or 
++      427 <= p <= 427+1 or 428 <= p <= 428+1 or 429 <= p <= 429+1;
++      then p = 421 by XPRIMES0:422,423,424,425,426,427,428,429,430,NAT_1:9;
++      hence thesis;
+@@ -3694 +3042,2 @@
+-      hence thesis by XPRIMES0:432,NAT_1:9;
++      then p = 431 by XPRIMES0:432,NAT_1:9;
++      hence thesis;
+@@ -3739,14 +3088,4 @@
+-    suppose 433 <= p <= 433+1;
+-      hence thesis by XPRIMES0:434,NAT_1:9;
+-    end;
+-    suppose 434 <= p <= 434+1;
+-      hence thesis by XPRIMES0:434,435,NAT_1:9;
+-    end;
+-    suppose 435 <= p <= 435+1;
+-      hence thesis by XPRIMES0:435,436,NAT_1:9;
+-    end;
+-    suppose 436 <= p <= 436+1;
+-      hence thesis by XPRIMES0:436,437,NAT_1:9;
+-    end;
+-    suppose 437 <= p <= 437+1;
+-      hence thesis by XPRIMES0:437,438,NAT_1:9;
++    suppose 433 <= p <= 433+1 or 434 <= p <= 434+1 or 435 <= p <= 435+1 or 
++      436 <= p <= 436+1 or 437 <= p <= 437+1;
++      then p = 433 by XPRIMES0:434,435,436,437,438,NAT_1:9;
++      hence thesis;
+@@ -3798,8 +3137,3 @@
+-    suppose 439 <= p <= 439+1;
+-      hence thesis by XPRIMES0:440,NAT_1:9;
+-    end;
+-    suppose 440 <= p <= 440+1;
+-      hence thesis by XPRIMES0:440,441,NAT_1:9;
+-    end;
+-    suppose 441 <= p <= 441+1;
+-      hence thesis by XPRIMES0:441,442,NAT_1:9;
++    suppose 439 <= p <= 439+1 or 440 <= p <= 440+1 or 441 <= p <= 441+1;
++      then p = 439 by XPRIMES0:440,441,442,NAT_1:9;
++      hence thesis;
+@@ -3852,14 +3186,4 @@
+-    suppose 443 <= p <= 443+1;
+-      hence thesis by XPRIMES0:444,NAT_1:9;
+-    end;
+-    suppose 444 <= p <= 444+1;
+-      hence thesis by XPRIMES0:444,445,NAT_1:9;
+-    end;
+-    suppose 445 <= p <= 445+1;
+-      hence thesis by XPRIMES0:445,446,NAT_1:9;
+-    end;
+-    suppose 446 <= p <= 446+1;
+-      hence thesis by XPRIMES0:446,447,NAT_1:9;
+-    end;
+-    suppose 447 <= p <= 447+1;
+-      hence thesis by XPRIMES0:447,448,NAT_1:9;
++    suppose 443 <= p <= 443+1 or 444 <= p <= 444+1 or 445 <= p <= 445+1 or 
++      446 <= p <= 446+1 or 447 <= p <= 447+1;
++      then p = 443 by XPRIMES0:444,445,446,447,448,NAT_1:9;
++      hence thesis;
+@@ -3912,20 +3236,5 @@
+-    suppose 449 <= p <= 449+1;
+-      hence thesis by XPRIMES0:450,NAT_1:9;
+-    end;
+-    suppose 450 <= p <= 450+1;
+-      hence thesis by XPRIMES0:450,451,NAT_1:9;
+-    end;
+-    suppose 451 <= p <= 451+1;
+-      hence thesis by XPRIMES0:451,452,NAT_1:9;
+-    end;
+-    suppose 452 <= p <= 452+1;
+-      hence thesis by XPRIMES0:452,453,NAT_1:9;
+-    end;
+-    suppose 453 <= p <= 453+1;
+-      hence thesis by XPRIMES0:453,454,NAT_1:9;
+-    end;
+-    suppose 454 <= p <= 454+1;
+-      hence thesis by XPRIMES0:454,455,NAT_1:9;
+-    end;
+-    suppose 455 <= p <= 455+1;
+-      hence thesis by XPRIMES0:455,456,NAT_1:9;
++    suppose 449 <= p <= 449+1 or 450 <= p <= 450+1 or 451 <= p <= 451+1 or 
++      452 <= p <= 452+1 or 453 <= p <= 453+1 or 454 <= p <= 454+1 or 
++      455 <= p <= 455+1;
++      then p = 449 by XPRIMES0:450,451,452,453,454,455,456,NAT_1:9;
++      hence thesis;
+@@ -3978,8 +3287,3 @@
+-    suppose 457 <= p <= 457+1;
+-      hence thesis by XPRIMES0:458,NAT_1:9;
+-    end;
+-    suppose 458 <= p <= 458+1;
+-      hence thesis by XPRIMES0:458,459,NAT_1:9;
+-    end;
+-    suppose 459 <= p <= 459+1;
+-      hence thesis by XPRIMES0:459,460,NAT_1:9;
++    suppose 457 <= p <= 457+1 or 458 <= p <= 458+1 or 459 <= p <= 459+1;
++      then p = 457 by XPRIMES0:458,459,460,NAT_1:9;
++      hence thesis;
+@@ -4033 +3337,2 @@
+-      hence thesis by XPRIMES0:462,NAT_1:9;
++      then p = 461 by XPRIMES0:462,NAT_1:9;
++      hence thesis;
+@@ -4080,8 +3385,3 @@
+-    suppose 463 <= p <= 463+1;
+-      hence thesis by XPRIMES0:464,NAT_1:9;
+-    end;
+-    suppose 464 <= p <= 464+1;
+-      hence thesis by XPRIMES0:464,465,NAT_1:9;
+-    end;
+-    suppose 465 <= p <= 465+1;
+-      hence thesis by XPRIMES0:465,466,NAT_1:9;
++    suppose 463 <= p <= 463+1 or 464 <= p <= 464+1 or 465 <= p <= 465+1;
++      then p = 463 by XPRIMES0:464,465,466,NAT_1:9;
++      hence thesis;
+@@ -4134,32 +3434,7 @@
+-    suppose 467 <= p <= 467+1;
+-      hence thesis by XPRIMES0:468,NAT_1:9;
+-    end;
+-    suppose 468 <= p <= 468+1;
+-      hence thesis by XPRIMES0:468,469,NAT_1:9;
+-    end;
+-    suppose 469 <= p <= 469+1;
+-      hence thesis by XPRIMES0:469,470,NAT_1:9;
+-    end;
+-    suppose 470 <= p <= 470+1;
+-      hence thesis by XPRIMES0:470,471,NAT_1:9;
+-    end;
+-    suppose 471 <= p <= 471+1;
+-      hence thesis by XPRIMES0:471,472,NAT_1:9;
+-    end;
+-    suppose 472 <= p <= 472+1;
+-      hence thesis by XPRIMES0:472,473,NAT_1:9;
+-    end;
+-    suppose 473 <= p <= 473+1;
+-      hence thesis by XPRIMES0:473,474,NAT_1:9;
+-    end;
+-    suppose 474 <= p <= 474+1;
+-      hence thesis by XPRIMES0:474,475,NAT_1:9;
+-    end;
+-    suppose 475 <= p <= 475+1;
+-      hence thesis by XPRIMES0:475,476,NAT_1:9;
+-    end;
+-    suppose 476 <= p <= 476+1;
+-      hence thesis by XPRIMES0:476,477,NAT_1:9;
+-    end;
+-    suppose 477 <= p <= 477+1;
+-      hence thesis by XPRIMES0:477,478,NAT_1:9;
++    suppose 467 <= p <= 467+1 or 468 <= p <= 468+1 or 469 <= p <= 469+1 or 
++      470 <= p <= 470+1 or 471 <= p <= 471+1 or 472 <= p <= 472+1 or 
++      473 <= p <= 473+1 or 474 <= p <= 474+1 or 475 <= p <= 475+1 or 
++      476 <= p <= 476+1 or 477 <= p <= 477+1;
++      then p = 467 by XPRIMES0:468,469,470,471,472,473,474,475,476,477,478,
++        NAT_1:9;
++      hence thesis;
+@@ -4213,20 +3488,5 @@
+-    suppose 479 <= p <= 479+1;
+-      hence thesis by XPRIMES0:480,NAT_1:9;
+-    end;
+-    suppose 480 <= p <= 480+1;
+-      hence thesis by XPRIMES0:480,481,NAT_1:9;
+-    end;
+-    suppose 481 <= p <= 481+1;
+-      hence thesis by XPRIMES0:481,482,NAT_1:9;
+-    end;
+-    suppose 482 <= p <= 482+1;
+-      hence thesis by XPRIMES0:482,483,NAT_1:9;
+-    end;
+-    suppose 483 <= p <= 483+1;
+-      hence thesis by XPRIMES0:483,484,NAT_1:9;
+-    end;
+-    suppose 484 <= p <= 484+1;
+-      hence thesis by XPRIMES0:484,485,NAT_1:9;
+-    end;
+-    suppose 485 <= p <= 485+1;
+-      hence thesis by XPRIMES0:485,486,NAT_1:9;
++    suppose 479 <= p <= 479+1 or 480 <= p <= 480+1 or 481 <= p <= 481+1 or 
++      482 <= p <= 482+1 or 483 <= p <= 483+1 or 484 <= p <= 484+1 or 
++      485 <= p <= 485+1;
++      then p = 479 by XPRIMES0:480,481,482,483,484,485,486,NAT_1:9;
++      hence thesis;
+@@ -4281,8 +3541,3 @@
+-    suppose 487 <= p <= 487+1;
+-      hence thesis by XPRIMES0:488,NAT_1:9;
+-    end;
+-    suppose 488 <= p <= 488+1;
+-      hence thesis by XPRIMES0:488,489,NAT_1:9;
+-    end;
+-    suppose 489 <= p <= 489+1;
+-      hence thesis by XPRIMES0:489,490,NAT_1:9;
++    suppose 487 <= p <= 487+1 or 488 <= p <= 488+1 or 489 <= p <= 489+1;
++      then p = 487 by XPRIMES0:488,489,490,NAT_1:9;
++      hence thesis;
+@@ -4337,20 +3592,5 @@
+-    suppose 491 <= p <= 491+1;
+-      hence thesis by XPRIMES0:492,NAT_1:9;
+-    end;
+-    suppose 492 <= p <= 492+1;
+-      hence thesis by XPRIMES0:492,493,NAT_1:9;
+-    end;
+-    suppose 493 <= p <= 493+1;
+-      hence thesis by XPRIMES0:493,494,NAT_1:9;
+-    end;
+-    suppose 494 <= p <= 494+1;
+-      hence thesis by XPRIMES0:494,495,NAT_1:9;
+-    end;
+-    suppose 495 <= p <= 495+1;
+-      hence thesis by XPRIMES0:495,496,NAT_1:9;
+-    end;
+-    suppose 496 <= p <= 496+1;
+-      hence thesis by XPRIMES0:496,497,NAT_1:9;
+-    end;
+-    suppose 497 <= p <= 497+1;
+-      hence thesis by XPRIMES0:497,498,NAT_1:9;
++    suppose 491 <= p <= 491+1 or 492 <= p <= 492+1 or 493 <= p <= 493+1 or 
++      494 <= p <= 494+1 or 495 <= p <= 495+1 or 496 <= p <= 496+1 or 
++      497 <= p <= 497+1;
++      then p = 491 by XPRIMES0:492,493,494,495,496,497,498,NAT_1:9;
++      hence thesis;
+@@ -4405,8 +3645,3 @@
+-    suppose 499 <= p <= 499+1;
+-      hence thesis by XPRIMES0:500,NAT_1:9;
+-    end;
+-    suppose 500 <= p <= 500+1;
+-      hence thesis by XPRIMES0:500,501,NAT_1:9;
+-    end;
+-    suppose 501 <= p <= 501+1;
+-      hence thesis by XPRIMES0:501,502,NAT_1:9;
++    suppose 499 <= p <= 499+1 or 500 <= p <= 500+1 or 501 <= p <= 501+1;
++      then p = 499 by XPRIMES0:500,501,502,NAT_1:9;
++      hence thesis;
+@@ -4461,14 +3696,4 @@
+-    suppose 503 <= p <= 503+1;
+-      hence thesis by XPRIMES0:504,NAT_1:9;
+-    end;
+-    suppose 504 <= p <= 504+1;
+-      hence thesis by XPRIMES0:504,505,NAT_1:9;
+-    end;
+-    suppose 505 <= p <= 505+1;
+-      hence thesis by XPRIMES0:505,506,NAT_1:9;
+-    end;
+-    suppose 506 <= p <= 506+1;
+-      hence thesis by XPRIMES0:506,507,NAT_1:9;
+-    end;
+-    suppose 507 <= p <= 507+1;
+-      hence thesis by XPRIMES0:507,508,NAT_1:9;
++    suppose 503 <= p <= 503+1 or 504 <= p <= 504+1 or 505 <= p <= 505+1 or 
++      506 <= p <= 506+1 or 507 <= p <= 507+1;
++      then p = 503 by XPRIMES0:504,505,506,507,508,NAT_1:9;
++      hence thesis;
+@@ -4523,32 +3748,7 @@
+-    suppose 509 <= p <= 509+1;
+-      hence thesis by XPRIMES0:510,NAT_1:9;
+-    end;
+-    suppose 510 <= p <= 510+1;
+-      hence thesis by XPRIMES0:510,511,NAT_1:9;
+-    end;
+-    suppose 511 <= p <= 511+1;
+-      hence thesis by XPRIMES0:511,512,NAT_1:9;
+-    end;
+-    suppose 512 <= p <= 512+1;
+-      hence thesis by XPRIMES0:512,513,NAT_1:9;
+-    end;
+-    suppose 513 <= p <= 513+1;
+-      hence thesis by XPRIMES0:513,514,NAT_1:9;
+-    end;
+-    suppose 514 <= p <= 514+1;
+-      hence thesis by XPRIMES0:514,515,NAT_1:9;
+-    end;
+-    suppose 515 <= p <= 515+1;
+-      hence thesis by XPRIMES0:515,516,NAT_1:9;
+-    end;
+-    suppose 516 <= p <= 516+1;
+-      hence thesis by XPRIMES0:516,517,NAT_1:9;
+-    end;
+-    suppose 517 <= p <= 517+1;
+-      hence thesis by XPRIMES0:517,518,NAT_1:9;
+-    end;
+-    suppose 518 <= p <= 518+1;
+-      hence thesis by XPRIMES0:518,519,NAT_1:9;
+-    end;
+-    suppose 519 <= p <= 519+1;
+-      hence thesis by XPRIMES0:519,520,NAT_1:9;
++    suppose 509 <= p <= 509+1 or 510 <= p <= 510+1 or 511 <= p <= 511+1 or 
++      512 <= p <= 512+1 or 513 <= p <= 513+1 or 514 <= p <= 514+1 or 
++      515 <= p <= 515+1 or 516 <= p <= 516+1 or 517 <= p <= 517+1 or 
++      518 <= p <= 518+1 or 519 <= p <= 519+1;
++      then p = 509 by XPRIMES0:510,511,512,513,514,515,516,517,518,519,520,
++        NAT_1:9;
++      hence thesis;
+@@ -4604 +3804,2 @@
+-      hence thesis by XPRIMES0:522,NAT_1:9;
++      then p = 521 by XPRIMES0:522,NAT_1:9;
++      hence thesis;
+@@ -4655,52 +3856,12 @@
+-      then per cases;
+-      suppose 523 <= p <= 523+1;
+-        hence thesis by XPRIMES0:524,NAT_1:9;
+-      end;
+-      suppose 524 <= p <= 524+1;
+-        hence thesis by XPRIMES0:524,525,NAT_1:9;
+-      end;
+-      suppose 525 <= p <= 525+1;
+-        hence thesis by XPRIMES0:525,526,NAT_1:9;
+-      end;
+-      suppose 526 <= p <= 526+1;
+-        hence thesis by XPRIMES0:526,527,NAT_1:9;
+-      end;
+-      suppose 527 <= p <= 527+1;
+-        hence thesis by XPRIMES0:527,528,NAT_1:9;
+-      end;
+-      suppose 528 <= p <= 528+1;
+-        hence thesis by XPRIMES0:528,529,NAT_1:9;
+-      end;
+-      suppose 529 <= p <= 529+1;
+-        hence thesis by XPRIMES0:529,530,NAT_1:9;
+-      end;
+-      suppose 530 <= p <= 530+1;
+-        hence thesis by XPRIMES0:530,531,NAT_1:9;
+-      end;
+-      suppose 531 <= p <= 531+1;
+-        hence thesis by XPRIMES0:531,532,NAT_1:9;
+-      end;
+-    end;
+-    suppose 532 <= p <= 532+1;
+-      hence thesis by XPRIMES0:532,533,NAT_1:9;
+-    end;
+-    suppose 533 <= p <= 533+1;
+-      hence thesis by XPRIMES0:533,534,NAT_1:9;
+-    end;
+-    suppose 534 <= p <= 534+1;
+-      hence thesis by XPRIMES0:534,535,NAT_1:9;
+-    end;
+-    suppose 535 <= p <= 535+1;
+-      hence thesis by XPRIMES0:535,536,NAT_1:9;
+-    end;
+-    suppose 536 <= p <= 536+1;
+-      hence thesis by XPRIMES0:536,537,NAT_1:9;
+-    end;
+-    suppose 537 <= p <= 537+1;
+-      hence thesis by XPRIMES0:537,538,NAT_1:9;
+-    end;
+-    suppose 538 <= p <= 538+1;
+-      hence thesis by XPRIMES0:538,539,NAT_1:9;
+-    end;
+-    suppose 539 <= p <= 539+1;
+-      hence thesis by XPRIMES0:539,540,NAT_1:9;
++      then 523 <= p <= 523+1 or 524 <= p <= 524+1 or 525 <= p <= 525+1 or 
++      526 <= p <= 526+1 or 527 <= p <= 527+1 or 528 <= p <= 528+1 or 
++      529 <= p <= 529+1 or 530 <= p <= 530+1 or 531 <= p <= 531+1;
++      then p = 523 by XPRIMES0:524,525,526,527,528,529,530,531,532,NAT_1:9;
++      hence thesis;
++    end;
++    suppose 532 <= p <= 532+1 or 533 <= p <= 533+1 or 534 <= p <= 534+1 or 
++      535 <= p <= 535+1 or 536 <= p <= 536+1 or 537 <= p <= 537+1 or 
++      538 <= p <= 538+1 or 539 <= p <= 539+1;
++      then contradiction by XPRIMES0:532,533,534,535,536,537,538,539,540,
++        NAT_1:9;
++      hence thesis;
+@@ -4757,14 +3918,4 @@
+-    suppose 541 <= p <= 541+1;
+-      hence thesis by XPRIMES0:542,NAT_1:9;
+-    end;
+-    suppose 542 <= p <= 542+1;
+-      hence thesis by XPRIMES0:542,543,NAT_1:9;
+-    end;
+-    suppose 543 <= p <= 543+1;
+-      hence thesis by XPRIMES0:543,544,NAT_1:9;
+-    end;
+-    suppose 544 <= p <= 544+1;
+-      hence thesis by XPRIMES0:544,545,NAT_1:9;
+-    end;
+-    suppose 545 <= p <= 545+1;
+-      hence thesis by XPRIMES0:545,546,NAT_1:9;
++    suppose 541 <= p <= 541+1 or 542 <= p <= 542+1 or 543 <= p <= 543+1 or 
++      544 <= p <= 544+1 or 545 <= p <= 545+1;
++      then p = 541 by XPRIMES0:542,543,544,545,546,NAT_1:9;
++      hence thesis;
+@@ -4821,26 +3972,5 @@
+-    suppose 547 <= p <= 547+1;
+-      hence thesis by XPRIMES0:548,NAT_1:9;
+-    end;
+-    suppose 548 <= p <= 548+1;
+-      hence thesis by XPRIMES0:548,549,NAT_1:9;
+-    end;
+-    suppose 549 <= p <= 549+1;
+-      hence thesis by XPRIMES0:549,550,NAT_1:9;
+-    end;
+-    suppose 550 <= p <= 550+1;
+-      hence thesis by XPRIMES0:550,551,NAT_1:9;
+-    end;
+-    suppose 551 <= p <= 551+1;
+-      hence thesis by XPRIMES0:551,552,NAT_1:9;
+-    end;
+-    suppose 552 <= p <= 552+1;
+-      hence thesis by XPRIMES0:552,553,NAT_1:9;
+-    end;
+-    suppose 553 <= p <= 553+1;
+-      hence thesis by XPRIMES0:553,554,NAT_1:9;
+-    end;
+-    suppose 554 <= p <= 554+1;
+-      hence thesis by XPRIMES0:554,555,NAT_1:9;
+-    end;
+-    suppose 555 <= p <= 555+1;
+-      hence thesis by XPRIMES0:555,556,NAT_1:9;
++    suppose 547 <= p <= 547+1 or 548 <= p <= 548+1 or 549 <= p <= 549+1 or 
++      550 <= p <= 550+1 or 551 <= p <= 551+1 or 552 <= p <= 552+1 or 
++      553 <= p <= 553+1 or 554 <= p <= 554+1 or 555 <= p <= 555+1;
++      then p = 547 by XPRIMES0:548,549,550,551,552,553,554,555,556,NAT_1:9;
++      hence thesis;
+@@ -4897,14 +4027,4 @@
+-    suppose 557 <= p <= 557+1;
+-      hence thesis by XPRIMES0:558,NAT_1:9;
+-    end;
+-    suppose 558 <= p <= 558+1;
+-      hence thesis by XPRIMES0:558,559,NAT_1:9;
+-    end;
+-    suppose 559 <= p <= 559+1;
+-      hence thesis by XPRIMES0:559,560,NAT_1:9;
+-    end;
+-    suppose 560 <= p <= 560+1;
+-      hence thesis by XPRIMES0:560,561,NAT_1:9;
+-    end;
+-    suppose 561 <= p <= 561+1;
+-      hence thesis by XPRIMES0:561,562,NAT_1:9;
++    suppose 557 <= p <= 557+1 or 558 <= p <= 558+1 or 559 <= p <= 559+1 or 
++      560 <= p <= 560+1 or 561 <= p <= 561+1;
++      then p = 557 by XPRIMES0:558,559,560,561,562,NAT_1:9;
++      hence thesis;
+@@ -4961,14 +4081,4 @@
+-    suppose 563 <= p <= 563+1;
+-      hence thesis by XPRIMES0:564,NAT_1:9;
+-    end;
+-    suppose 564 <= p <= 564+1;
+-      hence thesis by XPRIMES0:564,565,NAT_1:9;
+-    end;
+-    suppose 565 <= p <= 565+1;
+-      hence thesis by XPRIMES0:565,566,NAT_1:9;
+-    end;
+-    suppose 566 <= p <= 566+1;
+-      hence thesis by XPRIMES0:566,567,NAT_1:9;
+-    end;
+-    suppose 567 <= p <= 567+1;
+-      hence thesis by XPRIMES0:567,568,NAT_1:9;
++    suppose 563 <= p <= 563+1 or 564 <= p <= 564+1 or 565 <= p <= 565+1 or 
++      566 <= p <= 566+1 or 567 <= p <= 567+1;
++      then p = 563 by XPRIMES0:564,565,566,567,568,NAT_1:9;
++      hence thesis;
+@@ -5026 +4136,2 @@
+-      hence thesis by XPRIMES0:570,NAT_1:9;
++      then p = 569 by XPRIMES0:570,NAT_1:9;
++      hence thesis;
+@@ -5077,14 +4188,4 @@
+-    suppose 571 <= p <= 571+1;
+-      hence thesis by XPRIMES0:572,NAT_1:9;
+-    end;
+-    suppose 572 <= p <= 572+1;
+-      hence thesis by XPRIMES0:572,573,NAT_1:9;
+-    end;
+-    suppose 573 <= p <= 573+1;
+-      hence thesis by XPRIMES0:573,574,NAT_1:9;
+-    end;
+-    suppose 574 <= p <= 574+1;
+-      hence thesis by XPRIMES0:574,575,NAT_1:9;
+-    end;
+-    suppose 575 <= p <= 575+1;
+-      hence thesis by XPRIMES0:575,576,NAT_1:9;
++    suppose 571 <= p <= 571+1 or 572 <= p <= 572+1 or 573 <= p <= 573+1 or 
++      574 <= p <= 574+1 or 575 <= p <= 575+1;
++      then p = 571 by XPRIMES0:572,573,574,575,576,NAT_1:9;
++      hence thesis;
+@@ -5142,26 +4243,5 @@
+-    suppose 577 <= p <= 577+1;
+-      hence thesis by XPRIMES0:578,NAT_1:9;
+-    end;
+-    suppose 578 <= p <= 578+1;
+-      hence thesis by XPRIMES0:578,579,NAT_1:9;
+-    end;
+-    suppose 579 <= p <= 579+1;
+-      hence thesis by XPRIMES0:579,580,NAT_1:9;
+-    end;
+-    suppose 580 <= p <= 580+1;
+-      hence thesis by XPRIMES0:580,581,NAT_1:9;
+-    end;
+-    suppose 581 <= p <= 581+1;
+-      hence thesis by XPRIMES0:581,582,NAT_1:9;
+-    end;
+-    suppose 582 <= p <= 582+1;
+-      hence thesis by XPRIMES0:582,583,NAT_1:9;
+-    end;
+-    suppose 583 <= p <= 583+1;
+-      hence thesis by XPRIMES0:583,584,NAT_1:9;
+-    end;
+-    suppose 584 <= p <= 584+1;
+-      hence thesis by XPRIMES0:584,585,NAT_1:9;
+-    end;
+-    suppose 585 <= p <= 585+1;
+-      hence thesis by XPRIMES0:585,586,NAT_1:9;
++    suppose 577 <= p <= 577+1 or 578 <= p <= 578+1 or 579 <= p <= 579+1 or 
++      580 <= p <= 580+1 or 581 <= p <= 581+1 or 582 <= p <= 582+1 or 
++      583 <= p <= 583+1 or 584 <= p <= 584+1 or 585 <= p <= 585+1;
++      then p = 577 by XPRIMES0:578,579,580,581,582,583,584,585,586,NAT_1:9;
++      hence thesis;
+@@ -5220,14 +4300,4 @@
+-    suppose 587 <= p <= 587+1;
+-      hence thesis by XPRIMES0:588,NAT_1:9;
+-    end;
+-    suppose 588 <= p <= 588+1;
+-      hence thesis by XPRIMES0:588,589,NAT_1:9;
+-    end;
+-    suppose 589 <= p <= 589+1;
+-      hence thesis by XPRIMES0:589,590,NAT_1:9;
+-    end;
+-    suppose 590 <= p <= 590+1;
+-      hence thesis by XPRIMES0:590,591,NAT_1:9;
+-    end;
+-    suppose 591 <= p <= 591+1;
+-      hence thesis by XPRIMES0:591,592,NAT_1:9;
++    suppose 587 <= p <= 587+1 or 588 <= p <= 588+1 or 589 <= p <= 589+1 or 
++      590 <= p <= 590+1 or 591 <= p <= 591+1;
++      then p = 587 by XPRIMES0:588,589,590,591,592,NAT_1:9;
++      hence thesis;
+@@ -5286,14 +4356,4 @@
+-    suppose 593 <= p <= 593+1;
+-      hence thesis by XPRIMES0:594,NAT_1:9;
+-    end;
+-    suppose 594 <= p <= 594+1;
+-      hence thesis by XPRIMES0:594,595,NAT_1:9;
+-    end;
+-    suppose 595 <= p <= 595+1;
+-      hence thesis by XPRIMES0:595,596,NAT_1:9;
+-    end;
+-    suppose 596 <= p <= 596+1;
+-      hence thesis by XPRIMES0:596,597,NAT_1:9;
+-    end;
+-    suppose 597 <= p <= 597+1;
+-      hence thesis by XPRIMES0:597,598,NAT_1:9;
++    suppose 593 <= p <= 593+1 or 594 <= p <= 594+1 or 595 <= p <= 595+1 or 
++      596 <= p <= 596+1 or 597 <= p <= 597+1;
++      then p = 593 by XPRIMES0:594,595,596,597,598,NAT_1:9;
++      hence thesis;
+@@ -5353 +4413,2 @@
+-      hence thesis by XPRIMES0:600,NAT_1:9;
++      then p = 599 by XPRIMES0:600,NAT_1:9;
++      hence thesis;
+@@ -5406,14 +4467,4 @@
+-    suppose 601 <= p <= 601+1;
+-      hence thesis by XPRIMES0:602,NAT_1:9;
+-    end;
+-    suppose 602 <= p <= 602+1;
+-      hence thesis by XPRIMES0:602,603,NAT_1:9;
+-    end;
+-    suppose 603 <= p <= 603+1;
+-      hence thesis by XPRIMES0:603,604,NAT_1:9;
+-    end;
+-    suppose 604 <= p <= 604+1;
+-      hence thesis by XPRIMES0:604,605,NAT_1:9;
+-    end;
+-    suppose 605 <= p <= 605+1;
+-      hence thesis by XPRIMES0:605,606,NAT_1:9;
++    suppose 601 <= p <= 601+1 or 602 <= p <= 602+1 or 603 <= p <= 603+1 or 
++      604 <= p <= 604+1 or 605 <= p <= 605+1;
++      then p = 601 by XPRIMES0:602,603,604,605,606,NAT_1:9;
++      hence thesis;
+@@ -5472,14 +4523,4 @@
+-    suppose 607 <= p <= 607+1;
+-      hence thesis by XPRIMES0:608,NAT_1:9;
+-    end;
+-    suppose 608 <= p <= 608+1;
+-      hence thesis by XPRIMES0:608,609,NAT_1:9;
+-    end;
+-    suppose 609 <= p <= 609+1;
+-      hence thesis by XPRIMES0:609,610,NAT_1:9;
+-    end;
+-    suppose 610 <= p <= 610+1;
+-      hence thesis by XPRIMES0:610,611,NAT_1:9;
+-    end;
+-    suppose 611 <= p <= 611+1;
+-      hence thesis by XPRIMES0:611,612,NAT_1:9;
++    suppose 607 <= p <= 607+1 or 608 <= p <= 608+1 or 609 <= p <= 609+1 or 
++      610 <= p <= 610+1 or 611 <= p <= 611+1;
++      then p = 607 by XPRIMES0:608,609,610,611,612,NAT_1:9;
++      hence thesis;
+@@ -5538,8 +4579,3 @@
+-    suppose 613 <= p <= 613+1;
+-      hence thesis by XPRIMES0:614,NAT_1:9;
+-    end;
+-    suppose 614 <= p <= 614+1;
+-      hence thesis by XPRIMES0:614,615,NAT_1:9;
+-    end;
+-    suppose 615 <= p <= 615+1;
+-      hence thesis by XPRIMES0:615,616,NAT_1:9;
++    suppose 613 <= p <= 613+1 or 614 <= p <= 614+1 or 615 <= p <= 615+1;
++      then p = 613 by XPRIMES0:614,615,616,NAT_1:9;
++      hence thesis;
+@@ -5600 +4636,2 @@
+-      hence thesis by XPRIMES0:618,NAT_1:9;
++      then p = 617 by XPRIMES0:618,NAT_1:9;
++      hence thesis;
+@@ -5655,32 +4692,7 @@
+-    suppose 619 <= p <= 619+1;
+-      hence thesis by XPRIMES0:620,NAT_1:9;
+-    end;
+-    suppose 620 <= p <= 620+1;
+-      hence thesis by XPRIMES0:620,621,NAT_1:9;
+-    end;
+-    suppose 621 <= p <= 621+1;
+-      hence thesis by XPRIMES0:621,622,NAT_1:9;
+-    end;
+-    suppose 622 <= p <= 622+1;
+-      hence thesis by XPRIMES0:622,623,NAT_1:9;
+-    end;
+-    suppose 623 <= p <= 623+1;
+-      hence thesis by XPRIMES0:623,624,NAT_1:9;
+-    end;
+-    suppose 624 <= p <= 624+1;
+-      hence thesis by XPRIMES0:624,625,NAT_1:9;
+-    end;
+-    suppose 625 <= p <= 625+1;
+-      hence thesis by XPRIMES0:625,626,NAT_1:9;
+-    end;
+-    suppose 626 <= p <= 626+1;
+-      hence thesis by XPRIMES0:626,627,NAT_1:9;
+-    end;
+-    suppose 627 <= p <= 627+1;
+-      hence thesis by XPRIMES0:627,628,NAT_1:9;
+-    end;
+-    suppose 628 <= p <= 628+1;
+-      hence thesis by XPRIMES0:628,629,NAT_1:9;
+-    end;
+-    suppose 629 <= p <= 629+1;
+-      hence thesis by XPRIMES0:629,630,NAT_1:9;
++    suppose 619 <= p <= 619+1 or 620 <= p <= 620+1 or 621 <= p <= 621+1 or 
++      622 <= p <= 622+1 or 623 <= p <= 623+1 or 624 <= p <= 624+1 or 
++      625 <= p <= 625+1 or 626 <= p <= 626+1 or 627 <= p <= 627+1 or 
++      628 <= p <= 628+1 or 629 <= p <= 629+1;
++      then p = 619 by XPRIMES0:620,621,622,623,624,625,626,627,628,629,630,
++        NAT_1:9;
++      hence thesis;
+@@ -5741,26 +4753,5 @@
+-    suppose 631 <= p <= 631+1;
+-      hence thesis by XPRIMES0:632,NAT_1:9;
+-    end;
+-    suppose 632 <= p <= 632+1;
+-      hence thesis by XPRIMES0:632,633,NAT_1:9;
+-    end;
+-    suppose 633 <= p <= 633+1;
+-      hence thesis by XPRIMES0:633,634,NAT_1:9;
+-    end;
+-    suppose 634 <= p <= 634+1;
+-      hence thesis by XPRIMES0:634,635,NAT_1:9;
+-    end;
+-    suppose 635 <= p <= 635+1;
+-      hence thesis by XPRIMES0:635,636,NAT_1:9;
+-    end;
+-    suppose 636 <= p <= 636+1;
+-      hence thesis by XPRIMES0:636,637,NAT_1:9;
+-    end;
+-    suppose 637 <= p <= 637+1;
+-      hence thesis by XPRIMES0:637,638,NAT_1:9;
+-    end;
+-    suppose 638 <= p <= 638+1;
+-      hence thesis by XPRIMES0:638,639,NAT_1:9;
+-    end;
+-    suppose 639 <= p <= 639+1;
+-      hence thesis by XPRIMES0:639,640,NAT_1:9;
++    suppose 631 <= p <= 631+1 or 632 <= p <= 632+1 or 633 <= p <= 633+1 or 
++      634 <= p <= 634+1 or 635 <= p <= 635+1 or 636 <= p <= 636+1 or 
++      637 <= p <= 637+1 or 638 <= p <= 638+1 or 639 <= p <= 639+1;
++      then p = 631 by XPRIMES0:632,633,634,635,636,637,638,639,640,NAT_1:9;
++      hence thesis;
+@@ -5822 +4813,2 @@
+-      hence thesis by XPRIMES0:642,NAT_1:9;
++      then p = 641 by XPRIMES0:642,NAT_1:9;
++      hence thesis;
+@@ -5877,8 +4869,3 @@
+-    suppose 643 <= p <= 643+1;
+-      hence thesis by XPRIMES0:644,NAT_1:9;
+-    end;
+-    suppose 644 <= p <= 644+1;
+-      hence thesis by XPRIMES0:644,645,NAT_1:9;
+-    end;
+-    suppose 645 <= p <= 645+1;
+-      hence thesis by XPRIMES0:645,646,NAT_1:9;
++    suppose 643 <= p <= 643+1 or 644 <= p <= 644+1 or 645 <= p <= 645+1;
++      then p = 643 by XPRIMES0:644,645,646,NAT_1:9;
++      hence thesis;
+@@ -5939,14 +4926,4 @@
+-    suppose 647 <= p <= 647+1;
+-      hence thesis by XPRIMES0:648,NAT_1:9;
+-    end;
+-    suppose 648 <= p <= 648+1;
+-      hence thesis by XPRIMES0:648,649,NAT_1:9;
+-    end;
+-    suppose 649 <= p <= 649+1;
+-      hence thesis by XPRIMES0:649,650,NAT_1:9;
+-    end;
+-    suppose 650 <= p <= 650+1;
+-      hence thesis by XPRIMES0:650,651,NAT_1:9;
+-    end;
+-    suppose 651 <= p <= 651+1;
+-      hence thesis by XPRIMES0:651,652,NAT_1:9;
++    suppose 647 <= p <= 647+1 or 648 <= p <= 648+1 or 649 <= p <= 649+1 or 
++      650 <= p <= 650+1 or 651 <= p <= 651+1;
++      then p = 647 by XPRIMES0:648,649,650,651,652,NAT_1:9;
++      hence thesis;
+@@ -6007,14 +4984,4 @@
+-    suppose 653 <= p <= 653+1;
+-      hence thesis by XPRIMES0:654,NAT_1:9;
+-    end;
+-    suppose 654 <= p <= 654+1;
+-      hence thesis by XPRIMES0:654,655,NAT_1:9;
+-    end;
+-    suppose 655 <= p <= 655+1;
+-      hence thesis by XPRIMES0:655,656,NAT_1:9;
+-    end;
+-    suppose 656 <= p <= 656+1;
+-      hence thesis by XPRIMES0:656,657,NAT_1:9;
+-    end;
+-    suppose 657 <= p <= 657+1;
+-      hence thesis by XPRIMES0:657,658,NAT_1:9;
++    suppose 653 <= p <= 653+1 or 654 <= p <= 654+1 or 655 <= p <= 655+1 or 
++      656 <= p <= 656+1 or 657 <= p <= 657+1;
++      then p = 653 by XPRIMES0:654,655,656,657,658,NAT_1:9;
++      hence thesis;
+@@ -6077 +5044,2 @@
+-      hence thesis by XPRIMES0:660,NAT_1:9;
++      then p = 659 by XPRIMES0:660,NAT_1:9;
++      hence thesis;
+@@ -6134,32 +5102,7 @@
+-    suppose 661 <= p <= 661+1;
+-      hence thesis by XPRIMES0:662,NAT_1:9;
+-    end;
+-    suppose 662 <= p <= 662+1;
+-      hence thesis by XPRIMES0:662,663,NAT_1:9;
+-    end;
+-    suppose 663 <= p <= 663+1;
+-      hence thesis by XPRIMES0:663,664,NAT_1:9;
+-    end;
+-    suppose 664 <= p <= 664+1;
+-      hence thesis by XPRIMES0:664,665,NAT_1:9;
+-    end;
+-    suppose 665 <= p <= 665+1;
+-      hence thesis by XPRIMES0:665,666,NAT_1:9;
+-    end;
+-    suppose 666 <= p <= 666+1;
+-      hence thesis by XPRIMES0:666,667,NAT_1:9;
+-    end;
+-    suppose 667 <= p <= 667+1;
+-      hence thesis by XPRIMES0:667,668,NAT_1:9;
+-    end;
+-    suppose 668 <= p <= 668+1;
+-      hence thesis by XPRIMES0:668,669,NAT_1:9;
+-    end;
+-    suppose 669 <= p <= 669+1;
+-      hence thesis by XPRIMES0:669,670,NAT_1:9;
+-    end;
+-    suppose 670 <= p <= 670+1;
+-      hence thesis by XPRIMES0:670,671,NAT_1:9;
+-    end;
+-    suppose 671 <= p <= 671+1;
+-      hence thesis by XPRIMES0:671,672,NAT_1:9;
++    suppose 661 <= p <= 661+1 or 662 <= p <= 662+1 or 663 <= p <= 663+1 or 
++      664 <= p <= 664+1 or 665 <= p <= 665+1 or 666 <= p <= 666+1 or 
++      667 <= p <= 667+1 or 668 <= p <= 668+1 or 669 <= p <= 669+1 or 
++      670 <= p <= 670+1 or 671 <= p <= 671+1;
++      then p = 661 by XPRIMES0:662,663,664,665,666,667,668,669,670,671,672,
++        NAT_1:9;
++      hence thesis;
+@@ -6222,8 +5165,3 @@
+-    suppose 673 <= p <= 673+1;
+-      hence thesis by XPRIMES0:674,NAT_1:9;
+-    end;
+-    suppose 674 <= p <= 674+1;
+-      hence thesis by XPRIMES0:674,675,NAT_1:9;
+-    end;
+-    suppose 675 <= p <= 675+1;
+-      hence thesis by XPRIMES0:675,676,NAT_1:9;
++    suppose 673 <= p <= 673+1 or 674 <= p <= 674+1 or 675 <= p <= 675+1;
++      then p = 673 by XPRIMES0:674,675,676,NAT_1:9;
++      hence thesis;
+@@ -6286,14 +5224,4 @@
+-    suppose 677 <= p <= 677+1;
+-      hence thesis by XPRIMES0:678,NAT_1:9;
+-    end;
+-    suppose 678 <= p <= 678+1;
+-      hence thesis by XPRIMES0:678,679,NAT_1:9;
+-    end;
+-    suppose 679 <= p <= 679+1;
+-      hence thesis by XPRIMES0:679,680,NAT_1:9;
+-    end;
+-    suppose 680 <= p <= 680+1;
+-      hence thesis by XPRIMES0:680,681,NAT_1:9;
+-    end;
+-    suppose 681 <= p <= 681+1;
+-      hence thesis by XPRIMES0:681,682,NAT_1:9;
++    suppose 677 <= p <= 677+1 or 678 <= p <= 678+1 or 679 <= p <= 679+1 or 
++      680 <= p <= 680+1 or 681 <= p <= 681+1;
++      then p = 677 by XPRIMES0:678,679,680,681,682,NAT_1:9;
++      hence thesis;
+@@ -6356,20 +5284,5 @@
+-    suppose 683 <= p <= 683+1;
+-      hence thesis by XPRIMES0:684,NAT_1:9;
+-    end;
+-    suppose 684 <= p <= 684+1;
+-      hence thesis by XPRIMES0:684,685,NAT_1:9;
+-    end;
+-    suppose 685 <= p <= 685+1;
+-      hence thesis by XPRIMES0:685,686,NAT_1:9;
+-    end;
+-    suppose 686 <= p <= 686+1;
+-      hence thesis by XPRIMES0:686,687,NAT_1:9;
+-    end;
+-    suppose 687 <= p <= 687+1;
+-      hence thesis by XPRIMES0:687,688,NAT_1:9;
+-    end;
+-    suppose 688 <= p <= 688+1;
+-      hence thesis by XPRIMES0:688,689,NAT_1:9;
+-    end;
+-    suppose 689 <= p <= 689+1;
+-      hence thesis by XPRIMES0:689,690,NAT_1:9;
++    suppose 683 <= p <= 683+1 or 684 <= p <= 684+1 or 685 <= p <= 685+1 or 
++      686 <= p <= 686+1 or 687 <= p <= 687+1 or 688 <= p <= 688+1 or 
++      689 <= p <= 689+1;
++      then p = 683 by XPRIMES0:684,685,686,687,688,689,690,NAT_1:9;
++      hence thesis;
+@@ -6432,26 +5345,5 @@
+-    suppose 691 <= p <= 691+1;
+-      hence thesis by XPRIMES0:692,NAT_1:9;
+-    end;
+-    suppose 692 <= p <= 692+1;
+-      hence thesis by XPRIMES0:692,693,NAT_1:9;
+-    end;
+-    suppose 693 <= p <= 693+1;
+-      hence thesis by XPRIMES0:693,694,NAT_1:9;
+-    end;
+-    suppose 694 <= p <= 694+1;
+-      hence thesis by XPRIMES0:694,695,NAT_1:9;
+-    end;
+-    suppose 695 <= p <= 695+1;
+-      hence thesis by XPRIMES0:695,696,NAT_1:9;
+-    end;
+-    suppose 696 <= p <= 696+1;
+-      hence thesis by XPRIMES0:696,697,NAT_1:9;
+-    end;
+-    suppose 697 <= p <= 697+1;
+-      hence thesis by XPRIMES0:697,698,NAT_1:9;
+-    end;
+-    suppose 698 <= p <= 698+1;
+-      hence thesis by XPRIMES0:698,699,NAT_1:9;
+-    end;
+-    suppose 699 <= p <= 699+1;
+-      hence thesis by XPRIMES0:699,700,NAT_1:9;
++    suppose 691 <= p <= 691+1 or 692 <= p <= 692+1 or 693 <= p <= 693+1 or 
++      694 <= p <= 694+1 or 695 <= p <= 695+1 or 696 <= p <= 696+1 or 
++      697 <= p <= 697+1 or 698 <= p <= 698+1 or 699 <= p <= 699+1;
++      then p = 691 by XPRIMES0:692,693,694,695,696,697,698,699,700,NAT_1:9;
++      hence thesis;
+@@ -6514,20 +5406,5 @@
+-    suppose 701 <= p <= 701+1;
+-      hence thesis by XPRIMES0:702,NAT_1:9;
+-    end;
+-    suppose 702 <= p <= 702+1;
+-      hence thesis by XPRIMES0:702,703,NAT_1:9;
+-    end;
+-    suppose 703 <= p <= 703+1;
+-      hence thesis by XPRIMES0:703,704,NAT_1:9;
+-    end;
+-    suppose 704 <= p <= 704+1;
+-      hence thesis by XPRIMES0:704,705,NAT_1:9;
+-    end;
+-    suppose 705 <= p <= 705+1;
+-      hence thesis by XPRIMES0:705,706,NAT_1:9;
+-    end;
+-    suppose 706 <= p <= 706+1;
+-      hence thesis by XPRIMES0:706,707,NAT_1:9;
+-    end;
+-    suppose 707 <= p <= 707+1;
+-      hence thesis by XPRIMES0:707,708,NAT_1:9;
++    suppose 701 <= p <= 701+1 or 702 <= p <= 702+1 or 703 <= p <= 703+1 or 
++      704 <= p <= 704+1 or 705 <= p <= 705+1 or 706 <= p <= 706+1 or 
++      707 <= p <= 707+1;
++      then p = 701 by XPRIMES0:702,703,704,705,706,707,708,NAT_1:9;
++      hence thesis;
+@@ -6591,26 +5468,5 @@
+-    suppose 709 <= p <= 709+1;
+-      hence thesis by XPRIMES0:710,NAT_1:9;
+-    end;
+-    suppose 710 <= p <= 710+1;
+-      hence thesis by XPRIMES0:710,711,NAT_1:9;
+-    end;
+-    suppose 711 <= p <= 711+1;
+-      hence thesis by XPRIMES0:711,712,NAT_1:9;
+-    end;
+-    suppose 712 <= p <= 712+1;
+-      hence thesis by XPRIMES0:712,713,NAT_1:9;
+-    end;
+-    suppose 713 <= p <= 713+1;
+-      hence thesis by XPRIMES0:713,714,NAT_1:9;
+-    end;
+-    suppose 714 <= p <= 714+1;
+-      hence thesis by XPRIMES0:714,715,NAT_1:9;
+-    end;
+-    suppose 715 <= p <= 715+1;
+-      hence thesis by XPRIMES0:715,716,NAT_1:9;
+-    end;
+-    suppose 716 <= p <= 716+1;
+-      hence thesis by XPRIMES0:716,717,NAT_1:9;
+-    end;
+-    suppose 717 <= p <= 717+1;
+-      hence thesis by XPRIMES0:717,718,NAT_1:9;
++    suppose 709 <= p <= 709+1 or 710 <= p <= 710+1 or 711 <= p <= 711+1 or 
++      712 <= p <= 712+1 or 713 <= p <= 713+1 or 714 <= p <= 714+1 or 
++      715 <= p <= 715+1 or 716 <= p <= 716+1 or 717 <= p <= 717+1;
++      then p = 709 by XPRIMES0:710,711,712,713,714,715,716,717,718,NAT_1:9;
++      hence thesis;
+@@ -6675,20 +5531,5 @@
+-    suppose 719 <= p <= 719+1;
+-      hence thesis by XPRIMES0:720,NAT_1:9;
+-    end;
+-    suppose 720 <= p <= 720+1;
+-      hence thesis by XPRIMES0:720,721,NAT_1:9;
+-    end;
+-    suppose 721 <= p <= 721+1;
+-      hence thesis by XPRIMES0:721,722,NAT_1:9;
+-    end;
+-    suppose 722 <= p <= 722+1;
+-      hence thesis by XPRIMES0:722,723,NAT_1:9;
+-    end;
+-    suppose 723 <= p <= 723+1;
+-      hence thesis by XPRIMES0:723,724,NAT_1:9;
+-    end;
+-    suppose 724 <= p <= 724+1;
+-      hence thesis by XPRIMES0:724,725,NAT_1:9;
+-    end;
+-    suppose 725 <= p <= 725+1;
+-      hence thesis by XPRIMES0:725,726,NAT_1:9;
++    suppose 719 <= p <= 719+1 or 720 <= p <= 720+1 or 721 <= p <= 721+1 or 
++      722 <= p <= 722+1 or 723 <= p <= 723+1 or 724 <= p <= 724+1 or 
++      725 <= p <= 725+1;
++      then p = 719 by XPRIMES0:720,721,722,723,724,725,726,NAT_1:9;
++      hence thesis;
+@@ -6753,14 +5594,4 @@
+-    suppose 727 <= p <= 727+1;
+-      hence thesis by XPRIMES0:728,NAT_1:9;
+-    end;
+-    suppose 728 <= p <= 728+1;
+-      hence thesis by XPRIMES0:728,729,NAT_1:9;
+-    end;
+-    suppose 729 <= p <= 729+1;
+-      hence thesis by XPRIMES0:729,730,NAT_1:9;
+-    end;
+-    suppose 730 <= p <= 730+1;
+-      hence thesis by XPRIMES0:730,731,NAT_1:9;
+-    end;
+-    suppose 731 <= p <= 731+1;
+-      hence thesis by XPRIMES0:731,732,NAT_1:9;
++    suppose 727 <= p <= 727+1 or 728 <= p <= 728+1 or 729 <= p <= 729+1 or 
++      730 <= p <= 730+1 or 731 <= p <= 731+1;
++      then p = 727 by XPRIMES0:728,729,730,731,732,NAT_1:9;
++      hence thesis;
+@@ -6825,14 +5656,4 @@
+-    suppose 733 <= p <= 733+1;
+-      hence thesis by XPRIMES0:734,NAT_1:9;
+-    end;
+-    suppose 734 <= p <= 734+1;
+-      hence thesis by XPRIMES0:734,735,NAT_1:9;
+-    end;
+-    suppose 735 <= p <= 735+1;
+-      hence thesis by XPRIMES0:735,736,NAT_1:9;
+-    end;
+-    suppose 736 <= p <= 736+1;
+-      hence thesis by XPRIMES0:736,737,NAT_1:9;
+-    end;
+-    suppose 737 <= p <= 737+1;
+-      hence thesis by XPRIMES0:737,738,NAT_1:9;
++    suppose 733 <= p <= 733+1 or 734 <= p <= 734+1 or 735 <= p <= 735+1 or 
++      736 <= p <= 736+1 or 737 <= p <= 737+1;
++      then p = 733 by XPRIMES0:734,735,736,737,738,NAT_1:9;
++      hence thesis;
+@@ -6897,8 +5718,3 @@
+-    suppose 739 <= p <= 739+1;
+-      hence thesis by XPRIMES0:740,NAT_1:9;
+-    end;
+-    suppose 740 <= p <= 740+1;
+-      hence thesis by XPRIMES0:740,741,NAT_1:9;
+-    end;
+-    suppose 741 <= p <= 741+1;
+-      hence thesis by XPRIMES0:741,742,NAT_1:9;
++    suppose 739 <= p <= 739+1 or 740 <= p <= 740+1 or 741 <= p <= 741+1;
++      then p = 739 by XPRIMES0:740,741,742,NAT_1:9;
++      hence thesis;
+@@ -6963,20 +5779,5 @@
+-    suppose 743 <= p <= 743+1;
+-      hence thesis by XPRIMES0:744,NAT_1:9;
+-    end;
+-    suppose 744 <= p <= 744+1;
+-      hence thesis by XPRIMES0:744,745,NAT_1:9;
+-    end;
+-    suppose 745 <= p <= 745+1;
+-      hence thesis by XPRIMES0:745,746,NAT_1:9;
+-    end;
+-    suppose 746 <= p <= 746+1;
+-      hence thesis by XPRIMES0:746,747,NAT_1:9;
+-    end;
+-    suppose 747 <= p <= 747+1;
+-      hence thesis by XPRIMES0:747,748,NAT_1:9;
+-    end;
+-    suppose 748 <= p <= 748+1;
+-      hence thesis by XPRIMES0:748,749,NAT_1:9;
+-    end;
+-    suppose 749 <= p <= 749+1;
+-      hence thesis by XPRIMES0:749,750,NAT_1:9;
++    suppose 743 <= p <= 743+1 or 744 <= p <= 744+1 or 745 <= p <= 745+1 or 
++      746 <= p <= 746+1 or 747 <= p <= 747+1 or 748 <= p <= 748+1 or 
++      749 <= p <= 749+1;
++      then p = 743 by XPRIMES0:744,745,746,747,748,749,750,NAT_1:9;
++      hence thesis;
+@@ -7041,14 +5842,4 @@
+-    suppose 751 <= p <= 751+1;
+-      hence thesis by XPRIMES0:752,NAT_1:9;
+-    end;
+-    suppose 752 <= p <= 752+1;
+-      hence thesis by XPRIMES0:752,753,NAT_1:9;
+-    end;
+-    suppose 753 <= p <= 753+1;
+-      hence thesis by XPRIMES0:753,754,NAT_1:9;
+-    end;
+-    suppose 754 <= p <= 754+1;
+-      hence thesis by XPRIMES0:754,755,NAT_1:9;
+-    end;
+-    suppose 755 <= p <= 755+1;
+-      hence thesis by XPRIMES0:755,756,NAT_1:9;
++    suppose 751 <= p <= 751+1 or 752 <= p <= 752+1 or 753 <= p <= 753+1 or 
++      754 <= p <= 754+1 or 755 <= p <= 755+1;
++      then p = 751 by XPRIMES0:752,753,754,755,756,NAT_1:9;
++      hence thesis;
+@@ -7114,8 +5905,3 @@
+-    suppose 757 <= p <= 757+1;
+-      hence thesis by XPRIMES0:758,NAT_1:9;
+-    end;
+-    suppose 758 <= p <= 758+1;
+-      hence thesis by XPRIMES0:758,759,NAT_1:9;
+-    end;
+-    suppose 759 <= p <= 759+1;
+-      hence thesis by XPRIMES0:759,760,NAT_1:9;
++    suppose 757 <= p <= 757+1 or 758 <= p <= 758+1 or 759 <= p <= 759+1;
++      then p = 757 by XPRIMES0:758,759,760,NAT_1:9;
++      hence thesis;
+@@ -7182,20 +5968,5 @@
+-    suppose 761 <= p <= 761+1;
+-      hence thesis by XPRIMES0:762,NAT_1:9;
+-    end;
+-    suppose 762 <= p <= 762+1;
+-      hence thesis by XPRIMES0:762,763,NAT_1:9;
+-    end;
+-    suppose 763 <= p <= 763+1;
+-      hence thesis by XPRIMES0:763,764,NAT_1:9;
+-    end;
+-    suppose 764 <= p <= 764+1;
+-      hence thesis by XPRIMES0:764,765,NAT_1:9;
+-    end;
+-    suppose 765 <= p <= 765+1;
+-      hence thesis by XPRIMES0:765,766,NAT_1:9;
+-    end;
+-    suppose 766 <= p <= 766+1;
+-      hence thesis by XPRIMES0:766,767,NAT_1:9;
+-    end;
+-    suppose 767 <= p <= 767+1;
+-      hence thesis by XPRIMES0:767,768,NAT_1:9;
++    suppose 761 <= p <= 761+1 or 762 <= p <= 762+1 or 763 <= p <= 763+1 or 
++      764 <= p <= 764+1 or 765 <= p <= 765+1 or 766 <= p <= 766+1 or 
++      767 <= p <= 767+1;
++      then p = 761 by XPRIMES0:762,763,764,765,766,767,768,NAT_1:9;
++      hence thesis;
+@@ -7262,8 +6033,3 @@
+-    suppose 769 <= p <= 769+1;
+-      hence thesis by XPRIMES0:770,NAT_1:9;
+-    end;
+-    suppose 770 <= p <= 770+1;
+-      hence thesis by XPRIMES0:770,771,NAT_1:9;
+-    end;
+-    suppose 771 <= p <= 771+1;
+-      hence thesis by XPRIMES0:771,772,NAT_1:9;
++    suppose 769 <= p <= 769+1 or 770 <= p <= 770+1 or 771 <= p <= 771+1;
++      then p = 769 by XPRIMES0:770,771,772,NAT_1:9;
++      hence thesis;
+@@ -7331,40 +6097,11 @@
+-      then per cases;
+-      suppose 773 <= p <= 773+1;
+-        hence thesis by XPRIMES0:774,NAT_1:9;
+-      end;
+-      suppose 774 <= p <= 774+1;
+-        hence thesis by XPRIMES0:774,775,NAT_1:9;
+-      end;
+-      suppose 775 <= p <= 775+1;
+-        hence thesis by XPRIMES0:775,776,NAT_1:9;
+-      end;
+-      suppose 776 <= p <= 776+1;
+-        hence thesis by XPRIMES0:776,777,NAT_1:9;
+-      end;
+-      suppose 777 <= p <= 777+1;
+-        hence thesis by XPRIMES0:777,778,NAT_1:9;
+-      end;
+-      suppose 778 <= p <= 778+1;
+-        hence thesis by XPRIMES0:778,779,NAT_1:9;
+-      end;
+-      suppose 779 <= p <= 779+1;
+-        hence thesis by XPRIMES0:779,780,NAT_1:9;
+-      end;
+-    end;
+-    suppose 780 <= p <= 780+1;
+-      hence thesis by XPRIMES0:780,781,NAT_1:9;
+-    end;
+-    suppose 781 <= p <= 781+1;
+-      hence thesis by XPRIMES0:781,782,NAT_1:9;
+-    end;
+-    suppose 782 <= p <= 782+1;
+-      hence thesis by XPRIMES0:782,783,NAT_1:9;
+-    end;
+-    suppose 783 <= p <= 783+1;
+-      hence thesis by XPRIMES0:783,784,NAT_1:9;
+-    end;
+-    suppose 784 <= p <= 784+1;
+-      hence thesis by XPRIMES0:784,785,NAT_1:9;
+-    end;
+-    suppose 785 <= p <= 785+1;
+-      hence thesis by XPRIMES0:785,786,NAT_1:9;
++      then 773 <= p <= 773+1 or 774 <= p <= 774+1 or 775 <= p <= 775+1 or 
++      776 <= p <= 776+1 or 777 <= p <= 777+1 or 778 <= p <= 778+1 or 
++      779 <= p <= 779+1;
++      then p = 773 by XPRIMES0:774,775,776,777,778,779,780,NAT_1:9;
++      hence thesis;
++    end;
++    suppose 780 <= p <= 780+1 or 781 <= p <= 781+1 or 
++      782 <= p <= 782+1 or 783 <= p <= 783+1 or 784 <= p <= 784+1 or 
++      785 <= p <= 785+1;
++      then contradiction by XPRIMES0:780,781,782,783,784,785,786,NAT_1:9;
++      hence thesis;
+@@ -7431,26 +6168,5 @@
+-    suppose 787 <= p <= 787+1;
+-      hence thesis by XPRIMES0:788,NAT_1:9;
+-    end;
+-    suppose 788 <= p <= 788+1;
+-      hence thesis by XPRIMES0:788,789,NAT_1:9;
+-    end;
+-    suppose 789 <= p <= 789+1;
+-      hence thesis by XPRIMES0:789,790,NAT_1:9;
+-    end;
+-    suppose 790 <= p <= 790+1;
+-      hence thesis by XPRIMES0:790,791,NAT_1:9;
+-    end;
+-    suppose 791 <= p <= 791+1;
+-      hence thesis by XPRIMES0:791,792,NAT_1:9;
+-    end;
+-    suppose 792 <= p <= 792+1;
+-      hence thesis by XPRIMES0:792,793,NAT_1:9;
+-    end;
+-    suppose 793 <= p <= 793+1;
+-      hence thesis by XPRIMES0:793,794,NAT_1:9;
+-    end;
+-    suppose 794 <= p <= 794+1;
+-      hence thesis by XPRIMES0:794,795,NAT_1:9;
+-    end;
+-    suppose 795 <= p <= 795+1;
+-      hence thesis by XPRIMES0:795,796,NAT_1:9;
++    suppose 787 <= p <= 787+1 or 788 <= p <= 788+1 or 789 <= p <= 789+1 or 
++      790 <= p <= 790+1 or 791 <= p <= 791+1 or 792 <= p <= 792+1 or 
++      793 <= p <= 793+1 or 794 <= p <= 794+1 or 795 <= p <= 795+1;
++      then p = 787 by XPRIMES0:788,789,790,791,792,793,794,795,796,NAT_1:9;
++      hence thesis;
+@@ -7517,32 +6233,7 @@
+-    suppose 797 <= p <= 797+1;
+-      hence thesis by XPRIMES0:798,NAT_1:9;
+-    end;
+-    suppose 798 <= p <= 798+1;
+-      hence thesis by XPRIMES0:798,799,NAT_1:9;
+-    end;
+-    suppose 799 <= p <= 799+1;
+-      hence thesis by XPRIMES0:799,800,NAT_1:9;
+-    end;
+-    suppose 800 <= p <= 800+1;
+-      hence thesis by XPRIMES0:800,801,NAT_1:9;
+-    end;
+-    suppose 801 <= p <= 801+1;
+-      hence thesis by XPRIMES0:801,802,NAT_1:9;
+-    end;
+-    suppose 802 <= p <= 802+1;
+-      hence thesis by XPRIMES0:802,803,NAT_1:9;
+-    end;
+-    suppose 803 <= p <= 803+1;
+-      hence thesis by XPRIMES0:803,804,NAT_1:9;
+-    end;
+-    suppose 804 <= p <= 804+1;
+-      hence thesis by XPRIMES0:804,805,NAT_1:9;
+-    end;
+-    suppose 805 <= p <= 805+1;
+-      hence thesis by XPRIMES0:805,806,NAT_1:9;
+-    end;
+-    suppose 806 <= p <= 806+1;
+-      hence thesis by XPRIMES0:806,807,NAT_1:9;
+-    end;
+-    suppose 807 <= p <= 807+1;
+-      hence thesis by XPRIMES0:807,808,NAT_1:9;
++    suppose 797 <= p <= 797+1 or 798 <= p <= 798+1 or 799 <= p <= 799+1 or 
++      800 <= p <= 800+1 or 801 <= p <= 801+1 or 802 <= p <= 802+1 or 
++      803 <= p <= 803+1 or 804 <= p <= 804+1 or 805 <= p <= 805+1 or 
++      806 <= p <= 806+1 or 807 <= p <= 807+1;
++      then p = 797 by XPRIMES0:798,799,800,801,802,803,804,805,806,807,808,
++        NAT_1:9;
++      hence thesis;
+@@ -7610 +6301,2 @@
+-      hence thesis by XPRIMES0:810,NAT_1:9;
++      then p = 809 by XPRIMES0:810,NAT_1:9;
++      hence thesis;
+@@ -7672,26 +6364,5 @@
+-    suppose 811 <= p <= 811+1;
+-      hence thesis by XPRIMES0:812,NAT_1:9;
+-    end;
+-    suppose 812 <= p <= 812+1;
+-      hence thesis by XPRIMES0:812,813,NAT_1:9;
+-    end;
+-    suppose 813 <= p <= 813+1;
+-      hence thesis by XPRIMES0:813,814,NAT_1:9;
+-    end;
+-    suppose 814 <= p <= 814+1;
+-      hence thesis by XPRIMES0:814,815,NAT_1:9;
+-    end;
+-    suppose 815 <= p <= 815+1;
+-      hence thesis by XPRIMES0:815,816,NAT_1:9;
+-    end;
+-    suppose 816 <= p <= 816+1;
+-      hence thesis by XPRIMES0:816,817,NAT_1:9;
+-    end;
+-    suppose 817 <= p <= 817+1;
+-      hence thesis by XPRIMES0:817,818,NAT_1:9;
+-    end;
+-    suppose 818 <= p <= 818+1;
+-      hence thesis by XPRIMES0:818,819,NAT_1:9;
+-    end;
+-    suppose 819 <= p <= 819+1;
+-      hence thesis by XPRIMES0:819,820,NAT_1:9;
++    suppose 811 <= p <= 811+1 or 812 <= p <= 812+1 or 813 <= p <= 813+1 or 
++      814 <= p <= 814+1 or 815 <= p <= 815+1 or 816 <= p <= 816+1 or 
++      817 <= p <= 817+1 or 818 <= p <= 818+1 or 819 <= p <= 819+1;
++      then p = 811 by XPRIMES0:812,813,814,815,816,817,818,819,820,NAT_1:9;
++      hence thesis;
+@@ -7761 +6432,2 @@
+-      hence thesis by XPRIMES0:822,NAT_1:9;
++      then p = 821 by XPRIMES0:822,NAT_1:9;
++      hence thesis;
+@@ -7824,8 +6496,3 @@
+-    suppose 823 <= p <= 823+1;
+-      hence thesis by XPRIMES0:824,NAT_1:9;
+-    end;
+-    suppose 824 <= p <= 824+1;
+-      hence thesis by XPRIMES0:824,825,NAT_1:9;
+-    end;
+-    suppose 825 <= p <= 825+1;
+-      hence thesis by XPRIMES0:825,826,NAT_1:9;
++    suppose 823 <= p <= 823+1 or 824 <= p <= 824+1 or 825 <= p <= 825+1;
++      then p = 823 by XPRIMES0:824,825,826,NAT_1:9;
++      hence thesis;
+@@ -7895 +6562,2 @@
+-      hence thesis by XPRIMES0:828,NAT_1:9;
++      then p = 827 by XPRIMES0:828,NAT_1:9;
++      hence thesis;
+@@ -7958,26 +6626,5 @@
+-    suppose 829 <= p <= 829+1;
+-      hence thesis by XPRIMES0:830,NAT_1:9;
+-    end;
+-    suppose 830 <= p <= 830+1;
+-      hence thesis by XPRIMES0:830,831,NAT_1:9;
+-    end;
+-    suppose 831 <= p <= 831+1;
+-      hence thesis by XPRIMES0:831,832,NAT_1:9;
+-    end;
+-    suppose 832 <= p <= 832+1;
+-      hence thesis by XPRIMES0:832,833,NAT_1:9;
+-    end;
+-    suppose 833 <= p <= 833+1;
+-      hence thesis by XPRIMES0:833,834,NAT_1:9;
+-    end;
+-    suppose 834 <= p <= 834+1;
+-      hence thesis by XPRIMES0:834,835,NAT_1:9;
+-    end;
+-    suppose 835 <= p <= 835+1;
+-      hence thesis by XPRIMES0:835,836,NAT_1:9;
+-    end;
+-    suppose 836 <= p <= 836+1;
+-      hence thesis by XPRIMES0:836,837,NAT_1:9;
+-    end;
+-    suppose 837 <= p <= 837+1;
+-      hence thesis by XPRIMES0:837,838,NAT_1:9;
++    suppose 829 <= p <= 829+1 or 830 <= p <= 830+1 or 831 <= p <= 831+1 or 
++      832 <= p <= 832+1 or 833 <= p <= 833+1 or 834 <= p <= 834+1 or 
++      835 <= p <= 835+1 or 836 <= p <= 836+1 or 837 <= p <= 837+1;
++      then p = 829 by XPRIMES0:830,831,832,833,834,835,836,837,838,NAT_1:9;
++      hence thesis;
+@@ -8047,40 +6694,11 @@
+-      then per cases;
+-      suppose 839 <= p <= 839+1;
+-        hence thesis by XPRIMES0:840,NAT_1:9;
+-      end;
+-      suppose 840 <= p <= 840+1;
+-        hence thesis by XPRIMES0:840,841,NAT_1:9;
+-      end;
+-      suppose 841 <= p <= 841+1;
+-        hence thesis by XPRIMES0:841,842,NAT_1:9;
+-      end;
+-      suppose 842 <= p <= 842+1;
+-        hence thesis by XPRIMES0:842,843,NAT_1:9;
+-      end;
+-      suppose 843 <= p <= 843+1;
+-        hence thesis by XPRIMES0:843,844,NAT_1:9;
+-      end;
+-      suppose 844 <= p <= 844+1;
+-        hence thesis by XPRIMES0:844,845,NAT_1:9;
+-      end;
+-      suppose 845 <= p <= 845+1;
+-        hence thesis by XPRIMES0:845,846,NAT_1:9;
+-      end;
+-    end;
+-    suppose 846 <= p <= 846+1;
+-      hence thesis by XPRIMES0:846,847,NAT_1:9;
+-    end;
+-    suppose 847 <= p <= 847+1;
+-      hence thesis by XPRIMES0:847,848,NAT_1:9;
+-    end;
+-    suppose 848 <= p <= 848+1;
+-      hence thesis by XPRIMES0:848,849,NAT_1:9;
+-    end;
+-    suppose 849 <= p <= 849+1;
+-      hence thesis by XPRIMES0:849,850,NAT_1:9;
+-    end;
+-    suppose 850 <= p <= 850+1;
+-      hence thesis by XPRIMES0:850,851,NAT_1:9;
+-    end;
+-    suppose 851 <= p <= 851+1;
+-      hence thesis by XPRIMES0:851,852,NAT_1:9;
++      then 839 <= p <= 839+1 or 840 <= p <= 840+1 or 841 <= p <= 841+1 or 
++      842 <= p <= 842+1 or 843 <= p <= 843+1 or 844 <= p <= 844+1 or 
++      845 <= p <= 845+1;
++      then p = 839 by XPRIMES0:840,841,842,843,844,845,846,NAT_1:9;
++      hence thesis;
++    end;
++    suppose 846 <= p <= 846+1 or 847 <= p <= 847+1 or 
++      848 <= p <= 848+1 or 849 <= p <= 849+1 or 850 <= p <= 850+1 or 
++      851 <= p <= 851+1;
++      then contradiction by XPRIMES0:846,847,848,849,850,851,852,NAT_1:9;
++      hence thesis;
+@@ -8149,8 +6767,3 @@
+-    suppose 853 <= p <= 853+1;
+-      hence thesis by XPRIMES0:854,NAT_1:9;
+-    end;
+-    suppose 854 <= p <= 854+1;
+-      hence thesis by XPRIMES0:854,855,NAT_1:9;
+-    end;
+-    suppose 855 <= p <= 855+1;
+-      hence thesis by XPRIMES0:855,856,NAT_1:9;
++    suppose 853 <= p <= 853+1 or 854 <= p <= 854+1 or 855 <= p <= 855+1;
++      then p = 853 by XPRIMES0:854,855,856,NAT_1:9;
++      hence thesis;
+@@ -8221 +6834,2 @@
+-      hence thesis by XPRIMES0:858,NAT_1:9;
++      then p = 857 by XPRIMES0:858,NAT_1:9;
++      hence thesis;
+@@ -8286,8 +6900,3 @@
+-    suppose 859 <= p <= 859+1;
+-      hence thesis by XPRIMES0:860,NAT_1:9;
+-    end;
+-    suppose 860 <= p <= 860+1;
+-      hence thesis by XPRIMES0:860,861,NAT_1:9;
+-    end;
+-    suppose 861 <= p <= 861+1;
+-      hence thesis by XPRIMES0:861,862,NAT_1:9;
++    suppose 859 <= p <= 859+1 or 860 <= p <= 860+1 or 861 <= p <= 861+1;
++      then p = 859 by XPRIMES0:860,861,862,NAT_1:9;
++      hence thesis;
+@@ -8359,40 +6968,11 @@
+-      then per cases;
+-      suppose 863 <= p <= 863+1;
+-        hence thesis by XPRIMES0:864,NAT_1:9;
+-      end;
+-      suppose 864 <= p <= 864+1;
+-        hence thesis by XPRIMES0:864,865,NAT_1:9;
+-      end;
+-      suppose 865 <= p <= 865+1;
+-        hence thesis by XPRIMES0:865,866,NAT_1:9;
+-      end;
+-      suppose 866 <= p <= 866+1;
+-        hence thesis by XPRIMES0:866,867,NAT_1:9;
+-      end;
+-      suppose 867 <= p <= 867+1;
+-        hence thesis by XPRIMES0:867,868,NAT_1:9;
+-      end;
+-      suppose 868 <= p <= 868+1;
+-        hence thesis by XPRIMES0:868,869,NAT_1:9;
+-      end;
+-      suppose 869 <= p <= 869+1;
+-        hence thesis by XPRIMES0:869,870,NAT_1:9;
+-      end;
+-    end;
+-    suppose 870 <= p <= 870+1;
+-      hence thesis by XPRIMES0:870,871,NAT_1:9;
+-    end;
+-    suppose 871 <= p <= 871+1;
+-      hence thesis by XPRIMES0:871,872,NAT_1:9;
+-    end;
+-    suppose 872 <= p <= 872+1;
+-      hence thesis by XPRIMES0:872,873,NAT_1:9;
+-    end;
+-    suppose 873 <= p <= 873+1;
+-      hence thesis by XPRIMES0:873,874,NAT_1:9;
+-    end;
+-    suppose 874 <= p <= 874+1;
+-      hence thesis by XPRIMES0:874,875,NAT_1:9;
+-    end;
+-    suppose 875 <= p <= 875+1;
+-      hence thesis by XPRIMES0:875,876,NAT_1:9;
++      then 863 <= p <= 863+1 or 864 <= p <= 864+1 or 865 <= p <= 865+1 or 
++      866 <= p <= 866+1 or 867 <= p <= 867+1 or 868 <= p <= 868+1 or 
++      869 <= p <= 869+1;
++      then p = 863 by XPRIMES0:864,865,866,867,868,869,870,NAT_1:9;
++      hence thesis;
++    end;
++    suppose 870 <= p <= 870+1 or 871 <= p <= 871+1 or 
++      872 <= p <= 872+1 or 873 <= p <= 873+1 or 874 <= p <= 874+1 or 
++      875 <= p <= 875+1;
++      then contradiction by XPRIMES0:870,871,872,873,874,875,876,NAT_1:9;
++      hence thesis;
+@@ -8463,8 +7043,3 @@
+-    suppose 877 <= p <= 877+1;
+-      hence thesis by XPRIMES0:878,NAT_1:9;
+-    end;
+-    suppose 878 <= p <= 878+1;
+-      hence thesis by XPRIMES0:878,879,NAT_1:9;
+-    end;
+-    suppose 879 <= p <= 879+1;
+-      hence thesis by XPRIMES0:879,880,NAT_1:9;
++    suppose 877 <= p <= 877+1 or 878 <= p <= 878+1 or 879 <= p <= 879+1;
++      then p = 877 by XPRIMES0:878,879,880,NAT_1:9;
++      hence thesis;
+@@ -8536 +7111,2 @@
+-      hence thesis by XPRIMES0:882,NAT_1:9;
++      then p = 881 by XPRIMES0:882,NAT_1:9;
++      hence thesis;
+@@ -8601,8 +7177,3 @@
+-    suppose 883 <= p <= 883+1;
+-      hence thesis by XPRIMES0:884,NAT_1:9;
+-    end;
+-    suppose 884 <= p <= 884+1;
+-      hence thesis by XPRIMES0:884,885,NAT_1:9;
+-    end;
+-    suppose 885 <= p <= 885+1;
+-      hence thesis by XPRIMES0:885,886,NAT_1:9;
++    suppose 883 <= p <= 883+1 or 884 <= p <= 884+1 or 885 <= p <= 885+1;
++      then p = 883 by XPRIMES0:884,885,886,NAT_1:9;
++      hence thesis;
+@@ -8674,58 +7245,14 @@
+-      then per cases;      
+-      suppose 887 <= p <= 887+1;
+-        hence thesis by XPRIMES0:888,NAT_1:9;
+-      end;
+-      suppose 888 <= p <= 888+1;
+-        hence thesis by XPRIMES0:888,889,NAT_1:9;
+-      end;
+-      suppose 889 <= p <= 889+1;
+-        hence thesis by XPRIMES0:889,890,NAT_1:9;
+-      end;
+-      suppose 890 <= p <= 890+1;
+-        hence thesis by XPRIMES0:890,891,NAT_1:9;
+-      end;
+-      suppose 891 <= p <= 891+1;
+-        hence thesis by XPRIMES0:891,892,NAT_1:9;
+-      end;
+-      suppose 892 <= p <= 892+1;
+-        hence thesis by XPRIMES0:892,893,NAT_1:9;
+-      end;
+-      suppose 893 <= p <= 893+1;
+-        hence thesis by XPRIMES0:893,894,NAT_1:9;
+-      end;
+-      suppose 894 <= p <= 894+1;
+-        hence thesis by XPRIMES0:894,895,NAT_1:9;
+-      end;
+-      suppose 895 <= p <= 895+1;
+-        hence thesis by XPRIMES0:895,896,NAT_1:9;
+-      end;
+-      suppose 896 <= p <= 896+1;
+-        hence thesis by XPRIMES0:896,897,NAT_1:9;
+-      end;
+-    end;
+-    suppose 897 <= p <= 897+1;
+-      hence thesis by XPRIMES0:897,898,NAT_1:9;
+-    end;
+-    suppose 898 <= p <= 898+1;
+-      hence thesis by XPRIMES0:898,899,NAT_1:9;
+-    end;
+-    suppose 899 <= p <= 899+1;
+-      hence thesis by XPRIMES0:899,900,NAT_1:9;
+-    end;
+-    suppose 900 <= p <= 900+1;
+-      hence thesis by XPRIMES0:900,901,NAT_1:9;
+-    end;
+-    suppose 901 <= p <= 901+1;
+-      hence thesis by XPRIMES0:901,902,NAT_1:9;
+-    end;
+-    suppose 902 <= p <= 902+1;
+-      hence thesis by XPRIMES0:902,903,NAT_1:9;
+-    end;
+-    suppose 903 <= p <= 903+1;
+-      hence thesis by XPRIMES0:903,904,NAT_1:9;
+-    end;
+-    suppose 904 <= p <= 904+1;
+-      hence thesis by XPRIMES0:904,905,NAT_1:9;
+-    end;
+-    suppose 905 <= p <= 905+1;
+-      hence thesis by XPRIMES0:905,906,NAT_1:9;
++      then 887 <= p <= 887+1 or 888 <= p <= 888+1 or 889 <= p <= 889+1 or 
++      890 <= p <= 890+1 or 891 <= p <= 891+1 or 892 <= p <= 892+1 or 
++      893 <= p <= 893+1 or 894 <= p <= 894+1 or 895 <= p <= 895+1 or 
++      896 <= p <= 896+1;
++      then p = 887 by XPRIMES0:888,889,890,891,892,893,894,895,896,897,NAT_1:9;
++      hence thesis;
++    end;
++    suppose 897 <= p <= 897+1 or 898 <= p <= 898+1 or 
++      899 <= p <= 899+1 or 900 <= p <= 900+1 or 901 <= p <= 901+1 or 
++      902 <= p <= 902+1 or 903 <= p <= 903+1 or 904 <= p <= 904+1 or 
++      905 <= p <= 905+1;
++      then contradiction by XPRIMES0:897,898,899,900,901,902,903,904,905,906,
++        NAT_1:9;
++      hence thesis;
+@@ -8797,8 +7324,3 @@
+-    suppose 907 <= p <= 907+1;
+-      hence thesis by XPRIMES0:908,NAT_1:9;
+-    end;
+-    suppose 908 <= p <= 908+1;
+-      hence thesis by XPRIMES0:908,909,NAT_1:9;
+-    end;
+-    suppose 909 <= p <= 909+1;
+-      hence thesis by XPRIMES0:909,910,NAT_1:9;
++    suppose 907 <= p <= 907+1 or 908 <= p <= 908+1 or 909 <= p <= 909+1;
++      then p = 907 by XPRIMES0:908,909,910,NAT_1:9;
++      hence thesis;
+@@ -8871,20 +7393,5 @@
+-    suppose 911 <= p <= 911+1;
+-      hence thesis by XPRIMES0:912,NAT_1:9;
+-    end;
+-    suppose 912 <= p <= 912+1;
+-      hence thesis by XPRIMES0:912,913,NAT_1:9;
+-    end;
+-    suppose 913 <= p <= 913+1;
+-      hence thesis by XPRIMES0:913,914,NAT_1:9;
+-    end;
+-    suppose 914 <= p <= 914+1;
+-      hence thesis by XPRIMES0:914,915,NAT_1:9;
+-    end;
+-    suppose 915 <= p <= 915+1;
+-      hence thesis by XPRIMES0:915,916,NAT_1:9;
+-    end;
+-    suppose 916 <= p <= 916+1;
+-      hence thesis by XPRIMES0:916,917,NAT_1:9;
+-    end;
+-    suppose 917 <= p <= 917+1;
+-      hence thesis by XPRIMES0:917,918,NAT_1:9;
++    suppose 911 <= p <= 911+1 or 912 <= p <= 912+1 or 913 <= p <= 913+1 or 
++      914 <= p <= 914+1 or 915 <= p <= 915+1 or 916 <= p <= 916+1 or 
++      917 <= p <= 917+1;
++      then p = 911 by XPRIMES0:912,913,914,915,916,917,918,NAT_1:9;
++      hence thesis;
+@@ -8957,26 +7464,5 @@
+-    suppose 919 <= p <= 919+1;
+-      hence thesis by XPRIMES0:920,NAT_1:9;
+-    end;
+-    suppose 920 <= p <= 920+1;
+-      hence thesis by XPRIMES0:920,921,NAT_1:9;
+-    end;
+-    suppose 921 <= p <= 921+1;
+-      hence thesis by XPRIMES0:921,922,NAT_1:9;
+-    end;
+-    suppose 922 <= p <= 922+1;
+-      hence thesis by XPRIMES0:922,923,NAT_1:9;
+-    end;
+-    suppose 923 <= p <= 923+1;
+-      hence thesis by XPRIMES0:923,924,NAT_1:9;
+-    end;
+-    suppose 924 <= p <= 924+1;
+-      hence thesis by XPRIMES0:924,925,NAT_1:9;
+-    end;
+-    suppose 925 <= p <= 925+1;
+-      hence thesis by XPRIMES0:925,926,NAT_1:9;
+-    end;
+-    suppose 926 <= p <= 926+1;
+-      hence thesis by XPRIMES0:926,927,NAT_1:9;
+-    end;
+-    suppose 927 <= p <= 927+1;
+-      hence thesis by XPRIMES0:927,928,NAT_1:9;
++    suppose 919 <= p <= 919+1 or 920 <= p <= 920+1 or 921 <= p <= 921+1 or 
++      922 <= p <= 922+1 or 923 <= p <= 923+1 or 924 <= p <= 924+1 or 
++      925 <= p <= 925+1 or 926 <= p <= 926+1 or 927 <= p <= 927+1;
++      then p = 919 by XPRIMES0:920,921,922,923,924,925,926,927,928,NAT_1:9;
++      hence thesis;
+@@ -9049,20 +7535,5 @@
+-    suppose 929 <= p <= 929+1;
+-      hence thesis by XPRIMES0:930,NAT_1:9;
+-    end;
+-    suppose 930 <= p <= 930+1;
+-      hence thesis by XPRIMES0:930,931,NAT_1:9;
+-    end;
+-    suppose 931 <= p <= 931+1;
+-      hence thesis by XPRIMES0:931,932,NAT_1:9;
+-    end;
+-    suppose 932 <= p <= 932+1;
+-      hence thesis by XPRIMES0:932,933,NAT_1:9;
+-    end;
+-    suppose 933 <= p <= 933+1;
+-      hence thesis by XPRIMES0:933,934,NAT_1:9;
+-    end;
+-    suppose 934 <= p <= 934+1;
+-      hence thesis by XPRIMES0:934,935,NAT_1:9;
+-    end;
+-    suppose 935 <= p <= 935+1;
+-      hence thesis by XPRIMES0:935,936,NAT_1:9;
++    suppose 929 <= p <= 929+1 or 930 <= p <= 930+1 or 931 <= p <= 931+1 or 
++      932 <= p <= 932+1 or 933 <= p <= 933+1 or 934 <= p <= 934+1 or 
++      935 <= p <= 935+1;
++      then p = 929 by XPRIMES0:930,931,932,933,934,935,936,NAT_1:9;
++      hence thesis;
+@@ -9135,8 +7606,3 @@
+-    suppose 937 <= p <= 937+1;
+-      hence thesis by XPRIMES0:938,NAT_1:9;
+-    end;
+-    suppose 938 <= p <= 938+1;
+-      hence thesis by XPRIMES0:938,939,NAT_1:9;
+-    end;
+-    suppose 939 <= p <= 939+1;
+-      hence thesis by XPRIMES0:939,940,NAT_1:9;
++    suppose 937 <= p <= 937+1 or 938 <= p <= 938+1 or 939 <= p <= 939+1;
++      then p = 937 by XPRIMES0:938,939,940,NAT_1:9;
++      hence thesis;
+@@ -9209,14 +7675,4 @@
+-    suppose 941 <= p <= 941+1;
+-      hence thesis by XPRIMES0:942,NAT_1:9;
+-    end;
+-    suppose 942 <= p <= 942+1;
+-      hence thesis by XPRIMES0:942,943,NAT_1:9;
+-    end;
+-    suppose 943 <= p <= 943+1;
+-      hence thesis by XPRIMES0:943,944,NAT_1:9;
+-    end;
+-    suppose 944 <= p <= 944+1;
+-      hence thesis by XPRIMES0:944,945,NAT_1:9;
+-    end;
+-    suppose 945 <= p <= 945+1;
+-      hence thesis by XPRIMES0:945,946,NAT_1:9;
++    suppose 941 <= p <= 941+1 or 942 <= p <= 942+1 or 943 <= p <= 943+1 or 
++      944 <= p <= 944+1 or 945 <= p <= 945+1;
++      then p = 941 by XPRIMES0:942,943,944,945,946,NAT_1:9;
++      hence thesis;
+@@ -9289,14 +7745,4 @@
+-    suppose 947 <= p <= 947+1;
+-      hence thesis by XPRIMES0:948,NAT_1:9;
+-    end;
+-    suppose 948 <= p <= 948+1;
+-      hence thesis by XPRIMES0:948,949,NAT_1:9;
+-    end;
+-    suppose 949 <= p <= 949+1;
+-      hence thesis by XPRIMES0:949,950,NAT_1:9;
+-    end;
+-    suppose 950 <= p <= 950+1;
+-      hence thesis by XPRIMES0:950,951,NAT_1:9;
+-    end;
+-    suppose 951 <= p <= 951+1;
+-      hence thesis by XPRIMES0:951,952,NAT_1:9;
++    suppose 947 <= p <= 947+1 or 948 <= p <= 948+1 or 949 <= p <= 949+1 or 
++      950 <= p <= 950+1 or 951 <= p <= 951+1;
++      then p = 947 by XPRIMES0:948,949,950,951,952,NAT_1:9;
++      hence thesis;
+@@ -9371,40 +7817,11 @@
+-      then per cases;
+-      suppose 953 <= p <= 953+1;
+-        hence thesis by XPRIMES0:954,NAT_1:9;
+-      end;
+-      suppose 954 <= p <= 954+1;
+-        hence thesis by XPRIMES0:954,955,NAT_1:9;
+-      end;
+-      suppose 955 <= p <= 955+1;
+-        hence thesis by XPRIMES0:955,956,NAT_1:9;
+-      end;
+-      suppose 956 <= p <= 956+1;
+-        hence thesis by XPRIMES0:956,957,NAT_1:9;
+-      end;
+-      suppose 957 <= p <= 957+1;
+-        hence thesis by XPRIMES0:957,958,NAT_1:9;
+-      end;
+-      suppose 958 <= p <= 958+1;
+-        hence thesis by XPRIMES0:958,959,NAT_1:9;
+-      end;
+-      suppose 959 <= p <= 959+1;
+-        hence thesis by XPRIMES0:959,960,NAT_1:9;
+-      end;
+-    end;
+-    suppose 960 <= p <= 960+1;
+-      hence thesis by XPRIMES0:960,961,NAT_1:9;
+-    end;
+-    suppose 961 <= p <= 961+1;
+-      hence thesis by XPRIMES0:961,962,NAT_1:9;
+-    end;
+-    suppose 962 <= p <= 962+1;
+-      hence thesis by XPRIMES0:962,963,NAT_1:9;
+-    end;
+-    suppose 963 <= p <= 963+1;
+-      hence thesis by XPRIMES0:963,964,NAT_1:9;
+-    end;
+-    suppose 964 <= p <= 964+1;
+-      hence thesis by XPRIMES0:964,965,NAT_1:9;
+-    end;
+-    suppose 965 <= p <= 965+1;
+-      hence thesis by XPRIMES0:965,966,NAT_1:9;
++      then 953 <= p <= 953+1 or 954 <= p <= 954+1 or 955 <= p <= 955+1 or 
++      956 <= p <= 956+1 or 957 <= p <= 957+1 or 958 <= p <= 958+1 or 
++      959 <= p <= 959+1;
++      then p = 953 by XPRIMES0:954,955,956,957,958,959,960,NAT_1:9;
++      hence thesis;
++    end;
++    suppose 960 <= p <= 960+1 or 961 <= p <= 961+1 or 
++      962 <= p <= 962+1 or 963 <= p <= 963+1 or 964 <= p <= 964+1 or 
++      965 <= p <= 965+1;
++      then contradiction by XPRIMES0:960,961,962,963,964,965,966,NAT_1:9;
++      hence thesis;
+@@ -9479,8 +7896,3 @@
+-    suppose 967 <= p <= 967+1;
+-      hence thesis by XPRIMES0:968,NAT_1:9;
+-    end;
+-    suppose 968 <= p <= 968+1;
+-      hence thesis by XPRIMES0:968,969,NAT_1:9;
+-    end;
+-    suppose 969 <= p <= 969+1;
+-      hence thesis by XPRIMES0:969,970,NAT_1:9;
++    suppose 967 <= p <= 967+1 or 968 <= p <= 968+1 or 969 <= p <= 969+1;
++      then p = 967 by XPRIMES0:968,969,970,NAT_1:9;
++      hence thesis;
+@@ -9555,14 +7967,4 @@
+-    suppose 971 <= p <= 971+1;
+-      hence thesis by XPRIMES0:972,NAT_1:9;
+-    end;
+-    suppose 972 <= p <= 972+1;
+-      hence thesis by XPRIMES0:972,973,NAT_1:9;
+-    end;
+-    suppose 973 <= p <= 973+1;
+-      hence thesis by XPRIMES0:973,974,NAT_1:9;
+-    end;
+-    suppose 974 <= p <= 974+1;
+-      hence thesis by XPRIMES0:974,975,NAT_1:9;
+-    end;
+-    suppose 975 <= p <= 975+1;
+-      hence thesis by XPRIMES0:975,976,NAT_1:9;
++    suppose 971 <= p <= 971+1 or 972 <= p <= 972+1 or 973 <= p <= 973+1 or 
++      974 <= p <= 974+1 or 975 <= p <= 975+1;
++      then p = 971 by XPRIMES0:972,973,974,975,976,NAT_1:9;
++      hence thesis;
+@@ -9637,14 +8039,4 @@
+-    suppose 977 <= p <= 977+1;
+-      hence thesis by XPRIMES0:978,NAT_1:9;
+-    end;
+-    suppose 978 <= p <= 978+1;
+-      hence thesis by XPRIMES0:978,979,NAT_1:9;
+-    end;
+-    suppose 979 <= p <= 979+1;
+-      hence thesis by XPRIMES0:979,980,NAT_1:9;
+-    end;
+-    suppose 980 <= p <= 980+1;
+-      hence thesis by XPRIMES0:980,981,NAT_1:9;
+-    end;
+-    suppose 981 <= p <= 981+1;
+-      hence thesis by XPRIMES0:981,982,NAT_1:9;
++    suppose 977 <= p <= 977+1 or 978 <= p <= 978+1 or 979 <= p <= 979+1 or 
++      980 <= p <= 980+1 or 981 <= p <= 981+1;
++      then p = 977 by XPRIMES0:978,979,980,981,982,NAT_1:9;
++      hence thesis;
+@@ -9719,20 +8111,5 @@
+-    suppose 983 <= p <= 983+1;
+-      hence thesis by XPRIMES0:984,NAT_1:9;
+-    end;
+-    suppose 984 <= p <= 984+1;
+-      hence thesis by XPRIMES0:984,985,NAT_1:9;
+-    end;
+-    suppose 985 <= p <= 985+1;
+-      hence thesis by XPRIMES0:985,986,NAT_1:9;
+-    end;
+-    suppose 986 <= p <= 986+1;
+-      hence thesis by XPRIMES0:986,987,NAT_1:9;
+-    end;
+-    suppose 987 <= p <= 987+1;
+-      hence thesis by XPRIMES0:987,988,NAT_1:9;
+-    end;
+-    suppose 988 <= p <= 988+1;
+-      hence thesis by XPRIMES0:988,989,NAT_1:9;
+-    end;
+-    suppose 989 <= p <= 989+1;
+-      hence thesis by XPRIMES0:989,990,NAT_1:9;
++    suppose 983 <= p <= 983+1 or 984 <= p <= 984+1 or 985 <= p <= 985+1 or 
++      986 <= p <= 986+1 or 987 <= p <= 987+1 or 988 <= p <= 988+1 or 
++      989 <= p <= 989+1;
++      then p = 983 by XPRIMES0:984,985,986,987,988,989,990,NAT_1:9;
++      hence thesis;
+@@ -9807,14 +8184,4 @@
+-    suppose 991 <= p <= 991+1;
+-      hence thesis by XPRIMES0:992,NAT_1:9;
+-    end;
+-    suppose 992 <= p <= 992+1;
+-      hence thesis by XPRIMES0:992,993,NAT_1:9;
+-    end;
+-    suppose 993 <= p <= 993+1;
+-      hence thesis by XPRIMES0:993,994,NAT_1:9;
+-    end;
+-    suppose 994 <= p <= 994+1;
+-      hence thesis by XPRIMES0:994,995,NAT_1:9;
+-    end;
+-    suppose 995 <= p <= 995+1;
+-      hence thesis by XPRIMES0:995,996,NAT_1:9;
++    suppose 991 <= p <= 991+1 or 992 <= p <= 992+1 or 993 <= p <= 993+1 or 
++      994 <= p <= 994+1 or 995 <= p <= 995+1;
++      then p = 991 by XPRIMES0:992,993,994,995,996,NAT_1:9;
++      hence thesis;
+@@ -9889,32 +8256,7 @@
+-    suppose 997 <= p <= 997+1;
+-      hence thesis by XPRIMES0:998,NAT_1:9;
+-    end;
+-    suppose 998 <= p <= 998+1;
+-      hence thesis by XPRIMES0:998,999,NAT_1:9;
+-    end;
+-    suppose 999 <= p <= 999+1;
+-      hence thesis by XPRIMES0:999,1000,NAT_1:9;
+-    end;
+-    suppose 1000 <= p <= 1000+1;
+-      hence thesis by XPRIMES0:1000,1001,NAT_1:9;
+-    end;
+-    suppose 1001 <= p <= 1001+1;
+-      hence thesis by XPRIMES0:1001,1002,NAT_1:9;
+-    end;
+-    suppose 1002 <= p <= 1002+1;
+-      hence thesis by XPRIMES0:1002,1003,NAT_1:9;
+-    end;
+-    suppose 1003 <= p <= 1003+1;
+-      hence thesis by XPRIMES0:1003,1004,NAT_1:9;
+-    end;
+-    suppose 1004 <= p <= 1004+1;
+-      hence thesis by XPRIMES0:1004,1005,NAT_1:9;
+-    end;
+-    suppose 1005 <= p <= 1005+1;
+-      hence thesis by XPRIMES0:1005,1006,NAT_1:9;
+-    end;
+-    suppose 1006 <= p <= 1006+1;
+-      hence thesis by XPRIMES0:1006,1007,NAT_1:9;
+-    end;
+-    suppose 1007 <= p <= 1007+1;
+-      hence thesis by XPRIMES0:1007,1008,NAT_1:9;
++    suppose 997 <= p <= 997+1 or 998 <= p <= 998+1 or 999 <= p <= 999+1 or 
++      1000 <= p <= 1000+1 or 1001 <= p <= 1001+1 or 1002 <= p <= 1002+1 or 
++      1003 <= p <= 1003+1 or 1004 <= p <= 1004+1 or 1005 <= p <= 1005+1 or 
++      1006 <= p <= 1006+1 or 1007 <= p <= 1007+1;
++      then p = 997 by XPRIMES0:1000,1001,1002,1003,1004,1005,1006,1007,1008,
++        998,999,NAT_1:9;
++      hence thesis;
 --- mml/xxreal_2.miz
 +++ mml/xxreal_2.miz
 @@ -40 +40,2 @@
