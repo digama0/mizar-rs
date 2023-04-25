@@ -18,7 +18,8 @@ pub struct Reader {
   pub no_suppress_checker: bool,
   pub accom: Option<Box<Accomodator>>,
   /// gFormatsColl
-  pub formats: HashMap<Format, FormatId>,
+  #[allow(clippy::box_collection)]
+  pub formats: Box<HashMap<Format, FormatId>>,
   pub formats_base: usize,
   /// Notat
   pub notations: EnumMap<PatternKindClass, ExtVec<Pattern>>,
@@ -103,13 +104,13 @@ impl MizPath {
     let symbols = v.accom.as_deref_mut().map(|accom| {
       let mut symbols = Default::default();
       let mut inf = parser.as_ref().map(|_| Default::default());
-      let priority = &mut v.lc.formatter.formats.priority;
-      accom.accom_symbols(mml_vct, &mut symbols, priority, inf.as_mut());
+      let mut priority = vec![];
+      accom.accom_symbols(mml_vct, &mut symbols, &mut priority, inf.as_mut());
       if cfg.checker_enabled || cfg.parser_enabled {
         accom.accom_articles()
       }
       if let Some(parser) = &mut parser {
-        parser.load_symbols(&symbols, &inf.unwrap(), priority);
+        parser.load_symbols(&symbols, &inf.unwrap(), &priority);
       }
       symbols
     });
@@ -117,9 +118,10 @@ impl MizPath {
     let needs_formats =
       cfg.analyzer_enabled || v.lc.formatter.cfg.enable_formatter || cfg.exporter_enabled;
     if needs_formats && !cfg.parser_enabled {
-      v.lc.formatter.formats.priority.clear();
-      self.read_formats("frx", &mut v.lc.formatter.formats).unwrap();
-      v.formats.extend(v.lc.formatter.formats.formats.enum_iter().map(|(id, f)| (*f, id)));
+      let mut fmts = Default::default();
+      self.read_formats("frx", &mut fmts).unwrap();
+      v.formats.extend(fmts.formats.enum_iter().map(|(id, f)| (*f, id)));
+      *v.lc.formatter.formats = fmts.formats;
     }
     if let Some(accom) = &mut v.accom {
       if let Some(parser) = &mut parser {
@@ -127,8 +129,8 @@ impl MizPath {
         let mut fmt_map = Default::default();
         accom.accom_notations(&mut fmt_map, Some(&mut fmts), &mut notations).unwrap();
         fmts.formats.0.iter().for_each(|fmt| parser.read_format(fmt));
-        v.lc.formatter.formats.formats = fmts.formats;
-        v.formats.extend(v.lc.formatter.formats.formats.enum_iter().map(|(id, f)| (*f, id)));
+        v.formats.extend(fmts.formats.enum_iter().map(|(id, f)| (*f, id)));
+        *v.lc.formatter.formats = fmts.formats;
       } else {
         accom.accom_notations(&mut v.formats, None, &mut notations).unwrap();
       }
@@ -137,7 +139,7 @@ impl MizPath {
     }
     if cfg.exporter_enabled {
       v.formats_base = if cfg.parser_enabled {
-        v.lc.formatter.formats.formats.len()
+        v.lc.formatter.formats.len()
       } else {
         let mut f = Default::default();
         self.read_formats("frm", &mut f).unwrap();

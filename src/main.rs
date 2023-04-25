@@ -3088,7 +3088,7 @@ impl FormatterConfig {
     show_only_infer: false,
     show_priv: false,
     show_marks: true,
-    show_invisible: true,
+    show_invisible: false,
     show_orig: true,
     upper_clusters: false,
     both_clusters: false,

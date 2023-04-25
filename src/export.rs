@@ -254,7 +254,7 @@ impl Analyzer<'_> {
 
     // validating .dfr
     {
-      let mut dfr1 = self.lc.formatter.formats.formats.0[self.formats_base..].to_owned();
+      let mut dfr1 = self.lc.formatter.formats.0[self.formats_base..].to_owned();
       let nonempty = !dfr1.is_empty();
       let (mut marked_vocs, mut vocs2, mut dfr2) = Default::default();
       if self.g.cfg.verify_export {
@@ -333,7 +333,7 @@ impl Analyzer<'_> {
         .flat_map(|(i, nota)| &nota[self.export.notations_base[i] as usize..])
         .map(|pat| {
           let Pattern { kind, fmt, primary, visible, pos } = pat.visit_cloned(ep);
-          Pattern { kind, fmt: self.lc.formatter.formats.formats[fmt], primary, visible, pos }
+          Pattern { kind, fmt: self.lc.formatter.formats[fmt], primary, visible, pos }
         })
         .collect();
       let nonempty = !dno1.pats.is_empty();

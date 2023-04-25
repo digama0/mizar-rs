@@ -3,7 +3,7 @@ use crate::ast::{
   ReservedId, VarKind,
 };
 use crate::export::Exporter;
-use crate::parser::MizParser;
+use crate::parser::{MizParser, MsmParser};
 use crate::reader::Reader;
 use crate::types::{PatternKindClass as PKC, *};
 use crate::*;
@@ -61,22 +61,37 @@ impl<'a> std::ops::DerefMut for Analyzer<'a> {
 }
 
 impl Reader {
-  pub fn run_analyzer(&mut self, path: &MizPath, mut parser: Option<&mut MizParser<'_>>) {
-    let mut items;
-    if let Some(parser) = &mut parser {
-      // parser.formats is empty, formatter.formats has .frm
-      parser.formats = std::mem::take(&mut self.lc.formatter.formats.formats);
-      parser.format_lookup = std::mem::take(&mut self.formats);
-      items = parser.parse_items();
-      // move .frx formats back to formatter
-      self.lc.formatter.formats.formats = std::mem::take(&mut parser.formats);
-      self.formats = std::mem::take(&mut parser.format_lookup);
-    } else if self.g.cfg.nameck_enabled {
-      items = path.open_wsx().unwrap().parse_items()
-    } else {
-      items = path.open_msx().unwrap().parse_items()
+  fn push_parse_item(
+    &mut self, parser: &mut Result<&mut MizParser<'_>, MsmParser>, buf: &mut Vec<ast::Item>,
+  ) -> bool {
+    match parser {
+      Ok(parser) => {
+        // parser.formats is empty, formatter.formats has .frm
+        std::mem::swap(&mut parser.formats, &mut self.lc.formatter.formats);
+        std::mem::swap(&mut parser.format_lookup, &mut self.formats);
+        let res = parser.push_parse_item(buf);
+        // move .frx formats back to formatter
+        std::mem::swap(&mut self.lc.formatter.formats, &mut parser.formats);
+        std::mem::swap(&mut self.formats, &mut parser.format_lookup);
+        res
+      }
+      Err(parser) => parser.push_parse_item(buf),
     }
+  }
+
+  pub fn run_analyzer(&mut self, path: &MizPath, parser: Option<&mut MizParser<'_>>) {
+    let mut parser = parser.ok_or_else(|| {
+      if self.g.cfg.nameck_enabled {
+        path.open_wsx().unwrap()
+      } else {
+        path.open_msx().unwrap()
+      }
+    });
+    let mut items = vec![];
     if !self.g.cfg.analyzer_enabled {
+      while self.push_parse_item(&mut parser, &mut items) {
+        items.clear()
+      }
       return
     }
     let mut elab = Analyzer {
@@ -112,14 +127,19 @@ impl Reader {
       elab.export.reductions_base = elab.reductions.len() as u32;
       elab.export.properties_base = elab.properties.len() as u32;
     }
-    for (i, it) in items.iter_mut().enumerate() {
-      if let Some(n) = elab.g.cfg.first_verbose_top_item {
-        set_verbose(i >= n);
+    let mut i = 0;
+    while elab.r.push_parse_item(&mut parser, &mut items) {
+      for it in items.iter_mut() {
+        if let Some(n) = elab.g.cfg.first_verbose_top_item {
+          set_verbose(i >= n);
+        }
+        if elab.g.cfg.top_item_header {
+          eprintln!("item {i}: {it:?}");
+        }
+        elab.elab_top_item(it);
+        i += 1;
       }
-      if elab.g.cfg.top_item_header {
-        eprintln!("item {i}: {it:?}");
-      }
-      elab.elab_top_item(it);
+      items.clear()
     }
     if elab.g.cfg.exporter_enabled {
       elab.export()

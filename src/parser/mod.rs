@@ -14,6 +14,7 @@ mod miz;
 mod msm;
 
 pub use miz::Parser as MizParser;
+pub use msm::MsmParser;
 
 impl MizPath {
   pub fn read_ere(&self, idx: &mut RequirementIndexes) -> io::Result<()> {

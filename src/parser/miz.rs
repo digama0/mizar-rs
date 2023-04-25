@@ -373,13 +373,14 @@ pub struct Parser<'a> {
   scan: Scanner<'a>,
   pub art: Article,
   pub articles: HashMap<Article, ArticleId>,
-  pub formats: IdxVec<FormatId, Format>,
+  pub formats: Box<IdxVec<FormatId, Format>>,
   allow_internal_selector: bool,
   max_mode_args: HashMap<ModeSymId, u8>,
   max_struct_args: HashMap<StructSymId, u8>,
   max_pred_rhs: HashMap<PredSymId, u8>,
   func_prio: HashMap<FuncSymId, u32>,
-  pub format_lookup: HashMap<Format, FormatId>,
+  #[allow(clippy::box_collection)]
+  pub format_lookup: Box<HashMap<Format, FormatId>>,
 }
 
 impl<'a> Parser<'a> {
@@ -1916,31 +1917,29 @@ impl<'a> Parser<'a> {
     ItemKind::Reservation(ress)
   }
 
-  pub fn parse_items(&mut self) -> Vec<Item> {
-    let mut items = vec![];
-    loop {
-      let tok = self.scan.next();
-      let kind = match tok.kind {
-        TokenKind::Pragma => ItemKind::Pragma(tok.spelling[2..].parse().unwrap()),
-        TokenKind::Keyword(Keyword::Begin) => ItemKind::Section,
-        TokenKind::Keyword(Keyword::Scheme) => ItemKind::SchemeBlock(self.parse_scheme()),
-        TokenKind::Keyword(Keyword::Definition) => self.parse_block(BlockKind::Definition),
-        TokenKind::Keyword(Keyword::Notation) => self.parse_block(BlockKind::Notation),
-        TokenKind::Keyword(Keyword::Registration) => self.parse_block(BlockKind::Registration),
-        TokenKind::Keyword(Keyword::Reserve) => self.parse_reservation(),
-        TokenKind::Keyword(Keyword::Theorem) => ItemKind::Theorem {
-          prop: Box::new(self.parse_proposition()),
-          just: Box::new(self.parse_justification_semi(None)),
-        },
-        TokenKind::Eof => return items,
-        _ => {
-          self.scan.undo(tok);
-          let kind = self.parse_stmt_item();
-          self.scan.accept(Keyword::Semicolon);
-          kind
-        }
-      };
-      items.push(Item { pos: tok.pos, kind })
-    }
+  pub fn push_parse_item(&mut self, buf: &mut Vec<Item>) -> bool {
+    let tok = self.scan.next();
+    let kind = match tok.kind {
+      TokenKind::Pragma => ItemKind::Pragma(tok.spelling[2..].parse().unwrap()),
+      TokenKind::Keyword(Keyword::Begin) => ItemKind::Section,
+      TokenKind::Keyword(Keyword::Scheme) => ItemKind::SchemeBlock(self.parse_scheme()),
+      TokenKind::Keyword(Keyword::Definition) => self.parse_block(BlockKind::Definition),
+      TokenKind::Keyword(Keyword::Notation) => self.parse_block(BlockKind::Notation),
+      TokenKind::Keyword(Keyword::Registration) => self.parse_block(BlockKind::Registration),
+      TokenKind::Keyword(Keyword::Reserve) => self.parse_reservation(),
+      TokenKind::Keyword(Keyword::Theorem) => ItemKind::Theorem {
+        prop: Box::new(self.parse_proposition()),
+        just: Box::new(self.parse_justification_semi(None)),
+      },
+      TokenKind::Eof => return false,
+      _ => {
+        self.scan.undo(tok);
+        let kind = self.parse_stmt_item();
+        self.scan.accept(Keyword::Semicolon);
+        kind
+      }
+    };
+    buf.push(Item { pos: tok.pos, kind });
+    true
   }
 }

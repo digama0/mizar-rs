@@ -395,7 +395,7 @@ impl MsmParser {
     out
   }
 
-  fn push_parse_item(&mut self, items: &mut Vec<Item>) -> bool {
+  pub fn push_parse_item(&mut self, items: &mut Vec<Item>) -> bool {
     let Ok(e) = self.r.try_read_start(&mut self.buf, Some(b"Item")) else { return false };
     let (mut pos, (mut kind, mut property, mut shape, mut spelling, mut condition)) =
       <(Position, _)>::default();
