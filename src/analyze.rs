@@ -312,11 +312,18 @@ impl Analyzer<'_> {
         }
         self.lc.term_cache.get_mut().close_scope();
       }
-      &mut ast::ItemKind::Pragma(Pragma::Canceled(k, n)) => self.elab_canceled(it.pos, k, n),
-      ast::ItemKind::Pragma(Pragma::ThmDesc(_) | Pragma::Insert(_)) => self.items -= 1,
-      // This is intentionally stricter than necessary to ensure that MML has no weird
-      // pragmas. The line below should be uncommented to allow pragmas for general use.
-      // ast::ItemKind::Pragma(Pragma::Other(_)) => self.items -= 1,
+      ast::ItemKind::Pragma(pragma) => {
+        self.items -= 1;
+        match *pragma {
+          Pragma::Canceled(k, n) => self.elab_canceled(it.pos, k, n),
+          Pragma::SetVerify(b) => self.no_suppress_checker = b,
+          Pragma::ThmDesc(_) | Pragma::Insert(_) => {}
+          // This is intentionally stricter than necessary to ensure that MML has no weird
+          // pragmas. The line below should be uncommented to allow pragmas for general use.
+          // Pragma::Other(_) => {}
+          Pragma::Other(ref s) => panic!("unexpected pragma: {s:?}"),
+        }
+      }
       _ => self.elab_stmt_item(it),
     }
   }
@@ -842,7 +849,7 @@ impl Analyzer<'_> {
   }
 
   fn elab_canceled(&mut self, pos: Position, kind: CancelKind, n: u32) {
-    self.items += n as usize - 1;
+    self.items += n as usize;
     match kind {
       CancelKind::Def => {
         // canceled defs outside a block don't create a DefTheorem, so they don't increment self.defthms
@@ -4581,7 +4588,7 @@ impl BlockReader {
   }
 
   fn elab_canceled_def(&mut self, elab: &mut Analyzer, loc: Position, n: u32) {
-    elab.items += n as usize - 1;
+    elab.items += n as usize;
     elab.defthms.0 += n;
     if elab.g.cfg.exporter_enabled {
       self.defs.extend((0..n).map(|_| (loc, None)))
@@ -4694,8 +4701,10 @@ impl ReadProof for BlockReader {
       (BlockKind::Registration, ast::ItemKind::Reduction(it)) => self.elab_reduction(elab, it),
       (BlockKind::Registration, ast::ItemKind::SethoodRegistration { ty, just }) =>
         self.elab_sethood_registration(elab, ty, just),
-      (BlockKind::Definition, &mut ast::ItemKind::Pragma(Pragma::Canceled(CancelKind::Def, n))) =>
-        self.elab_canceled_def(elab, it.pos, n),
+      (BlockKind::Definition, &mut ast::ItemKind::Pragma(Pragma::Canceled(CancelKind::Def, n))) => {
+        elab.items -= 1;
+        self.elab_canceled_def(elab, it.pos, n)
+      }
       (
         BlockKind::Registration | BlockKind::Definition,
         ast::ItemKind::Pragma(Pragma::ThmDesc(_)),

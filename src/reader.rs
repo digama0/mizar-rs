@@ -15,6 +15,7 @@ pub struct Reader {
   pub libs: Libraries,
   pub article: Article,
   treat_thm_as_axiom: bool,
+  pub no_suppress_checker: bool,
   pub accom: Option<Box<Accomodator>>,
   /// gFormatsColl
   pub formats: HashMap<Format, FormatId>,
@@ -390,6 +391,7 @@ impl Reader {
       pending_defs: Default::default(),
       items: 0,
       inference_nr: 0,
+      no_suppress_checker: true,
     }
   }
 
@@ -933,6 +935,10 @@ impl Reader {
 
   pub fn read_inference(&mut self, thesis: &Formula, it: &Inference) {
     if !self.g.cfg.checker_enabled {
+      return
+    }
+    if !self.no_suppress_checker {
+      stat("skipped by $V-");
       return
     }
     let refs = it.refs.iter().map(|r| match r.kind {

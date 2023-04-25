@@ -704,6 +704,8 @@ pub enum Pragma {
   ThmDesc(String),
   /// $INSERT
   Insert(String),
+  /// $V-, $V+
+  SetVerify(bool),
   Other(String),
 }
 
@@ -728,7 +730,11 @@ impl FromStr for Pragma {
     } else if let Some(s) = spelling.strip_prefix("$INSERT") {
       Pragma::Insert(s.trim_start().to_owned())
     } else {
-      Pragma::Other(spelling.to_owned())
+      match spelling {
+        "$V-" => Pragma::SetVerify(false),
+        "$V+" => Pragma::SetVerify(true),
+        _ => Pragma::Other(spelling.to_owned()),
+      }
     })
   }
 }
