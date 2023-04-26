@@ -1496,6 +1496,10 @@ impl TermCollection {
   /// MarkTermsInTTColl
   fn open_scope(&mut self) {
     // vprintln!("[{}] open scope", self.scope);
+    if self.scope == 0 && self.terms.len() > GC_THRESHOLD {
+      stat("gc");
+      self.terms.clear()
+    }
     self.scope += 1
   }
 
@@ -3080,6 +3084,7 @@ pub struct Config {
 
 const DEBUG: bool = cfg!(debug_assertions);
 const COUNT_SKIPPED_ITEMS: bool = false;
+const GC_THRESHOLD: usize = 5000;
 
 impl FormatterConfig {
   const DEFAULT: Self = Self {
