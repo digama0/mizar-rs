@@ -2,8 +2,7 @@ use crate::error::report_accom_warning;
 use crate::parser::{catch_missing, ParseError, PathResult};
 use crate::reader::DefiniensId;
 use crate::types::*;
-use crate::{mk_id, CmpStyle, MizPath, VisitMut};
-use std::collections::HashMap;
+use crate::{mk_id, CmpStyle, HashMap, MizPath, VisitMut};
 use std::io;
 
 mk_id! {

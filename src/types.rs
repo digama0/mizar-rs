@@ -1,9 +1,9 @@
 use crate::accom::SigBuilder;
-use crate::VisitMut;
+use crate::{HashSet, VisitMut};
 use enum_map::{Enum, EnumMap};
 use paste::paste;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::marker::PhantomData;
 use std::ops::{Index, IndexMut, Range};
 

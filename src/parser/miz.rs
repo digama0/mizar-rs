@@ -5,11 +5,10 @@ use crate::types::{
   PriorityKind, PropertyKind, RightBrkSymId, SchId, StructSymId, SymbolKind, Symbols, ThmId,
   MAX_ARTICLE_LEN,
 };
-use crate::READ_MAX_LINE_COUNT;
+use crate::{HashMap, READ_MAX_LINE_COUNT};
 use enum_map::Enum;
 use indicatif::ProgressBar;
 use radix_trie::{Trie, TrieCommon};
-use std::collections::HashMap;
 
 macro_rules! mk_keywords {
   ($($id:ident: $lit:expr,)*) => {
@@ -441,7 +440,7 @@ impl<'a> Parser<'a> {
   }
 
   pub fn push_format(&mut self, _pos: Position, fmt: Format) {
-    if let std::collections::hash_map::Entry::Vacant(e) = self.format_lookup.entry(fmt) {
+    if let hashbrown::hash_map::Entry::Vacant(e) = self.format_lookup.entry(fmt) {
       let id = self.formats.push(fmt);
       e.insert(id);
       self.read_format(&fmt);

@@ -1,10 +1,9 @@
 use crate::parser::article::ArticleParser;
 use crate::types::*;
-use crate::{CmpStyle, MizPath, OnVarMut, RequirementIndexes, VisitMut};
+use crate::{CmpStyle, HashSet, MizPath, OnVarMut, RequirementIndexes, VisitMut};
 use enum_map::Enum;
 use quick_xml::events::{BytesStart, Event};
 use std::borrow::Cow;
-use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};

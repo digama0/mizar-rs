@@ -1,9 +1,8 @@
 use crate::types::*;
-use crate::{LocalContext, MizPath};
+use crate::{HashMap, LocalContext, MizPath};
 use pretty::{Arena, DocAllocator, DocBuilder};
 use std::borrow::Cow;
 use std::cell::Cell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 #[derive(Debug)]
@@ -99,18 +98,19 @@ impl Formatter {
     }
     for f in &self.formats.0 {
       match f {
-        Format::Aggr(f) => assert!(self.symbols.contains_key(&f.sym.into())),
-        &Format::SubAggr(sym) => assert!(self.symbols.contains_key(&sym.into())),
-        Format::Struct(f) => assert!(self.symbols.contains_key(&f.sym.into())),
-        Format::Mode(f) => assert!(self.symbols.contains_key(&f.sym.into())),
-        &Format::Sel(sym) => assert!(self.symbols.contains_key(&sym.into())),
-        Format::Attr(f) => assert!(self.symbols.contains_key(&f.sym.into())),
+        Format::Aggr(f) => assert!(self.symbols.contains_key(&SymbolKind::from(f.sym))),
+        &Format::SubAggr(sym) => assert!(self.symbols.contains_key(&SymbolKind::from(sym))),
+        Format::Struct(f) => assert!(self.symbols.contains_key(&SymbolKind::from(f.sym))),
+        Format::Mode(f) => assert!(self.symbols.contains_key(&SymbolKind::from(f.sym))),
+        &Format::Sel(sym) => assert!(self.symbols.contains_key(&SymbolKind::from(sym))),
+        Format::Attr(f) => assert!(self.symbols.contains_key(&SymbolKind::from(f.sym))),
         &Format::Func(FormatFunc::Func { sym, .. }) =>
-          assert!(self.symbols.contains_key(&sym.into())),
+          assert!(self.symbols.contains_key(&SymbolKind::from(sym))),
         &Format::Func(FormatFunc::Bracket { lsym, rsym, .. }) => assert!(
-          self.symbols.contains_key(&lsym.into()) && self.symbols.contains_key(&rsym.into())
+          self.symbols.contains_key(&SymbolKind::from(lsym))
+            && self.symbols.contains_key(&SymbolKind::from(rsym))
         ),
-        Format::Pred(f) => assert!(self.symbols.contains_key(&f.sym.into())),
+        Format::Pred(f) => assert!(self.symbols.contains_key(&SymbolKind::from(f.sym))),
       }
     }
   }
@@ -356,9 +356,9 @@ impl<'a> Pretty<'a> {
             assert_eq!(vis.len(), n as usize);
             ovis = (!self.cfg.show_invisible || vis.len() == args.len()).then_some(&**vis);
             doc = Some(if self.cfg.show_orig {
-              self.text(format!("{}[{}]", lc.formatter.symbols[&sym.into()], nr.0))
+              self.text(format!("{}[{}]", lc.formatter.symbols[&SymbolKind::from(sym)], nr.0))
             } else {
-              self.text(&lc.formatter.symbols[&sym.into()])
+              self.text(&lc.formatter.symbols[&SymbolKind::from(sym)])
             });
           }
         }
@@ -387,13 +387,13 @@ impl<'a> Pretty<'a> {
               assert_eq!(len as usize, args.len());
               assert_eq!(vis.len(), n as usize);
               let left = if self.cfg.show_orig {
-                self.text(format!("{}[{}] ", &lc.formatter.symbols[&lsym.into()], nr.0))
+                self.text(format!("{}[{}] ", &lc.formatter.symbols[&SymbolKind::from(lsym)], nr.0))
               } else {
-                self.text(&*lc.formatter.symbols[&lsym.into()])
+                self.text(&*lc.formatter.symbols[&SymbolKind::from(lsym)])
               };
               return self
                 .terms(Some(vis), args, vars, depth, lift)
-                .enclose(left, &lc.formatter.symbols[&rsym.into()])
+                .enclose(left, &lc.formatter.symbols[&SymbolKind::from(rsym)])
             }
             None => {}
           }
@@ -412,7 +412,7 @@ impl<'a> Pretty<'a> {
             assert_eq!(len as usize, args.len());
             assert_eq!(vis.len(), 1);
             ovis = Some(&**vis);
-            s = Some(&lc.formatter.symbols[&sym.into()]);
+            s = Some(&lc.formatter.symbols[&SymbolKind::from(sym)]);
           }
         }
         let doc = self.text(match s {
@@ -462,9 +462,9 @@ impl<'a> Pretty<'a> {
     if let Some(lc) = self.lc {
       if let Some(&(len, ref vis, FormatAttr { sym, args: n })) = lc.formatter.attr.get(&nr) {
         let sym = if self.cfg.show_orig {
-          self.text(format!("{}[{}]", lc.formatter.symbols[&sym.into()], nr.0))
+          self.text(format!("{}[{}]", lc.formatter.symbols[&SymbolKind::from(sym)], nr.0))
         } else {
-          self.text(&lc.formatter.symbols[&sym.into()])
+          self.text(&lc.formatter.symbols[&SymbolKind::from(sym)])
         };
         assert_eq!(len as usize, args.len() + 1);
         // if len as usize != args.len() + 1 {
@@ -524,17 +524,17 @@ impl<'a> Pretty<'a> {
             assert_eq!(vis.len(), args as usize);
             ovis = (!self.cfg.show_invisible || vis.len() == ty.args.len()).then_some(&**vis);
             s = Some(if self.cfg.show_orig {
-              Cow::Owned(format!("{}({})", &*lc.formatter.symbols[&sym.into()], n.0))
+              Cow::Owned(format!("{}({})", &*lc.formatter.symbols[&SymbolKind::from(sym)], n.0))
             } else {
-              Cow::Borrowed(&*lc.formatter.symbols[&sym.into()])
+              Cow::Borrowed(&*lc.formatter.symbols[&SymbolKind::from(sym)])
             })
           },
         TypeKind::Mode(n) =>
           if let Some(&(len, ref vis, FormatMode { sym, args })) = lc.formatter.mode.get(&n) {
             let sym = if self.cfg.show_orig {
-              Cow::Owned(format!("{}[{}]", &*lc.formatter.symbols[&sym.into()], n.0))
+              Cow::Owned(format!("{}[{}]", &*lc.formatter.symbols[&SymbolKind::from(sym)], n.0))
             } else {
-              Cow::Borrowed(&*lc.formatter.symbols[&sym.into()])
+              Cow::Borrowed(&*lc.formatter.symbols[&SymbolKind::from(sym)])
             };
             assert_eq!(len as usize, ty.args.len());
             assert_eq!(vis.len(), args as usize);
