@@ -1,8 +1,9 @@
 use crate::accom::SigBuilder;
 use crate::ast::CaseKind;
+use crate::proof::{Step, WriteProof};
 use crate::reader::DefiniensId;
 use crate::types::{self, *};
-use crate::{Global, LocalContext, MizPath};
+use crate::{Global, HashMap, LocalContext, MizPath};
 use enum_map::{Enum, EnumMap};
 use quick_xml::events::attributes::Attribute;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
@@ -11,15 +12,15 @@ use serde::Serialize;
 use serde_json::ser::{CompactFormatter as JsonFormatter, Formatter};
 use serde_json::Serializer as JsonSerializer;
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{self, BufWriter, ErrorKind, Write};
 use std::rc::Rc;
 
 const INDENT: usize = 0;
 
-struct MizWriter {
-  w: quick_xml::Writer<BufWriter<File>>,
+pub struct MizWriter<W: Write = BufWriter<File>> {
+  w: quick_xml::Writer<W>,
   pending: Option<Elem>,
   two_clusters: bool,
   depth: u32,
@@ -2039,5 +2040,28 @@ impl WriteMptJson {
     )
     .unwrap();
     JsonFormatter.end_array_value(&mut self.w).unwrap();
+  }
+}
+
+pub struct XMLProofWriter<W: Write>(MizWriter<W>, u32);
+
+impl XMLProofWriter<BufWriter<File>> {
+  pub fn new(path: &MizPath) -> io::Result<Self> {
+    let mut w = path.create_xml(true, false, "ppf")?;
+    w.start("Proof");
+    Ok(XMLProofWriter(w, 0))
+  }
+
+  fn finish(mut self) {
+    self.0.end_tag("Proof");
+    self.0.finish()
+  }
+}
+
+impl<W: Write> WriteProof for XMLProofWriter<W> {
+  fn write_step(&mut self, step: Step) -> std::io::Result<()> {
+    // match step {};
+    self.1 += 1;
+    todo!()
   }
 }

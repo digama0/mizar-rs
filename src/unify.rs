@@ -3,12 +3,12 @@ use crate::checker::{Atoms, Dnf, Open, OrUnsat, Overflow, Unsat};
 use crate::equate::Equalizer;
 use crate::types::*;
 use crate::{
-  vprintln, CheckLocus, EqCtx, Equate, ExpandPrivFunc, Global, LocalContext, Visit, VisitMut,
-  WithGlobalLocal,
+  vprintln, CheckLocus, EqCtx, Equate, ExpandPrivFunc, Global, HashMap, LocalContext, Visit,
+  VisitMut, WithGlobalLocal,
 };
 use enum_map::{Enum, EnumMap};
 use itertools::Itertools;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 const ENABLE_UNIFIER: bool = true;
 

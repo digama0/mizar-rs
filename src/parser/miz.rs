@@ -5,11 +5,10 @@ use crate::types::{
   FormatFunc, FuncSymId, LeftBrkSymId, LocusId, ModeSymId, Position, PredSymId, PriorityKind,
   PropertyKind, RightBrkSymId, SchId, StructSymId, SymbolKind, Symbols, ThmId,
 };
-use crate::READ_MAX_LINE_COUNT;
+use crate::{HashMap, READ_MAX_LINE_COUNT};
 use enum_map::Enum;
 use indicatif::ProgressBar;
 use radix_trie::{Trie, TrieCommon};
-use std::collections::HashMap;
 
 macro_rules! mk_keywords {
   ($($id:ident: $lit:expr,)*) => {

@@ -1,7 +1,7 @@
 use crate::bignum::Complex;
 use crate::format::Formatter;
 use crate::types::*;
-use crate::{mizfiles, stat, Config};
+use crate::{mizfiles, stat, Config, HashMap, HashSet};
 use enum_map::EnumMap;
 use itertools::EitherOrBoth;
 use serde::Deserialize;
@@ -9,7 +9,7 @@ use serde_json::de::IoRead;
 use serde_json::Deserializer;
 use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{self, BufReader};
 use std::ops::Range;

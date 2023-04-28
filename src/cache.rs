@@ -1,8 +1,7 @@
 use crate::parser::{MaybeMut, ParseError, PathResult};
 use crate::types::*;
-use crate::MizPath;
+use crate::{HashMap, MizPath};
 use once_cell::sync::OnceCell;
-use std::collections::HashMap;
 
 struct CacheMap {
   articles: HashMap<Article, Cache>,
