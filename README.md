@@ -59,93 +59,194 @@ See [#2](https://github.com/digama0/mizar-rs/issues/2#issuecomment-1467281905) f
 
 Here some additional mizar-rs modes, together with the time taken to check the MML on 8 threads:
 
-|                            | command                      | real time | CPU time   |
-|----------------------------|------------------------------|-----------|------------|
-| accom + export             | `EXPORT`                     | 28.88 sec | 3.44 min   |
-| export                     | `NO_ACCOM` + `EXPORT`        | 31.22 sec | 3.71 min   |
-| accom + analyzer           | `ANALYZER_ONLY`              | 1.75 min  | 12.99 min  |
-| analyzer                   | `NO_ACCOM` + `ANALYZER_ONLY` | 1.70 min  | 12.83 min  |
-| checker                    | `CHECKER_ONLY`               | 11.33 min | 73.70 min  |
-| accom + analyzer + checker |  (default)                   | 11.86 min | 88.87 min  |
-| analyzer + checker         | `NO_ACCOM`                   | 12.45 min | 91.84 min  |
+|                            | command    | real time | CPU time   |
+|----------------------------|------------|-----------|------------|
+| accom + export             | `-ex`      | 28.88 sec | 3.44 min   |
+| export                     | `-PMex`    | 31.22 sec | 3.71 min   |
+| accom + analyzer           | `-a`       | 1.75 min  | 12.99 min  |
+| analyzer                   | `-PMa`     | 1.70 min  | 12.83 min  |
+| checker                    | `-PMc`     | 11.33 min | 73.70 min  |
+| accom + analyzer + checker |  (default) | 11.86 min | 88.87 min  |
+| analyzer + checker         | `-PM`      | 12.45 min | 91.84 min  |
 
 * The "export" mode also includes running the analyzer in "quick" mode, which does just enough analysis to construct theorem statements. This constructs the `prel/` data for dependent articles, and represents the not-trivially-parallelizable part of MML processing when generating data files from scratch.
 
 * The "accom" mode (which can be mixed with any of the others) uses the `prel/` files directly to import dependencies, rather than using the files prepared by Mizar's `accom` tool. As the numbers show, the cost of this extra processing is sometimes negative, because we are reading fewer files total and doing less XML parsing.
 
-## Configuration
+## Usage and configuration
 
-Currently most configuration is stored in the code itself. Most flags are in
-[main.rs](src/main.rs) at the start of `main()`, and can be used to debug why a proof fails.
-
-```rust
-// verbose printing options
-top_item_header: false,
-always_verbose_item: false,
-item_header: DEBUG,
-checker_inputs: DEBUG,
-checker_header: DEBUG,
-checker_conjuncts: DEBUG,
-checker_result: DEBUG,
-unify_header: DEBUG,
-unify_insts: DEBUG,
-
-// dump various parts of the input state
-dump_constructors: false,
-dump_requirements: false,
-dump_notations: false,
-dump_clusters: false,
-dump_definitions: false,
-dump_libraries: false,
-dump_formatter: false,
+The `mizar-rs --help` output is replicated here for convenience:
 ```
+Mizar verifier toolchain. Common usage cases:
 
-These flags allow enabling different components of Mizar. The processing is always
-single-pass, so this just affects what the starting point of processing is.
-The default behavior is to run all the passes.
-```rust
-accom_enabled: true, // set env var NO_ACCOM to disable
-analyzer_enabled: true, // set env var NO_ANALYZER to disable
-analyzer_full: true, // enabled as required for other flags
-checker_enabled: true, // set env var NO_CHECKER to disable
-exporter_enabled: true, // set env var NO_EXPORT to disable
-```
+  * mizar-rs -dex --overwrite-prel
+    Read the MML .miz files and generate the prel/ folder
+  * mizar-rs
+    Parse and compile the whole MML from scratch
+  * mizar-rs nat_4 --one-file
+    Parse and compile only article nat_4
+  * mizar-rs nat_4 14 --unify-insts
+    Give debugging info regarding the item at line 14 of article nat_4
 
-When this is enabled, the new checker is disabled completely and the only thing
-that remains of the program is the top loop which dispatches file tasks, shelling
-out to `mizbin/verifier`. This is used for timing comparisons.
-Where applicable the same accom / analyzer / checker settings are respected
-as in the main program.
-```rust
-const ORIG_MIZAR: bool = false;
-```
+Usage: mizar-rs [OPTIONS] [FILE] [FIRST_VERBOSE_LINE]
 
-These flags cover behavior which is known to be buggy but require more substantial
-patching of MML:
-```rust
-legacy_flex_handling: true,
-flex_expansion_bug: true,
-attr_sort_bug: true,
-```
+Arguments:
+  [FILE]
+          The name of the first file to process, or the index of the file in `mml.lar`
 
-This is used for zooming in on a particular proof or file. The number of each file
-is printed in release mode, and you can use `FIRST_FILE` to start processing from there
-and `ONE_FILE` to process only that file. The `FIRST_VERBOSE` options enable the
-`vprintln` verbose debug logging, so you can see exactly how a particular proof proceeds.
-```rust
-const FIRST_FILE: usize = 0;
-const ONE_FILE: bool = false;
-panic_on_fail: DEBUG,
-first_verbose_top_item: None,
-first_verbose_item: None,
-one_item: false,
-first_verbose_checker: None,
-skip_to_verbose: DEBUG,
-```
+  [FIRST_VERBOSE_LINE]
+          The line on which to turn on verbose mode
 
-The `parallelism` option controls how many parallel threads are used. Adjust this to taste.
-```rust
-parallelism: if DEBUG || ONE_FILE { 1 } else { 8 },
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Pass selection options:
+  -c, --checker
+          Enables (only) the checker, checking 'by' proofs straight from .xml
+
+  -C, --no-checker
+          Disables the checker, checking the proof skeleton but not individual by steps
+
+  -a, --analyzer
+          Enables (only) the analyzer, checking the proof skeleton but not individual by steps
+
+  -A, --no-analyzer
+          Disables the analyzer
+
+  -e, --export
+          Enables (only) the exporter, doing the minimal amount of work to produce theorem statements
+
+  -E, --no-export
+          Disables the exporter
+
+  -v, --verify-export
+          Check that the exported statements exactly match the `miz/mizshare/prel/` directory
+
+  -x, --xml-export
+          Produce exported statements to the `miz/prel/` directory (requires `-e`)
+
+  -M, --no-accom
+          Disables the accomodator. (requires `-P`)
+
+  -P, --no-parser
+          Disables the parser, reading .wsx files instead of .miz
+
+  -N, --no-nameck
+          Disables name resolution, reading .msx instead of .wsx (requires `-P`)
+
+  -d, --dep-order
+          Strictly follow dependency order, instead of using `prel/`
+
+  -j, --parallelism <PARALLELISM>
+          The number of threads to use (currently only file level parallelism is supported)
+
+          [default: 8]
+
+      --orig-mizar
+          Use `mizar-rs` as a frontend for the original mizar `verifier`
+
+      --one-item[=<ONE_ITEM>]
+          Exit after processing the first verbose item
+
+          [default: true]
+
+      --one-file[=<ONE_FILE>]
+          Exit after processing the first selected file
+
+          [default: false]
+
+      --skip-to-verbose[=<SKIP_TO_VERBOSE>]
+          Disable the checker while not in verbose mode
+
+          [default: false]
+
+Other options:
+      --panic-on-fail[=<PANIC_ON_FAIL>]
+          Panic on the first error
+
+          [default: false]
+
+      --overwrite-prel[=<OVERWRITE_PREL>]
+          Write exported statements to `miz/mizshare/prel/` instead of `miz/prel/`, overwriting the originals
+
+          [default: false]
+
+      --no-cache
+          Always read cross-article theorems from `prel/` instead of from memory
+
+      --no-progress
+          Don't show the fancy progress bar
+
+Debugging tools:
+      --top-item-header[=<TOP_ITEM_HEADER>]
+          Print a header at every top level item
+
+          [default: false]
+
+      --always-verbose-item[=<ALWAYS_VERBOSE_ITEM>]
+          Print the full AST for each item, even when not in verbose mode
+
+          [default: false]
+
+      --item-header[=<ITEM_HEADER>]
+          Print a header at each item
+
+          [default: false]
+
+      --checker-inputs[=<CHECKER_INPUTS>]
+          Print the checker input facts in verbose mode
+
+          [default: false]
+
+      --checker-header[=<CHECKER_HEADER>]
+          Print the checker header in verbose mode
+
+          [default: false]
+
+      --checker-conjuncts[=<CHECKER_CONJUNCTS>]
+          Print the processed checker conjuncts in verbose mode
+
+          [default: false]
+
+      --checker-result[=<CHECKER_RESULT>]
+          Print the checker result in verbose mode
+
+          [default: false]
+
+      --unify-header[=<UNIFY_HEADER>]
+          Print the input to the unifier module in verbose mode
+
+          [default: false]
+
+      --unify-insts[=<UNIFY_INSTS>]
+          Print the instantiation produced by the unifier in verbose mode
+
+          [default: false]
+
+      --dump [<DUMP>...]
+          Dump the contents of various system components, or `--dump` without arguments to print everything
+
+          [possible values: config, constructors, requirements, notations, clusters, definitions, libraries, formatter]
+
+Bugs and unsound flags:
+      --legacy-flex-handling[=<LEGACY_FLEX_HANDLING>]
+          This is an UNSOUND FLAG that enables checking of `P[a] & ... & P[b]` equality by checking only the endpoints `P[a]` and `P[b]`. This is needed to check some MML proofs
+
+          [default: true]
+
+      --flex-expansion-bug[=<FLEX_EXPANSION_BUG>]
+          This is completely wrong and UNSOUND behavior, when expanding a flex-and only the first conjunct is used, but aofa_l00 can't be checked without it (the proof should be patched)
+
+          [default: true]
+
+      --attr-sort-bug[=<ATTR_SORT_BUG>]
+          This is buggy behavior, but not unsound. It is required to interpret some MML files
+
+          [default: true]
 ```
 
 ## Formatter configuration

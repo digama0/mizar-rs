@@ -83,7 +83,7 @@ impl MizPath {
     // Load_EnvConstructors
     let mut v = Reader::new(cfg, progress.cloned(), accom, self.art);
     v.lc.attr_sort_bug = cfg.attr_sort_bug;
-    v.lc.formatter.dump = cfg.dump_formatter;
+    v.lc.formatter.dump = cfg.dump.formatter;
     let old = v.lc.start_stash();
     if let Some(accom) = &mut v.accom {
       accom.accom_constructors(&mut v.g.constrs).unwrap();
@@ -147,16 +147,16 @@ impl MizPath {
         f.formats.len()
       }
     }
-    if cfg.dump_notations {
+    if cfg.dump.notations {
       notations.iter().for_each(|pat| eprintln!("{pat:?}"))
     }
     v.lc.formatter.init_symbols(self, symbols);
     v.lc.formatter.init();
     v.lc.formatter.extend(&v.g.constrs, &notations);
-    if cfg.dump_constructors {
+    if cfg.dump.constructors {
       v.g.constrs.dump()
     }
-    if cfg.dump_requirements {
+    if cfg.dump.requirements {
       v.g.reqs.dump(&v.g.constrs)
     }
     if let Some(accom) = &mut v.accom {
@@ -165,7 +165,7 @@ impl MizPath {
       self.read_ecl(&v.g.constrs, &mut v.g.clusters).unwrap();
     }
     v.g.clusters.functor.sort_all(|a, b| FunctorCluster::cmp_term(&a.term, &v.g.constrs, &b.term));
-    if cfg.dump_clusters {
+    if cfg.dump.clusters {
       v.g.clusters.dump()
     }
 
@@ -204,7 +204,7 @@ impl MizPath {
       } else {
         self.read_definitions(&v.g.constrs, false, "dfs", None, &mut v.definitions).unwrap();
       }
-      if cfg.dump_definitions {
+      if cfg.dump.definitions {
         for d in &v.definitions {
           eprintln!("definition: {d:?}");
         }
@@ -220,7 +220,7 @@ impl MizPath {
       } else {
         self.read_definitions(&v.g.constrs, false, "dfe", None, &mut v.equalities).unwrap();
       }
-      if cfg.dump_definitions {
+      if cfg.dump.definitions {
         for d in &v.equalities {
           eprintln!("equality: {d:?}");
         }
@@ -236,7 +236,7 @@ impl MizPath {
       } else {
         self.read_definitions(&v.g.constrs, false, "dfx", None, &mut v.expansions).unwrap();
       }
-      if cfg.dump_definitions {
+      if cfg.dump.definitions {
         for d in &v.expansions {
           eprintln!("expansion: {d:?}");
         }
@@ -331,7 +331,7 @@ impl MizPath {
       }
       RoundUpTypes::with(&v.g, &mut v.lc, |rr| v.libs.visit(rr));
 
-      if cfg.dump_libraries {
+      if cfg.dump.libraries {
         for (&(ar, nr), th) in &v.libs.thm {
           eprintln!("art {ar:?}:{nr:?} = {th:?}");
         }
@@ -533,7 +533,7 @@ impl Reader {
     if let Some(pos) = it.pos() {
       self.set_pos(pos);
     }
-    if let Some(n) = self.g.cfg.first_verbose_item {
+    if let Some(n) = self.g.cfg.first_verbose_line {
       if self.pos.line > n && self.g.cfg.one_item {
         eprintln!("exiting");
         std::process::exit(0)

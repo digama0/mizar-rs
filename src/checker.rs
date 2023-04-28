@@ -31,7 +31,7 @@ impl<'a> Checker<'a> {
   }
 
   pub fn justify(&mut self, premises: Vec<&'a Formula>) {
-    if let Some(n) = self.g.cfg.first_verbose_checker {
+    if let Some(n) = self.g.cfg.first_verbose_line {
       set_verbose(self.pos.line >= n);
     }
     if self.g.cfg.skip_to_verbose && !crate::verbose() {
@@ -200,7 +200,7 @@ impl<'a> Checker<'a> {
   }
 
   pub fn justify_scheme(&mut self, sch: &Scheme, premises: Vec<&'a Formula>, thesis: &'a Formula) {
-    if let Some(n) = self.g.cfg.first_verbose_checker {
+    if let Some(n) = self.g.cfg.first_verbose_line {
       set_verbose(self.pos.line >= n);
     }
     if self.g.cfg.skip_to_verbose && !crate::verbose() {

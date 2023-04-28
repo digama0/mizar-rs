@@ -219,7 +219,7 @@ impl Analyzer<'_> {
 
   fn item_header(&mut self, it: &ast::Item, s: &str) {
     self.set_pos(it.pos);
-    if let Some(n) = self.g.cfg.first_verbose_item {
+    if let Some(n) = self.g.cfg.first_verbose_line {
       if self.pos.line > n && self.g.cfg.one_item {
         eprintln!("exiting");
         std::process::exit(0)
