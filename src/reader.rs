@@ -41,6 +41,7 @@ pub struct Reader {
   labels: IdxVec<LabelId, Option<usize>>,
   pending_defs: Vec<PendingDef>,
   pub pos: Position,
+  pub progress: Option<ProgressBar>,
 }
 impl WithGlobalLocal for Reader {
   fn global(&self) -> &Global { &self.g }
@@ -49,13 +50,14 @@ impl WithGlobalLocal for Reader {
 
 impl MizPath {
   pub fn with_reader(
-    &self, cfg: &Config, mml_vct: &[u8], f: &mut dyn FnMut(&mut Reader, Option<&mut MizParser<'_>>),
+    &self, cfg: &Config, progress: Option<&ProgressBar>, mml_vct: &[u8],
+    f: &mut dyn FnMut(&mut Reader, Option<&mut MizParser<'_>>),
   ) {
     let mut accom = cfg.accom_enabled.then(Box::<Accomodator>::default);
     let data;
     let mut parser = if cfg.parser_enabled {
       data = self.read_miz().unwrap();
-      Some(Box::new(MizParser::new(self.art, &data)))
+      Some(Box::new(MizParser::new(self.art, progress, &data)))
     } else {
       None
     };
@@ -79,7 +81,7 @@ impl MizPath {
     };
 
     // Load_EnvConstructors
-    let mut v = Reader::new(cfg, accom, self.art);
+    let mut v = Reader::new(cfg, progress.cloned(), accom, self.art);
     v.lc.attr_sort_bug = cfg.attr_sort_bug;
     v.lc.formatter.dump = cfg.dump_formatter;
     let old = v.lc.start_stash();
@@ -362,7 +364,9 @@ pub struct Scope {
 }
 
 impl Reader {
-  pub fn new(cfg: &Config, accom: Option<Box<Accomodator>>, article: Article) -> Self {
+  pub fn new(
+    cfg: &Config, progress: Option<ProgressBar>, accom: Option<Box<Accomodator>>, article: Article,
+  ) -> Self {
     Reader {
       g: Global {
         cfg: cfg.clone(),
@@ -392,6 +396,7 @@ impl Reader {
       pending_defs: Default::default(),
       pos: Default::default(),
       no_suppress_checker: true,
+      progress,
     }
   }
 
@@ -517,9 +522,16 @@ impl Reader {
     })
   }
 
+  pub fn set_pos(&mut self, pos: Position) {
+    self.pos = pos;
+    if let Some(progress) = &self.progress {
+      progress.set_position(pos.line.into())
+    }
+  }
+
   pub fn read_item(&mut self, it: &Item) {
     if let Some(pos) = it.pos() {
-      self.pos = pos;
+      self.set_pos(pos);
     }
     if let Some(n) = self.g.cfg.first_verbose_item {
       if self.pos.line > n && self.g.cfg.one_item {
@@ -932,6 +944,7 @@ impl Reader {
       stat("skipped by $V-");
       return
     }
+    self.set_pos(it.pos);
     let refs = it.refs.iter().map(|r| match r.kind {
       ReferenceKind::Priv(lab) => &self.props[self.labels[lab].unwrap()],
       ReferenceKind::Thm(thm) => &self.libs.thm[&thm],

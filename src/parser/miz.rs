@@ -5,7 +5,9 @@ use crate::types::{
   PriorityKind, PropertyKind, RightBrkSymId, SchId, StructSymId, SymbolKind, Symbols, ThmId,
   MAX_ARTICLE_LEN,
 };
+use crate::READ_MAX_LINE_COUNT;
 use enum_map::Enum;
+use indicatif::ProgressBar;
 use radix_trie::{Trie, TrieCommon};
 use std::collections::HashMap;
 
@@ -174,7 +176,7 @@ struct Scanner<'a> {
 }
 
 impl<'a> Scanner<'a> {
-  fn new(data: &'a [u8]) -> Self {
+  fn new(data: &'a [u8], progress: Option<&ProgressBar>) -> Self {
     let mut tokens = Trie::default();
     let mut push1 = |cc: &[u8], kind| assert!(tokens.insert(cc.to_owned(), kind).is_none());
     push1(b"$", TokenKind::Dollar(0));
@@ -189,6 +191,11 @@ impl<'a> Scanner<'a> {
     }
     for dir in (0..DirectiveKind::LENGTH).map(DirectiveKind::from_usize) {
       push1(dir.name().as_bytes(), TokenKind::Directive(dir))
+    }
+    if READ_MAX_LINE_COUNT {
+      if let Some(progress) = progress {
+        progress.set_length(bytecount::count(data, b'\n') as u64 + 1)
+      }
     }
     Self {
       data,
@@ -384,9 +391,9 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-  pub fn new(art: Article, data: &'a [u8]) -> Self {
+  pub fn new(art: Article, progress: Option<&ProgressBar>, data: &'a [u8]) -> Self {
     Self {
-      scan: Scanner::new(data),
+      scan: Scanner::new(data, progress),
       art,
       articles: Default::default(),
       formats: Default::default(),
