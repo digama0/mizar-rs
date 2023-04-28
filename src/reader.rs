@@ -40,8 +40,7 @@ pub struct Reader {
   props: Vec<Formula>,
   labels: IdxVec<LabelId, Option<usize>>,
   pending_defs: Vec<PendingDef>,
-  pub items: usize,
-  inference_nr: usize,
+  pub pos: Position,
 }
 impl WithGlobalLocal for Reader {
   fn global(&self) -> &Global { &self.g }
@@ -391,8 +390,7 @@ impl Reader {
       props: Default::default(),
       labels: Default::default(),
       pending_defs: Default::default(),
-      items: 0,
-      inference_nr: 0,
+      pos: Default::default(),
       no_suppress_checker: true,
     }
   }
@@ -499,9 +497,7 @@ impl Reader {
 
   /// Prepare
   pub fn run_checker(&mut self, path: &MizPath) {
-    let items = path.read_xml().unwrap();
-    // println!("parsed {:?}, {} items", path.0, r.len());
-    for (i, it) in items.iter().enumerate() {
+    path.read_xml(|it| {
       assert!(matches!(
         it,
         Item::AuxiliaryItem(_)
@@ -514,26 +510,26 @@ impl Reader {
           | Item::Block { .. }
       ));
       // stat(s);
-      if let Some(n) = self.g.cfg.first_verbose_top_item {
-        set_verbose(i >= n);
-      }
       if self.g.cfg.top_item_header {
-        eprintln!("item {i}: {it:?}");
+        eprintln!("item: {it:?}");
       }
-      self.read_item(it);
-    }
+      self.read_item(&it);
+    })
   }
 
   pub fn read_item(&mut self, it: &Item) {
+    if let Some(pos) = it.pos() {
+      self.pos = pos;
+    }
     if let Some(n) = self.g.cfg.first_verbose_item {
-      if self.items == n + 1 && self.g.cfg.one_item {
+      if self.pos.line > n && self.g.cfg.one_item {
         eprintln!("exiting");
         std::process::exit(0)
       }
-      set_verbose(self.items >= n);
+      set_verbose(self.pos.line >= n);
     }
     if self.g.cfg.item_header {
-      eprint!("item[{}]: ", self.items);
+      eprint!("item[{:?}]: ", self.pos);
       if self.g.cfg.always_verbose_item || verbose() {
         eprintln!("{it:#?}");
       } else {
@@ -571,7 +567,6 @@ impl Reader {
         }
       }
     }
-    self.items += 1;
     match it {
       // reservations not handled by checker
       Item::Reservation { .. } => {}
@@ -642,10 +637,7 @@ impl Reader {
       },
       Item::Scheme(sch) => self.read_scheme(sch),
       Item::Theorem { prop, just } => self.read_just_prop(prop, just, true),
-      Item::DefTheorem { prop, .. } => {
-        self.items -= 1; // this is not a real item
-        self.read_proposition(prop)
-      }
+      Item::DefTheorem { prop, .. } => self.read_proposition(prop),
       Item::Canceled(_) => {}
       Item::Definition(Definition { conds, corr, props, constr, patts, .. }) => {
         self.read_corr_conds(conds, corr);
@@ -667,10 +659,7 @@ impl Reader {
         self.read_corr_conds(conds, corr);
         self.lc.formatter.extend(&self.g.constrs, patts)
       }
-      Item::Definiens(df) => {
-        self.items -= 1; // this is not a real item
-        self.read_definiens(df)
-      }
+      Item::Definiens(df) => self.read_definiens(df),
       Item::Block { kind, label, items, .. } => {
         let check = matches!(kind, BlockKind::Definition | BlockKind::Registration);
         self.scope(*label, check, |this| {
@@ -957,8 +946,6 @@ impl Reader {
       func_ids: &self.func_ids,
       reductions: &self.reductions,
       article: self.article,
-      item_idx: self.items - 1,
-      idx: self.inference_nr,
       pos: it.pos,
     };
     match it.kind {
@@ -973,7 +960,6 @@ impl Reader {
           premises.extend(refs);
           ck.justify(premises);
         }
-        self.inference_nr += 1;
       }
       InferenceKind::From { sch } =>
         ck.justify_scheme(&self.libs.sch[&sch], refs.collect(), thesis),

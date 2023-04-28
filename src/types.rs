@@ -2030,6 +2030,18 @@ pub enum AuxiliaryItem {
     value: Formula,
   },
 }
+impl AuxiliaryItem {
+  pub fn pos(&self) -> Option<Position> {
+    match self {
+      AuxiliaryItem::Statement(stmt) => Some(stmt.pos()),
+      AuxiliaryItem::Consider { prop, .. } => Some(prop.pos),
+      AuxiliaryItem::Set { .. }
+      | AuxiliaryItem::Reconsider { .. }
+      | AuxiliaryItem::DefFunc { .. }
+      | AuxiliaryItem::DefPred { .. } => None,
+    }
+  }
+}
 
 #[derive(Debug)]
 pub enum Registration {
@@ -2189,6 +2201,31 @@ pub enum Item {
     label: Option<LabelId>,
     items: Vec<Item>,
   },
+}
+
+impl Item {
+  pub fn pos(&self) -> Option<Position> {
+    match self {
+      Item::Given(it) => Some(it.prop.pos),
+      Item::Thus(stmt) => Some(stmt.pos()),
+      Item::Assume(prop) => Some(prop[0].pos),
+      Item::PerCases(it) => Some(it.pos.0),
+      Item::AuxiliaryItem(it) => it.pos(),
+      Item::Scheme(it) => Some(it.pos.0),
+      Item::Theorem { prop, .. } | Item::DefTheorem { prop, .. } => Some(prop.pos),
+      Item::Definition(it) => Some(it.pos),
+      Item::DefStruct(it) => Some(it.pos),
+      Item::Block { pos, .. } => Some(pos.0),
+      Item::Let(_)
+      | Item::Take(_)
+      | Item::TakeAsVar(..)
+      | Item::Registration(_)
+      | Item::Reservation { .. }
+      | Item::Canceled(_)
+      | Item::Definiens(_)
+      | Item::Pattern(_) => None,
+    }
+  }
 }
 
 #[derive(Clone, Copy, Debug, Enum, PartialEq, Eq, PartialOrd, Ord)]

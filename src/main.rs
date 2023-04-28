@@ -120,15 +120,13 @@ pub struct Config {
   pub attr_sort_bug: bool,
 
   pub panic_on_fail: bool,
-  pub first_verbose_top_item: Option<usize>,
-  pub first_verbose_item: Option<usize>,
+  pub first_verbose_item: Option<u32>,
   pub one_item: bool,
-  pub first_verbose_checker: Option<usize>,
+  pub first_verbose_checker: Option<u32>,
   pub skip_to_verbose: bool,
 }
 
 const DEBUG: bool = cfg!(debug_assertions);
-const COUNT_SKIPPED_ITEMS: bool = false;
 const GC_THRESHOLD: usize = 5000;
 
 impl FormatterConfig {
@@ -183,7 +181,6 @@ fn main() {
     attr_sort_bug: true,
 
     panic_on_fail: DEBUG,
-    first_verbose_top_item: None,
     first_verbose_item: None,
     one_item: false,
     first_verbose_checker: None,

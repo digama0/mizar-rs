@@ -127,17 +127,12 @@ impl Reader {
       elab.export.reductions_base = elab.reductions.len() as u32;
       elab.export.properties_base = elab.properties.len() as u32;
     }
-    let mut i = 0;
     while elab.r.push_parse_item(&mut parser, &mut items) {
       for it in items.iter_mut() {
-        if let Some(n) = elab.g.cfg.first_verbose_top_item {
-          set_verbose(i >= n);
-        }
         if elab.g.cfg.top_item_header {
-          eprintln!("item {i}: {it:?}");
+          eprintln!("item {:?}: {:?}", it.pos, it.kind);
         }
         elab.elab_top_item(it);
-        i += 1;
       }
       items.clear()
     }
@@ -211,14 +206,6 @@ impl Analyzer<'_> {
     r
   }
 
-  fn skip_scope(&mut self, f: impl FnOnce(&mut Self)) {
-    let lookup = self.lookup.clone();
-    let fixed_var = self.lc.fixed_var.len();
-    f(self);
-    self.lookup = lookup;
-    self.lc.fixed_var.0.truncate(fixed_var);
-  }
-
   pub fn push_prop(&mut self, label: Option<(Option<LabelId>, Rc<str>)>, prop: Formula) {
     let label = label.map(|(id2, name)| {
       let id = self.label_names.push(Some(name));
@@ -231,22 +218,22 @@ impl Analyzer<'_> {
   }
 
   fn item_header(&mut self, it: &ast::Item, s: &str) {
+    self.r.pos = it.pos;
     if let Some(n) = self.g.cfg.first_verbose_item {
-      if self.items == n + 1 && self.g.cfg.one_item {
+      if self.pos.line > n && self.g.cfg.one_item {
         eprintln!("exiting");
         std::process::exit(0)
       }
-      set_verbose(self.items >= n);
+      set_verbose(self.pos.line >= n);
     }
     if self.g.cfg.item_header {
-      eprint!("item[{}]: ", self.items);
+      eprint!("item[{:?}]: ", self.pos);
       if self.g.cfg.always_verbose_item || verbose() {
-        eprintln!("{it:#?}");
+        eprintln!("{:#?}", it.kind);
       } else {
-        eprintln!("{s} @ {:?}", it.pos)
+        eprintln!("{s}")
       }
     }
-    self.items += 1;
   }
 
   fn elab_top_item(&mut self, it: &mut ast::Item) {
@@ -277,8 +264,6 @@ impl Analyzer<'_> {
           let label = prop.label.as_ref().map(|l| l.id.clone());
           self.elab_justification_intro_reserved(label.is_some(), &f, just, block);
           self.push_prop(label, f)
-        } else if COUNT_SKIPPED_ITEMS {
-          self.skip_justification(just, block);
         }
         assert!(self.reserved_extra_depth == 0);
         if self.g.cfg.exporter_enabled {
@@ -288,7 +273,6 @@ impl Analyzer<'_> {
       ast::ItemKind::Reservation(its) => {
         self.lc.term_cache.get_mut().open_scope();
         assert!(self.lc.bound_var.is_empty());
-        self.items += its.len() - 1;
         for it in its {
           let ty;
           let fvars = if let Some(tys) = &it.tys {
@@ -333,7 +317,6 @@ impl Analyzer<'_> {
         self.lc.term_cache.get_mut().close_scope();
       }
       ast::ItemKind::Pragma(pragma) => {
-        self.items -= 1;
         match *pragma {
           Pragma::Canceled(k, n) => self.elab_canceled(it.pos, k, n),
           Pragma::SetVerify(b) => self.no_suppress_checker = b,
@@ -495,8 +478,6 @@ impl Analyzer<'_> {
         if let Some(conjs) = conjs {
           let f = Formula::mk_and(conjs);
           self.elab_justification(false, &f, just)
-        } else if COUNT_SKIPPED_ITEMS {
-          self.skip_justification(just, <_>::default())
         }
       }
       ast::ItemKind::Consider { vars, conds, just } => {
@@ -523,75 +504,13 @@ impl Analyzer<'_> {
             f.visit(&mut self.intern_const());
             self.push_prop(label, f);
           }
-        } else {
-          self.skip_justification(just, <_>::default());
         }
       }
       ast::ItemKind::Statement(stmt) =>
         if self.g.cfg.analyzer_full {
           self.elab_stmt(stmt);
-        } else if COUNT_SKIPPED_ITEMS {
-          self.skip_stmt(stmt);
         },
       _ => unreachable!("unexpected item: {it:?}"),
-    }
-  }
-
-  fn skip_item(&mut self, it: &mut ast::Item) {
-    self.items += 1;
-    match &mut it.kind {
-      ast::ItemKind::Let { vars, conds } => {
-        self.items += vars.len() - 1;
-        if !conds.is_empty() {
-          self.items += 1;
-        }
-        self.skip_fixed_vars(vars)
-      }
-      ast::ItemKind::Given { vars, .. } => self.skip_fixed_vars(vars),
-      ast::ItemKind::Take(decl) =>
-        if self.g.cfg.nameck_enabled {
-          for d in decl {
-            if let Some(v) = &mut d.var {
-              self.skip_fixed_var(v)
-            }
-          }
-        },
-      ast::ItemKind::Set(decl) =>
-        if self.g.cfg.nameck_enabled {
-          for d in decl {
-            self.skip_fixed_var(&mut d.var)
-          }
-        },
-      ast::ItemKind::Thus(stmt) => self.skip_stmt(stmt),
-      ast::ItemKind::Assume { .. } => {}
-      ast::ItemKind::DefFunc { var, tys, .. } =>
-        if self.g.cfg.nameck_enabled {
-          let i = self.r.lc.priv_func.push(FuncDef::default());
-          (Rc::make_mut(&mut self.lookup).func)
-            .insert((var.spelling.clone(), tys.len() as u32), PrivFuncKind::PrivFunc(i));
-        },
-      ast::ItemKind::DefPred { var, tys, .. } =>
-        if self.g.cfg.nameck_enabled {
-          let i = self.priv_pred.push(<_>::default());
-          (Rc::make_mut(&mut self.lookup).pred)
-            .insert((var.spelling.clone(), tys.len() as u32), PrivPredKind::PrivPred(i));
-        },
-      ast::ItemKind::PerCases { just, blocks, .. } => {
-        blocks.iter_mut().for_each(|bl| self.skip_items(&mut bl.items, <_>::default()));
-        self.skip_justification(just, <_>::default())
-      }
-      ast::ItemKind::Reconsider { vars, just, .. } => {
-        for ast::ReconsiderVar::Var(var) | ast::ReconsiderVar::Equality { var, .. } in vars {
-          self.skip_fixed_var(var)
-        }
-        self.skip_justification(just, <_>::default())
-      }
-      ast::ItemKind::Consider { vars, just, .. } => {
-        self.skip_fixed_vars(vars);
-        self.skip_justification(just, <_>::default())
-      }
-      ast::ItemKind::Statement(stmt) => self.skip_stmt(stmt),
-      _ => panic!("unexpected item: {it:?}"),
     }
   }
 
@@ -639,23 +558,6 @@ impl Analyzer<'_> {
     }
   }
 
-  fn skip_stmt(&mut self, stmt: &mut ast::Statement) {
-    match stmt {
-      ast::Statement::Proposition { prop, just } => {
-        let fvars = self.collect_reserved(|cr| cr.visit_formula(&mut prop.f));
-        self.reserved_extra_depth = fvars.len() as u32;
-        self.skip_justification(just, ReserveBlock(fvars))
-      }
-      ast::Statement::IterEquality { just, steps, .. } => {
-        self.skip_justification(just, <_>::default());
-        for ast::IterStep { just, .. } in steps {
-          self.skip_justification(just, <_>::default())
-        }
-      }
-      ast::Statement::Now { items, .. } => self.skip_items(items, <_>::default()),
-    }
-  }
-
   fn elab_proof_intro_reserved(
     &mut self, push_label: bool, thesis: &Formula, items: &mut [ast::Item], end: Position,
     reset: ReserveBlock,
@@ -664,13 +566,6 @@ impl Analyzer<'_> {
       this.thesis = Some(Box::new(thesis.clone()));
       reset.intro(this);
       WithThesis.elab_proof(this, items, end)
-    })
-  }
-
-  fn skip_items(&mut self, items: &mut [ast::Item], reset: ReserveBlock) {
-    self.skip_scope(|this| {
-      reset.skip_intro(this);
-      items.iter_mut().for_each(|item| this.skip_item(item))
     })
   }
 
@@ -711,17 +606,6 @@ impl Analyzer<'_> {
       for v in vars {
         lookup.var.insert(v.spelling.clone(), VarKind::Const(base.fresh()));
       }
-    }
-  }
-
-  fn skip_fixed_var(&mut self, v: &mut ast::Variable) {
-    let c = self.lc.fixed_var.push(FixedVar { ty: Type::default(), def: None });
-    Rc::make_mut(&mut self.lookup).var.insert(v.spelling.clone(), VarKind::Const(c));
-  }
-
-  fn skip_fixed_vars(&mut self, vars: &mut [ast::BinderGroup]) {
-    if self.g.cfg.nameck_enabled {
-      vars.iter_mut().for_each(|it| it.vars.iter_mut().for_each(|v| self.skip_fixed_var(v)));
     }
   }
 
@@ -798,12 +682,6 @@ impl Analyzer<'_> {
     }
   }
 
-  fn skip_justification(&mut self, just: &mut ast::Justification, block: ReserveBlock) {
-    if let ast::Justification::Block { items, .. } = just {
-      self.skip_items(items, block)
-    }
-  }
-
   fn elab_corr_conds(
     &mut self, mut cc: CorrConds, conds: &mut [ast::CorrCond], corr: &mut Option<ast::Correctness>,
   ) {
@@ -825,13 +703,6 @@ impl Analyzer<'_> {
         self.elab_justification(false, &thesis, &mut corr.just);
       }
       assert!(cc.0.iter().all(|p| p.1.is_none()));
-    } else if COUNT_SKIPPED_ITEMS {
-      for cond in conds {
-        self.skip_justification(&mut cond.just, <_>::default())
-      }
-      if let Some(corr) = corr {
-        self.skip_justification(&mut corr.just, <_>::default());
-      }
     }
   }
 
@@ -869,7 +740,6 @@ impl Analyzer<'_> {
   }
 
   fn elab_canceled(&mut self, pos: Position, kind: CancelKind, n: u32) {
-    self.items += n as usize;
     match kind {
       CancelKind::Def => {
         // canceled defs outside a block don't create a DefTheorem, so they don't increment self.defthms
@@ -2331,8 +2201,6 @@ impl<'a> PropertiesBuilder<'a> {
           (k, tgt) => panic!("property {k:?} is not applicable to {tgt:?}"),
         };
         elab.elab_justification(false, &thesis, &mut prop.just);
-      } else if COUNT_SKIPPED_ITEMS {
-        elab.skip_justification(&mut prop.just, <_>::default());
       }
       self.props.set(match self.kind {
         PropertyDeclKind::Pred(_, false) => prop.kind.flip(),
@@ -2372,7 +2240,6 @@ struct ReserveBlock(Vec<ReservedId>);
 impl ReserveBlock {
   fn intro(self, elab: &mut Analyzer<'_>) {
     if !self.0.is_empty() {
-      elab.items += self.0.len();
       let mut thesis = elab.thesis.take().expect("must be called in a proof block");
       let mut inst = InstConst { depth: 0, base: elab.lc.fixed_var.len() as u32 };
       let lookup = Rc::make_mut(&mut elab.lookup);
@@ -2389,18 +2256,6 @@ impl ReserveBlock {
       }
       inst.visit_formula(&mut thesis);
       elab.thesis = Some(thesis);
-    }
-  }
-
-  fn skip_intro(self, elab: &mut Analyzer<'_>) {
-    if !self.0.is_empty() {
-      elab.items += self.0.len();
-      let lookup = Rc::make_mut(&mut elab.lookup);
-      for &nr in &self.0 {
-        let c = elab.r.lc.fixed_var.push(FixedVar { ty: Type::default(), def: None });
-        elab.reserved_lookup.insert(nr, VarKind::Const(c));
-        lookup.var.insert(elab.reserved[nr].0.clone(), VarKind::Const(c));
-      }
     }
   }
 }
@@ -2773,10 +2628,6 @@ trait ReadProof {
     // eprintln!("[{:?}] thesis = {:?}", it.pos, elab.thesis);
     match &mut it.kind {
       ast::ItemKind::Let { vars, conds } => {
-        elab.items += vars.len() - 1;
-        if !conds.is_empty() {
-          elab.items += 1;
-        }
         let n = elab.lc.fixed_var.len();
         let istart = elab.lc.infer_const.get_mut().len() as u32;
         for var in vars {
@@ -2811,8 +2662,7 @@ trait ReadProof {
         });
         self.given(elab, n, istart, f);
       }
-      ast::ItemKind::Take(its) => {
-        elab.items += its.len() - 1;
+      ast::ItemKind::Take(its) =>
         for ast::TakeDecl { var, term } in its {
           let term = elab.elab_intern_term_no_reserve(term);
           if let Some(var) = var {
@@ -2825,14 +2675,11 @@ trait ReadProof {
           } else {
             self.take(elab, term)
           }
-        }
-      }
+        },
       ast::ItemKind::Thus(stmt) =>
         if elab.g.cfg.analyzer_full {
           let f = elab.elab_stmt(stmt);
           self.thus(elab, f.into_conjuncts())
-        } else if COUNT_SKIPPED_ITEMS {
-          elab.skip_stmt(stmt)
         },
       ast::ItemKind::PerCases { just, kind: CaseKind::Case, blocks } => {
         let mut iter = self.new_cases(elab);
@@ -4473,8 +4320,6 @@ impl BlockReader {
       ));
       property.visit(&mut elab.intern_const());
       elab.elab_justification(false, &property, just);
-    } else if COUNT_SKIPPED_ITEMS {
-      elab.skip_justification(just, <_>::default())
     }
     self.to_locus(elab, |l| ty.visit(l));
     CheckAccess::with(&primary, |occ| occ.visit_type(&ty));
@@ -4608,7 +4453,6 @@ impl BlockReader {
   }
 
   fn elab_canceled_def(&mut self, elab: &mut Analyzer, loc: Position, n: u32) {
-    elab.items += n as usize;
     elab.defthms.0 += n;
     if elab.g.cfg.exporter_enabled {
       self.defs.extend((0..n).map(|_| (loc, None)))
@@ -4721,14 +4565,12 @@ impl ReadProof for BlockReader {
       (BlockKind::Registration, ast::ItemKind::Reduction(it)) => self.elab_reduction(elab, it),
       (BlockKind::Registration, ast::ItemKind::SethoodRegistration { ty, just }) =>
         self.elab_sethood_registration(elab, ty, just),
-      (BlockKind::Definition, &mut ast::ItemKind::Pragma(Pragma::Canceled(CancelKind::Def, n))) => {
-        elab.items -= 1;
-        self.elab_canceled_def(elab, it.pos, n)
-      }
+      (BlockKind::Definition, &mut ast::ItemKind::Pragma(Pragma::Canceled(CancelKind::Def, n))) =>
+        self.elab_canceled_def(elab, it.pos, n),
       (
         BlockKind::Registration | BlockKind::Definition,
         ast::ItemKind::Pragma(Pragma::ThmDesc(_)),
-      ) => elab.items -= 1,
+      ) => {}
       _ => return self.super_elab_item(elab, it),
     }
     true

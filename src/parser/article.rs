@@ -84,14 +84,6 @@ impl ArticleParser<'_> {
     }
   }
 
-  pub(super) fn parse_items(&mut self) -> Vec<Item> {
-    let mut items = vec![];
-    while let Some(item) = self.parse_item() {
-      items.push(item)
-    }
-    items
-  }
-
   fn finish_proposition(&mut self, prop: Proposition) -> Item {
     let s = Statement::Proposition { prop, just: self.parse_justification() };
     Item::AuxiliaryItem(AuxiliaryItem::Statement(s))

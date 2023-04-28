@@ -747,14 +747,16 @@ impl MizPath {
     Ok(true)
   }
 
-  pub fn read_xml(&self) -> io::Result<Vec<Item>> {
-    let (mut r, mut buf) = MizReader::new(self.open(true, false, "xml")?, MaybeMut::None, true);
+  pub fn read_xml(&self, mut f: impl FnMut(Item)) {
+    let (mut r, mut buf) =
+      MizReader::new(self.open(true, false, "xml").unwrap(), MaybeMut::None, true);
     r.read_pi(&mut buf);
     r.read_start(&mut buf, Some(b"Article"));
     let mut p = ArticleParser { r, buf };
-    let items = p.parse_items();
+    while let Some(item) = p.parse_item() {
+      f(item)
+    }
     assert!(matches!(p.r.read_event(&mut p.buf), Event::Eof));
-    Ok(items)
   }
 }
 

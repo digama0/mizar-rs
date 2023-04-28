@@ -22,8 +22,6 @@ pub struct Checker<'a> {
   pub func_ids: &'a BTreeMap<ConstrKind, Vec<usize>>,
   pub reductions: &'a [Reduction],
   pub article: Article,
-  pub item_idx: usize,
-  pub idx: usize,
   pub pos: Position,
 }
 
@@ -34,7 +32,7 @@ impl<'a> Checker<'a> {
 
   pub fn justify(&mut self, premises: Vec<&'a Formula>) {
     if let Some(n) = self.g.cfg.first_verbose_checker {
-      set_verbose(self.idx >= n);
+      set_verbose(self.pos.line >= n);
     }
     if self.g.cfg.skip_to_verbose && !crate::verbose() {
       return
@@ -63,29 +61,30 @@ impl<'a> Checker<'a> {
       }
     });
     if self.g.cfg.checker_header {
-      eprintln!("refuting {} @ {:?}:{:?}:\n  {check_f:?}", self.idx, self.article, self.pos);
+      eprintln!("refuting {:?}:{:?}:\n  {check_f:?}", self.article, self.pos);
     }
 
     OpenAsConst(self).open_quantifiers(&mut check_f, true);
-    // vprintln!("opened {} @ {:?}:{:?}:\n  {check_f:?}", self.idx, self.article, self.pos);
+    // vprintln!("opened {:?}:{:?}:\n  {check_f:?}", self.article, self.pos);
 
     check_f.visit(&mut self.intern_const());
-    // vprintln!("interned {} @ {:?}:{:?}:\n  {check_f:?}", self.idx, self.article, self.pos);
+    // vprintln!("interned {:?}:{:?}:\n  {check_f:?}", self.article, self.pos);
 
     let mut atoms = Atoms::default();
     let Dnf::Or(mut normal_form) = atoms.normalize(self.g, self.lc, check_f, true).unwrap()
     else { panic!("it is not true") };
-    // vprintln!("normalized {} @ {:?}:{:?}:\n  {normal_form:?}", self.idx, self.article, self.pos);
+    // vprintln!("normalized {:?}:{:?}:\n  {normal_form:?}", self.article, self.pos);
 
     self.process_is(&mut atoms, &mut normal_form).unwrap();
-    // vprintln!("process_is {} @ {:?}:{:?}:\n  {normal_form:?}", self.idx, self.article, self.pos);
+    // vprintln!("process_is {:?}:{:?}:\n  {normal_form:?}", self.article, self.pos);
 
     let mut err = false;
     for (i, f) in normal_form.into_iter().enumerate() {
       if self.g.cfg.checker_conjuncts {
         eprintln!(
-          "falsifying {}.{i}: {:#?}",
-          self.idx,
+          "falsifying {:?}:{:?}.{i}: {:#?}",
+          self.article,
+          self.pos,
           f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
         );
       }
@@ -98,8 +97,7 @@ impl<'a> Checker<'a> {
       if sat.is_err() {
         if self.g.cfg.checker_result {
           eprintln!(
-            "proved {}.{i} @ {:?}:{:?}! {:#?}",
-            self.idx,
+            "proved {:?}:{:?}.{i}! {:#?}",
             self.article,
             self.pos,
             f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
@@ -109,23 +107,16 @@ impl<'a> Checker<'a> {
         err = true;
         if self.g.cfg.checker_result {
           eprintln!(
-            "FAILED TO JUSTIFY {}.{i} @ {:?}:{:?}: {:#?}",
-            self.idx,
+            "FAILED TO JUSTIFY {:?}:{:?}.{i}: {:#?}",
             self.article,
             self.pos,
             f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
           );
         }
         stat("failure");
-        println!(
-          "[{}] failed to justify {}.{i} @ {:?}:{:?}",
-          self.item_idx, self.idx, self.article, self.pos
-        );
+        println!("failed to justify {:?}:{:?}.{i}", self.article, self.pos);
         if self.g.cfg.panic_on_fail {
-          panic!(
-            "[{}] failed to justify {}.{i} @ {:?}:{:?}",
-            self.item_idx, self.idx, self.article, self.pos
-          );
+          panic!("failed to justify {:?}:{:?}.{i}", self.article, self.pos);
         }
         break
       }
@@ -210,7 +201,7 @@ impl<'a> Checker<'a> {
 
   pub fn justify_scheme(&mut self, sch: &Scheme, premises: Vec<&'a Formula>, thesis: &'a Formula) {
     if let Some(n) = self.g.cfg.first_verbose_checker {
-      set_verbose(self.idx >= n);
+      set_verbose(self.pos.line >= n);
     }
     if self.g.cfg.skip_to_verbose && !crate::verbose() {
       return
@@ -233,22 +224,16 @@ impl<'a> Checker<'a> {
     {
       stat("success");
       if self.g.cfg.checker_result {
-        eprintln!("proved sch {} @ {:?}:{:?}!", self.idx, self.article, self.pos);
+        eprintln!("proved sch {:?}:{:?}!", self.article, self.pos);
       }
     } else {
       stat("failure");
       if self.g.cfg.checker_result {
-        eprintln!("FAILED TO JUSTIFY sch {} @ {:?}:{:?}", self.idx, self.article, self.pos);
+        eprintln!("FAILED TO JUSTIFY sch {:?}:{:?}", self.article, self.pos);
       }
-      println!(
-        "[{}] failed to justify sch {} @ {:?}:{:?}",
-        self.item_idx, self.idx, self.article, self.pos
-      );
+      println!("failed to justify sch {:?}:{:?}", self.article, self.pos);
       if self.g.cfg.panic_on_fail {
-        panic!(
-          "[{}] failed to justify sch {} @ {:?}:{:?}",
-          self.item_idx, self.idx, self.article, self.pos
-        );
+        panic!("failed to justify sch {:?}:{:?}", self.article, self.pos);
       }
     }
     self.lc.term_cache.get_mut().close_scope();
