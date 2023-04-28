@@ -1041,9 +1041,9 @@ macro_rules! mk_property_kind {
       $($(#[$attr])* $id,)*
     }
     impl $ty {
-      pub fn to_upper(self) -> &'static [u8] {
+      pub fn to_upper(self) -> &'static str {
         match self {
-          $(Self::$id => $upper,)*
+          $(Self::$id => stringify!($id),)*
         }
       }
       pub fn to_lower(self) -> &'static [u8] {

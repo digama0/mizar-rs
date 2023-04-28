@@ -9,7 +9,7 @@ edition = "2021"
 debug = true
 
 [dependencies]
-quick-xml = "0.23.0"
+quick-xml = "0.28.1"
 once_cell = "1.12"
 enum-map = "2.4"
 backtrace = "0.3"

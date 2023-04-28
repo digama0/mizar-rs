@@ -2,7 +2,6 @@ use crate::parser::article::ArticleParser;
 use crate::types::*;
 use crate::{CmpStyle, MizPath, OnVarMut, RequirementIndexes, VisitMut};
 use enum_map::Enum;
-use quick_xml::escape::unescape;
 use quick_xml::events::{BytesStart, Event};
 use std::collections::HashSet;
 use std::fs::File;
@@ -173,13 +172,13 @@ impl XmlReader {
     r.trim_text(true);
     r.expand_empty_elements(true);
     r.check_end_names(true);
-    assert!(matches!(r.read_event(buf).unwrap(), Event::Decl(_)));
+    assert!(matches!(r.read_event_into(buf).unwrap(), Event::Decl(_)));
     Self(r)
   }
 
   fn read_event<'a>(&mut self, buf: &'a mut Vec<u8>) -> Event<'a> {
     buf.clear();
-    let e = self.0.read_event(buf).unwrap();
+    let e = self.0.read_event_into(buf).unwrap();
     // vprintln!("{:w$}{:?}", "", e, w = backtrace::Backtrace::new().frames().len());
     e
   }
@@ -191,10 +190,10 @@ impl XmlReader {
       Event::Start(e) => {
         if let Some(expecting) = expecting {
           assert!(
-            e.local_name() == expecting,
+            e.local_name().as_ref() == expecting,
             "expected <{}>, got <{}>",
             std::str::from_utf8(expecting).unwrap(),
-            std::str::from_utf8(e.local_name()).unwrap()
+            std::str::from_utf8(e.local_name().as_ref()).unwrap()
           )
         }
         Ok(e)
@@ -208,16 +207,12 @@ impl XmlReader {
   }
 
   fn get_attr<F: FromStr>(&self, value: &[u8]) -> F {
-    self.0.decode_without_bom(value).unwrap().parse().ok().unwrap()
-  }
-
-  fn get_attr_unescaped(&self, value: &[u8]) -> String {
-    String::from_utf8(unescape(value).unwrap().into()).unwrap()
+    self.0.decoder().decode(value).unwrap().parse().ok().unwrap()
   }
 
   fn read_to_end(&mut self, tag: &[u8], buf: &mut Vec<u8>) {
     buf.clear();
-    self.0.read_to_end(tag, buf).unwrap()
+    self.0.read_to_end_into(quick_xml::name::QName(tag), buf).unwrap();
   }
 
   fn end_tag(&mut self, buf: &mut Vec<u8>) {
@@ -238,7 +233,7 @@ impl XmlReader {
   fn get_pos(&mut self, e: &BytesStart<'_>) -> Position {
     let mut pos = Position::default();
     for attr in e.attributes().map(Result::unwrap) {
-      match attr.key {
+      match attr.key.0 {
         b"line" => pos.line = self.get_attr(&attr.value),
         b"col" => pos.col = self.get_attr(&attr.value),
         _ => {}
@@ -250,7 +245,7 @@ impl XmlReader {
   fn get_pos_and_label(&mut self, e: &BytesStart<'_>) -> (Position, Option<LabelId>) {
     let (mut pos, mut nr) = (Position::default(), 0u32);
     for attr in e.attributes().map(Result::unwrap) {
-      match attr.key {
+      match attr.key.0 {
         b"line" => pos.line = self.get_attr(&attr.value),
         b"col" => pos.col = self.get_attr(&attr.value),
         b"nr" => nr = self.get_attr(&attr.value),
@@ -329,10 +324,10 @@ impl MizPath {
     while let Ok(e) = r.try_read_start(buf, Some(b"Symbol")) {
       let (mut kind, mut nr, mut name) = Default::default();
       for attr in e.attributes().map(Result::unwrap) {
-        match attr.key {
-          b"kind" => kind = r.get_attr_unescaped(&attr.value).chars().next().unwrap() as u8,
+        match attr.key.0 {
+          b"kind" => kind = attr.unescape_value().unwrap().chars().next().unwrap() as u8,
           b"nr" => nr = r.get_attr::<u32>(&attr.value),
-          b"name" => name = r.get_attr_unescaped(&attr.value),
+          b"name" => name = attr.unescape_value().unwrap().to_string(),
           _ => {}
         }
       }
@@ -624,7 +619,7 @@ impl MizPath {
     while let Ok(e) = r.try_read_start(buf, Some(b"Theorem")) {
       let (mut lib_nr, mut thm_nr, mut kind) = Default::default();
       for attr in e.attributes().map(Result::unwrap) {
-        match attr.key {
+        match attr.key.0 {
           b"articlenr" => lib_nr = r.get_attr(&attr.value),
           b"nr" => thm_nr = r.get_attr::<u32>(&attr.value) - 1,
           b"kind" => kind = attr.value[0],
@@ -693,7 +688,7 @@ impl MizPath {
     while let Ok(e) = r.try_read_start(buf, Some(b"Scheme")) {
       let (mut lib_nr, mut sch_nr) = Default::default();
       for attr in e.attributes().map(Result::unwrap) {
-        match attr.key {
+        match attr.key.0 {
           b"articlenr" => lib_nr = r.get_attr(&attr.value),
           b"nr" => sch_nr = SchId(r.get_attr::<u32>(&attr.value) - 1),
           _ => {}
@@ -726,7 +721,7 @@ impl MizPath {
     r.read_start(buf, Some(b"Schemes"));
     r.parse_signature(buf, &mut schs.sig);
     while let Event::Start(e) = r.read_event(buf) {
-      match e.local_name() {
+      match e.local_name().as_ref() {
         b"Canceled" => {
           r.end_tag(buf);
           schs.sch.push(None)
@@ -817,7 +812,7 @@ impl MizReader<'_> {
       let mut nr = 0;
       let mut pos = true;
       for attr in e.attributes().map(Result::unwrap) {
-        match attr.key {
+        match attr.key.0 {
           b"nr" => nr = self.get_attr(&attr.value),
           b"value" if &*attr.value != b"true" => pos = false,
           _ => {}
@@ -834,7 +829,7 @@ impl MizReader<'_> {
     let mut kind = 0;
     let mut nr = 0;
     for attr in e.attributes().map(Result::unwrap) {
-      match attr.key {
+      match attr.key.0 {
         b"kind" => kind = attr.value[0],
         b"nr" => nr = self.get_attr(&attr.value),
         _ => {}
@@ -861,8 +856,8 @@ impl MizReader<'_> {
       while let Ok(e) = self.try_read_start(buf, Some(b"SymbolCount")) {
         let (mut kind, mut nr) = Default::default();
         for attr in e.attributes().map(Result::unwrap) {
-          match attr.key {
-            b"kind" => kind = self.get_attr_unescaped(&attr.value).chars().next().unwrap() as u8,
+          match attr.key.0 {
+            b"kind" => kind = attr.unescape_value().unwrap().chars().next().unwrap() as u8,
             b"nr" => nr = self.get_attr::<u32>(&attr.value),
             _ => {}
           }
@@ -898,13 +893,13 @@ impl MizReader<'_> {
     let mut article = Article::default();
     let mut abs_nr = 0;
     for attr in e.attributes().map(Result::unwrap) {
-      match attr.key {
+      match attr.key.0 {
         b"aid" => article = Article::from_upper(&attr.value),
         b"nr" => abs_nr = self.get_attr(&attr.value),
         _ => {}
       }
     }
-    match e.local_name() {
+    match e.local_name().as_ref() {
       b"RCluster" => ((article, abs_nr), ClusterKind::R),
       b"FCluster" => ((article, abs_nr), ClusterKind::F),
       b"CCluster" => ((article, abs_nr), ClusterKind::C),
@@ -953,11 +948,11 @@ impl MizReader<'_> {
   }
 
   fn parse_pairs(&mut self, buf: &mut Vec<u8>, name: &[u8], mut f: impl FnMut(u32, u32)) {
-    assert!(matches!(self.read_event(buf), Event::Start(e) if e.local_name() == name));
+    assert!(matches!(self.read_event(buf), Event::Start(e) if e.local_name().as_ref() == name));
     while let Ok(e) = self.try_read_start(buf, Some(b"Pair")) {
       let (mut x, mut y) = (0, 0);
       for attr in e.attributes().map(Result::unwrap) {
-        match attr.key {
+        match attr.key.0 {
           b"x" => x = self.get_attr(&attr.value),
           b"y" => y = self.get_attr(&attr.value),
           _ => {}
@@ -970,7 +965,7 @@ impl MizReader<'_> {
 
   fn parse_nr_attr(&mut self, e: BytesStart<'_>) -> u32 {
     let attr = e.attributes().next().unwrap().unwrap();
-    assert!(attr.key == b"nr");
+    assert!(attr.key.0 == b"nr");
     self.get_attr(&attr.value)
   }
 
@@ -978,7 +973,7 @@ impl MizReader<'_> {
     let mut attrs = PatternAttrs { pos: true, ..PatternAttrs::default() };
     let mut constr_kind = 0;
     for attr in e.attributes().map(Result::unwrap) {
-      match attr.key {
+      match attr.key.0 {
         b"nr" => attrs._abs_nr = self.get_attr(&attr.value),
         b"aid" => attrs._article = Article::from_upper(&attr.value),
         b"kind" => attrs.kind = attr.value[0],
@@ -1027,8 +1022,8 @@ impl MizReader<'_> {
     while let Ok(e) = self.try_read_start(buf, Some(b"ConstrCount")) {
       let (mut kind, mut nr) = Default::default();
       for attr in e.attributes().map(Result::unwrap) {
-        match attr.key {
-          b"kind" => kind = self.get_attr_unescaped(&attr.value).chars().next().unwrap() as u8,
+        match attr.key.0 {
+          b"kind" => kind = attr.unescape_value().unwrap().chars().next().unwrap() as u8,
           b"nr" => nr = self.get_attr::<u32>(&attr.value),
           _ => {}
         }
@@ -1050,7 +1045,7 @@ impl MizReader<'_> {
   fn parse_constructor_attrs(&mut self, e: &BytesStart<'_>) -> ConstructorAttrs {
     let mut attrs = ConstructorAttrs::default();
     for attr in e.attributes().map(Result::unwrap) {
-      match attr.key {
+      match attr.key.0 {
         b"kind" => attrs.kind = attr.value[0],
         b"nr" => attrs._abs_nr = self.get_attr(&attr.value),
         b"aid" => attrs._article = Article::from_upper(&attr.value),
@@ -1133,7 +1128,7 @@ impl MizReader<'_> {
   fn parse_constr_kind(&mut self, e: &BytesStart<'_>) -> Option<ConstrKind> {
     let (mut constr_nr, mut constr_kind) = Default::default();
     for attr in e.attributes().map(Result::unwrap) {
-      match attr.key {
+      match attr.key.0 {
         b"constrkind" => constr_kind = attr.value[0],
         b"constrnr" => constr_nr = self.get_attr::<u32>(&attr.value) - 1,
         _ => {}
@@ -1165,7 +1160,7 @@ impl MizReader<'_> {
   fn parse_definiens_attrs(&mut self, e: BytesStart<'_>) -> (DefId, Article, ConstrKind) {
     let (mut article, mut def_nr) = Default::default();
     for attr in e.attributes().map(Result::unwrap) {
-      match attr.key {
+      match attr.key.0 {
         b"aid" => article = Article::from_upper(&attr.value),
         b"defnr" => def_nr = DefId(self.get_attr::<u32>(&attr.value) - 1),
         _ => {}
@@ -1201,7 +1196,7 @@ impl MizReader<'_> {
   fn parse_identify_attrs(&mut self, e: &BytesStart<'_>) -> IdentifyAttrs {
     let mut attrs = IdentifyAttrs::default();
     for attr in e.attributes().map(Result::unwrap) {
-      match attr.key {
+      match attr.key.0 {
         b"aid" => attrs._article = Article::from_upper(&attr.value),
         b"nr" => attrs._abs_nr = self.get_attr(&attr.value),
         b"constrkind" => attrs.kind = attr.value[0],
@@ -1234,7 +1229,7 @@ impl MizReader<'_> {
   fn parse_reduction_attrs(&mut self, e: &BytesStart<'_>) -> ReductionAttrs {
     let mut attrs = ReductionAttrs::default();
     for attr in e.attributes().map(Result::unwrap) {
-      match attr.key {
+      match attr.key.0 {
         b"aid" => attrs._article = Article::from_upper(&attr.value),
         b"nr" => attrs._abs_nr = self.get_attr(&attr.value),
         _ => {}
@@ -1261,7 +1256,7 @@ impl MizReader<'_> {
   fn parse_property_attrs(&mut self, e: &BytesStart<'_>) -> PropertyAttrs {
     let (mut _abs_nr, mut _article, mut kind) = Default::default();
     for attr in e.attributes().map(Result::unwrap) {
-      match attr.key {
+      match attr.key.0 {
         b"aid" => _article = Article::from_upper(&attr.value),
         b"nr" => _abs_nr = self.get_attr(&attr.value),
         b"x" => kind = self.get_attr::<usize>(&attr.value),
@@ -1298,7 +1293,7 @@ impl MizReader<'_> {
           nr
         }};
       }
-      match e.local_name() {
+      match e.local_name().as_ref() {
         b"Typ" => {
           let (kind, nr) = self.get_basic_attrs(&e);
           let kind = match kind {
@@ -1317,14 +1312,14 @@ impl MizReader<'_> {
         b"Properties" => {
           let mut props = Properties::EMPTY;
           for attr in e.attributes().map(Result::unwrap) {
-            match attr.key {
+            match attr.key.0 {
               b"propertyarg1" => props.arg1 = self.get_attr::<u8>(&attr.value).saturating_sub(1),
               b"propertyarg2" => props.arg2 = self.get_attr::<u8>(&attr.value).saturating_sub(1),
               _ => {}
             }
           }
           while let Event::Start(e) = self.read_event(buf) {
-            props.set(e.local_name().try_into().expect("unexpected property"));
+            props.set(e.local_name().as_ref().try_into().expect("unexpected property"));
             self.end_tag(buf);
           }
           props.trim();
@@ -1341,7 +1336,7 @@ impl MizReader<'_> {
           let mut fields = vec![];
           while let Ok(e) = self.try_read_start(buf, Some(b"Field")) {
             let attr = e.attributes().next().unwrap().unwrap();
-            assert!(attr.key == b"nr");
+            assert!(attr.key.0 == b"nr");
             fields.push(SelId(self.get_attr::<u32>(&attr.value) - 1));
             self.end_tag(buf);
           }
@@ -1505,8 +1500,8 @@ impl MizReader<'_> {
         b"Format" => {
           let (mut kind, mut sym, mut args, mut left, mut rsym) = Default::default();
           for attr in e.attributes().map(Result::unwrap) {
-            match attr.key {
-              b"kind" => kind = unescape(&attr.value).unwrap()[0],
+            match attr.key.0 {
+              b"kind" => kind = attr.unescape_value().unwrap().as_bytes()[0],
               b"symbolnr" => sym = self.get_attr::<u32>(&attr.value) - 1,
               b"argnr" => args = Some(self.get_attr(&attr.value)),
               b"leftargnr" => left = Some(self.get_attr(&attr.value)),
@@ -1543,7 +1538,7 @@ impl MizReader<'_> {
         b"Priority" => {
           let (mut kind, mut sym, mut value) = Default::default();
           for attr in e.attributes().map(Result::unwrap) {
-            match attr.key {
+            match attr.key.0 {
               b"kind" => kind = attr.value[0],
               b"symbolnr" => sym = self.get_attr(&attr.value),
               b"value" => value = Some(self.get_attr(&attr.value)),

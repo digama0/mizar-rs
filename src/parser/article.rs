@@ -133,7 +133,7 @@ impl ArticleParser<'_> {
       let (pos, label) = self.r.get_pos_and_label(&e);
       let (mut article_nr, mut nr, mut kind) = Default::default();
       for attr in e.attributes().map(Result::unwrap) {
-        match attr.key {
+        match attr.key.0 {
           b"kind" => kind = attr.value[0],
           b"nr" => nr = self.r.get_attr::<u32>(&attr.value) - 1,
           b"articlenr" => article_nr = self.r.get_attr(&attr.value),
@@ -154,7 +154,7 @@ impl ArticleParser<'_> {
 
   fn parse_justification(&mut self) -> Justification {
     let e = self.r.read_start(&mut self.buf, None);
-    match e.local_name() {
+    match e.local_name().as_ref() {
       b"By" => {
         let linked =
           e.try_get_attribute(b"linked").unwrap().map_or(false, |attr| &*attr.value == b"true");
@@ -167,7 +167,7 @@ impl ArticleParser<'_> {
       b"From" => {
         let (mut article_nr, mut nr) = Default::default();
         for attr in e.attributes().map(Result::unwrap) {
-          match attr.key {
+          match attr.key.0 {
             b"nr" => nr = self.r.get_attr::<u32>(&attr.value) - 1,
             b"articlenr" => article_nr = self.r.get_attr(&attr.value),
             _ => {}
@@ -255,7 +255,7 @@ impl ArticleParser<'_> {
 
   fn parse_elem(&mut self) -> ArticleElem {
     if let Event::Start(e) = self.r.read_event(&mut self.buf) {
-      match e.local_name() {
+      match e.local_name().as_ref() {
         b"DefinitionBlock" => {
           let (start, label) = self.r.get_pos_and_label(&e);
           let mut items = vec![];
@@ -339,7 +339,7 @@ impl ArticleParser<'_> {
           let mut decls = vec![];
           loop {
             if let Event::Start(e) = self.r.read_event(&mut self.buf) {
-              match e.local_name() {
+              match e.local_name().as_ref() {
                 b"SchemeFuncDecl" => {
                   let args = self.r.parse_arg_types(&mut self.buf);
                   let ty = self.r.parse_type(&mut self.buf).unwrap();
@@ -526,7 +526,7 @@ impl ArticleParser<'_> {
           let (pos, label) = self.r.get_pos_and_label(&e);
           let (mut expand, mut redef, mut kind) = Default::default();
           for attr in e.attributes().map(Result::unwrap) {
-            match attr.key {
+            match attr.key.0 {
               b"kind" => kind = attr.value[0],
               b"expandable" => expand = &*attr.value == b"true",
               b"redefinition" => redef = &*attr.value == b"true",
@@ -707,7 +707,7 @@ impl ArticleParser<'_> {
         }
         b"JustifiedProperty" => {
           let e = self.r.read_start(&mut self.buf, None);
-          let kind = e.local_name().try_into().expect("unexpected property");
+          let kind = e.local_name().as_ref().try_into().expect("unexpected property");
           self.r.end_tag(&mut self.buf);
           let prop = self.r.parse_proposition(&mut self.buf, false).unwrap();
           let just = self.parse_justification();

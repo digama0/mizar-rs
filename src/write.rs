@@ -2,7 +2,7 @@ use crate::types::*;
 use crate::{Global, MizPath};
 use enum_map::{Enum, EnumMap};
 use quick_xml::events::attributes::Attribute;
-use quick_xml::events::{BytesEnd, BytesStart, Event};
+use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
 use std::borrow::Cow;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
@@ -19,13 +19,13 @@ impl MizPath {
   fn create_xml(&self, new_prel: bool, ext: &str) -> io::Result<MizWriter> {
     let w = BufWriter::new(self.create(new_prel, ext)?);
     let mut w = quick_xml::Writer::new_with_indent(w, b' ', INDENT);
-    w.write(b"<?xml version=\"1.0\"?>\n").unwrap();
+    w.write_event(Event::Decl(BytesDecl::new("1.0", None, None))).unwrap();
     Ok(MizWriter { w, pending: None, depth: 0 })
   }
 
   pub fn write_dfr(&self, new_prel: bool, vocs: &Vocabularies, formats: &[Format]) {
     let mut w = self.create_xml(new_prel, "dfr").unwrap();
-    w.with0(b"Formats", |w| {
+    w.with0("Formats", |w| {
       w.write_vocabularies(vocs);
       formats.iter().for_each(|fmt| w.write_format(fmt));
     });
@@ -37,9 +37,9 @@ impl MizPath {
     DepConstructors { sig, counts, constrs }: &DepConstructors,
   ) {
     let mut w = self.create_xml(new_prel, "dco").unwrap();
-    w.with0(b"Constructors", |w| {
+    w.with0("Constructors", |w| {
       w.write_signature(sig);
-      w.with0(b"ConstrCounts", |w| {
+      w.with0("ConstrCounts", |w| {
         w.write_constr_count(b'M', counts.mode);
         w.write_constr_count(b'L', counts.struct_mode);
         w.write_constr_count(b'V', counts.attribute);
@@ -85,7 +85,7 @@ impl MizPath {
 
   pub fn write_dno(&self, new_prel: bool, DepNotation { sig, vocs, pats }: &DepNotation) {
     let mut w = self.create_xml(new_prel, "dno").unwrap();
-    w.with0(b"Notations", |w| {
+    w.with0("Notations", |w| {
       w.write_signature(sig);
       w.write_vocabularies(vocs);
       let art = self.art.as_str().to_ascii_uppercase();
@@ -115,12 +115,12 @@ impl MizPath {
           }
           // w.attr_str(b"redefnr", redefines);
         };
-        w.with(b"Pattern", attrs, |w| {
+        w.with("Pattern", attrs, |w| {
           w.write_format(&pat.fmt);
           w.write_arg_types(&pat.primary);
-          w.write_loci(b"Visible", &pat.visible);
+          w.write_loci("Visible", &pat.visible);
           if let PatternKind::ExpandableMode { expansion } = &pat.kind {
-            w.with0(b"Expansion", |w| w.write_type(expansion))
+            w.with0("Expansion", |w| w.write_type(expansion))
           }
         })
       }
@@ -130,18 +130,18 @@ impl MizPath {
 
   pub fn write_dcl(&self, new_prel: bool, DepClusters { sig, cl }: &DepClusters) {
     let mut w = self.create_xml(new_prel, "dcl").unwrap();
-    w.with0(b"Registrations", |w| {
+    w.with0("Registrations", |w| {
       w.write_signature(sig);
       let art = self.art.as_str().to_ascii_uppercase();
       let art = art.as_bytes();
       for (i, cl) in cl.registered.iter().enumerate() {
-        w.write_cluster(b"RCluster", art, i, cl, |w| {
+        w.write_cluster("RCluster", art, i, cl, |w| {
           w.write_type(&cl.ty);
           w.write_attrs(&cl.consequent.0)
         })
       }
       for (i, cl) in cl.functor.iter().enumerate() {
-        w.write_cluster(b"FCluster", art, i, cl, |w| {
+        w.write_cluster("FCluster", art, i, cl, |w| {
           w.write_term(&cl.term);
           w.write_attrs(&cl.consequent.0);
           if let Some(ty) = &cl.ty {
@@ -150,7 +150,7 @@ impl MizPath {
         })
       }
       for (i, cl) in cl.conditional.iter().enumerate() {
-        w.write_cluster(b"CCluster", art, i, cl, |w| {
+        w.write_cluster("CCluster", art, i, cl, |w| {
           w.write_attrs(&cl.antecedent);
           w.write_type(&cl.ty);
           w.write_attrs(&cl.consequent.0)
@@ -162,7 +162,7 @@ impl MizPath {
 
   pub fn write_def(&self, new_prel: bool, sig: &[Article], def: &[Definiens]) {
     let mut w = self.create_xml(new_prel, "def").unwrap();
-    w.with0(b"Definientia", |w| {
+    w.with0("Definientia", |w| {
       w.write_signature(sig);
       let art = self.art.as_str().to_ascii_uppercase();
       for def in def {
@@ -175,9 +175,9 @@ impl MizPath {
           // w.attr_str(b"vid", lab_id);
           // w.attr_str(b"relnr", rel_nr);
         };
-        w.with(b"Definiens", attrs, |w| {
+        w.with("Definiens", attrs, |w| {
           w.write_types(&def.primary);
-          w.write_loci(b"Essentials", &def.essential);
+          w.write_loci("Essentials", &def.essential);
           if !matches!(def.assumptions, Formula::True) {
             w.write_formula(&def.assumptions)
           }
@@ -193,7 +193,7 @@ impl MizPath {
 
   pub fn write_did(&self, new_prel: bool, sig: &[Article], ids: &[IdentifyFunc]) {
     let mut w = self.create_xml(new_prel, "did").unwrap();
-    w.with0(b"IdentifyRegistrations", |w| {
+    w.with0("IdentifyRegistrations", |w| {
       w.write_signature(sig);
       let art = self.art.as_str().to_ascii_uppercase();
       let art = art.as_bytes();
@@ -203,13 +203,13 @@ impl MizPath {
           w.attr_str(b"nr", i + 1);
           w.attr(b"constrkind", &b"K"[..]);
         };
-        w.with(b"Identify", attrs, |w| {
+        w.with("Identify", attrs, |w| {
           w.write_types(&id.primary);
           w.write_term(&id.lhs);
           w.write_term(&id.rhs);
-          w.with0(b"EqArgs", |w| {
+          w.with0("EqArgs", |w| {
             for &(x, y) in &*id.eq_args {
-              w.with_attr(b"Pair", |w| {
+              w.with_attr("Pair", |w| {
                 w.attr_str(b"x", x.0 + 1);
                 w.attr_str(b"y", y.0 + 1)
               })
@@ -223,7 +223,7 @@ impl MizPath {
 
   pub fn write_drd(&self, new_prel: bool, sig: &[Article], reds: &[Reduction]) {
     let mut w = self.create_xml(new_prel, "drd").unwrap();
-    w.with0(b"ReductionRegistrations", |w| {
+    w.with0("ReductionRegistrations", |w| {
       w.write_signature(sig);
       let art = self.art.as_str().to_ascii_uppercase();
       let art = art.as_bytes();
@@ -232,7 +232,7 @@ impl MizPath {
           w.attr(b"aid", art);
           w.attr_str(b"nr", i + 1);
         };
-        w.with(b"Reduction", attrs, |w| {
+        w.with("Reduction", attrs, |w| {
           w.write_types(&red.primary);
           w.write_term(&red.terms[0]);
           w.write_term(&red.terms[1])
@@ -244,7 +244,7 @@ impl MizPath {
 
   pub fn write_dpr(&self, new_prel: bool, sig: &[Article], props: &[Property]) {
     let mut w = self.create_xml(new_prel, "dpr").unwrap();
-    w.with0(b"PropertyRegistration", |w| {
+    w.with0("PropertyRegistration", |w| {
       w.write_signature(sig);
       let art = self.art.as_str().to_ascii_uppercase();
       let art = art.as_bytes();
@@ -254,7 +254,7 @@ impl MizPath {
           w.attr_str(b"nr", i + 1);
           w.attr_str(b"x", prop.kind as u8 + 1);
         };
-        w.with(b"Property", attrs, |w| {
+        w.with("Property", attrs, |w| {
           w.write_arg_types(&prop.primary);
           w.write_type(&prop.ty)
         })
@@ -265,7 +265,7 @@ impl MizPath {
 
   pub fn write_the(&self, new_prel: bool, DepTheorems { sig, thm }: &DepTheorems) {
     let mut w = self.create_xml(new_prel, "the").unwrap();
-    w.with0(b"Theorems", |w| {
+    w.with0("Theorems", |w| {
       w.write_signature(sig);
       for Theorem { pos: _, kind, stmt } in thm {
         let attrs = |w: &mut Elem| {
@@ -280,7 +280,7 @@ impl MizPath {
             w.attr_str(b"constrnr", nr + 1);
           }
         };
-        w.with(b"Theorem", attrs, |w| w.write_formula(stmt))
+        w.with("Theorem", attrs, |w| w.write_formula(stmt))
       }
     });
     w.finish()
@@ -288,17 +288,17 @@ impl MizPath {
 
   pub fn write_sch(&self, new_prel: bool, DepSchemes { sig, sch }: &DepSchemes) {
     let mut w = self.create_xml(new_prel, "sch").unwrap();
-    w.with0(b"Schemes", |w| {
+    w.with0("Schemes", |w| {
       w.write_signature(sig);
       for sch in sch {
         if let Some(sch) = sch {
-          w.with0(b"Scheme", |w| {
+          w.with0("Scheme", |w| {
             w.write_arg_types(&sch.sch_funcs);
             w.write_formula(&sch.thesis);
             w.write_formulas(&sch.prems)
           })
         } else {
-          w.with0(b"Canceled", |_| {})
+          w.with0("Canceled", |_| {})
         }
       }
     });
@@ -310,7 +310,7 @@ struct Elem(BytesStart<'static>);
 
 impl Elem {
   fn attr<'a>(&mut self, key: &[u8], value: impl Into<Cow<'a, [u8]>>) {
-    self.0.push_attribute(Attribute { key, value: value.into() })
+    self.0.push_attribute(Attribute { key: quick_xml::name::QName(key), value: value.into() })
   }
   fn attr_str(&mut self, key: &[u8], value: impl ToString) {
     self.attr(key, value.to_string().into_bytes())
@@ -329,20 +329,20 @@ impl MizWriter {
     }
   }
 
-  fn start(&mut self, tag: &'static [u8]) -> &mut Elem {
+  fn start(&mut self, tag: &'static str) -> &mut Elem {
     self.clear_pending();
-    self.pending.insert(Elem(BytesStart::borrowed_name(tag)))
+    self.pending.insert(Elem(BytesStart::new(tag)))
   }
 
   fn finish(mut self) {
     assert!(self.pending.is_none());
-    self.w.write(b"\n").unwrap();
-    self.w.inner().flush().unwrap()
+    self.w.get_mut().write_all(b"\n").unwrap();
+    self.w.get_mut().flush().unwrap()
   }
 
   #[inline]
   fn with(
-    &mut self, tag: &'static [u8], attrs: impl FnOnce(&mut Elem), body: impl FnOnce(&mut Self),
+    &mut self, tag: &'static str, attrs: impl FnOnce(&mut Elem), body: impl FnOnce(&mut Self),
   ) {
     attrs(self.start(tag));
     body(self);
@@ -350,37 +350,37 @@ impl MizWriter {
   }
 
   #[inline]
-  fn with0(&mut self, tag: &'static [u8], body: impl FnOnce(&mut Self)) {
+  fn with0(&mut self, tag: &'static str, body: impl FnOnce(&mut Self)) {
     self.with(tag, |_| {}, body);
   }
 
   #[inline]
-  fn with_attr(&mut self, tag: &'static [u8], attrs: impl FnOnce(&mut Elem)) {
+  fn with_attr(&mut self, tag: &'static str, attrs: impl FnOnce(&mut Elem)) {
     self.with(tag, attrs, |_| {})
   }
 
-  fn end_tag(&mut self, tag: &'static [u8]) {
+  fn end_tag(&mut self, tag: &'static str) {
     match self.pending.take() {
       Some(elem) => self.w.write_event(Event::Empty(elem.0)).unwrap(),
-      None => self.w.write_event(Event::End(BytesEnd::borrowed(tag))).unwrap(),
+      None => self.w.write_event(Event::End(BytesEnd::new(tag))).unwrap(),
     }
   }
 
   fn write_signature(&mut self, sig: &[Article]) {
-    self.with0(b"Signature", |w| {
+    self.with0("Signature", |w| {
       for art in sig {
-        w.with_attr(b"ArticleID", |e| e.attr_str(b"name", art.as_str().to_ascii_uppercase()))
+        w.with_attr("ArticleID", |e| e.attr_str(b"name", art.as_str().to_ascii_uppercase()))
       }
     })
   }
 
   fn write_vocabularies(&mut self, vocs: &Vocabularies) {
-    self.with0(b"Vocabularies", |w| {
+    self.with0("Vocabularies", |w| {
       for (art, symbols) in &vocs.0 {
-        w.with0(b"Vocabulary", |w| {
-          w.with_attr(b"ArticleID", |e| e.attr_str(b"name", art.as_str().to_ascii_uppercase()));
+        w.with0("Vocabulary", |w| {
+          w.with_attr("ArticleID", |e| e.attr_str(b"name", art.as_str().to_ascii_uppercase()));
           for (c, &n) in &symbols.0 {
-            w.with_attr(b"SymbolCount", |e| {
+            w.with_attr("SymbolCount", |e| {
               e.attr(b"kind", &[c.discr()][..]);
               e.attr_str(b"nr", n);
             })
@@ -391,7 +391,7 @@ impl MizWriter {
   }
 
   fn write_format(&mut self, fmt: &Format) {
-    self.with_attr(b"Format", |e| {
+    self.with_attr("Format", |e| {
       e.attr(b"kind", &[fmt.discr()][..]);
       let (sym, args, left, rsym) = match *fmt {
         Format::Aggr(FormatAggr { sym: StructSymId(sym), args })
@@ -414,7 +414,7 @@ impl MizWriter {
 
   fn write_constr_count(&mut self, kind: u8, value: u32) {
     if value != 0 {
-      self.with_attr(b"ConstrCount", |w| {
+      self.with_attr("ConstrCount", |w| {
         w.attr(b"kind", &[kind][..]);
         w.attr_str(b"nr", value);
       })
@@ -436,7 +436,7 @@ impl MizWriter {
       }
       attrs(w)
     };
-    self.with(b"Constructor", attrs, |w| {
+    self.with("Constructor", attrs, |w| {
       let attrs = |w: &mut Elem| {
         let arg1 = if c.properties.uses_arg1() { c.properties.arg1 + 1 } else { 0 };
         w.attr_str(b"propertyarg1", arg1);
@@ -444,7 +444,7 @@ impl MizWriter {
         w.attr_str(b"propertyarg2", arg2);
       };
       if c.properties.properties != PropertySet::EMPTY {
-        w.with(b"Properties", attrs, |w| {
+        w.with("Properties", attrs, |w| {
           for prop in (0..PropertyKind::LENGTH).map(PropertyKind::from_usize) {
             if c.properties.properties.get(prop) {
               w.with0(prop.to_upper(), |_| {})
@@ -464,14 +464,13 @@ impl MizWriter {
   }
 
   fn write_fields(&mut self, fields: &[SelId]) {
-    self.with0(b"Fields", |w| {
-      fields.iter().for_each(|field| w.with_attr(b"Field", |w| w.attr_str(b"nr", field.0 + 1)))
+    self.with0("Fields", |w| {
+      fields.iter().for_each(|field| w.with_attr("Field", |w| w.attr_str(b"nr", field.0 + 1)))
     })
   }
 
   fn write_cluster(
-    &mut self, tag: &'static [u8], art: &[u8], nr: usize, cl: &Cluster,
-    body: impl FnOnce(&mut Self),
+    &mut self, tag: &'static str, art: &[u8], nr: usize, cl: &Cluster, body: impl FnOnce(&mut Self),
   ) {
     let attrs = |w: &mut Elem| {
       w.attr(b"aid", art);
@@ -487,9 +486,9 @@ impl MizWriter {
     &mut self, kind: u8, body: &DefBody<T>, mut elem: impl FnMut(&mut Self, &T),
   ) {
     let attrs = |w: &mut Elem| w.attr(b"kind", &[kind][..]);
-    self.with(b"DefMeaning", attrs, |w| {
+    self.with("DefMeaning", attrs, |w| {
       for case in &*body.cases {
-        w.with0(b"PartialDef", |w| {
+        w.with0("PartialDef", |w| {
           elem(w, &case.case);
           w.write_formula(&case.guard)
         })
@@ -502,7 +501,7 @@ impl MizWriter {
 
   fn write_attrs(&mut self, attrs: &Attrs) {
     let Attrs::Consistent(attrs) = attrs else { unreachable!() };
-    self.with0(b"Cluster", |w| {
+    self.with0("Cluster", |w| {
       for attr in attrs {
         let attrs = |w: &mut Elem| {
           w.attr_str(b"nr", attr.nr.0 + 1);
@@ -511,7 +510,7 @@ impl MizWriter {
           }
           // w.attr_str(b"pid", pat_nr);
         };
-        w.with(b"Adjective", attrs, |w| w.write_terms(&attr.args))
+        w.with("Adjective", attrs, |w| w.write_terms(&attr.args))
       }
     })
   }
@@ -525,7 +524,7 @@ impl MizWriter {
       w.attr(b"kind", &[kind][..]);
       w.attr_str(b"nr", n + 1)
     };
-    self.with(b"Typ", attrs, |w| {
+    self.with("Typ", attrs, |w| {
       w.write_attrs(&ty.attrs.0);
       w.write_terms(&ty.args)
     })
@@ -533,27 +532,27 @@ impl MizWriter {
 
   fn write_types(&mut self, tys: &[Type]) { tys.iter().for_each(|ty| self.write_type(ty)) }
 
-  fn write_arg_types(&mut self, tys: &[Type]) { self.with0(b"ArgTypes", |w| w.write_types(tys)) }
+  fn write_arg_types(&mut self, tys: &[Type]) { self.with0("ArgTypes", |w| w.write_types(tys)) }
 
   fn write_term(&mut self, tm: &Term) {
     match tm {
-      Term::Numeral(n) => self.with_attr(b"Num", |w| w.attr_str(b"nr", *n)),
-      Term::Locus(n) => self.with_attr(b"LocusVar", |w| w.attr_str(b"nr", n.0 + 1)),
-      Term::Bound(n) => self.with_attr(b"Var", |w| w.attr_str(b"nr", n.0 + 1)),
-      Term::Const(n) => self.with_attr(b"Const", |w| w.attr_str(b"nr", n.0 + 1)),
-      Term::SchFunc { nr, args } => self.write_func(b"Func", b'F', nr.0, args),
-      Term::Aggregate { nr, args } => self.write_func(b"Func", b'G', nr.0, args),
+      Term::Numeral(n) => self.with_attr("Num", |w| w.attr_str(b"nr", *n)),
+      Term::Locus(n) => self.with_attr("LocusVar", |w| w.attr_str(b"nr", n.0 + 1)),
+      Term::Bound(n) => self.with_attr("Var", |w| w.attr_str(b"nr", n.0 + 1)),
+      Term::Const(n) => self.with_attr("Const", |w| w.attr_str(b"nr", n.0 + 1)),
+      Term::SchFunc { nr, args } => self.write_func("Func", b'F', nr.0, args),
+      Term::Aggregate { nr, args } => self.write_func("Func", b'G', nr.0, args),
       Term::PrivFunc { nr, args, value } => {
         let attrs = |w: &mut Elem| w.attr_str(b"nr", nr.0 + 1);
-        self.with(b"PrivFunc", attrs, |w| {
+        self.with("PrivFunc", attrs, |w| {
           w.write_term(value);
           w.write_terms(args)
         })
       }
-      Term::Functor { nr, args } => self.write_func(b"Func", b'K', nr.0, args),
-      Term::Selector { nr, args } => self.write_func(b"Func", b'U', nr.0, args),
-      Term::The { ty } => self.with0(b"Choice", |w| w.write_type(ty)),
-      Term::Fraenkel { args, scope, compr } => self.with0(b"Fraenkel", |w| {
+      Term::Functor { nr, args } => self.write_func("Func", b'K', nr.0, args),
+      Term::Selector { nr, args } => self.write_func("Func", b'U', nr.0, args),
+      Term::The { ty } => self.with0("Choice", |w| w.write_type(ty)),
+      Term::Fraenkel { args, scope, compr } => self.with0("Fraenkel", |w| {
         for ty in &**args {
           w.write_type(ty);
           w.depth += 1;
@@ -572,7 +571,7 @@ impl MizWriter {
   }
   fn write_terms(&mut self, tys: &[Term]) { tys.iter().for_each(|ty| self.write_term(ty)) }
 
-  fn write_func(&mut self, tag: &'static [u8], kind: u8, nr: u32, args: &[Term]) {
+  fn write_func(&mut self, tag: &'static str, kind: u8, nr: u32, args: &[Term]) {
     let attrs = |w: &mut Elem| {
       w.attr(b"kind", &[kind][..]);
       w.attr_str(b"nr", nr + 1)
@@ -582,27 +581,27 @@ impl MizWriter {
 
   fn write_formula(&mut self, f: &Formula) {
     match f {
-      Formula::SchPred { nr, args } => self.write_func(b"Pred", b'P', nr.0, args),
-      Formula::Pred { nr, args } => self.write_func(b"Pred", b'R', nr.0, args),
-      Formula::Attr { nr, args } => self.write_func(b"Pred", b'V', nr.0, args),
+      Formula::SchPred { nr, args } => self.write_func("Pred", b'P', nr.0, args),
+      Formula::Pred { nr, args } => self.write_func("Pred", b'R', nr.0, args),
+      Formula::Attr { nr, args } => self.write_func("Pred", b'V', nr.0, args),
       Formula::PrivPred { nr, args, value } => {
         let attrs = |w: &mut Elem| w.attr_str(b"nr", nr.0 + 1);
-        self.with(b"PrivPred", attrs, |w| {
+        self.with("PrivPred", attrs, |w| {
           w.write_terms(args);
           w.write_formula(value)
         })
       }
-      Formula::Is { term, ty } => self.with0(b"Is", |w| {
+      Formula::Is { term, ty } => self.with0("Is", |w| {
         w.write_term(term);
         w.write_type(ty)
       }),
-      Formula::Neg { f } => self.with0(b"Not", |w| w.write_formula(f)),
-      Formula::And { args } => self.with0(b"And", |w| w.write_formulas(args)),
+      Formula::Neg { f } => self.with0("Not", |w| w.write_formula(f)),
+      Formula::And { args } => self.with0("And", |w| w.write_formulas(args)),
       Formula::ForAll { dom, scope } => {
         let attrs = |_: &mut Elem| {
           // w.attr_str(b"vid", var_id)
         };
-        self.with(b"For", attrs, |w| {
+        self.with("For", attrs, |w| {
           w.write_type(dom);
           w.depth += 1;
           w.write_formula(scope);
@@ -617,19 +616,18 @@ impl MizWriter {
           &mut scope.clone(),
           self.depth,
         )),
-      Formula::LegacyFlexAnd { orig, terms, expansion } => self.with0(b"FlexFrm", |w| {
+      Formula::LegacyFlexAnd { orig, terms, expansion } => self.with0("FlexFrm", |w| {
         w.write_formulas(&**orig);
         w.write_terms(&**terms);
         w.write_formula(expansion)
       }),
-      Formula::True => self.with0(b"Verum", |_| {}),
+      Formula::True => self.with0("Verum", |_| {}),
     }
   }
 
   fn write_formulas(&mut self, fs: &[Formula]) { fs.iter().for_each(|ty| self.write_formula(ty)) }
 
-  fn write_loci(&mut self, tag: &'static [u8], args: &[LocusId]) {
-    self
-      .with0(tag, |w| args.iter().for_each(|n| w.with_attr(b"Int", |w| w.attr_str(b"x", n.0 + 1))))
+  fn write_loci(&mut self, tag: &'static str, args: &[LocusId]) {
+    self.with0(tag, |w| args.iter().for_each(|n| w.with_attr("Int", |w| w.attr_str(b"x", n.0 + 1))))
   }
 }
