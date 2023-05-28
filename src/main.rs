@@ -190,6 +190,10 @@ struct Cli {
     require_equals = true, default_missing_value = "true", hide_possible_values = true)]
   one_file: bool,
 
+  /// Index of the last file to process, if specified
+  #[arg(long)]
+  last_file: Option<usize>,
+
   /// Disable the checker while not in verbose mode
   #[arg(long, num_args = 0..=1, action = ArgAction::Set, default_value = bool_to_str(DEBUG),
     require_equals = true, default_missing_value = "true", hide_possible_values = true)]
@@ -210,6 +214,9 @@ struct Cli {
   /// Always read cross-article theorems from `prel/` instead of from memory
   #[arg(long)]
   no_cache: bool,
+  /// Only show the main progress bar
+  #[arg(long)]
+  no_multi_progress: bool,
   /// Don't show the fancy progress bar
   #[arg(long)]
   no_progress: bool,
@@ -480,7 +487,7 @@ fn main() {
   if cfg.cache_prel {
     cache::init_cache(jobs.iter().map(|&(i, x)| (x, cli.dep_order && i >= first_file)))
   }
-  if let Some(n) = LAST_FILE {
+  if let Some(n) = cli.last_file.or(LAST_FILE) {
     jobs.truncate(n + 1)
   }
   drop(jobs.drain(..first_file));
@@ -502,7 +509,7 @@ fn main() {
 
   let jobs = &Mutex::new(jobs.into_iter());
   let running = &*std::iter::repeat_with(|| {
-    (progress.as_ref())
+    (progress.as_ref().filter(|_| !cli.no_multi_progress))
       .map(|p| p.multi.insert(0, ProgressBar::hidden()).with_style(p.style.clone()))
   })
   .take(parallelism)

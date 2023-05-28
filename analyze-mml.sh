@@ -1,5 +1,6 @@
 #!/bin/sh
-DEP_ORDER=1 XML_EXPORT=1 NO_ANALYZER=1 NO_CHECKER=1 cargo run --release
+# disable the multi progress bar because it goes too fast and looks noisy
+cargo run --release -- -dex --no-multi-progress
 echo 'copying prel/ files to mizshare/prel/'
 cp -r miz/prel/* miz/mizshare/prel/
 rm -rf miz/prel

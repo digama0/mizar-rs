@@ -10,5 +10,5 @@ cd ../prel
 unzip ../../zip/prel.zip
 cd ..
 unzip ../zip/mizdb1.zip
-# rm -rf zip
-# patch -p0 < ../../mml.patch
+rm -rf zip
+patch -p0 < ../../mml.patch
