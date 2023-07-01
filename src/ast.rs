@@ -1,40 +1,40 @@
 use crate::mk_id;
-use crate::types::{
-  AttrSymId, BlockKind, ConstId, CorrCondKind, FormatAggr, FormatAttr, FormatFunc, FormatMode,
-  FormatPred, FormatStruct, FuncSymId, LabelId, LeftBrkSymId, LocusId, ModeSymId, Position,
-  PredSymId, PropertyKind, Reference, RightBrkSymId, SchId, SchRef, SelSymId, StructSymId,
-};
-use enum_map::Enum;
+use crate::types::*;
+use std::rc::Rc;
+use std::str::FromStr;
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Variable {
   pub pos: Position,
-  /// 'idnr' attribute, LocusObj.nVarId, VariableObj.nIdent
-  pub id: u32,
   /// 'varnr' attribute, MSLocusObj.nVarNr, MSVariableObj.nVarNr
   pub var: Option<ConstId>,
-  pub spelling: String,
+  pub spelling: Rc<str>,
 }
 
 impl Variable {
-  pub fn var(&self) -> ConstId { self.var.unwrap() }
+  #[track_caller]
+  pub fn var(&self) -> ConstId { self.var.expect("variable is not resolved") }
+
+  pub fn to_term(&self) -> Term {
+    Term::Var {
+      pos: self.pos,
+      kind: self.var.map(VarKind::Const),
+      spelling: (*self.spelling).into(),
+    }
+  }
 }
 
-#[derive(Copy, Clone, Debug, Enum)]
+#[derive(Copy, Clone, Debug)]
 pub enum VarKind {
-  Unknown,
-  Free,
-  Reserved,
-  Bound,
-  Const,
-  DefConst,
-  SchFunc,
-  PrivFunc,
-  SchPred,
-  PrivPred,
+  Bound(BoundId),
+  Const(ConstId),
+  Reserved(ReservedId),
 }
-impl Default for VarKind {
-  fn default() -> Self { Self::Unknown }
+
+#[derive(Copy, Clone, Debug)]
+pub enum PrivFuncKind {
+  PrivFunc(PrivFuncId),
+  SchFunc(SchFuncId),
 }
 
 #[derive(Debug)]
@@ -47,18 +47,15 @@ pub enum Term {
     pos: Position,
     value: u32,
   },
-  Simple {
+  Var {
     pos: Position,
-    kind: VarKind,
-    var: u32,
+    kind: Option<VarKind>,
     spelling: String,
-    origin: VarKind,
   },
   PrivFunc {
     pos: Position,
-    kind: VarKind,
-    var: u32,
-    spelling: String,
+    kind: Option<PrivFuncKind>,
+    spelling: Rc<str>,
     args: Vec<Term>,
   },
   Infix {
@@ -90,7 +87,8 @@ pub enum Term {
   },
   InternalSelector {
     pos: Position,
-    sym: (u32, String),
+    sym: (SelSymId, String),
+    id: Option<ConstId>,
   },
   Qua {
     pos: Position,
@@ -106,6 +104,7 @@ pub enum Term {
     vars: Vec<BinderGroup>,
     scope: Box<Term>,
     compr: Option<Box<Formula>>,
+    nameck: Option<Box<crate::analyze::FraenkelNameckResult>>,
   },
   It {
     pos: Position,
@@ -116,7 +115,7 @@ impl Term {
     match self {
       Term::Placeholder { pos, .. }
       | Term::Numeral { pos, .. }
-      | Term::Simple { pos, .. }
+      | Term::Var { pos, .. }
       | Term::PrivFunc { pos, .. }
       | Term::Infix { pos, .. }
       | Term::Bracket { pos, .. }
@@ -134,6 +133,7 @@ impl Term {
 
 mk_id! {
   ReservedId(u32),
+  ResGroupId(u32),
 }
 
 #[derive(Debug)]
@@ -141,7 +141,7 @@ pub enum Type {
   Mode { pos: Position, sym: (ModeSymId, String), args: Vec<Term> },
   Struct { pos: Position, sym: (StructSymId, String), args: Vec<Term> },
   Cluster { pos: Position, attrs: Vec<Attr>, ty: Box<Type> },
-  Reservation { pos: Position, nr: Option<ReservedId>, subst: Vec<(VarKind, u32)> },
+  Reservation { pos: Position, group: ResGroupId, subst: Vec<VarKind> },
 }
 impl Type {
   pub fn pos(&self) -> Position {
@@ -152,6 +152,12 @@ impl Type {
       | Type::Reservation { pos, .. } => *pos,
     }
   }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum PrivPredKind {
+  PrivPred(PrivPredId),
+  SchPred(SchPredId),
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -172,6 +178,8 @@ pub enum FormulaBinder {
 
 #[derive(Debug)]
 pub struct Pred {
+  pub pos: Position,
+  pub positive: bool,
   pub sym: (PredSymId, String),
   pub left: u8,
   pub args: Vec<Term>,
@@ -179,30 +187,69 @@ pub struct Pred {
 
 #[derive(Debug)]
 pub struct PredRhs {
+  pub pos: Position,
+  pub positive: bool,
   pub sym: (PredSymId, String),
   pub right: Vec<Term>,
 }
 
 #[derive(Debug)]
 pub enum Formula {
-  Not { pos: Position, f: Box<Formula> },
-  Binop { kind: FormulaBinop, pos: Position, f1: Box<Formula>, f2: Box<Formula> },
-  Pred { pos: Position, pred: Pred },
-  ChainPred { pos: Position, first: Pred, rest: Vec<PredRhs> },
-  PrivPred { pos: Position, kind: VarKind, var: u32, spelling: String, args: Vec<Term> },
-  Attr { pos: Position, term: Box<Term>, attrs: Vec<Attr> },
-  Is { pos: Position, term: Box<Term>, ty: Box<Type> },
-  Binder { kind: FormulaBinder, pos: Position, var: Box<BinderGroup>, scope: Box<Formula> },
-  False { pos: Position },
-  Thesis { pos: Position },
+  Not {
+    pos: Position,
+    f: Box<Formula>,
+  },
+  Binop {
+    kind: FormulaBinop,
+    pos: Position,
+    f1: Box<Formula>,
+    f2: Box<Formula>,
+  },
+  Pred(Box<Pred>),
+  ChainPred {
+    pos: Position,
+    first: Box<Pred>,
+    rest: Vec<PredRhs>,
+  },
+  PrivPred {
+    pos: Position,
+    kind: Option<PrivPredKind>,
+    spelling: Rc<str>,
+    args: Vec<Term>,
+  },
+  Attr {
+    pos: Position,
+    positive: bool,
+    term: Box<Term>,
+    attrs: Vec<Attr>,
+  },
+  Is {
+    pos: Position,
+    positive: bool,
+    term: Box<Term>,
+    ty: Box<Type>,
+  },
+  Binder {
+    kind: FormulaBinder,
+    pos: Position,
+    vars: Vec<BinderGroup>,
+    st: Option<Box<Formula>>,
+    scope: Box<Formula>,
+  },
+  False {
+    pos: Position,
+  },
+  Thesis {
+    pos: Position,
+  },
 }
 impl Formula {
   pub fn pos(&self) -> Position {
     match self {
+      Formula::Pred(p) => p.pos,
       Formula::Not { pos, .. }
       | Formula::Binop { pos, .. }
       | Formula::False { pos, .. }
-      | Formula::Pred { pos, .. }
       | Formula::ChainPred { pos, .. }
       | Formula::PrivPred { pos, .. }
       | Formula::Attr { pos, .. }
@@ -220,9 +267,33 @@ pub struct Proposition {
 }
 
 #[derive(Debug)]
+pub enum SchRef {
+  Resolved(ArticleId, SchId),
+  UnresolvedPriv(String),
+}
+
+#[derive(Debug)]
 pub enum InferenceKind {
   By { link: Option<Position> },
   From { sch: SchRef },
+}
+
+#[derive(Debug, Clone)]
+pub enum RefFragment {
+  Thm { pos: Position, id: ThmId },
+  Def { pos: Position, id: DefId },
+}
+#[derive(Debug, Clone)]
+pub enum ReferenceKind {
+  Priv(Option<LabelId>),
+  UnresolvedPriv(String),
+  Global(ArticleId, Vec<RefFragment>),
+}
+
+#[derive(Debug, Clone)]
+pub struct Reference {
+  pub pos: Position,
+  pub kind: ReferenceKind,
 }
 
 #[derive(Debug)]
@@ -240,6 +311,7 @@ pub enum SchemeBinderGroup {
 #[derive(Debug)]
 pub struct BinderGroup {
   pub vars: Vec<Variable>,
+  // The vars list must be length 1 when this is None
   pub ty: Option<Box<Type>>,
 }
 
@@ -259,7 +331,7 @@ pub struct Item {
   pub kind: ItemKind,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CaseKind {
   Case,
   Suppose,
@@ -288,8 +360,8 @@ impl PatternStruct {
   pub fn to_mode_format(&self) -> FormatStruct {
     FormatStruct { sym: self.sym.0, args: self.args.len() as u8 }
   }
-  pub fn to_aggr_format(&self) -> FormatAggr {
-    FormatAggr { sym: self.sym.0, args: self.args.len() as u8 }
+  pub fn to_aggr_format(&self, n: usize) -> FormatAggr {
+    FormatAggr { sym: self.sym.0, args: n as u8 }
   }
   pub fn to_subaggr_format(&self) -> StructSymId { self.sym.0 }
 }
@@ -311,7 +383,15 @@ pub enum PatternFunc {
 }
 
 impl PatternFunc {
+  pub fn pos(&self) -> Position {
+    let (PatternFunc::Func { pos, .. } | PatternFunc::Bracket { pos, .. }) = *self;
+    pos
+  }
   pub fn args(&self) -> &[Variable] {
+    let (PatternFunc::Func { args, .. } | PatternFunc::Bracket { args, .. }) = self;
+    args
+  }
+  pub fn args_mut(&mut self) -> &mut [Variable] {
     let (PatternFunc::Func { args, .. } | PatternFunc::Bracket { args, .. }) = self;
     args
   }
@@ -370,6 +450,17 @@ pub enum Pattern {
   Attr(Box<PatternAttr>),
 }
 
+impl Pattern {
+  pub fn pos(&self) -> Position {
+    match self {
+      Pattern::Pred(p) => p.pos,
+      Pattern::Func(p) => p.pos(),
+      Pattern::Mode(p) => p.pos,
+      Pattern::Attr(p) => p.pos,
+    }
+  }
+}
+
 #[derive(Debug)]
 pub struct DefCase<T> {
   pub case: Box<T>,
@@ -416,6 +507,14 @@ pub enum Attr {
   Non { pos: Position, attr: Box<Attr> },
 }
 
+impl Attr {
+  pub fn pos(&self) -> Position {
+    match *self {
+      Attr::Attr { pos, .. } | Attr::Non { pos, .. } => pos,
+    }
+  }
+}
+
 #[derive(Debug)]
 pub enum ClusterDeclKind {
   Exist { concl: Vec<Attr>, ty: Box<Type> },
@@ -426,7 +525,7 @@ pub enum ClusterDeclKind {
 #[derive(Debug)]
 pub struct Label {
   pub pos: Position,
-  pub id: (LabelId, String),
+  pub id: (Option<LabelId>, Rc<str>),
 }
 
 #[derive(Debug)]
@@ -435,12 +534,24 @@ pub enum Assumption {
   Collective { pos: Position, conds: Vec<Proposition> },
 }
 impl Assumption {
-  pub fn conds(&self) -> &[Proposition] {
+  pub fn conds(&mut self) -> &mut [Proposition] {
     match self {
-      Assumption::Single { prop, .. } => std::slice::from_ref(prop),
+      Assumption::Single { prop, .. } => std::slice::from_mut(prop),
       Assumption::Collective { conds, .. } => conds,
     }
   }
+}
+
+#[derive(Debug)]
+pub struct SetDecl {
+  pub var: Box<Variable>,
+  pub value: Box<Term>,
+}
+
+#[derive(Debug)]
+pub struct TakeDecl {
+  pub var: Option<Box<Variable>>,
+  pub term: Box<Term>,
 }
 
 #[derive(Debug)]
@@ -478,6 +589,19 @@ pub enum DefinitionKind {
   Attr { pat: Box<PatternAttr>, def: Option<Box<Definiens>> },
 }
 
+impl DefinitionKind {
+  pub fn pos(&self) -> Position {
+    match self {
+      DefinitionKind::Func { pat, .. } => match **pat {
+        PatternFunc::Func { pos, .. } | PatternFunc::Bracket { pos, .. } => pos,
+      },
+      DefinitionKind::Pred { pat, .. } => pat.pos,
+      DefinitionKind::Mode { pat, .. } => pat.pos,
+      DefinitionKind::Attr { pat, .. } => pat.pos,
+    }
+  }
+}
+
 #[derive(Debug)]
 pub struct CorrCond {
   pub pos: Position,
@@ -488,7 +612,6 @@ pub struct CorrCond {
 #[derive(Debug)]
 pub struct Correctness {
   pub pos: Position,
-  pub conds: Vec<CorrCondKind>,
   pub just: Justification,
 }
 
@@ -500,8 +623,8 @@ pub struct Property {
 
 #[derive(Debug)]
 pub struct SchemeHead {
-  pub sym: (u32, String),
-  pub nr: SchId,
+  pub sym: Option<Rc<str>>,
+  pub nr: Option<SchId>,
   pub groups: Vec<SchemeBinderGroup>,
   pub concl: Formula,
   pub prems: Vec<Proposition>,
@@ -518,14 +641,18 @@ pub struct SchemeBlock {
 pub struct Reservation {
   pub vars: Vec<Variable>,
   pub tys: Option<Vec<Type>>,
-  pub fvars: Option<Vec<u32>>,
+  pub fvars: Option<IdxVec<BoundId, ReservedId>>,
   pub ty: Box<Type>,
 }
 
 #[derive(Debug)]
 pub struct Definition {
-  pub redef: bool,
   pub kind: DefinitionKind,
+  pub body: DefinitionBody,
+}
+#[derive(Debug)]
+pub struct DefinitionBody {
+  pub redef: bool,
   pub conds: Vec<CorrCond>,
   pub corr: Option<Correctness>,
   pub props: Vec<Property>,
@@ -536,8 +663,6 @@ pub struct DefStruct {
   pub parents: Vec<Type>,
   pub fields: Vec<FieldGroup>,
   pub pat: PatternStruct,
-  pub conds: Vec<CorrCond>,
-  pub corr: Option<Correctness>,
 }
 
 #[derive(Debug)]
@@ -549,8 +674,8 @@ pub struct Cluster {
 
 #[derive(Debug)]
 pub struct IdentifyFunc {
-  pub orig: PatternFunc,
-  pub new: PatternFunc,
+  pub lhs: Box<PatternFunc>,
+  pub rhs: Box<PatternFunc>,
   pub eqs: Vec<(Variable, Variable)>,
   pub conds: Vec<CorrCond>,
   pub corr: Option<Correctness>,
@@ -558,8 +683,8 @@ pub struct IdentifyFunc {
 
 #[derive(Debug)]
 pub struct Reduction {
-  pub from: Term,
-  pub to: Term,
+  pub from: Box<Term>,
+  pub to: Box<Term>,
   pub conds: Vec<CorrCond>,
   pub corr: Option<Correctness>,
 }
@@ -569,6 +694,49 @@ pub struct CaseBlock {
   pub end: Position,
   pub hyp: Box<Assumption>,
   pub items: Vec<Item>,
+}
+
+#[derive(Debug)]
+pub enum Pragma {
+  /// $CD, $CT, $CS
+  Canceled(CancelKind, u32),
+  /// $N
+  ThmDesc(String),
+  /// $INSERT
+  Insert(String),
+  /// $V-, $V+
+  SetVerify(bool),
+  Other(String),
+}
+
+impl FromStr for Pragma {
+  type Err = std::convert::Infallible;
+  fn from_str(spelling: &str) -> Result<Self, Self::Err> {
+    let parse_num = |s: &str| {
+      if s.is_empty() {
+        1
+      } else {
+        s.trim().parse::<u32>().unwrap()
+      }
+    };
+    Ok(if let Some(s) = spelling.strip_prefix("$CD") {
+      Pragma::Canceled(CancelKind::Def, parse_num(s))
+    } else if let Some(s) = spelling.strip_prefix("$CT") {
+      Pragma::Canceled(CancelKind::Thm, parse_num(s))
+    } else if let Some(s) = spelling.strip_prefix("$CS") {
+      Pragma::Canceled(CancelKind::Sch, parse_num(s))
+    } else if let Some(s) = spelling.strip_prefix("$N") {
+      Pragma::ThmDesc(s.trim_start().to_owned())
+    } else if let Some(s) = spelling.strip_prefix("$INSERT") {
+      Pragma::Insert(s.trim_start().to_owned())
+    } else {
+      match spelling {
+        "$V-" => Pragma::SetVerify(false),
+        "$V+" => Pragma::SetVerify(true),
+        _ => Pragma::Other(spelling.to_owned()),
+      }
+    })
+  }
 }
 
 #[derive(Debug)]
@@ -584,7 +752,7 @@ pub enum ItemKind {
     prop: Box<Proposition>,
     just: Box<Justification>,
   },
-  Reservation(Box<Reservation>),
+  Reservation(Vec<Reservation>),
   /// itConclusion
   Thus(Statement),
   Statement(Statement),
@@ -612,13 +780,11 @@ pub enum ItemKind {
     value: Box<Formula>,
   },
   /// itConstantDefinition
-  Set {
-    var: Box<Variable>,
-    value: Box<Term>,
-  },
+  Set(Vec<SetDecl>),
   /// itGeneralization, itLociDeclaration
   Let {
-    var: Box<BinderGroup>,
+    vars: Vec<BinderGroup>,
+    conds: Vec<Proposition>,
   },
   /// itExistentialAssumption
   Given {
@@ -626,10 +792,7 @@ pub enum ItemKind {
     conds: Vec<Proposition>,
   },
   /// itExemplification
-  Take {
-    var: Option<Box<Variable>>,
-    term: Option<Box<Term>>,
-  },
+  Take(Vec<TakeDecl>),
   PerCases {
     just: Box<Justification>,
     kind: CaseKind,
@@ -646,9 +809,7 @@ pub enum ItemKind {
     ty: Box<Type>,
     just: Box<Justification>,
   },
-  Pragma {
-    spelling: String,
-  },
+  Pragma(Pragma),
   /// parser internal use only
   SchemeHead(Box<SchemeHead>),
   /// parser internal use only
