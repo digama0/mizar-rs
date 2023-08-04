@@ -9,6 +9,10 @@ enum PendingDef {
   Cluster(ClusterKind, usize),
 }
 
+mk_id! {
+  DefiniensId(u32),
+}
+
 pub struct Reader {
   pub g: Global,
   pub lc: LocalContext,
@@ -24,7 +28,7 @@ pub struct Reader {
   /// Notat
   pub notations: EnumMap<PatternKindClass, ExtVec<Pattern>>,
   /// Definientia
-  pub definitions: Vec<Definiens>,
+  pub definitions: IdxVec<DefiniensId, Definiens>,
   /// EqDefinientia
   pub equalities: Vec<Definiens>,
   /// ExDefinientia
@@ -40,6 +44,7 @@ pub struct Reader {
   props: Vec<Formula>,
   labels: IdxVec<LabelId, Option<usize>>,
   pending_defs: Vec<PendingDef>,
+  pub def_map: HashMap<DefRef, DefiniensId>,
   pub pos: Position,
   pub progress: Option<ProgressBar>,
 }
@@ -199,13 +204,13 @@ impl MizPath {
     if cfg.analyzer_enabled {
       if let Some(accom) = &mut v.accom {
         accom
-          .accom_definitions(&v.g.constrs, DirectiveKind::Definitions, &mut v.definitions)
+          .accom_definitions(&v.g.constrs, DirectiveKind::Definitions, &mut v.definitions.0)
           .unwrap();
       } else {
-        self.read_definitions(&v.g.constrs, false, "dfs", None, &mut v.definitions).unwrap();
+        self.read_definitions(&v.g.constrs, false, "dfs", None, &mut v.definitions.0).unwrap();
       }
       if cfg.dump.definitions {
-        for d in &v.definitions {
+        for d in &v.definitions.0 {
           eprintln!("definition: {d:?}");
         }
       }
@@ -317,7 +322,7 @@ impl MizPath {
     // InLibraries
     if cfg.checker_enabled {
       if let Some(accom) = &mut v.accom {
-        accom.accom_theorems(&v.g.constrs, &mut v.libs).unwrap();
+        accom.accom_theorems(&v.g.constrs, &mut v.def_map, &mut v.libs).unwrap();
       } else {
         self.read_eth(&v.g.constrs, refs, &mut v.libs).unwrap();
       }
@@ -394,6 +399,7 @@ impl Reader {
       props: Default::default(),
       labels: Default::default(),
       pending_defs: Default::default(),
+      def_map: Default::default(),
       pos: Default::default(),
       no_suppress_checker: true,
       progress,

@@ -4,7 +4,7 @@ use crate::ast::{
 };
 use crate::export::Exporter;
 use crate::parser::{MizParser, MsmParser};
-use crate::reader::Reader;
+use crate::reader::{DefiniensId, Reader};
 use crate::types::{PatternKindClass as PKC, *};
 use crate::*;
 use std::ops::Range;
@@ -49,6 +49,7 @@ pub struct Analyzer<'a> {
   /// all lifts are applied cumulatively.
   reserved_more_insertion: Vec<(u32, u32)>,
   internal_selectors: HashMap<SelSymId, ConstId>,
+  local_def_map: HashMap<LabelId, DefiniensId>,
   defthms: DefId,
   pub export: Exporter,
 }
@@ -113,6 +114,7 @@ impl Reader {
       reserved_extra_depth: 0,
       reserved_more_insertion: vec![],
       internal_selectors: Default::default(),
+      local_def_map: Default::default(),
       defthms: Default::default(),
       export: Default::default(),
     };
@@ -122,7 +124,7 @@ impl Reader {
       }
       elab.export.constrs_base = elab.g.constrs.len();
       elab.export.clusters_base = elab.g.clusters.len();
-      elab.export.definitions_base = elab.definitions.len() as u32;
+      elab.export.definitions_base = elab.definitions.peek();
       elab.export.identify_base = elab.identify.len() as u32;
       elab.export.reductions_base = elab.reductions.len() as u32;
       elab.export.properties_base = elab.properties.len() as u32;
@@ -574,7 +576,7 @@ impl Analyzer<'_> {
     // for i in 0..vars.len() {
     //   vprintln!("elab_fixed_var c{}: {ty:?}", self.lc.fixed_var.len() + i);
     // }
-    let mut base = ConstId::from_usize(self.lc.fixed_var.len());
+    let mut base = self.lc.fixed_var.peek();
     if let Some(ty) = ty {
       let ty = self.elab_intern_type_no_reserve(ty);
       for _ in 1..vars.len() {
@@ -2607,6 +2609,9 @@ trait ReadProof {
   /// Changes the thesis from `conjs & rest` to `rest`
   fn thus(&mut self, elab: &mut Analyzer, conjs: Vec<Formula>);
 
+  /// Unfold the definitions `refs` in the thesis
+  fn unfold(&mut self, elab: &mut Analyzer, refs: &[ast::Reference]);
+
   fn new_cases(&mut self, elab: &mut Analyzer) -> Self::CaseIter;
 
   fn new_case(&mut self, _: &mut Analyzer, _: &mut Self::CaseIter, _: &[Formula]) {}
@@ -2629,6 +2634,7 @@ trait ReadProof {
     match &it.kind {
       ast::ItemKind::Let { .. } => elab.item_header(it, "Let"),
       ast::ItemKind::Assume { .. } => elab.item_header(it, "Assume"),
+      ast::ItemKind::Unfold { .. } => elab.item_header(it, "Unfold"),
       ast::ItemKind::Given { .. } => elab.item_header(it, "Given"),
       ast::ItemKind::Take { .. } => elab.item_header(it, "Take"),
       ast::ItemKind::Thus { .. } => elab.item_header(it, "Thus"),
@@ -2712,6 +2718,7 @@ trait ReadProof {
         elab.elab_justification(false, &f.mk_neg(), just);
         return false
       }
+      ast::ItemKind::Unfold(refs) => self.unfold(elab, refs),
       ast::ItemKind::PerCases { just, kind: CaseKind::Suppose, blocks } => {
         let f = Formula::mk_and_with(|disjs| {
           let mut recv = self.new_supposes(elab);
@@ -2977,6 +2984,49 @@ impl ReadProof for WithThesis {
     elab.thesis = Some(Box::new(Formula::mk_and(args)))
   }
 
+  fn unfold(&mut self, elab: &mut Analyzer, refs: &[ast::Reference]) {
+    let mut f = (true, elab.thesis.take().unwrap());
+    for r in elab.elab_references(refs) {
+      let def = match r.kind {
+        ReferenceKind::Priv(label) => elab.local_def_map.get(&label),
+        ReferenceKind::Thm(_) => None,
+        ReferenceKind::Def(r) => elab.def_map.get(&r),
+      };
+      let def = &elab.definitions[*def.expect("not a definition reference")];
+      let fail = || panic!("thesis is not the specified definition");
+      let mut args_buf;
+      let (kind, args) = loop {
+        match &mut *f.1 {
+          Formula::Neg { f: f2 } => f = (!f.0, std::mem::take(f2)),
+          Formula::PrivPred { value, .. } => f.1 = std::mem::take(value),
+          Formula::Pred { nr, args } => {
+            let (n, args) = Formula::adjust_pred(*nr, args, Some(&elab.g.constrs));
+            break (ConstrKind::Pred(n), args)
+          }
+          Formula::Attr { nr, args } => {
+            let (n, args) = Formula::adjust_attr(*nr, args, Some(&elab.g.constrs));
+            break (ConstrKind::Attr(n), args)
+          }
+          Formula::Is { term, ty } => {
+            let TypeKind::Mode(n) = ty.kind else { fail() };
+            if !matches!(&ty.attrs.0, Attrs::Consistent(attrs) if attrs.is_empty()) {
+              fail()
+            }
+            let (n, args) = Type::adjust(n, &ty.args, &elab.g.constrs);
+            args_buf = args.to_vec();
+            args_buf.push((**term).clone());
+            break (ConstrKind::Mode(n), &*args_buf)
+          }
+          _ => fail(),
+        }
+      };
+      let Some((pos, f2)) = elab.try_unfold(false, def, true, kind, args) else { fail() };
+      f.0 = pos;
+      *f.1 = f2;
+    }
+    elab.thesis = Some(Box::new(f.1.maybe_neg(f.0)));
+  }
+
   fn new_cases(&mut self, elab: &mut Analyzer) -> Self::CaseIter {
     UnfoldConjIter::new(elab.thesis.as_ref().unwrap().clone().mk_neg().into_conjuncts())
   }
@@ -3141,6 +3191,10 @@ impl ReadProof for ReconstructThesis {
     } else {
       self.stack.push(ProofStep::Thus { conjs: f })
     }
+  }
+
+  fn unfold(&mut self, _: &mut Analyzer, _: &[ast::Reference]) {
+    panic!("unfolding steps are not reconstructable")
   }
 
   fn new_cases(&mut self, _: &mut Analyzer) { self.stack.push(ProofStep::Break(false)) }
@@ -3328,9 +3382,13 @@ impl BlockReader {
     elab.notations.iter_mut().for_each(|nota| nota.1.up());
     for (pos, def) in self.defs {
       if let Some(PendingDef { kind, df, label, thm }) = def {
+        let id = elab.r.definitions.peek();
         elab.r.read_definiens(&df);
         if elab.g.cfg.analyzer_full {
           let thm2 = (*thm).visit_cloned(&mut elab.intern_const());
+          if let Some((Some(label), _)) = label {
+            elab.local_def_map.insert(label, id);
+          }
           elab.push_prop(label, thm2);
         }
         if elab.g.cfg.exporter_enabled {
@@ -4511,6 +4569,7 @@ impl ReadProof for BlockReader {
 
   fn take(&mut self, _: &mut Analyzer, _: Term) { panic!("invalid item") }
   fn thus(&mut self, _: &mut Analyzer, _: Vec<Formula>) { panic!("invalid item") }
+  fn unfold(&mut self, _: &mut Analyzer, _: &[ast::Reference]) { panic!("invalid item") }
   fn new_cases(&mut self, _: &mut Analyzer) -> Self::CaseIter { panic!("invalid item") }
 
   fn new_supposes(&mut self, _: &mut Analyzer) -> Self::SupposeRecv { panic!("invalid item") }

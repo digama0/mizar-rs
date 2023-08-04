@@ -1,5 +1,6 @@
 use crate::analyze::Analyzer;
 use crate::parser::MaybeMut;
+use crate::reader::DefiniensId;
 use crate::types::*;
 use crate::{Assignment, LocalContext, OnVarMut, VisitMut};
 use enum_map::EnumMap;
@@ -13,7 +14,7 @@ pub struct Exporter {
   pub notations_base: EnumMap<PatternKindClass, u32>,
   pub constrs_base: ConstructorsBase,
   pub clusters_base: ClustersBase,
-  pub definitions_base: u32,
+  pub definitions_base: DefiniensId,
   pub identify_base: u32,
   pub reductions_base: u32,
   pub properties_base: u32,
@@ -403,7 +404,7 @@ impl Analyzer<'_> {
 
     // validating .def
     {
-      let mut def1 = self.definitions[self.export.definitions_base as usize..].to_owned();
+      let mut def1 = self.definitions.0[self.export.definitions_base.into_usize()..].to_owned();
       let nonempty = !def1.is_empty();
       let (mut sig1, mut sig, mut def2) = Default::default();
       if self.g.cfg.verify_export {

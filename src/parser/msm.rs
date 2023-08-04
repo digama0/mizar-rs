@@ -572,6 +572,10 @@ impl MsmParser {
         let term = term.unwrap_or_else(|| Box::new(var.as_deref().unwrap().to_term()));
         ItemKind::Take(vec![TakeDecl { var, term }])
       }
+      b"Unfolding" => {
+        self.r.read_start(&mut self.buf, Some(b"Unfolding"));
+        ItemKind::Unfold(self.parse_references())
+      }
       b"Per-Cases" => ItemKind::PerCasesHead(self.parse_justification()),
       b"Regular-Statement" => {
         let shape = (*shape).try_into().unwrap();

@@ -1,3 +1,4 @@
+use crate::reader::DefiniensId;
 use crate::types::*;
 use crate::{mk_id, CmpStyle, MizPath, VisitMut};
 use std::collections::HashMap;
@@ -447,7 +448,10 @@ impl Accomodator {
   }
 
   /// ProcessTheorems
-  pub fn accom_theorems(&mut self, ctx: &Constructors, libs: &mut Libraries) -> io::Result<()> {
+  pub fn accom_theorems(
+    &mut self, ctx: &Constructors, def_map: &mut HashMap<DefRef, DefiniensId>, libs: &mut Libraries,
+  ) -> io::Result<()> {
+    let mut defthms = DefiniensId::default();
     for &(_, art) in &self.dirs.0[DirectiveKind::Theorems] {
       let mut thms = Default::default();
       if MizPath::new(art.as_str()).read_the(false, &mut thms)? {
@@ -461,7 +465,11 @@ impl Accomodator {
               let def_nr = def_nr.fresh();
               thm.stmt.visit(&mut rename);
               if rename.ok() {
-                libs.def.insert((lib_nr.unwrap(), def_nr), thm.stmt);
+                let art = lib_nr.unwrap();
+                libs.def.insert((art, def_nr), thm.stmt);
+                if let TheoremKind::Def(_) = thm.kind {
+                  def_map.insert((art, def_nr), defthms.fresh());
+                }
               }
             }
             TheoremKind::Thm | TheoremKind::CanceledThm => {

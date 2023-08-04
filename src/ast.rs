@@ -799,6 +799,7 @@ pub enum ItemKind {
     blocks: Vec<CaseBlock>,
   },
   Assume(Assumption),
+  Unfold(Vec<Reference>),
   Definition(Box<Definition>),
   DefStruct(Box<DefStruct>),
   PatternRedef(PatternRedef),

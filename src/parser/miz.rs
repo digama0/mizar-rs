@@ -114,6 +114,7 @@ mk_keywords! {
   Thesis: b"thesis",
   Thus: b"thus",
   To: b"to",
+  Unfolding: b"unfolding",
   // Wrt: b"wrt",
   Where: b"where",
   When: b"when",
@@ -1704,6 +1705,7 @@ impl<'a> Parser<'a> {
         let (vars, conds) = self.parse_choice();
         ItemKind::Given { vars, conds }
       }
+      TokenKind::Keyword(Keyword::Unfolding) => ItemKind::Unfold(self.parse_references()),
       TokenKind::Keyword(Keyword::Assume) => ItemKind::Assume(self.parse_assumption(pos)),
       _ => {
         self.scan.undo(tok);
