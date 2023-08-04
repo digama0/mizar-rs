@@ -911,8 +911,9 @@ impl<'a> Equalizer<'a> {
     }
     let eq_class = std::mem::take(&mut self.terms[from].eq_class);
     self.terms[to].eq_class.append(&mut { eq_class });
-    let Attrs::Consistent(attrs) = std::mem::take(&mut self.terms[from].supercluster)
-    else { unreachable!() };
+    let Attrs::Consistent(attrs) = std::mem::take(&mut self.terms[from].supercluster) else {
+      unreachable!()
+    };
     for attr in attrs {
       self.terms[to].supercluster.try_insert(&self.g.constrs, self.lc, attr)?;
     }
@@ -920,7 +921,7 @@ impl<'a> Equalizer<'a> {
       self.insert_type(ty, to)?;
     }
     let eq_polys = std::mem::take(&mut self.terms[from].eq_polys);
-    self.terms[to].eq_polys.extend(eq_polys.into_iter());
+    self.terms[to].eq_polys.extend(eq_polys);
     if self.terms[to].eq_polys.len() == 2 {
       let mut it = std::mem::take(&mut self.terms[to].eq_polys).into_iter();
       let (p1, p2) = (it.next().unwrap(), it.next().unwrap());

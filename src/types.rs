@@ -115,7 +115,7 @@ impl<I, T> IdxVec<I, T> {
   }
 
   /// Returns the value that would be returned by the next call to `push`.
-  pub fn peek(&mut self) -> I
+  pub fn peek(&self) -> I
   where I: Idx {
     I::from_usize(self.0.len())
   }
@@ -209,7 +209,9 @@ macro_rules! mk_id {
         fn into_usize(self) -> usize { self.0 as usize }
       }
       impl std::fmt::Debug for $id {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.0.fmt(f) }
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+          std::fmt::Debug::fmt(&self.0, f)
+        }
       }
       impl std::str::FromStr for $id {
         type Err = std::num::ParseIntError;

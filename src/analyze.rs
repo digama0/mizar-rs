@@ -1690,6 +1690,46 @@ impl Analyzer<'_> {
     f
   }
 
+  fn try_unfold(
+    &self, up: bool, def: &Definiens, pos: bool, kind: ConstrKind, args: &[Term],
+  ) -> Option<(bool, Formula)> {
+    let subst = def.matches(&self.g, &self.lc, kind, args)?.finish();
+    let mut inst = Inst::new(&self.g.constrs, &self.lc, &subst, 0);
+    let DefValue::Formula(value) = &def.value else { unreachable!() };
+    let (pos2, f2) = if value.cases.is_empty() {
+      (pos, value.otherwise.as_ref().unwrap().visit_cloned(&mut inst))
+    } else {
+      let f = Formula::mk_and_with(|disjs| {
+        let mut otherwise = vec![];
+        for case in &*value.cases {
+          let guard = case.guard.visit_cloned(&mut inst);
+          if value.otherwise.is_some() {
+            guard.clone().mk_neg().append_conjuncts_to(&mut otherwise)
+          }
+          let f = Formula::mk_and_with(|conj| {
+            guard.append_conjuncts_to(conj);
+            case.case.visit_cloned(&mut inst).maybe_neg(pos).append_conjuncts_to(conj);
+          });
+          f.mk_neg().append_conjuncts_to(disjs)
+        }
+        if let Some(ow) = &value.otherwise {
+          ow.visit_cloned(&mut inst).maybe_neg(pos).append_conjuncts_to(&mut otherwise);
+          Formula::mk_and(otherwise).mk_neg().append_conjuncts_to(disjs)
+        }
+      });
+      (false, f)
+    };
+    if matches!(def.assumptions, Formula::True) {
+      Some((pos2, f2))
+    } else {
+      let f = Formula::mk_and_with(|conjs| {
+        def.assumptions.visit_cloned(&mut inst).append_conjuncts_to(conjs);
+        f2.maybe_neg(pos2 != up).append_conjuncts_to(conjs);
+      });
+      Some((!up, f))
+    }
+  }
+
   /// Replaces `f` with the normalized version,
   /// satisfying `f -> new_f` (up = true) or `new_f -> f` (up = false).
   /// Swapping both `up` and `f.0` produces almost the same result,
@@ -1716,8 +1756,9 @@ impl Analyzer<'_> {
           continue 'start
         }
         Formula::FlexAnd { .. } => {
-          let Formula::FlexAnd { nat, le, terms, scope } = std::mem::take(&mut *f.1)
-          else { unreachable!() };
+          let Formula::FlexAnd { nat, le, terms, scope } = std::mem::take(&mut *f.1) else {
+            unreachable!()
+          };
           *f.1 = Global::expand_flex_and(nat, le, *terms, scope, 0);
           continue 'start
         }
@@ -1741,47 +1782,14 @@ impl Analyzer<'_> {
         }
         _ => break,
       };
-      for def in self.definitions.iter().rev() {
-        let Some(subst) = def.matches(&self.g, &self.lc, kind, args) else { continue };
-        let subst = subst.finish();
-        let mut inst = Inst::new(&self.g.constrs, &self.lc, &subst, 0);
-        let DefValue::Formula(value) = &def.value else { unreachable!() };
-        let (pos2, f2) = if value.cases.is_empty() {
-          (f.0, value.otherwise.as_ref().unwrap().visit_cloned(&mut inst))
-        } else {
-          let f = Formula::mk_and_with(|disjs| {
-            let mut otherwise = vec![];
-            for case in &*value.cases {
-              let guard = case.guard.visit_cloned(&mut inst);
-              if value.otherwise.is_some() {
-                guard.clone().mk_neg().append_conjuncts_to(&mut otherwise)
-              }
-              let f = Formula::mk_and_with(|conj| {
-                guard.append_conjuncts_to(conj);
-                case.case.visit_cloned(&mut inst).maybe_neg(f.0).append_conjuncts_to(conj);
-              });
-              f.mk_neg().append_conjuncts_to(disjs)
-            }
-            if let Some(ow) = &value.otherwise {
-              ow.visit_cloned(&mut inst).maybe_neg(f.0).append_conjuncts_to(&mut otherwise);
-              Formula::mk_and(otherwise).mk_neg().append_conjuncts_to(disjs)
-            }
-          });
-          (false, f)
-        };
-        if matches!(def.assumptions, Formula::True) {
+      for def in self.definitions.0.iter().rev() {
+        if let Some((pos2, f2)) = self.try_unfold(up, def, f.0, kind, args) {
           f.0 = pos2;
           *f.1 = f2;
-        } else {
-          *f.1 = Formula::mk_and_with(|conjs| {
-            def.assumptions.visit_cloned(&mut inst).append_conjuncts_to(conjs);
-            f2.maybe_neg(pos2 != up).append_conjuncts_to(conjs);
-            f.0 = !up;
-          });
+          // vprintln!("expanded {def:?}\n  -> {:?}", f);
+          atomic -= 1;
+          continue 'start
         }
-        // vprintln!("expanded {def:?}\n  -> {:?}", f);
-        atomic -= 1;
-        continue 'start
       }
       break
     }
@@ -2464,9 +2472,11 @@ impl CollectReserved<'_> {
     match tm {
       ast::Term::Var { pos, kind, ref spelling } =>
         if kind.is_none() {
-          let Some(kind2) = self.lookup.var.get(&**spelling).copied()
+          let Some(kind2) = (self.lookup.var.get(&**spelling).copied())
             .or_else(|| Some(VarKind::Reserved(*self.reserved_by_name.get(&**spelling)?)))
-          else { panic!("{pos:?}: unresolved variable '{spelling}'") };
+          else {
+            panic!("{pos:?}: unresolved variable '{spelling}'")
+          };
           if let VarKind::Reserved(n) = kind2 {
             self.use_reserved(*pos, n)
           }
@@ -3828,7 +3838,7 @@ impl BlockReader {
     let mut parents: Box<[_]> = it.parents.iter().map(|ty| elab.elab_type(ty)).collect();
     let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect_vec();
     let struct_primary: Box<[_]> = self.primary.0.iter().cloned().collect();
-    let struct_id = StructId::from_usize(elab.g.constrs.struct_mode.len());
+    let struct_id = elab.g.constrs.struct_mode.peek();
     let struct_pat = Pattern {
       kind: PatternKind::Struct(struct_id),
       fmt: elab.formats[&Format::Struct(it.pat.to_mode_format())],
@@ -3868,7 +3878,7 @@ impl BlockReader {
       });
       self.primary.0.iter().cloned().chain(field_tys2).collect()
     });
-    let aggr_id = AggrId::from_usize(elab.g.constrs.aggregate.len());
+    let aggr_id = elab.g.constrs.aggregate.peek();
     let aggr_pat = Pattern {
       kind: PatternKind::Aggr(aggr_id),
       fmt: elab.formats[&Format::Aggr(it.pat.to_aggr_format(field_tys.len()))],
@@ -4468,7 +4478,7 @@ impl ReadProof for BlockReader {
   fn intro(&mut self, elab: &mut Analyzer, start: usize, _: u32) {
     self.to_locus.0.resize(start, None);
     if !matches!(self.assums.last(), Some(ReconstructAssum::Let { .. })) {
-      self.assums.push(ReconstructAssum::Let { start: LocusId::from_usize(self.primary.len()) })
+      self.assums.push(ReconstructAssum::Let { start: self.primary.peek() })
     }
     for fv in &elab.r.lc.fixed_var.0[start..] {
       let mut ty = fv.ty.clone();

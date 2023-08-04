@@ -397,6 +397,18 @@ impl MsmParser {
     out
   }
 
+  fn parse_references(&mut self) -> Vec<Reference> {
+    let mut refs = vec![];
+    loop {
+      match self.parse_elem() {
+        Elem::Reference(r) => refs.push(r),
+        Elem::End => break,
+        _ => panic!("unexpected element"),
+      }
+    }
+    refs
+  }
+
   pub fn push_parse_item(&mut self, items: &mut Vec<Item>) -> bool {
     let Ok(e) = self.r.try_read_start(&mut self.buf, Some(b"Item")) else { return false };
     let (mut pos, (mut kind, mut property, mut shape, mut spelling, mut condition)) =
@@ -417,13 +429,15 @@ impl MsmParser {
     let mut end_tag = false;
     let kind = match &*kind {
       b"Definition-Item" => {
-        let Block { pos, kind: BlockKind::Def(kind), items } = *self.parse_block().unwrap()
-        else { panic!("expected a definition block") };
+        let Block { pos, kind: BlockKind::Def(kind), items } = *self.parse_block().unwrap() else {
+          panic!("expected a definition block")
+        };
         ItemKind::Block { end: pos.1, kind, items }
       }
       b"Scheme-Block-Item" => {
-        let Block { pos, kind: BlockKind::Scheme, mut items } = *self.parse_block().unwrap()
-        else { panic!("expected a scheme block") };
+        let Block { pos, kind: BlockKind::Scheme, mut items } = *self.parse_block().unwrap() else {
+          panic!("expected a scheme block")
+        };
         let ItemKind::SchemeHead(head) = items.remove(0).kind else { panic!() };
         ItemKind::SchemeBlock(Box::new(SchemeBlock { end: pos.1, head: *head, items }))
       }
@@ -581,8 +595,9 @@ impl MsmParser {
         match it {
           ItemKind::PerCases { kind: k2, blocks, .. } if *k2 == kind => blocks.push(bl),
           _ => {
-            let ItemKind::PerCasesHead(just) = std::mem::take(it)
-            else { panic!("unexpected case block") };
+            let ItemKind::PerCasesHead(just) = std::mem::take(it) else {
+              panic!("unexpected case block")
+            };
             *it = ItemKind::PerCases { just, kind, blocks: vec![bl] };
           }
         }
@@ -896,14 +911,7 @@ impl MsmParser {
                 _ => {}
               }
             }
-            let mut refs = vec![];
-            loop {
-              match self.parse_elem() {
-                Elem::Reference(r) => refs.push(r),
-                Elem::End => break,
-                _ => panic!("unexpected element"),
-              }
-            }
+            let refs = self.parse_references();
             let sch = if art == ArticleId::SELF {
               match sch.checked_sub(1) {
                 Some(sch) => SchRef::Resolved(art, SchId(sch)),

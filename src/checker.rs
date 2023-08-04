@@ -71,8 +71,9 @@ impl<'a> Checker<'a> {
     // vprintln!("interned {:?}:{:?}:\n  {check_f:?}", self.article, self.pos);
 
     let mut atoms = Atoms::default();
-    let Dnf::Or(mut normal_form) = atoms.normalize(self.g, self.lc, check_f, true).unwrap()
-    else { panic!("it is not true") };
+    let Dnf::Or(mut normal_form) = atoms.normalize(self.g, self.lc, check_f, true).unwrap() else {
+      panic!("it is not true")
+    };
     // vprintln!("normalized {:?}:{:?}:\n  {normal_form:?}", self.article, self.pos);
 
     self.process_is(&mut atoms, &mut normal_form).unwrap();
@@ -323,7 +324,7 @@ impl Expand<'_> {
   }
 
   /// ExpandFlex
-  fn expand_flex(&mut self, terms: &mut Box<[Term; 2]>, scope: &Formula, conjs: &mut Vec<Formula>) {
+  fn expand_flex(&mut self, terms: &[Term; 2], scope: &Formula, conjs: &mut Vec<Formula>) {
     fn get_number<'a>(
       g: &Global, ic: &'a IdxVec<InferId, Assignment>, mut tm: &'a Term, zero: &mut Option<Term>,
     ) -> Option<u32> {
@@ -689,7 +690,10 @@ where Conjunct<K, V>: std::fmt::Debug
   /// PreInstCollection.UnionWith
   pub fn mk_or(&mut self, other: Self) -> Result<(), Overflow> {
     let Dnf::Or(this) = self else { return Ok(()) };
-    let Dnf::Or(other) = other else { *self = Dnf::True; return Ok(()) };
+    let Dnf::Or(other) = other else {
+      *self = Dnf::True;
+      return Ok(())
+    };
     other.into_iter().try_for_each(|conj| {
       Self::insert_and_absorb(this, conj)?;
       Ok(())

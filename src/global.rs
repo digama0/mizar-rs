@@ -1996,11 +1996,9 @@ impl Attrs {
         if other.is_empty() {
           return
         }
-        for item in itertools::merge_join_by(
-          std::mem::take(this).into_iter(),
-          other.iter().map(map),
-          |a, b| a.cmp_abs(Some(ctx), Some(lc), b, CmpStyle::Attr),
-        ) {
+        for item in itertools::merge_join_by(std::mem::take(this), other.iter().map(map), |a, b| {
+          a.cmp_abs(Some(ctx), Some(lc), b, CmpStyle::Attr)
+        }) {
           match item {
             EitherOrBoth::Left(attr) | EitherOrBoth::Right(attr) => this.push(attr),
             EitherOrBoth::Both(attr1, attr2) => {
