@@ -1,3 +1,4 @@
+// #![warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use crate::format::FormatterConfig;
 use crate::types::*;
 use clap::{ArgAction, CommandFactory, Parser, ValueEnum};
@@ -7,7 +8,7 @@ use itertools::Itertools;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
-use std::io::Write;
+use std::io::{self, Write};
 use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 
@@ -18,6 +19,7 @@ mod bignum;
 mod cache;
 mod checker;
 mod equate;
+mod error;
 mod export;
 mod format;
 mod global;
@@ -30,6 +32,7 @@ mod write;
 
 pub use global::*;
 
+#[allow(clippy::unwrap_used)]
 pub fn stat(s: &'static str) {
   *STATS.lock().unwrap().get_or_insert_with(HashMap::new).entry(s).or_default() += 1;
 }
@@ -61,14 +64,14 @@ pub fn set_verbose(b: bool) { VERBOSE.store(b, std::sync::atomic::Ordering::SeqC
 
 static STATS: Mutex<Option<HashMap<&'static str, u32>>> = Mutex::new(None);
 
-fn print_stats_and_exit() {
+fn print_stats_and_exit(has_errors: bool) {
   let mut g = STATS.lock().unwrap();
   let mut vec: Vec<_> = g.get_or_insert_with(HashMap::new).iter().collect();
   vec.sort();
   for (s, i) in vec {
     println!("{s}: {i}");
   }
-  std::process::exit(0)
+  std::process::exit(has_errors as i32)
 }
 
 #[derive(Clone)]
@@ -505,7 +508,7 @@ fn main() {
     None
   };
 
-  ctrlc::set_handler(print_stats_and_exit).expect("Error setting Ctrl-C handler");
+  ctrlc::set_handler(|| print_stats_and_exit(true)).expect("Error setting Ctrl-C handler");
 
   let jobs = &Mutex::new(jobs.into_iter());
   let running = &*std::iter::repeat_with(|| {
@@ -521,7 +524,9 @@ fn main() {
     p.multi.set_move_cursor(true);
   }
   let cfg = &cfg;
+  let mut has_errors = AtomicBool::new(false);
   std::thread::scope(|s| {
+    let has_errors = &has_errors;
     for thread in running {
       s.spawn(move || {
         while let Some((i, s)) = {
@@ -536,7 +541,7 @@ fn main() {
             thread.reset_elapsed();
           }
           let start = std::time::Instant::now();
-          if let Err(_payload) = std::panic::catch_unwind(|| {
+          let result = std::panic::catch_unwind(|| -> io::Result<bool> {
             if cli.orig_mizar {
               if cfg.accom_enabled {
                 let mut cmd = std::process::Command::new("miz/mizbin/accom");
@@ -566,16 +571,33 @@ fn main() {
                 panic!("mizar verifier failed")
               }
               // println!("{}", String::from_utf8(output.stdout).unwrap());
+              Ok(false)
             } else if cfg.parser_enabled || cfg.analyzer_enabled {
-              path.with_reader(cfg, thread.as_ref(), mml_vct, &mut |v, p| v.run_analyzer(&path, p));
+              path.with_reader(cfg, thread.as_ref(), mml_vct, &mut |v, p| v.run_analyzer(&path, p))
             } else if cfg.checker_enabled {
-              path.with_reader(cfg, thread.as_ref(), mml_vct, &mut |v, _| v.run_checker(&path));
+              path.with_reader(cfg, thread.as_ref(), mml_vct, &mut |v, _| v.run_checker(&path))
+            } else {
+              Ok(false)
             }
-          }) {
-            println!("error: {i}: {s} panicked");
-            stat("panic");
-            if cfg.panic_on_fail {
-              std::process::abort()
+          });
+          match result {
+            Ok(Ok(err)) =>
+              if err {
+                has_errors.store(true, std::sync::atomic::Ordering::Relaxed)
+              },
+            Ok(Err(err)) => {
+              println!("error: {i}: {s} IO error: {err}");
+              stat("panic");
+              if cfg.panic_on_fail {
+                std::process::abort()
+              }
+            }
+            Err(_payload) => {
+              println!("error: {i}: {s} panicked");
+              stat("panic");
+              if cfg.panic_on_fail {
+                std::process::abort()
+              }
             }
           }
           if let Some(p) = progress.as_ref().filter(|p| !p.multi.is_hidden()) {
@@ -609,5 +631,5 @@ fn main() {
     drop(p.multi.clear());
   }
   // std::thread::sleep(std::time::Duration::from_secs(60 * 60));
-  print_stats_and_exit();
+  print_stats_and_exit(*has_errors.get_mut());
 }

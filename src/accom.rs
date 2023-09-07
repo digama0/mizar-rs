@@ -1,3 +1,4 @@
+use crate::error::AccomError;
 use crate::reader::DefiniensId;
 use crate::types::*;
 use crate::{mk_id, CmpStyle, MizPath, VisitMut};
@@ -37,8 +38,8 @@ impl VocBuilder {
   }
 
   fn truncate(&mut self, len: usize) {
-    if self.voc.len() > len {
-      self.base = self.voc.0[len].1;
+    if let Some(voc) = self.voc.0.get_mut(len) {
+      self.base = voc.1;
       self.voc.0.truncate(len)
     }
   }
@@ -51,10 +52,10 @@ pub struct SigBuilder {
 }
 
 impl SigBuilder {
-  fn push(&mut self, constrs: Option<&mut Constructors>, art: Article) -> SigId {
+  fn push(&mut self, constrs: Option<&mut Constructors>, art: Article) -> io::Result<SigId> {
     let mut dco = Default::default();
-    assert!(MizPath::new(art.as_str()).read_dco(false, &mut dco, constrs.is_some()).unwrap());
-    self.push_from(constrs, art, &mut dco)
+    assert!(MizPath::new(art.as_str()).read_dco(false, &mut dco, constrs.is_some())?);
+    Ok(self.push_from(constrs, art, &mut dco))
   }
 
   fn push_from(
@@ -79,11 +80,14 @@ impl SigBuilder {
     }
   }
 
-  fn get_or_push(&mut self, constrs: Option<&mut Constructors>, art: Article) -> SigId {
-    let id = self.sig.enum_iter().find(|p| p.1 .0 == art);
-    id.map(|p| p.0).unwrap_or_else(|| self.push(constrs, art))
+  fn get_or_push(&mut self, constrs: Option<&mut Constructors>, art: Article) -> io::Result<SigId> {
+    if let Some(p) = self.sig.enum_iter().find(|p| p.1 .0 == art) {
+      return Ok(p.0)
+    }
+    self.push(constrs, art)
   }
 
+  #[allow(clippy::panic)]
   fn get(&self, art: Article) -> SigId {
     match self.sig.enum_iter().find(|p| p.1 .0 == art) {
       Some((id, _)) => id,
@@ -95,19 +99,21 @@ impl SigBuilder {
     self.sig.get(SigId(id.0 + 1)).map_or(&self.base, |(_, base)| base)
   }
 
-  fn rename<'a>(&mut self, sig: &[Article], ctx: Option<&'a Constructors>) -> RenameConstr<'a> {
+  fn rename<'a>(
+    &mut self, sig: &[Article], ctx: Option<&'a Constructors>,
+  ) -> io::Result<RenameConstr<'a>> {
     let mut rename = RenameConstr { ctx, ..Default::default() };
     let limit = self.sig.len();
     for &art in sig {
-      let id = self.get_or_push(None, art);
+      let id = self.get_or_push(None, art)?;
       rename.push(self, id, id.into_usize() < limit)
     }
-    rename
+    Ok(rename)
   }
 
   fn truncate(&mut self, len: usize) {
-    if self.sig.len() > len {
-      self.base = self.sig.0[len].1;
+    if let Some(sig) = self.sig.0.get_mut(len) {
+      self.base = sig.1;
       self.sig.0.truncate(len)
     }
   }
@@ -115,10 +121,12 @@ impl SigBuilder {
 
 #[derive(Debug, Default)]
 pub struct Accomodator {
+  article: Article,
   pub dirs: Directives,
   pub sig: SigBuilder,
   pub articles: HashMap<Article, ArticleId>,
   dict: VocBuilder,
+  pub has_errors: bool,
 }
 
 #[derive(Debug, Default)]
@@ -133,6 +141,7 @@ impl RenameSymbol {
     self.base += val;
   }
   fn apply(&mut self, k: SymbolKindClass, n: &mut u32) {
+    #[allow(clippy::indexing_slicing)]
     if let Some(i) = self.trans.partition_point(|(base, _, _)| base.0[k] <= *n).checked_sub(1) {
       let (from, to, allow) = &self.trans[i];
       *n = *n - from.0[k] + to.0[k];
@@ -150,6 +159,7 @@ struct RenameConstr<'a> {
   ctx: Option<&'a Constructors>,
 }
 impl RenameConstr<'_> {
+  #[allow(clippy::indexing_slicing)]
   fn push(&mut self, sig: &SigBuilder, i: SigId, allow: bool) {
     let lo = self.base;
     self.base += *sig.hi(i) - sig.sig[i].1;
@@ -159,6 +169,7 @@ impl RenameConstr<'_> {
   fn apply(&mut self, n: &mut u32, key: impl Fn(&ConstructorsBase) -> u32) {
     assert!(*n < key(&self.base));
     if let Some(i) = self.trans.partition_point(|p| key(&p.0) <= *n).checked_sub(1) {
+      #[allow(clippy::indexing_slicing)]
       let (from, to, allow) = &self.trans[i];
       *n = *n - key(from) + key(to);
       self.failed |= !*allow;
@@ -204,6 +215,7 @@ impl Accomodator {
     &mut self, mml_vct: &'a [u8], syms: &mut Symbols, priority: &mut Vec<(PriorityKind, u32)>,
     mut infinitives: Option<&mut Vec<(PredSymId, &'a str)>>,
   ) {
+    #[allow(clippy::indexing_slicing)]
     for &(_, art) in &self.dirs.0[DirectiveKind::Vocabularies] {
       let mut voc = Default::default();
       assert!(art.read_vct(mml_vct, &mut voc)); // TODO: private vocabularies
@@ -242,6 +254,7 @@ impl Accomodator {
     }
   }
 
+  #[allow(clippy::indexing_slicing)]
   pub fn accom_articles(&mut self) {
     let mut id = ArticleId(1); // 0 is reserved for SELF
     for &(_, art) in &self.dirs.0[DirectiveKind::Theorems] {
@@ -253,12 +266,13 @@ impl Accomodator {
   }
 
   /// ProcessConstructors
+  #[allow(clippy::indexing_slicing)]
   pub fn accom_constructors(&mut self, constrs: &mut Constructors) -> io::Result<()> {
     for &(_, art) in &self.dirs.0[DirectiveKind::Constructors] {
       let mut dco = Default::default();
-      assert!(MizPath::new(art.as_str()).read_dco(false, &mut dco, true).unwrap());
+      assert!(MizPath::new(art.as_str()).read_dco(false, &mut dco, true)?);
       for &art2 in &dco.sig {
-        self.sig.get_or_push(Some(constrs), art2);
+        self.sig.get_or_push(Some(constrs), art2)?;
       }
       if !self.sig.sig.0.iter().any(|p| p.0 == art) {
         self.sig.push_from(Some(constrs), art, &mut dco);
@@ -268,6 +282,7 @@ impl Accomodator {
   }
 
   /// ProcessRequirements
+  #[allow(clippy::indexing_slicing)]
   pub fn accom_requirements(
     &mut self, ctx: &Constructors, idx: &mut RequirementIndexes,
   ) -> io::Result<()> {
@@ -275,7 +290,7 @@ impl Accomodator {
       let mut dre = Default::default();
       MizPath::new(art.as_str()).read_dre(&mut dre)?;
       let len = self.sig.sig.len();
-      let mut rename = self.sig.rename(&dre.sig, Some(ctx));
+      let mut rename = self.sig.rename(&dre.sig, Some(ctx))?;
       for DepRequirement { req, mut kind } in dre.reqs {
         kind.visit(&mut rename);
         assert!(rename.ok() && kind.lt(&ctx.len()), "inaccessible requirement");
@@ -287,12 +302,13 @@ impl Accomodator {
   }
 
   /// ProcessClusters
+  #[allow(clippy::indexing_slicing)]
   pub fn accom_clusters(&mut self, ctx: &Constructors, clusters: &mut Clusters) -> io::Result<()> {
     for &(_, art) in &self.dirs.0[DirectiveKind::Registrations] {
       let mut dcl = Default::default();
       if MizPath::new(art.as_str()).read_dcl(false, &mut dcl)? {
         let len = self.sig.sig.len();
-        let mut rename = self.sig.rename(&dcl.sig, Some(ctx));
+        let mut rename = self.sig.rename(&dcl.sig, Some(ctx))?;
         for mut cl in dcl.cl.registered {
           cl.visit(&mut rename);
           if rename.ok() {
@@ -318,6 +334,7 @@ impl Accomodator {
   }
 
   /// ProcessNotation
+  #[allow(clippy::indexing_slicing)]
   pub fn accom_notations(
     &mut self, fmt_map: &mut HashMap<Format, FormatId>, mut fmts: Option<&mut Formats>,
     pats: &mut Vec<Pattern>,
@@ -336,7 +353,7 @@ impl Accomodator {
         s_rename.push(val, &self.dict.voc[i].1, i.0 < dict_len as u32);
       }
       let sig_len = self.sig.sig.len();
-      let mut rename = self.sig.rename(&dno.sig, None);
+      let mut rename = self.sig.rename(&dno.sig, None)?;
       for Pattern { mut kind, mut fmt, mut primary, visible, pos } in dno.pats {
         fmt.visit_mut(|k, c| s_rename.apply(k, c));
         if s_rename.ok() {
@@ -360,6 +377,7 @@ impl Accomodator {
   }
 
   /// ProcessIdentify
+  #[allow(clippy::indexing_slicing)]
   pub fn accom_identify_regs(
     &mut self, ctx: &Constructors, ids: &mut Vec<IdentifyFunc>,
   ) -> io::Result<()> {
@@ -368,7 +386,7 @@ impl Accomodator {
       let path = MizPath::new(art.as_str());
       if path.read_did(false, &mut sig, &mut did)? {
         let len = self.sig.sig.len();
-        let mut rename = self.sig.rename(&sig, Some(ctx));
+        let mut rename = self.sig.rename(&sig, Some(ctx))?;
         for mut id in did {
           id.visit(&mut rename);
           if rename.ok() {
@@ -382,6 +400,7 @@ impl Accomodator {
   }
 
   /// ProcessReductions
+  #[allow(clippy::indexing_slicing)]
   pub fn accom_reduction_regs(
     &mut self, ctx: &Constructors, reds: &mut Vec<Reduction>,
   ) -> io::Result<()> {
@@ -390,7 +409,7 @@ impl Accomodator {
       let path = MizPath::new(art.as_str());
       if path.read_drd(false, &mut sig, &mut drd)? {
         let len = self.sig.sig.len();
-        let mut rename = self.sig.rename(&sig, Some(ctx));
+        let mut rename = self.sig.rename(&sig, Some(ctx))?;
         for mut red in drd {
           red.visit(&mut rename);
           if rename.ok() {
@@ -404,6 +423,7 @@ impl Accomodator {
   }
 
   /// ProcessProperties
+  #[allow(clippy::indexing_slicing)]
   pub fn accom_properties(
     &mut self, ctx: &Constructors, props: &mut Vec<Property>,
   ) -> io::Result<()> {
@@ -412,7 +432,7 @@ impl Accomodator {
       let path = MizPath::new(art.as_str());
       if path.read_dpr(false, &mut sig, &mut dpr)? {
         let len = self.sig.sig.len();
-        let mut rename = self.sig.rename(&sig, Some(ctx));
+        let mut rename = self.sig.rename(&sig, Some(ctx))?;
         for mut prop in dpr {
           prop.visit(&mut rename);
           if rename.ok() {
@@ -426,6 +446,7 @@ impl Accomodator {
   }
 
   /// ProcessDefinitions
+  #[allow(clippy::indexing_slicing)]
   pub fn accom_definitions(
     &mut self, ctx: &Constructors, kind: DirectiveKind, defs: &mut Vec<Definiens>,
   ) -> io::Result<()> {
@@ -434,7 +455,7 @@ impl Accomodator {
       let path = MizPath::new(art.as_str());
       if path.read_def(false, &mut sig, &mut def)? {
         let len = self.sig.sig.len();
-        let mut rename = self.sig.rename(&sig, Some(ctx));
+        let mut rename = self.sig.rename(&sig, Some(ctx))?;
         for mut def in def {
           def.visit(&mut rename);
           if rename.ok() {
@@ -448,65 +469,70 @@ impl Accomodator {
   }
 
   /// ProcessTheorems
+  #[allow(clippy::indexing_slicing)]
   pub fn accom_theorems(
     &mut self, ctx: &Constructors, def_map: &mut HashMap<DefRef, DefiniensId>, libs: &mut Libraries,
   ) -> io::Result<()> {
     let mut defthms = DefiniensId::default();
-    for &(_, art) in &self.dirs.0[DirectiveKind::Theorems] {
+    for &(pos, art) in &self.dirs.0[DirectiveKind::Theorems] {
       let mut thms = Default::default();
-      if MizPath::new(art.as_str()).read_the(false, &mut thms)? {
-        let len = self.sig.sig.len();
-        let mut rename = self.sig.rename(&thms.sig, Some(ctx));
-        let (mut thm_nr, mut def_nr) = <(ThmId, DefId)>::default();
-        let lib_nr = self.articles.get(&art).copied();
-        for mut thm in thms.thm {
-          match thm.kind {
-            TheoremKind::Def(_) | TheoremKind::CanceledDef => {
-              let def_nr = def_nr.fresh();
-              thm.stmt.visit(&mut rename);
-              if rename.ok() {
-                let art = lib_nr.unwrap();
-                libs.def.insert((art, def_nr), thm.stmt);
-                if let TheoremKind::Def(_) = thm.kind {
-                  def_map.insert((art, def_nr), defthms.fresh());
-                }
-              }
-            }
-            TheoremKind::Thm | TheoremKind::CanceledThm => {
-              let thm_nr = thm_nr.fresh();
-              thm.stmt.visit(&mut rename);
-              if rename.ok() {
-                libs.thm.insert((lib_nr.unwrap(), thm_nr), thm.stmt);
+      if !MizPath::new(art.as_str()).read_the(false, &mut thms)? {
+        self.has_errors |= AccomError::TheoremsNotFound(art).report(self.article, pos);
+        continue
+      }
+      let len = self.sig.sig.len();
+      let mut rename = self.sig.rename(&thms.sig, Some(ctx))?;
+      let (mut thm_nr, mut def_nr) = <(ThmId, DefId)>::default();
+      let lib_nr = self.articles[&art];
+      for mut thm in thms.thm {
+        match thm.kind {
+          TheoremKind::Def(_) | TheoremKind::CanceledDef => {
+            let def_nr = def_nr.fresh();
+            thm.stmt.visit(&mut rename);
+            if rename.ok() {
+              libs.def.insert((lib_nr, def_nr), thm.stmt);
+              if let TheoremKind::Def(_) = thm.kind {
+                def_map.insert((lib_nr, def_nr), defthms.fresh());
               }
             }
           }
+          TheoremKind::Thm | TheoremKind::CanceledThm => {
+            let thm_nr = thm_nr.fresh();
+            thm.stmt.visit(&mut rename);
+            if rename.ok() {
+              libs.thm.insert((lib_nr, thm_nr), thm.stmt);
+            }
+          }
         }
-        self.sig.truncate(len);
       }
+      self.sig.truncate(len);
     }
     Ok(())
   }
 
   /// ProcessSchemes
+  #[allow(clippy::indexing_slicing)]
   pub fn accom_schemes(&mut self, ctx: &Constructors, libs: &mut Libraries) -> io::Result<()> {
-    for &(_, art) in &self.dirs.0[DirectiveKind::Schemes] {
+    for &(pos, art) in &self.dirs.0[DirectiveKind::Schemes] {
       let mut schs = Default::default();
-      if MizPath::new(art.as_str()).read_sch(false, &mut schs)? {
-        let len = self.sig.sig.len();
-        let mut rename = self.sig.rename(&schs.sig, Some(ctx));
-        let mut sch_nr = SchId::default();
-        let lib_nr = self.articles.get(&art).copied();
-        for sch in schs.sch {
-          let sch_nr = sch_nr.fresh();
-          if let Some(mut sch) = sch {
-            sch.visit(&mut rename);
-            if rename.ok() {
-              libs.sch.insert((lib_nr.unwrap(), sch_nr), sch);
-            }
+      if !MizPath::new(art.as_str()).read_sch(false, &mut schs)? {
+        self.has_errors |= AccomError::SchemesNotFound(art).report(self.article, pos);
+        continue
+      }
+      let len = self.sig.sig.len();
+      let mut rename = self.sig.rename(&schs.sig, Some(ctx))?;
+      let mut sch_nr = SchId::default();
+      let lib_nr = self.articles[&art];
+      for sch in schs.sch {
+        let sch_nr = sch_nr.fresh();
+        if let Some(mut sch) = sch {
+          sch.visit(&mut rename);
+          if rename.ok() {
+            libs.sch.insert((lib_nr, sch_nr), sch);
           }
         }
-        self.sig.truncate(len);
       }
+      self.sig.truncate(len);
     }
     Ok(())
   }

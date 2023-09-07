@@ -2746,7 +2746,7 @@ pub struct SymbolData<'a> {
 }
 
 impl SymbolData<'static> {
-  pub const BUILTIN_SYMBOLS: &[(SymbolKindClass, &'static str)] = &[
+  pub const BUILTIN_SYMBOLS: &'static [(SymbolKindClass, &'static str)] = &[
     (SymbolKindClass::Mode, "set"),
     (SymbolKindClass::Pred, "="),
     (SymbolKindClass::LeftBrk, "["),

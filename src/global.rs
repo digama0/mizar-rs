@@ -2941,23 +2941,27 @@ impl MizPath {
     }
   }
 
-  pub fn open(&self, mml: bool, new_prel: bool, ext: &str) -> io::Result<File> {
+  pub fn to_path(&self, mml: bool, new_prel: bool, ext: &str) -> PathBuf {
     let mut path = if mml { self.mml() } else { self.prel(new_prel) };
     path.set_extension(ext);
+    path
+  }
+
+  pub fn open(&self, mml: bool, new_prel: bool, ext: &str) -> io::Result<File> {
+    let path = self.to_path(mml, new_prel, ext);
     // eprintln!("opening {}", path.to_str().unwrap());
     File::open(path)
   }
 
   pub fn read_miz(&self) -> io::Result<Vec<u8>> {
-    let mut path = self.mml();
-    path.set_extension("miz");
+    let path = self.to_path(true, false, "miz");
     // eprintln!("opening {}", path.to_str().unwrap());
     std::fs::read(path)
   }
 
+  #[allow(clippy::unwrap_used)]
   pub fn create(&self, new_prel: bool, ext: &str) -> io::Result<File> {
-    let mut path = self.prel(new_prel);
-    path.set_extension(ext);
+    let path = self.to_path(false, new_prel, ext);
     std::fs::create_dir_all(path.parent().unwrap())?;
     // eprintln!("writing {}", path.to_str().unwrap());
     File::create(path)

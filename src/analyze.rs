@@ -2,11 +2,13 @@ use crate::ast::{
   CaseKind, FormulaBinder, FormulaBinop, Pragma, PrivFuncKind, PrivPredKind, ResGroupId,
   ReservedId, VarKind,
 };
+use crate::error::MizError;
 use crate::export::Exporter;
 use crate::parser::{MizParser, MsmParser};
 use crate::reader::{DefiniensId, Reader};
 use crate::types::{PatternKindClass as PKC, *};
 use crate::*;
+use std::io;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -80,20 +82,19 @@ impl Reader {
     }
   }
 
-  pub fn run_analyzer(&mut self, path: &MizPath, parser: Option<&mut MizParser<'_>>) {
-    let mut parser = parser.ok_or_else(|| {
-      if self.g.cfg.nameck_enabled {
-        path.open_wsx().unwrap()
-      } else {
-        path.open_msx().unwrap()
-      }
-    });
+  pub fn run_analyzer(
+    &mut self, path: &MizPath, parser: Option<&mut MizParser<'_>>,
+  ) -> io::Result<()> {
+    let mut parser = match parser {
+      Some(v) => Ok(v),
+      None => Err(if self.g.cfg.nameck_enabled { path.open_wsx()? } else { path.open_msx()? }),
+    };
     let mut items = vec![];
     if !self.g.cfg.analyzer_enabled {
       while self.push_parse_item(&mut parser, &mut items) {
         items.clear()
       }
-      return
+      return Ok(())
     }
     let mut elab = Analyzer {
       r: self,
@@ -119,6 +120,7 @@ impl Reader {
       export: Default::default(),
     };
     if elab.g.cfg.exporter_enabled {
+      #[allow(clippy::indexing_slicing)]
       for (i, pats) in &elab.r.notations {
         elab.export.notations_base[i] = pats.len() as u32
       }
@@ -139,8 +141,9 @@ impl Reader {
       items.clear()
     }
     if elab.g.cfg.exporter_enabled {
-      elab.export()
+      elab.export()?
     }
+    Ok(())
   }
 }
 
@@ -187,6 +190,7 @@ impl Analyzer<'_> {
     }
   }
 
+  #[allow(clippy::unwrap_used)]
   fn close_scope(&mut self, sc: Scope, check_for_local_const: bool) -> Descope {
     self.priv_func_args.0.truncate(sc.sc.priv_funcs);
     self.priv_pred.0.truncate(sc.priv_preds);
@@ -294,7 +298,9 @@ impl Analyzer<'_> {
             let fvars = self.collect_reserved(|cr| cr.visit_type(&mut it.ty));
             self.reserved_extra_depth = fvars.len() as u32;
             for &var in &fvars {
+              #[allow(clippy::indexing_slicing)]
               let entry = &self.res_groups[self.reserved[var].1];
+              #[allow(clippy::unwrap_used)]
               let fvars2 = entry.fvars.as_ref().unwrap();
               let mut ty = entry.ty.clone();
               ty.visit(&mut InstReservation(self, |i| VarKind::Reserved(fvars2[i])));
@@ -326,7 +332,8 @@ impl Analyzer<'_> {
           // This is intentionally stricter than necessary to ensure that MML has no weird
           // pragmas. The line below should be uncommented to allow pragmas for general use.
           // Pragma::Other(_) => {}
-          Pragma::Other(ref s) => panic!("unexpected pragma: {s:?}"),
+          Pragma::Other(ref mut s) =>
+            self.err(it.pos, MizError::UnexpectedPragma(std::mem::take(s))),
         }
       }
       _ => self.elab_stmt_item(it),
@@ -529,10 +536,9 @@ impl Analyzer<'_> {
         f
       }
       ast::Statement::IterEquality { prop, just, steps } => {
-        if let Formula::Pred { nr, args } =
-          self.elab_intern_formula_forall_reserved(&mut prop.f, true)
-        {
-          if let (nr, [lhs, rhs]) = Formula::adjust_pred(nr, &args, Some(&self.g.constrs)) {
+        let f = self.elab_intern_formula_forall_reserved(&mut prop.f, true);
+        if let Formula::Pred { nr, ref args } = f {
+          if let (nr, [lhs, rhs]) = Formula::adjust_pred(nr, args, Some(&self.g.constrs)) {
             if self.g.reqs.equals_to() == Some(nr) {
               self.elab_justification(false, &self.g.reqs.mk_eq(lhs.clone(), rhs.clone()), just);
               let mut mid = rhs.clone();
@@ -547,7 +553,8 @@ impl Analyzer<'_> {
             }
           }
         }
-        panic!("not an equality")
+        self.err(prop.f.pos(), MizError::IterEqualityNotAnEquality(Box::new(f.clone())));
+        f
       }
       ast::Statement::Now { end, label, items } => {
         let label = label.as_ref().map(|l| l.id.clone());

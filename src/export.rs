@@ -6,6 +6,7 @@ use crate::{Assignment, LocalContext, OnVarMut, VisitMut};
 use enum_map::EnumMap;
 use itertools::Itertools;
 use std::fmt::Debug;
+use std::io;
 
 const DOUBLE_CHECK: bool = false;
 
@@ -22,6 +23,7 @@ pub struct Exporter {
   pub schemes: Vec<Option<SchId>>,
 }
 
+#[allow(clippy::panic)]
 fn assert_eq_iter<T: Debug + PartialEq<U>, U: Debug>(
   header: &str, mut it1: impl Iterator<Item = T> + Clone, mut it2: impl Iterator<Item = U> + Clone,
 ) {
@@ -94,6 +96,7 @@ fn mark_formats<T>(
       }
     }
   }
+  #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
   for fmt in fmts {
     get(fmt).visit_mut(|k, sym| *sym = trans[k][*sym as usize].unwrap());
   }
@@ -212,7 +215,7 @@ impl AccumConstructors {
 }
 
 impl Analyzer<'_> {
-  pub fn export(&mut self) {
+  pub fn export(&mut self) -> io::Result<()> {
     // This file deals with expressions after renumbering, so the formatter is liable to panic
     self.r.lc.formatter.cfg.enable_formatter = false;
     let ep = &mut ExportPrep {
@@ -228,7 +231,7 @@ impl Analyzer<'_> {
     if let Some(accom) = &self.accom {
       arts2.extend(accom.sig.sig.0.iter().map(|p| p.0));
     } else {
-      self.path.read_sgl(&mut arts2).unwrap()
+      self.path.read_sgl(&mut arts2)?
     }
     let arts1 = if self.g.constrs.since(&self.export.constrs_base).is_empty() {
       &*arts2
@@ -604,6 +607,7 @@ impl Analyzer<'_> {
       if self.g.cfg.cache_prel {
         self.path.with_cache(|c| &c.sch, schs1);
       }
+      Ok(())
     }
   }
 }

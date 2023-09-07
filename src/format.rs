@@ -596,28 +596,45 @@ impl<'a> Pretty<'a> {
   }
 }
 
-impl std::fmt::Debug for Term {
+trait EnvDebug {
+  fn pp_fmt<'a>(&self, p: &Pretty<'a>) -> Doc<'a>;
+}
+
+impl<T: EnvDebug> EnvDebug for Box<T> {
+  fn pp_fmt<'a>(&self, p: &Pretty<'a>) -> Doc<'a> { (**self).pp_fmt(p) }
+}
+
+macro_rules! impl_env_debug {
+  ($($ty:ty: |$self:ident, $p:ident| $e:expr;)*) => {
+    $(
+      impl EnvDebug for $ty {
+        fn pp_fmt<'a>(&$self, $p: &Pretty<'a>) -> Doc<'a> { $e }
+      }
+      impl std::fmt::Debug for $ty {
+        fn fmt(&$self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+          Pretty::with(|$p| $e.nest(2).render_fmt(100, f))
+        }
+      }
+    )*
+  };
+}
+
+impl_env_debug! {
+  Term: |self, p| p.term(false, self, p.depth(), 0);
+  Formula: |self, p| p.formula(false, true, self, p.depth(), 0);
+  Attr: |self, p| p.attr(self, false, p.depth(), 0);
+  Attrs: |self, p| p.attrs(self, false, p.depth(), 0);
+  Type: |self, p| p.ty(self, p.depth(), 0);
+}
+
+pub struct Display<'a, T>(Option<&'a LocalContext>, &'a T);
+
+impl<T: EnvDebug> std::fmt::Display for Display<'_, T> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.term(false, self, p.depth(), 0).nest(2).render_fmt(100, f))
+    Pretty::with_lc(self.0, |p| self.1.pp_fmt(p).nest(2).render_fmt(100, f))
   }
 }
-impl std::fmt::Debug for Formula {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.formula(false, true, self, p.depth(), 0).nest(2).render_fmt(100, f))
-  }
-}
-impl std::fmt::Debug for Attr {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.attr(self, false, p.depth(), 0).nest(2).render_fmt(100, f))
-  }
-}
-impl std::fmt::Debug for Attrs {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.attrs(self, false, p.depth(), 0).nest(2).render_fmt(100, f))
-  }
-}
-impl std::fmt::Debug for Type {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.ty(self, p.depth(), 0).nest(2).render_fmt(100, f))
-  }
+
+impl LocalContext {
+  pub fn pp<'a, T>(&'a self, t: &'a T) -> Display<'a, T> { Display(Some(self), t) }
 }

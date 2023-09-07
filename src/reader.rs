@@ -1,8 +1,10 @@
 use crate::accom::Accomodator;
 use crate::checker::Checker;
+use crate::error::MizError;
 use crate::parser::MizParser;
 use crate::types::*;
 use crate::*;
+use std::io;
 
 enum PendingDef {
   Constr(ConstrKind),
@@ -24,6 +26,7 @@ pub struct Reader {
   /// gFormatsColl
   #[allow(clippy::box_collection)]
   pub formats: Box<HashMap<Format, FormatId>>,
+  has_errors: bool,
   pub formats_base: usize,
   /// Notat
   pub notations: EnumMap<PatternKindClass, ExtVec<Pattern>>,
@@ -56,8 +59,8 @@ impl WithGlobalLocal for Reader {
 impl MizPath {
   pub fn with_reader(
     &self, cfg: &Config, progress: Option<&ProgressBar>, mml_vct: &[u8],
-    f: &mut dyn FnMut(&mut Reader, Option<&mut MizParser<'_>>),
-  ) {
+    f: &mut dyn FnMut(&mut Reader, Option<&mut MizParser<'_>>) -> io::Result<()>,
+  ) -> io::Result<bool> {
     let mut accom = cfg.accom_enabled.then(Box::<Accomodator>::default);
     let data;
     let mut parser = if cfg.parser_enabled {
@@ -353,9 +356,10 @@ impl MizPath {
       std::mem::swap(&mut parser.articles, &mut accom.articles)
     }
 
-    f(&mut v, parser.as_deref_mut());
+    f(&mut v, parser.as_deref_mut())?;
 
     LocalContext::end_stash(old);
+    Ok(v.has_errors)
   }
 }
 
@@ -384,6 +388,7 @@ impl Reader {
       libs: Libraries::default(),
       article,
       treat_thm_as_axiom: matches!(article.as_str(), "tarski_0" | "tarski_a"),
+      has_errors: accom.as_deref().map_or(false, |acc| acc.has_errors),
       accom,
       formats: Default::default(),
       formats_base: 0,
@@ -404,6 +409,10 @@ impl Reader {
       no_suppress_checker: true,
       progress,
     }
+  }
+
+  pub fn err(&mut self, pos: Position, msg: MizError) {
+    self.has_errors |= msg.report(self.article, pos, &self.g, &self.lc);
   }
 
   pub fn intern<'a, T: Clone + Visitable<InternConst<'a>>>(&'a self, t: &T) -> T {
@@ -507,7 +516,7 @@ impl Reader {
   }
 
   /// Prepare
-  pub fn run_checker(&mut self, path: &MizPath) {
+  pub fn run_checker(&mut self, path: &MizPath) -> io::Result<()> {
     path.read_xml(|it| {
       assert!(matches!(
         it,
