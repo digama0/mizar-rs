@@ -65,6 +65,7 @@ pub fn set_verbose(b: bool) { VERBOSE.store(b, std::sync::atomic::Ordering::SeqC
 static STATS: Mutex<Option<HashMap<&'static str, u32>>> = Mutex::new(None);
 
 fn print_stats_and_exit(has_errors: bool) {
+  #[allow(clippy::unwrap_used)]
   let mut g = STATS.lock().unwrap();
   let mut vec: Vec<_> = g.get_or_insert_with(HashMap::new).iter().collect();
   vec.sort();
@@ -82,6 +83,7 @@ struct Progress {
 }
 
 impl Progress {
+  #[allow(clippy::unwrap_used)]
   fn new(num_jobs: usize, known_len: bool) -> Option<Self> {
     let multi = MultiProgress::with_draw_target(ProgressDrawTarget::stdout_with_hz(5));
     if multi.is_hidden() {
@@ -290,6 +292,12 @@ struct Cli {
   attr_sort_bug: bool,
 }
 
+impl Cli {
+  fn die(message: impl Display) -> ! {
+    Cli::command().error(clap::error::ErrorKind::ArgumentConflict, message).exit()
+  }
+}
+
 macro_rules! mk_dump {
   (struct $dump:ident {
     $($id:ident,)*
@@ -466,9 +474,18 @@ fn main() {
   }
   let one_file = cli.one_file;
 
-  let file = std::fs::read_to_string("miz/mizshare/mml.lar").unwrap();
-  let mml_vct =
-    &if cfg.accom_enabled { std::fs::read("miz/mizshare/mml.vct").unwrap() } else { vec![] };
+  let file = std::fs::read_to_string("miz/mizshare/mml.lar").unwrap_or_else(|e| {
+    println!("IO error reading miz/mizshare/mml.lar: {e}");
+    std::process::abort()
+  });
+  let mml_vct = &if cfg.accom_enabled {
+    std::fs::read("miz/mizshare/mml.vct").unwrap_or_else(|e| {
+      println!("IO error reading miz/mizshare/mml.vct: {e}");
+      std::process::abort()
+    })
+  } else {
+    vec![]
+  };
   let mut jobs = file.lines().enumerate().collect_vec();
   let first_file = match cli.file {
     None => FIRST_FILE,
@@ -508,7 +525,7 @@ fn main() {
     None
   };
 
-  ctrlc::set_handler(|| print_stats_and_exit(true)).expect("Error setting Ctrl-C handler");
+  let _ = ctrlc::set_handler(|| print_stats_and_exit(true));
 
   let jobs = &Mutex::new(jobs.into_iter());
   let running = &*std::iter::repeat_with(|| {
@@ -530,6 +547,7 @@ fn main() {
     for thread in running {
       s.spawn(move || {
         while let Some((i, s)) = {
+          #[allow(clippy::unwrap_used)]
           let mut lock = jobs.lock().unwrap();
           lock.next()
         } {
@@ -546,13 +564,16 @@ fn main() {
               if cfg.accom_enabled {
                 let mut cmd = std::process::Command::new("miz/mizbin/accom");
                 cmd.arg("-lqs");
-                let output = cmd.arg(format!("{}.miz", path.mml().display())).output().unwrap();
+                let output = cmd.arg(format!("{}.miz", path.mml().display())).output()?;
                 if !output.status.success() {
                   eprintln!("\nfile {} failed. Output:", path.art);
-                  std::io::stderr().write_all(&output.stderr).unwrap();
-                  std::io::stdout().write_all(&output.stdout).unwrap();
-                  std::io::stdout().flush().unwrap();
-                  panic!("mizar accom failed")
+                  std::io::stderr().write_all(&output.stderr)?;
+                  std::io::stdout().write_all(&output.stdout)?;
+                  std::io::stdout().flush()?;
+                  stat("fail");
+                  if cfg.panic_on_fail {
+                    std::process::abort()
+                  }
                 }
               }
               let mut cmd = std::process::Command::new("miz/mizbin/verifier");
@@ -560,17 +581,20 @@ fn main() {
                 (true, false) => cmd.arg("-a"),
                 (false, true) => cmd.arg("-c"),
                 (true, true) => &mut cmd,
-                (false, false) => panic!("unsupported"),
+                (false, false) => Cli::die("-a and -c cannot be used together"),
               };
-              let output = cmd.arg(format!("{}.miz", path.mml().display())).output().unwrap();
+              let output = cmd.arg(format!("{}.miz", path.mml().display())).output()?;
               if !output.status.success() {
                 eprintln!("\nfile {} failed. Output:", path.art);
-                std::io::stderr().write_all(&output.stderr).unwrap();
-                std::io::stdout().write_all(&output.stdout).unwrap();
-                std::io::stdout().flush().unwrap();
-                panic!("mizar verifier failed")
+                std::io::stderr().write_all(&output.stderr)?;
+                std::io::stdout().write_all(&output.stdout)?;
+                std::io::stdout().flush()?;
+                stat("fail");
+                if cfg.panic_on_fail {
+                  std::process::abort()
+                }
               }
-              // println!("{}", String::from_utf8(output.stdout).unwrap());
+              // println!("{}", String::from_utf8(output.stdout)?);
               Ok(false)
             } else if cfg.parser_enabled || cfg.analyzer_enabled {
               path.with_reader(cfg, thread.as_ref(), mml_vct, &mut |v, p| v.run_analyzer(&path, p))
@@ -602,7 +626,7 @@ fn main() {
           }
           if let Some(p) = progress.as_ref().filter(|p| !p.multi.is_hidden()) {
             let msg = format!("{i:4}: {s:8} in {:.3}s", start.elapsed().as_secs_f32());
-            p.multi.println(msg).unwrap();
+            let _ = p.multi.println(msg);
           } else {
             println!("{i:4}: {s:8} in {:.3}s", start.elapsed().as_secs_f32())
           }
