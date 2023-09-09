@@ -1,12 +1,11 @@
 use crate::analyze::Analyzer;
-use crate::parser::MaybeMut;
+use crate::parser::{catch_missing, MaybeMut, PathResult};
 use crate::reader::DefiniensId;
 use crate::types::*;
 use crate::{Assignment, LocalContext, OnVarMut, VisitMut};
 use enum_map::EnumMap;
 use itertools::Itertools;
 use std::fmt::Debug;
-use std::io;
 
 const DOUBLE_CHECK: bool = false;
 
@@ -214,8 +213,31 @@ impl AccumConstructors {
   }
 }
 
+macro_rules! try_p {
+  ($self:expr, $e:expr) => {
+    ok_parse_err(&mut $self.r.has_errors, $e)
+  };
+}
+macro_rules! assert_eq_nonempty {
+  ($self:expr, $ne:expr, $e:expr) => {
+    if let Some(p) = try_p!($self, catch_missing($e)) {
+      assert_eq!($ne, p.is_some());
+    }
+  };
+}
+fn ok_parse_err<T>(has_errors: &mut bool, val: PathResult<T>) -> Option<T> {
+  match val {
+    Ok(t) => Some(t),
+    Err((path, e)) => {
+      e.report(&path);
+      *has_errors = true;
+      None
+    }
+  }
+}
+
 impl Analyzer<'_> {
-  pub fn export(&mut self) -> io::Result<()> {
+  pub fn export(&mut self) {
     // This file deals with expressions after renumbering, so the formatter is liable to panic
     self.r.lc.formatter.cfg.enable_formatter = false;
     let ep = &mut ExportPrep {
@@ -231,7 +253,7 @@ impl Analyzer<'_> {
     if let Some(accom) = &self.accom {
       arts2.extend(accom.sig.sig.0.iter().map(|p| p.0));
     } else {
-      self.path.read_sgl(&mut arts2)?
+      try_p!(self, self.path.read_sgl(&mut arts2));
     }
     let arts1 = if self.g.constrs.since(&self.export.constrs_base).is_empty() {
       &*arts2
@@ -262,7 +284,7 @@ impl Analyzer<'_> {
       let nonempty = !dfr1.is_empty();
       let (mut marked_vocs, mut vocs2, mut dfr2) = Default::default();
       if self.g.cfg.verify_export {
-        assert_eq!(nonempty, self.path.read_dfr(false, &mut vocs2, &mut dfr2).unwrap());
+        assert_eq_nonempty!(self, nonempty, self.path.read_dfr(false, &mut vocs2, &mut dfr2));
       }
       if nonempty {
         mark_formats(&vocs1, &mut marked_vocs, &mut dfr1, |x| x);
@@ -287,11 +309,11 @@ impl Analyzer<'_> {
 
     // validating .dco (also push current article to aco)
     {
-      let since1 = self.g.constrs.since(&self.export.constrs_base);
+      let since1 = self.r.g.constrs.since(&self.export.constrs_base);
       let nonempty = !since1.is_empty();
       let (mut dco1, mut dco2) = <(DepConstructors, _)>::default();
       if self.g.cfg.verify_export {
-        assert_eq!(nonempty, self.path.read_dco(false, &mut dco2, true).unwrap())
+        assert_eq_nonempty!(self, nonempty, self.path.read_dco(false, &mut dco2, true));
       }
       if nonempty {
         dco1.constrs = since1.to_owned();
@@ -342,7 +364,7 @@ impl Analyzer<'_> {
         .collect();
       let nonempty = !dno1.pats.is_empty();
       if self.g.cfg.verify_export {
-        assert_eq!(nonempty, self.path.read_dno(false, &mut dno2).unwrap());
+        assert_eq_nonempty!(self, nonempty, self.path.read_dno(false, &mut dno2));
       }
       if nonempty {
         mark_formats(&vocs1, &mut dno1.vocs, &mut dno1.pats, |p| &mut p.fmt);
@@ -373,10 +395,10 @@ impl Analyzer<'_> {
     // validating .dcl
     {
       let (mut dcl1, mut dcl2) = <(DepClusters, _)>::default();
-      let since1 = self.g.clusters.since(&self.export.clusters_base);
+      let since1 = self.r.g.clusters.since(&self.export.clusters_base);
       let nonempty = !since1.is_empty();
       if self.g.cfg.verify_export {
-        assert_eq!(self.path.read_dcl(false, &mut dcl2).unwrap(), nonempty);
+        assert_eq_nonempty!(self, nonempty, self.path.read_dcl(false, &mut dcl2));
       }
       if nonempty {
         dcl1.cl = since1.to_owned();
@@ -411,8 +433,7 @@ impl Analyzer<'_> {
       let nonempty = !def1.is_empty();
       let (mut sig1, mut sig, mut def2) = Default::default();
       if self.g.cfg.verify_export {
-        let nonempty2 = self.path.read_def(false, &mut sig, &mut def2).unwrap();
-        assert_eq!(nonempty, nonempty2);
+        assert_eq_nonempty!(self, nonempty, self.path.read_def(false, &mut sig, &mut def2));
       }
       if nonempty {
         def1.visit(ep);
@@ -446,8 +467,7 @@ impl Analyzer<'_> {
       let nonempty = !did1.is_empty();
       let (mut sig1, mut sig, mut did2) = Default::default();
       if self.g.cfg.verify_export {
-        let nonempty2 = self.path.read_did(false, &mut sig, &mut did2).unwrap();
-        assert_eq!(nonempty, nonempty2);
+        assert_eq_nonempty!(self, nonempty, self.path.read_did(false, &mut sig, &mut did2));
       }
       if nonempty {
         did1.visit(ep);
@@ -481,8 +501,7 @@ impl Analyzer<'_> {
       let nonempty = !drd1.is_empty();
       let (mut sig1, mut sig, mut drd2) = Default::default();
       if self.g.cfg.verify_export {
-        let nonempty2 = self.path.read_drd(false, &mut sig, &mut drd2).unwrap();
-        assert_eq!(nonempty, nonempty2);
+        assert_eq_nonempty!(self, nonempty, self.path.read_drd(false, &mut sig, &mut drd2));
       }
       if nonempty {
         drd1.visit(ep);
@@ -516,8 +535,7 @@ impl Analyzer<'_> {
       let nonempty = !dpr1.is_empty();
       let (mut sig1, mut sig, mut dpr2) = Default::default();
       if self.g.cfg.verify_export {
-        let nonempty2 = self.path.read_dpr(false, &mut sig, &mut dpr2).unwrap();
-        assert_eq!(nonempty, nonempty2);
+        assert_eq_nonempty!(self, nonempty, self.path.read_dpr(false, &mut sig, &mut dpr2));
         dpr2.visit(ep);
       }
       if nonempty {
@@ -552,7 +570,7 @@ impl Analyzer<'_> {
       std::mem::swap(&mut thms1.thm, &mut self.export.theorems);
       let nonempty = !thms1.thm.is_empty();
       if self.g.cfg.verify_export {
-        assert_eq!(nonempty, self.path.read_the(false, &mut thms2).unwrap());
+        assert_eq_nonempty!(self, nonempty, self.path.read_the(false, &mut thms2));
       }
       if nonempty {
         thms1.thm.visit(ep);
@@ -585,7 +603,7 @@ impl Analyzer<'_> {
         .collect();
       let nonempty = !schs1.sch.is_empty();
       if self.g.cfg.verify_export {
-        assert_eq!(nonempty, self.path.read_sch(false, &mut schs2).unwrap());
+        assert_eq_nonempty!(self, nonempty, self.path.read_sch(false, &mut schs2));
       }
       if nonempty {
         schs1.sig = aco.mark(&mut schs1.sch, arts1.len(), &arts2);
@@ -607,7 +625,6 @@ impl Analyzer<'_> {
       if self.g.cfg.cache_prel {
         self.path.with_cache(|c| &c.sch, schs1);
       }
-      Ok(())
     }
   }
 }

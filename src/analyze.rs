@@ -4,11 +4,10 @@ use crate::ast::{
 };
 use crate::error::MizError;
 use crate::export::Exporter;
-use crate::parser::{MizParser, MsmParser};
+use crate::parser::{MizParser, MsmParser, PathResult};
 use crate::reader::{DefiniensId, Reader};
 use crate::types::{PatternKindClass as PKC, *};
 use crate::*;
-use std::io;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -66,7 +65,7 @@ impl<'a> std::ops::DerefMut for Analyzer<'a> {
 impl Reader {
   fn push_parse_item(
     &mut self, parser: &mut Result<&mut MizParser<'_>, MsmParser>, buf: &mut Vec<ast::Item>,
-  ) -> bool {
+  ) -> PathResult<bool> {
     match parser {
       Ok(parser) => {
         // parser.formats is empty, formatter.formats has .frm
@@ -76,25 +75,30 @@ impl Reader {
         // move .frx formats back to formatter
         std::mem::swap(&mut self.lc.formatter.formats, &mut parser.formats);
         std::mem::swap(&mut self.formats, &mut parser.format_lookup);
-        res
+        Ok(res)
       }
-      Err(parser) => parser.push_parse_item(buf),
+      Err(parser) => parser.push_parse_item(buf).map_err(|e| (parser.path.clone(), e)),
     }
   }
 
-  pub fn run_analyzer(
-    &mut self, path: &MizPath, parser: Option<&mut MizParser<'_>>,
-  ) -> io::Result<()> {
+  pub fn run_analyzer(&mut self, path: &MizPath, parser: Option<&mut MizParser<'_>>) {
     let mut parser = match parser {
       Some(v) => Ok(v),
-      None => Err(if self.g.cfg.nameck_enabled { path.open_wsx()? } else { path.open_msx()? }),
+      None => match if self.g.cfg.nameck_enabled { path.open_wsx() } else { path.open_msx() } {
+        Ok(parser) => Err(parser),
+        Err((path, e)) => {
+          e.report(&path);
+          self.has_errors = true;
+          return
+        }
+      },
     };
     let mut items = vec![];
     if !self.g.cfg.analyzer_enabled {
-      while self.push_parse_item(&mut parser, &mut items) {
+      while self.push_parse_item(&mut parser, &mut items).unwrap() {
         items.clear()
       }
-      return Ok(())
+      return
     }
     let mut elab = Analyzer {
       r: self,
@@ -131,7 +135,7 @@ impl Reader {
       elab.export.reductions_base = elab.reductions.len() as u32;
       elab.export.properties_base = elab.properties.len() as u32;
     }
-    while elab.r.push_parse_item(&mut parser, &mut items) {
+    while elab.r.push_parse_item(&mut parser, &mut items).unwrap() {
       for it in items.iter_mut() {
         if elab.g.cfg.top_item_header {
           eprintln!("item {:?}: {:?}", it.pos, it.kind);
@@ -141,9 +145,8 @@ impl Reader {
       items.clear()
     }
     if elab.g.cfg.exporter_enabled {
-      elab.export()?
+      elab.export()
     }
-    Ok(())
   }
 }
 

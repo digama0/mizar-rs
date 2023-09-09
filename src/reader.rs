@@ -26,7 +26,7 @@ pub struct Reader {
   /// gFormatsColl
   #[allow(clippy::box_collection)]
   pub formats: Box<HashMap<Format, FormatId>>,
-  has_errors: bool,
+  pub has_errors: bool,
   pub formats_base: usize,
   /// Notat
   pub notations: EnumMap<PatternKindClass, ExtVec<Pattern>>,
@@ -59,7 +59,7 @@ impl WithGlobalLocal for Reader {
 impl MizPath {
   pub fn with_reader(
     &self, cfg: &Config, progress: Option<&ProgressBar>, mml_vct: &[u8],
-    f: &mut dyn FnMut(&mut Reader, Option<&mut MizParser<'_>>) -> io::Result<()>,
+    f: &mut dyn FnMut(&mut Reader, Option<&mut MizParser<'_>>),
   ) -> io::Result<bool> {
     let mut accom = cfg.accom_enabled.then(Box::<Accomodator>::default);
     let data;
@@ -356,7 +356,7 @@ impl MizPath {
       std::mem::swap(&mut parser.articles, &mut accom.articles)
     }
 
-    f(&mut v, parser.as_deref_mut())?;
+    f(&mut v, parser.as_deref_mut());
 
     LocalContext::end_stash(old);
     Ok(v.has_errors)
@@ -516,8 +516,8 @@ impl Reader {
   }
 
   /// Prepare
-  pub fn run_checker(&mut self, path: &MizPath) -> io::Result<()> {
-    path.read_xml(|it| {
+  pub fn run_checker(&mut self, path: &MizPath) {
+    let result = path.read_xml(|it| {
       assert!(matches!(
         it,
         Item::AuxiliaryItem(_)
@@ -534,7 +534,11 @@ impl Reader {
         eprintln!("item: {it:?}");
       }
       self.read_item(&it);
-    })
+    });
+    if let Err((path, e)) = result {
+      e.report(&path);
+      self.has_errors = true;
+    }
   }
 
   pub fn set_pos(&mut self, pos: Position) {

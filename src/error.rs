@@ -1,5 +1,7 @@
-use crate::types::{Article, Formula, Position};
+use crate::parser::{try_to_line_col, ParseError};
+use crate::types::{Article, DirectiveKind, Formula, Position};
 use crate::{Global, LocalContext, MizPath};
+use std::path::{Path, PathBuf};
 
 #[derive(PartialEq, Eq)]
 enum Severity {
@@ -8,33 +10,27 @@ enum Severity {
   Warning,
 }
 
-#[derive(Debug)]
-pub enum AccomError {
-  TheoremsNotFound(Article),
-  SchemesNotFound(Article),
+impl ParseError {
+  pub fn report(self, path: &Path) {
+    if let Some(pos) = self.pos() {
+      if let Ok((line, col)) = try_to_line_col(path, pos) {
+        eprintln!("{}:{line}:{col}: error: {self}", path.to_string_lossy())
+      } else {
+        eprintln!("{}: index {pos}: error: {self}", path.to_string_lossy())
+      }
+    } else {
+      eprintln!("{}: error: {self}", path.to_string_lossy())
+    }
+  }
 }
 
-impl AccomError {
-  pub fn report(self, art: Article, pos: Position) -> bool {
-    let severity = Severity::Error;
-    let msg = match self {
-      AccomError::TheoremsNotFound(art) => format!(
-        "theorems for {art} not found (looked in {})",
-        MizPath { art }.to_path(false, false, "the").to_string_lossy()
-      ),
-      AccomError::SchemesNotFound(art) => format!(
-        "schemes for {art} not found (looked in {})",
-        MizPath { art }.to_path(false, false, "sch").to_string_lossy()
-      ),
-    };
-    let file = MizPath { art }.to_path(true, false, "miz");
-    let sev = match severity {
-      Severity::Error => "error",
-      Severity::Warning => "warning",
-    };
-    eprintln!("{}:{pos:?}: {sev}: {msg}", file.to_string_lossy());
-    severity == Severity::Error
-  }
+pub fn report_accom_warning(kind: DirectiveKind, path: PathBuf, art: Article, pos: Position) {
+  eprintln!(
+    "{file}:{pos:?}: warning: {kind} for {art} not found or empty (looked in {path})",
+    file = MizPath { art }.to_path(true, false, "miz").to_string_lossy(),
+    kind = kind.name(),
+    path = path.to_string_lossy()
+  );
 }
 
 #[derive(Debug)]

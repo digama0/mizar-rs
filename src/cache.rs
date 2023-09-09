@@ -1,9 +1,8 @@
-use crate::parser::MaybeMut;
+use crate::parser::{MaybeMut, ParseError, PathResult};
 use crate::types::*;
 use crate::MizPath;
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
-use std::io;
 
 struct CacheMap {
   articles: HashMap<Article, Cache>,
@@ -48,11 +47,11 @@ impl MizPath {
     }
   }
 
-  fn get_cache<A, T, R>(
+  fn get_cache<A, T, R, E>(
     &self, no: bool, args: &mut A, get: impl FnOnce(&Cache) -> &OnceCell<T>,
-    read: impl FnOnce(&mut A, bool) -> io::Result<R>, take: impl FnOnce(&mut A, R) -> T,
-    copy: impl FnOnce(&mut A, &T) -> R,
-  ) -> io::Result<R> {
+    read: impl FnOnce(&mut A, bool) -> Result<R, E>, take: impl FnOnce(&mut A, R) -> T,
+    copy: impl FnOnce(&mut A, &T) -> Result<R, E>,
+  ) -> Result<R, E> {
     if !no {
       if let Some(c) = CACHE.get().and_then(|map| map.articles.get(&self.art)) {
         let t = if c.wait {
@@ -60,16 +59,16 @@ impl MizPath {
         } else {
           get(c).get_or_try_init(|| read(args, true).map(|r| take(args, r)))?
         };
-        return Ok(copy(args, t))
+        return copy(args, t)
       }
     }
     read(args, false)
   }
 
-  fn get_cache_basic<A: Default + Clone, R>(
+  fn get_cache_basic<A: Default + Clone, R, E>(
     &self, no: bool, args: &mut A, get: impl FnOnce(&Cache) -> &OnceCell<A>,
-    read: impl FnOnce(&mut A) -> io::Result<R>, result: impl FnOnce(&A) -> R,
-  ) -> io::Result<R> {
+    read: impl FnOnce(&mut A) -> Result<R, E>, result: impl FnOnce(&A) -> Result<R, E>,
+  ) -> Result<R, E> {
     self.get_cache(
       no,
       args,
@@ -85,7 +84,7 @@ impl MizPath {
 
   pub fn read_dfr(
     &self, new_prel: bool, vocs: &mut Vocabularies, formats: &mut IdxVec<FormatId, Format>,
-  ) -> io::Result<bool> {
+  ) -> PathResult<()> {
     self.get_cache(
       new_prel,
       &mut (vocs, formats),
@@ -95,24 +94,34 @@ impl MizPath {
       |(vocs, formats), (vocs2, formats2)| {
         vocs.clone_from(vocs2);
         formats.0.clone_from(formats2);
-        !formats2.is_empty()
+        if formats2.is_empty() {
+          Err((self.to_path(false, new_prel, "dfr"), ParseError::MissingFile))
+        } else {
+          Ok(())
+        }
       },
     )
   }
 
-  pub fn read_dno(&self, new_prel: bool, dno: &mut DepNotation) -> io::Result<bool> {
+  pub fn read_dno(&self, new_prel: bool, dno: &mut DepNotation) -> PathResult<()> {
     self.get_cache_basic(
       new_prel,
       dno,
       |c| &c.dno,
       |dno| self.read_dno_uncached(new_prel, dno),
-      |dno| !dno.pats.is_empty(),
+      |dno| {
+        if dno.pats.is_empty() {
+          Err((self.to_path(false, new_prel, "dno"), ParseError::MissingFile))
+        } else {
+          Ok(())
+        }
+      },
     )
   }
 
   pub fn read_dco(
     &self, new_prel: bool, dco: &mut DepConstructors, read_constrs: bool,
-  ) -> io::Result<bool> {
+  ) -> PathResult<()> {
     self.get_cache(
       new_prel,
       dco,
@@ -125,37 +134,47 @@ impl MizPath {
         if read_constrs {
           dco.constrs.clone_from(&dco2.constrs);
         }
-        !dco2.constrs.as_ref().is_empty()
+        if dco2.constrs.as_ref().is_empty() {
+          Err((self.to_path(false, new_prel, "dco"), ParseError::MissingFile))
+        } else {
+          Ok(())
+        }
       },
     )
   }
 
-  pub fn read_dre(&self, dre: &mut DepRequirements) -> io::Result<()> {
+  pub fn read_dre(&self, dre: &mut DepRequirements) -> PathResult<()> {
     if let Some(c) = CACHE.get().and_then(|map| map.reqs.get(&self.art)) {
-      dre.clone_from(c.get_or_init(|| {
+      dre.clone_from(c.get_or_try_init(|| -> PathResult<DepRequirements> {
         let mut dre = Default::default();
-        self.read_dre_uncached(&mut dre).unwrap();
-        dre
-      }));
+        self.read_dre_uncached(&mut dre)?;
+        Ok(dre)
+      })?);
       Ok(())
     } else {
       self.read_dre_uncached(dre)
     }
   }
 
-  pub fn read_dcl(&self, new_prel: bool, dcl: &mut DepClusters) -> io::Result<bool> {
+  pub fn read_dcl(&self, new_prel: bool, dcl: &mut DepClusters) -> PathResult<()> {
     self.get_cache_basic(
       new_prel,
       dcl,
       |c| &c.dcl,
       |dcl| self.read_dcl_uncached(new_prel, dcl),
-      |dcl| !dcl.cl.as_ref().is_empty(),
+      |dcl| {
+        if dcl.cl.as_ref().is_empty() {
+          Err((self.to_path(false, new_prel, "dcl"), ParseError::MissingFile))
+        } else {
+          Ok(())
+        }
+      },
     )
   }
 
   pub fn read_def(
     &self, new_prel: bool, sig: &mut Vec<Article>, defs: &mut Vec<Definiens>,
-  ) -> io::Result<bool> {
+  ) -> PathResult<()> {
     self.get_cache(
       new_prel,
       &mut (sig, defs),
@@ -165,14 +184,18 @@ impl MizPath {
       |(sig, defs), (sig2, defs2)| {
         sig.clone_from(sig2);
         defs.clone_from(defs2);
-        !defs2.is_empty()
+        if defs2.is_empty() {
+          Err((self.to_path(false, new_prel, "def"), ParseError::MissingFile))
+        } else {
+          Ok(())
+        }
       },
     )
   }
 
   pub fn read_dpr(
     &self, new_prel: bool, sig: &mut Vec<Article>, dpr: &mut Vec<Property>,
-  ) -> io::Result<bool> {
+  ) -> PathResult<()> {
     self.get_cache(
       new_prel,
       &mut (sig, dpr),
@@ -182,14 +205,18 @@ impl MizPath {
       |(sig, dpr), (sig2, dpr2)| {
         sig.clone_from(sig2);
         dpr.clone_from(dpr2);
-        !dpr2.is_empty()
+        if dpr2.is_empty() {
+          Err((self.to_path(false, new_prel, "dpr"), ParseError::MissingFile))
+        } else {
+          Ok(())
+        }
       },
     )
   }
 
   pub fn read_did(
     &self, new_prel: bool, sig: &mut Vec<Article>, did: &mut Vec<IdentifyFunc>,
-  ) -> io::Result<bool> {
+  ) -> PathResult<()> {
     self.get_cache(
       new_prel,
       &mut (sig, did),
@@ -199,14 +226,18 @@ impl MizPath {
       |(sig, did), (sig2, did2)| {
         sig.clone_from(sig2);
         did.clone_from(did2);
-        !did2.is_empty()
+        if did2.is_empty() {
+          Err((self.to_path(false, new_prel, "did"), ParseError::MissingFile))
+        } else {
+          Ok(())
+        }
       },
     )
   }
 
   pub fn read_drd(
     &self, new_prel: bool, sig: &mut Vec<Article>, drd: &mut Vec<Reduction>,
-  ) -> io::Result<bool> {
+  ) -> PathResult<()> {
     self.get_cache(
       new_prel,
       &mut (sig, drd),
@@ -216,28 +247,44 @@ impl MizPath {
       |(sig, drd), (sig2, drd2)| {
         sig.clone_from(sig2);
         drd.clone_from(drd2);
-        !drd2.is_empty()
+        if drd2.is_empty() {
+          Err((self.to_path(false, new_prel, "drd"), ParseError::MissingFile))
+        } else {
+          Ok(())
+        }
       },
     )
   }
 
-  pub fn read_the(&self, new_prel: bool, the: &mut DepTheorems) -> io::Result<bool> {
+  pub fn read_the(&self, new_prel: bool, the: &mut DepTheorems) -> PathResult<()> {
     self.get_cache_basic(
       new_prel,
       the,
       |c| &c.the,
       |the| self.read_the_uncached(new_prel, the),
-      |the| !the.thm.is_empty(),
+      |the| {
+        if the.thm.is_empty() {
+          Err((self.to_path(false, new_prel, "the"), ParseError::MissingFile))
+        } else {
+          Ok(())
+        }
+      },
     )
   }
 
-  pub fn read_sch(&self, new_prel: bool, sch: &mut DepSchemes) -> io::Result<bool> {
+  pub fn read_sch(&self, new_prel: bool, sch: &mut DepSchemes) -> PathResult<()> {
     self.get_cache_basic(
       new_prel,
       sch,
       |c| &c.sch,
       |sch| self.read_sch_uncached(new_prel, sch),
-      |sch| !sch.sch.is_empty(),
+      |sch| {
+        if sch.sch.is_empty() {
+          Err((self.to_path(false, new_prel, "sch"), ParseError::MissingFile))
+        } else {
+          Ok(())
+        }
+      },
     )
   }
 }
