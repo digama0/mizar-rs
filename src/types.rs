@@ -217,6 +217,11 @@ macro_rules! mk_id {
         type Err = std::num::ParseIntError;
         fn from_str(s: &str) -> Result<Self, Self::Err> { <$ty>::from_str(s).map($id) }
       }
+      impl $crate::parser::FromStrPos for $id {
+        fn to_err(_: Self::Err, pos: usize) -> $crate::parser::ParseError {
+          $crate::parser::ParseError::BadInteger(pos)
+        }
+      }
 
       $(impl<V: VisitMut> Visitable<V> for $id {
         fn visit(&mut self, v: &mut V) { v.$visit(self) }
@@ -1019,18 +1024,48 @@ impl std::fmt::Debug for Article {
 impl std::fmt::Display for Article {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.as_str().fmt(f) }
 }
+
+#[derive(Debug)]
+pub enum ToArticleError {
+  TooLong,
+  NotAscii,
+}
+impl std::fmt::Display for ToArticleError {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      ToArticleError::NotAscii => write!(f, "non-ASCII characters in article name"),
+      ToArticleError::TooLong =>
+        write!(f, "article names can only be {MAX_ARTICLE_LEN} characters"),
+    }
+  }
+}
+
 impl Article {
   pub const HIDDEN: Article = Article(*b"hidden\0\0");
-  pub fn from_lower(s: &[u8]) -> Article {
+  pub fn from_lower(s: &[u8]) -> Result<Article, ToArticleError> {
+    if s.len() > MAX_ARTICLE_LEN {
+      return Err(ToArticleError::TooLong)
+    }
     let mut arr = [0; MAX_ARTICLE_LEN];
     arr[..s.len()].copy_from_slice(s);
-    Article(arr)
+    if !arr.iter().all(u8::is_ascii) {
+      return Err(ToArticleError::NotAscii)
+    }
+    Ok(Article(arr))
   }
-  pub fn from_upper(s: &[u8]) -> Article {
+  pub fn from_upper(s: &[u8]) -> Result<Article, ToArticleError> {
+    if s.len() > MAX_ARTICLE_LEN {
+      return Err(ToArticleError::TooLong)
+    }
     let mut arr = [0; MAX_ARTICLE_LEN];
     arr[..s.len()].copy_from_slice(s);
-    std::str::from_utf8_mut(&mut arr[..s.len()]).unwrap().make_ascii_lowercase();
-    Article(arr)
+    if !arr.iter().all(u8::is_ascii) {
+      return Err(ToArticleError::NotAscii)
+    }
+    std::str::from_utf8_mut(&mut arr[..s.len()])
+      .map_err(|_| ToArticleError::NotAscii)?
+      .make_ascii_lowercase();
+    Ok(Article(arr))
   }
   pub fn as_bytes(&self) -> &[u8] { &self.0[..self.0.iter().position(|&x| x == 0).unwrap_or(8)] }
   pub fn as_str(&self) -> &str { std::str::from_utf8(self.as_bytes()).unwrap() }
@@ -2705,13 +2740,6 @@ pub struct DepRequirement {
 pub struct DepRequirements {
   pub sig: Vec<Article>,
   pub reqs: Vec<DepRequirement>,
-}
-
-pub struct TokenKind(pub u8, pub u32); // TODO: enum
-
-pub struct Token {
-  pub kind: TokenKind,
-  pub value: String,
 }
 
 pub const DEFAULT_PRIO: u32 = 64;

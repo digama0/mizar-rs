@@ -72,15 +72,16 @@ impl From<ArticleElem> for Item {
 
 impl ArticleParser<'_> {
   pub fn parse_item(&mut self) -> Result<Option<Item>> {
+    let idx = self.r.position();
     Ok(match self.parse_elem()? {
       e @ (ArticleElem::Item(_) | ArticleElem::AuxiliaryItem(_) | ArticleElem::Canceled(_)) =>
         Some(e.into()),
       ArticleElem::Proposition(prop) => Some(self.finish_proposition(prop)?),
       ArticleElem::End => {
-        assert!(matches!(self.r.read_event(&mut self.buf), Event::Eof));
+        assert!(matches!(self.r.read_event(&mut self.buf)?, Event::Eof));
         None
       }
-      _ => panic!("unexpected element"),
+      _ => return Err(ParseError::unexpected_elem(idx, "item", None)),
     })
   }
 
@@ -97,7 +98,10 @@ impl ArticleParser<'_> {
   }
 
   fn parse_thesis(&mut self) -> Result<Thesis> {
-    let Elem::Thesis(f) = self.r.parse_elem(&mut self.buf)? else { panic!("expected thesis") };
+    let idx = self.r.position();
+    let Elem::Thesis(f) = self.r.parse_elem(&mut self.buf)? else {
+      return Err(ParseError::unexpected_elem(idx, "thesis", None))
+    };
     Ok(f)
   }
 
@@ -130,15 +134,15 @@ impl ArticleParser<'_> {
 
   fn parse_references(&mut self) -> Result<Vec<Reference>> {
     let mut refs = vec![];
-    while let Ok(e) = self.r.try_read_start(&mut self.buf, Some(b"Ref"))? {
+    while let Ok(e) = self.r.try_read_start(&mut self.buf, Some("Ref"))? {
       let (pos, label) = self.r.get_pos_and_label(&e)?;
       let (mut article_nr, mut nr, mut kind) = Default::default();
       for attr in e.attributes() {
         let attr = attr?;
         match attr.key.0 {
           b"kind" => kind = attr.value[0],
-          b"nr" => nr = self.r.get_attr::<u32>(&attr.value) - 1,
-          b"articlenr" => article_nr = self.r.get_attr(&attr.value),
+          b"nr" => nr = self.r.get_attr::<u32>(&attr.value)? - 1,
+          b"articlenr" => article_nr = self.r.get_attr(&attr.value)?,
           _ => {}
         }
       }
@@ -150,7 +154,7 @@ impl ArticleParser<'_> {
         b'D' => ReferenceKind::Def((ArticleId(article_nr), DefId(nr))),
         _ => panic!("unexpected inference kind"),
       };
-      self.r.end_tag(&mut self.buf);
+      self.r.end_tag(&mut self.buf)?;
       refs.push(Reference { pos, kind });
     }
     Ok(refs)
@@ -173,8 +177,8 @@ impl ArticleParser<'_> {
         for attr in e.attributes() {
           let attr = attr?;
           match attr.key.0 {
-            b"nr" => nr = self.r.get_attr::<u32>(&attr.value) - 1,
-            b"articlenr" => article_nr = self.r.get_attr(&attr.value),
+            b"nr" => nr = self.r.get_attr::<u32>(&attr.value)? - 1,
+            b"articlenr" => article_nr = self.r.get_attr(&attr.value)?,
             _ => {}
           }
         }
@@ -188,11 +192,11 @@ impl ArticleParser<'_> {
         let (start, label) = self.r.get_pos_and_label(&e)?;
         let thesis = self.parse_block_thesis()?.unwrap();
         let (items, end) = self.parse_reasoning(false)?;
-        self.r.end_tag(&mut self.buf);
+        self.r.end_tag(&mut self.buf)?;
         Justification::Proof { pos: (start, end), label, thesis, items }
       }
       b"SkippedProof" => {
-        self.r.end_tag(&mut self.buf);
+        self.r.end_tag(&mut self.buf)?;
         Justification::SkippedProof
       }
       _ => panic!("unexpected justification"),
@@ -216,12 +220,12 @@ impl ArticleParser<'_> {
   fn parse_corr_cond(&mut self, kind: CorrCondKind) -> Result<ArticleElem> {
     Ok(match self.r.parse_elem(&mut self.buf)? {
       Elem::Formula(f) => {
-        self.r.end_tag(&mut self.buf);
+        self.r.end_tag(&mut self.buf)?;
         ArticleElem::SimpleCorrCond(SimpleCorrCond { kind, f })
       }
       Elem::Proposition(prop) => {
         let just = self.parse_justification()?;
-        self.r.end_tag(&mut self.buf);
+        self.r.end_tag(&mut self.buf)?;
         ArticleElem::CorrCond(CorrCond { kind, prop, just })
       }
       _ => panic!("invalid correctness condition"),
@@ -234,7 +238,7 @@ impl ArticleParser<'_> {
       match self.parse_elem()? {
         ArticleElem::CorrCond(cond) => conds.push(cond),
         ArticleElem::Correctness(corr) => {
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           break (conds, Some(corr))
         }
         ArticleElem::End => break (conds, None),
@@ -262,12 +266,12 @@ impl ArticleParser<'_> {
       Some(block_thesis) => block_thesis,
       None => self.parse_block_thesis()?.unwrap(),
     };
-    self.r.end_tag(&mut self.buf);
+    self.r.end_tag(&mut self.buf)?;
     Ok(CaseBlock { pos: (start, end), block_thesis, cs, items, thesis })
   }
 
   fn parse_elem(&mut self) -> Result<ArticleElem> {
-    Ok(if let Event::Start(e) = self.r.read_event(&mut self.buf) {
+    Ok(if let Event::Start(e) = self.r.read_event(&mut self.buf)? {
       match e.local_name().as_ref() {
         b"DefinitionBlock" => {
           let (start, label) = self.r.get_pos_and_label(&e)?;
@@ -287,7 +291,7 @@ impl ArticleParser<'_> {
               e => panic!("unexpected definition item {e:?}"),
             }
           };
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           let kind = BlockKind::Definition;
           ArticleElem::Item(Item::Block { kind, pos: (start, end), label, items })
         }
@@ -306,7 +310,7 @@ impl ArticleParser<'_> {
               _ => panic!("unexpected definition item"),
             }
           };
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           let kind = BlockKind::Registration;
           ArticleElem::Item(Item::Block { kind, pos: (start, end), label, items })
         }
@@ -323,7 +327,7 @@ impl ArticleParser<'_> {
               _ => panic!("unexpected definition item"),
             }
           };
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           let kind = BlockKind::Notation;
           ArticleElem::Item(Item::Block { kind, pos: (start, end), label, items })
         }
@@ -342,26 +346,26 @@ impl ArticleParser<'_> {
             }
           };
           self.r.suppress_bvar_errors = false;
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           ArticleElem::Item(Item::Reservation { ids, ty })
         }
         b"SchemeBlock" => {
           let start = self.r.get_pos(&e)?;
           let nr =
-            self.r.get_attr::<u32>(&e.try_get_attribute(b"schemenr").unwrap().unwrap().value) - 1;
+            self.r.get_attr::<u32>(&e.try_get_attribute(b"schemenr").unwrap().unwrap().value)? - 1;
           let mut decls = vec![];
           loop {
-            if let Event::Start(e) = self.r.read_event(&mut self.buf) {
+            if let Event::Start(e) = self.r.read_event(&mut self.buf)? {
               match e.local_name().as_ref() {
                 b"SchemeFuncDecl" => {
                   let args = self.r.parse_arg_types(&mut self.buf)?;
                   let ty = self.r.parse_type(&mut self.buf)?.unwrap();
-                  self.r.end_tag(&mut self.buf);
+                  self.r.end_tag(&mut self.buf)?;
                   decls.push(SchemeDecl::Func { args, ty });
                 }
                 b"SchemePredDecl" => {
                   let args = self.r.parse_arg_types(&mut self.buf)?;
-                  self.r.end_tag(&mut self.buf);
+                  self.r.end_tag(&mut self.buf)?;
                   decls.push(SchemeDecl::Pred { args });
                 }
                 b"SchemePremises" => break,
@@ -376,7 +380,7 @@ impl ArticleParser<'_> {
           let thesis = self.r.parse_proposition(&mut self.buf, false)?.unwrap();
           let just = self.parse_justification()?;
           let end = self.parse_end_pos()?;
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           let bl = SchemeBlock { pos: (start, end), nr: SchId(nr), decls, prems, thesis, just };
           ArticleElem::Item(Item::Scheme(bl))
         }
@@ -409,13 +413,13 @@ impl ArticleParser<'_> {
         b"JustifiedTheorem" => {
           let prop = self.r.parse_proposition(&mut self.buf, true)?.unwrap();
           let just = self.parse_justification()?;
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           ArticleElem::Item(Item::Theorem { prop, just })
         }
         b"DefTheorem" => {
           let kind = self.r.parse_constr_kind(&e)?;
           let prop = self.r.parse_proposition(&mut self.buf, true)?.unwrap();
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           ArticleElem::Item(Item::DefTheorem { kind, prop })
         }
         b"Definiens" => {
@@ -426,17 +430,17 @@ impl ArticleParser<'_> {
         b"Proposition" => {
           let (pos, label) = self.r.get_pos_and_label(&e)?;
           let f = self.r.parse_formula(&mut self.buf)?.unwrap();
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           ArticleElem::Proposition(Proposition { pos, label, f })
         }
         b"IterEquality" => {
           let (start, label) = self.r.get_pos_and_label(&e)?;
           let lhs = self.r.parse_term(&mut self.buf)?.unwrap();
           let mut steps = vec![];
-          while self.r.try_read_start(&mut self.buf, Some(b"IterStep"))?.is_ok() {
+          while self.r.try_read_start(&mut self.buf, Some("IterStep"))?.is_ok() {
             let rhs = self.r.parse_term(&mut self.buf)?.unwrap();
             let just = self.parse_simple_justification()?;
-            self.r.end_tag(&mut self.buf);
+            self.r.end_tag(&mut self.buf)?;
             steps.push((rhs, just));
           }
           let s = Statement::IterEquality { start, label, lhs, steps };
@@ -446,7 +450,7 @@ impl ArticleParser<'_> {
           let (start, label) = self.r.get_pos_and_label(&e)?;
           let (items, end) = self.parse_reasoning(true)?;
           let thesis = self.parse_block_thesis()?.unwrap();
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           let s = Statement::Now {
             pos: (start, end),
             label,
@@ -475,7 +479,7 @@ impl ArticleParser<'_> {
         b"Set" => {
           let term = self.r.parse_term(&mut self.buf)?.unwrap();
           let ty = self.r.parse_type(&mut self.buf)?.unwrap();
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           ArticleElem::AuxiliaryItem(AuxiliaryItem::Set { term, ty })
         }
         b"Reconsider" => {
@@ -489,20 +493,20 @@ impl ArticleParser<'_> {
           };
           assert!(prop.label.is_none());
           let just = self.parse_justification()?;
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           ArticleElem::AuxiliaryItem(AuxiliaryItem::Reconsider { terms, prop, just })
         }
         b"DefFunc" => {
           let args = self.r.parse_arg_types(&mut self.buf)?;
           let value = self.r.parse_term(&mut self.buf)?.unwrap();
           let ty = self.r.parse_type(&mut self.buf)?.unwrap();
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           ArticleElem::AuxiliaryItem(AuxiliaryItem::DefFunc { args, value, ty })
         }
         b"DefPred" => {
           let args = self.r.parse_arg_types(&mut self.buf)?;
           let value = self.r.parse_formula(&mut self.buf)?.unwrap();
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           ArticleElem::AuxiliaryItem(AuxiliaryItem::DefPred { args, value })
         }
         b"Let" => {
@@ -614,7 +618,7 @@ impl ArticleParser<'_> {
         }
         b"Canceled" => {
           let kind = e.try_get_attribute(b"kind").unwrap().unwrap().value[0];
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           ArticleElem::Canceled(match kind {
             b'D' => CancelKind::Def,
             b'T' => CancelKind::Thm,
@@ -629,18 +633,18 @@ impl ArticleParser<'_> {
               Statement::Proposition { prop, just: self.parse_justification()? },
             _ => panic!("expected justified proposition"),
           };
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           ArticleElem::Thus(s)
         }
         b"Take" => {
           let tm = self.r.parse_term(&mut self.buf)?.unwrap();
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           ArticleElem::Take(tm)
         }
         b"TakeAsVar" => {
           let ty = self.r.parse_type(&mut self.buf)?.unwrap();
           let tm = self.r.parse_term(&mut self.buf)?.unwrap();
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           ArticleElem::TakeAsVar(ty, tm)
         }
         b"PerCasesReasoning" => {
@@ -664,13 +668,13 @@ impl ArticleParser<'_> {
             Some(block_thesis) => block_thesis,
             None => self.parse_block_thesis()?.unwrap(),
           };
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           ArticleElem::PerCases(PerCases { label, cases, prop, just, thesis, pos, block_thesis })
         }
         b"PerCases" => {
           let prop = self.r.parse_proposition(&mut self.buf, false)?.unwrap();
           let just = self.parse_justification()?;
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           ArticleElem::PerCasesJustification(prop, just)
         }
         b"Registration" => {
@@ -684,26 +688,26 @@ impl ArticleParser<'_> {
           ArticleElem::Registration(Registration::Cluster(ClusterDecl { kind, conds, corr }))
         }
         b"IdentifyRegistration" => {
-          let e = self.r.read_start(&mut self.buf, Some(b"Identify"))?;
+          let e = self.r.read_start(&mut self.buf, Some("Identify"))?;
           let attrs = self.r.parse_identify_attrs(&e)?;
           let kind = self.r.parse_identify_body(&mut self.buf, attrs)?;
           let (conds, corr) = self.parse_cond_and_correctness()?;
           ArticleElem::Registration(Registration::Identify { kind, conds, corr })
         }
         b"ReductionRegistration" => {
-          let e = self.r.read_start(&mut self.buf, Some(b"Reduction"))?;
+          let e = self.r.read_start(&mut self.buf, Some("Reduction"))?;
           let attrs = self.r.parse_reduction_attrs(&e)?;
           let kind = self.r.parse_reduction_body(&mut self.buf, attrs)?;
           let (conds, corr) = self.parse_cond_and_correctness()?;
           ArticleElem::Registration(Registration::Reduction { kind, conds, corr })
         }
         b"PropertyRegistration" => {
-          let e = self.r.read_start(&mut self.buf, Some(b"Property"))?;
+          let e = self.r.read_start(&mut self.buf, Some("Property"))?;
           let attrs = self.r.parse_property_attrs(&e)?;
           let kind = self.r.parse_property_body(&mut self.buf, attrs)?;
           let prop = self.r.parse_proposition(&mut self.buf, false)?.unwrap();
           let just = self.parse_justification()?;
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           ArticleElem::Registration(Registration::Property { kind, prop, just })
         }
         b"Coherence" => return self.parse_corr_cond(CorrCondKind::Coherence),
@@ -722,16 +726,16 @@ impl ArticleParser<'_> {
             }
           };
           let just = self.parse_justification()?;
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           ArticleElem::Correctness(Correctness { conds, prop, just })
         }
         b"JustifiedProperty" => {
           let e = self.r.read_start(&mut self.buf, None)?;
           let kind = e.local_name().as_ref().try_into().expect("unexpected property");
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           let prop = self.r.parse_proposition(&mut self.buf, false)?.unwrap();
           let just = self.parse_justification()?;
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           ArticleElem::JustifiedProperty(JustifiedProperty { kind, prop, just })
         }
         b"Constructor" => {
@@ -755,12 +759,12 @@ impl ArticleParser<'_> {
             }
           };
           self.r.suppress_bvar_errors = false;
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           ArticleElem::BlockThesis(f)
         }
         b"EndPosition" => {
           let end = self.r.get_pos(&e)?;
-          self.r.end_tag(&mut self.buf);
+          self.r.end_tag(&mut self.buf)?;
           ArticleElem::EndPosition(end)
         }
         _ => ArticleElem::Other,

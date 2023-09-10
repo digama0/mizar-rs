@@ -26,16 +26,19 @@ pub struct Cache {
   pub sch: OnceCell<DepSchemes>,
 }
 
+#[allow(clippy::unwrap_used)]
 pub fn init_cache<'a>(articles: impl Iterator<Item = (&'a str, bool)>) {
   let articles = ["hidden", "tarski_0", "tarski_a"]
     .into_iter()
     .map(|x| (x, false))
     .chain(articles)
-    .map(|(s, wait)| (Article::from_lower(s.as_bytes()), Cache { wait, ..Cache::default() }))
+    .map(|(s, wait)| {
+      (Article::from_lower(s.as_bytes()).unwrap(), Cache { wait, ..Cache::default() })
+    })
     .collect();
   let reqs = ["arithm", "boole", "hidden", "numerals", "real", "subset"]
     .into_iter()
-    .map(|s| (Article::from_lower(s.as_bytes()), Default::default()))
+    .map(|s| (Article::from_lower(s.as_bytes()).unwrap(), Default::default()))
     .collect();
   CACHE.set(CacheMap { articles, reqs }).ok().unwrap()
 }

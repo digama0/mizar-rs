@@ -2,7 +2,7 @@ use crate::error::report_accom_warning;
 use crate::parser::{catch_missing, ParseError, PathResult};
 use crate::reader::DefiniensId;
 use crate::types::*;
-use crate::{mk_id, CmpStyle, MizPath, VisitMut};
+use crate::{mk_id, CmpStyle, MizPath, VisitMut, MML_VCT_PATH};
 use std::collections::HashMap;
 use std::io;
 
@@ -55,7 +55,7 @@ pub struct SigBuilder {
 impl SigBuilder {
   fn push(&mut self, constrs: Option<&mut Constructors>, art: Article) -> PathResult<SigId> {
     let mut dco = Default::default();
-    MizPath::new(art.as_str()).read_dco(false, &mut dco, constrs.is_some())?;
+    MizPath { art }.read_dco(false, &mut dco, constrs.is_some())?;
     Ok(self.push_from(constrs, art, &mut dco))
   }
 
@@ -259,7 +259,22 @@ impl Accomodator {
     #[allow(clippy::indexing_slicing)]
     for &(_, art) in &self.dirs.0[DirectiveKind::Vocabularies] {
       let mut voc = Default::default();
-      assert!(art.read_vct(mml_vct, &mut voc)); // TODO: private vocabularies
+      match art.read_vct(mml_vct, &mut voc) {
+        Ok(true) => {}
+        Ok(false) => {
+          // TODO: private vocabularies
+          println!(
+            "error: {MML_VCT_PATH}: vocabulary for {art} not found (TODO: private vocabularies)"
+          );
+          self.has_errors = true;
+          continue
+        }
+        Err(e) => {
+          e.report(MML_VCT_PATH.as_ref());
+          self.has_errors = true;
+          continue
+        }
+      }
       let hidden = self.dict.voc.is_empty();
       self.dict.voc.push((art, self.dict.base));
       if hidden {
@@ -311,7 +326,7 @@ impl Accomodator {
   pub fn accom_constructors(&mut self, constrs: &mut Constructors) -> io::Result<()> {
     for &(pos, art) in &self.dirs.0[DirectiveKind::Constructors] {
       let mut dco = Default::default();
-      let result = MizPath::new(art.as_str()).read_dco(false, &mut dco, true);
+      let result = MizPath { art }.read_dco(false, &mut dco, true);
       if try_p!(self, pos => Constructors, result).is_none() {
         continue
       }
@@ -332,8 +347,7 @@ impl Accomodator {
   ) -> io::Result<()> {
     for &(pos, art) in &self.dirs.0[DirectiveKind::Requirements] {
       let mut dre = Default::default();
-      if try_p!(self, pos => Requirements, MizPath::new(art.as_str()).read_dre(&mut dre)).is_none()
-      {
+      if try_p!(self, pos => Requirements, MizPath { art }.read_dre(&mut dre)).is_none() {
         continue
       }
       let len = self.sig.sig.len();
@@ -353,7 +367,7 @@ impl Accomodator {
   pub fn accom_clusters(&mut self, ctx: &Constructors, clusters: &mut Clusters) -> io::Result<()> {
     for &(_, art) in &self.dirs.0[DirectiveKind::Registrations] {
       let mut dcl = Default::default();
-      let result = MizPath::new(art.as_str()).read_dcl(false, &mut dcl);
+      let result = MizPath { art }.read_dcl(false, &mut dcl);
       let Some(_) = try_p!(self, catch_missing(result)) else { continue };
       let len = self.sig.sig.len();
       let Some(mut rename) = try_p!(self, self.sig.rename(&dcl.sig, Some(ctx))) else { continue };
@@ -393,7 +407,7 @@ impl Accomodator {
     for &(pos, art) in &self.dirs.0[DirectiveKind::Notations] {
       let dict_len = self.dict.voc.len();
       let mut dno = Default::default();
-      let result = MizPath::new(art.as_str()).read_dno(false, &mut dno);
+      let result = MizPath { art }.read_dno(false, &mut dno);
       let Some(_) = try_p!(self, pos => Notations, result) else { continue };
       let mut s_rename = RenameSymbol::default();
       for &(art, ref val) in &dno.vocs.0 {
@@ -431,7 +445,7 @@ impl Accomodator {
   ) -> io::Result<()> {
     for &(_, art) in &self.dirs.0[DirectiveKind::Registrations] {
       let (mut sig, mut did) = Default::default();
-      let result = MizPath::new(art.as_str()).read_did(false, &mut sig, &mut did);
+      let result = MizPath { art }.read_did(false, &mut sig, &mut did);
       let Some(_) = try_p!(self, catch_missing(result)) else { continue };
       let len = self.sig.sig.len();
       let Some(mut rename) = try_p!(self, self.sig.rename(&sig, Some(ctx))) else { continue };
@@ -453,7 +467,7 @@ impl Accomodator {
   ) -> io::Result<()> {
     for &(_, art) in &self.dirs.0[DirectiveKind::Registrations] {
       let (mut sig, mut drd) = Default::default();
-      let result = MizPath::new(art.as_str()).read_drd(false, &mut sig, &mut drd);
+      let result = MizPath { art }.read_drd(false, &mut sig, &mut drd);
       let Some(_) = try_p!(self, catch_missing(result)) else { continue };
       let len = self.sig.sig.len();
       let Some(mut rename) = try_p!(self, self.sig.rename(&sig, Some(ctx))) else { continue };
@@ -475,7 +489,7 @@ impl Accomodator {
   ) -> io::Result<()> {
     for &(_, art) in &self.dirs.0[DirectiveKind::Registrations] {
       let (mut sig, mut dpr) = Default::default();
-      let result = MizPath::new(art.as_str()).read_dpr(false, &mut sig, &mut dpr);
+      let result = MizPath { art }.read_dpr(false, &mut sig, &mut dpr);
       let Some(_) = try_p!(self, catch_missing(result)) else { continue };
       let len = self.sig.sig.len();
       let Some(mut rename) = try_p!(self, self.sig.rename(&sig, Some(ctx))) else { continue };
@@ -497,7 +511,7 @@ impl Accomodator {
   ) -> io::Result<()> {
     for &(pos, art) in &self.dirs.0[kind] {
       let (mut sig, mut def) = Default::default();
-      let result = MizPath::new(art.as_str()).read_def(false, &mut sig, &mut def);
+      let result = MizPath { art }.read_def(false, &mut sig, &mut def);
       let Some(_) = try_p!(self, pos => kind, result) else { continue };
       let len = self.sig.sig.len();
       let Some(mut rename) = try_p!(self, self.sig.rename(&sig, Some(ctx))) else { continue };
@@ -520,7 +534,7 @@ impl Accomodator {
     let mut defthms = DefiniensId::default();
     for &(pos, art) in &self.dirs.0[DirectiveKind::Theorems] {
       let mut thms = Default::default();
-      let result = MizPath::new(art.as_str()).read_the(false, &mut thms);
+      let result = MizPath { art }.read_the(false, &mut thms);
       let Some(_) = try_p!(self, pos => Theorems, result) else { continue };
       let len = self.sig.sig.len();
       let Some(mut rename) = try_p!(self, self.sig.rename(&thms.sig, Some(ctx))) else { continue };
@@ -557,7 +571,7 @@ impl Accomodator {
   pub fn accom_schemes(&mut self, ctx: &Constructors, libs: &mut Libraries) -> io::Result<()> {
     for &(pos, art) in &self.dirs.0[DirectiveKind::Schemes] {
       let mut schs = Default::default();
-      let result = MizPath::new(art.as_str()).read_sch(false, &mut schs);
+      let result = MizPath { art }.read_sch(false, &mut schs);
       let Some(_) = try_p!(self, pos => Schemes, result) else { continue };
       let len = self.sig.sig.len();
       let Some(mut rename) = try_p!(self, self.sig.rename(&schs.sig, Some(ctx))) else { continue };

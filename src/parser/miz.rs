@@ -449,7 +449,7 @@ impl<'a> Parser<'a> {
       tok.spelling.len() <= MAX_ARTICLE_LEN,
       "article names are at most {MAX_ARTICLE_LEN} characters"
     );
-    Article::from_upper(tok.spelling.as_bytes())
+    Article::from_upper(tok.spelling.as_bytes()).unwrap()
   }
 
   pub fn parse_env(&mut self, dirs: &mut Directives) {

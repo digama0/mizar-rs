@@ -62,6 +62,18 @@ impl<'a> std::ops::DerefMut for Analyzer<'a> {
   fn deref_mut(&mut self) -> &mut Self::Target { &mut self.r }
 }
 
+macro_rules! try_p {
+  ($self:expr, $e:expr) => {
+    match $e {
+      Ok(t) => t,
+      Err((path, e)) => {
+        e.report(&path);
+        $self.has_errors = true;
+        return
+      }
+    }
+  };
+}
 impl Reader {
   fn push_parse_item(
     &mut self, parser: &mut Result<&mut MizParser<'_>, MsmParser>, buf: &mut Vec<ast::Item>,
@@ -84,21 +96,16 @@ impl Reader {
   pub fn run_analyzer(&mut self, path: &MizPath, parser: Option<&mut MizParser<'_>>) {
     let mut parser = match parser {
       Some(v) => Ok(v),
-      None => match if self.g.cfg.nameck_enabled { path.open_wsx() } else { path.open_msx() } {
-        Ok(parser) => Err(parser),
-        Err((path, e)) => {
-          e.report(&path);
-          self.has_errors = true;
-          return
-        }
-      },
+      None => {
+        let result = if self.g.cfg.nameck_enabled { path.open_wsx() } else { path.open_msx() };
+        Err(try_p!(self, result))
+      }
     };
     let mut items = vec![];
     if !self.g.cfg.analyzer_enabled {
-      while self.push_parse_item(&mut parser, &mut items).unwrap() {
+      while try_p!(self, self.push_parse_item(&mut parser, &mut items)) {
         items.clear()
       }
-      return
     }
     let mut elab = Analyzer {
       r: self,
@@ -135,7 +142,7 @@ impl Reader {
       elab.export.reductions_base = elab.reductions.len() as u32;
       elab.export.properties_base = elab.properties.len() as u32;
     }
-    while elab.r.push_parse_item(&mut parser, &mut items).unwrap() {
+    while try_p!(elab, elab.r.push_parse_item(&mut parser, &mut items)) {
       for it in items.iter_mut() {
         if elab.g.cfg.top_item_header {
           eprintln!("item {:?}: {:?}", it.pos, it.kind);

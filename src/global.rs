@@ -2925,7 +2925,9 @@ pub struct MizPath {
 }
 
 impl MizPath {
-  pub fn new(s: &str) -> Self { Self { art: Article::from_lower(s.as_bytes()) } }
+  pub fn new(s: &str) -> Result<Self, ToArticleError> {
+    Ok(Self { art: Article::from_lower(s.as_bytes())? })
+  }
 
   pub fn mml(&self) -> PathBuf {
     let s = self.art.as_str();

@@ -413,6 +413,9 @@ fn conflict(msg: impl Display) -> ! {
   Cli::command().error(clap::error::ErrorKind::ArgumentConflict, msg).exit()
 }
 
+const MML_LAR_PATH: &str = "miz/mizshare/mml.lar";
+const MML_VCT_PATH: &str = "miz/mizshare/mml.vct";
+
 fn main() {
   let cli = Cli::parse();
   let enable = cli.analyzer || cli.checker || cli.export;
@@ -474,13 +477,13 @@ fn main() {
   }
   let one_file = cli.one_file;
 
-  let file = std::fs::read_to_string("miz/mizshare/mml.lar").unwrap_or_else(|e| {
-    println!("IO error reading miz/mizshare/mml.lar: {e}");
+  let file = std::fs::read_to_string(MML_LAR_PATH).unwrap_or_else(|e| {
+    println!("IO error reading {MML_LAR_PATH}: {e}");
     std::process::abort()
   });
   let mml_vct = &if cfg.accom_enabled {
-    std::fs::read("miz/mizshare/mml.vct").unwrap_or_else(|e| {
-      println!("IO error reading miz/mizshare/mml.vct: {e}");
+    std::fs::read(MML_VCT_PATH).unwrap_or_else(|e| {
+      println!("IO error reading {MML_VCT_PATH}: {e}");
       std::process::abort()
     })
   } else {
@@ -551,7 +554,14 @@ fn main() {
           let mut lock = jobs.lock().unwrap();
           lock.next()
         } {
-          let path = MizPath::new(s);
+          let path = match MizPath::new(s) {
+            Ok(t) => t,
+            Err(e) => {
+              println!("error: {MML_LAR_PATH}:{}: {e}", i + 1);
+              has_errors.store(true, std::sync::atomic::Ordering::Relaxed);
+              continue
+            }
+          };
           if let Some(thread) = &thread {
             thread.set_message(format!("{i:4}: {s}"));
             thread.set_length(1);
