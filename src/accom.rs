@@ -96,7 +96,7 @@ impl SigBuilder {
     }
   }
 
-  fn hi(&self, id: SigId) -> &ConstructorsBase {
+  pub fn hi(&self, id: SigId) -> &ConstructorsBase {
     self.sig.get(SigId(id.0 + 1)).map_or(&self.base, |(_, base)| base)
   }
 
@@ -416,7 +416,7 @@ impl Accomodator {
       }
       let sig_len = self.sig.sig.len();
       let Some(mut rename) = try_p!(self, self.sig.rename(&dno.sig, None)) else { continue };
-      for Pattern { mut kind, mut fmt, mut primary, visible, pos } in dno.pats {
+      for Pattern { article, abs_nr, mut kind, mut fmt, mut primary, visible, pos } in dno.pats {
         fmt.visit_mut(|k, c| s_rename.apply(k, c));
         if s_rename.ok() {
           if let Some(fmt) = match &mut fmts {
@@ -426,7 +426,7 @@ impl Accomodator {
             kind.visit(&mut rename);
             primary.visit(&mut rename);
             if rename.ok() {
-              pats.push(Pattern { kind, fmt, primary, visible, pos })
+              pats.push(Pattern { article, abs_nr, kind, fmt, primary, visible, pos })
             }
           }
         }
@@ -529,8 +529,10 @@ impl Accomodator {
   /// ProcessTheorems
   #[allow(clippy::indexing_slicing)]
   pub fn accom_theorems(
-    &mut self, ctx: &Constructors, def_map: &mut HashMap<DefRef, DefiniensId>, libs: &mut Libraries,
+    &mut self, write_eth: bool, ctx: &Constructors, def_map: &mut HashMap<DefRef, DefiniensId>,
+    libs: &mut Libraries,
   ) -> io::Result<()> {
+    let mut w = write_eth.then(|| MizPath { art: self.article }.write_eth());
     let mut defthms = DefiniensId::default();
     for &(pos, art) in &self.dirs.0[DirectiveKind::Theorems] {
       let mut thms = Default::default();
@@ -546,6 +548,9 @@ impl Accomodator {
             let def_nr = def_nr.fresh();
             thm.stmt.visit(&mut rename);
             if rename.ok() {
+              if let Some(w) = &mut w {
+                w.write(lib_nr, def_nr.0, art, &thm)
+              }
               libs.def.insert((lib_nr, def_nr), thm.stmt);
               if let TheoremKind::Def(_) = thm.kind {
                 def_map.insert((lib_nr, def_nr), defthms.fresh());
@@ -556,6 +561,9 @@ impl Accomodator {
             let thm_nr = thm_nr.fresh();
             thm.stmt.visit(&mut rename);
             if rename.ok() {
+              if let Some(w) = &mut w {
+                w.write(lib_nr, thm_nr.0, art, &thm)
+              }
               libs.thm.insert((lib_nr, thm_nr), thm.stmt);
             }
           }
@@ -563,12 +571,18 @@ impl Accomodator {
       }
       self.sig.truncate(len);
     }
+    if let Some(w) = w {
+      w.finish()
+    }
     Ok(())
   }
 
   /// ProcessSchemes
   #[allow(clippy::indexing_slicing)]
-  pub fn accom_schemes(&mut self, ctx: &Constructors, libs: &mut Libraries) -> io::Result<()> {
+  pub fn accom_schemes(
+    &mut self, write_esh: bool, ctx: &Constructors, libs: &mut Libraries,
+  ) -> io::Result<()> {
+    let mut w = write_esh.then(|| MizPath { art: self.article }.write_esh());
     for &(pos, art) in &self.dirs.0[DirectiveKind::Schemes] {
       let mut schs = Default::default();
       let result = MizPath { art }.read_sch(false, &mut schs);
@@ -582,11 +596,17 @@ impl Accomodator {
         if let Some(mut sch) = sch {
           sch.visit(&mut rename);
           if rename.ok() {
+            if let Some(w) = &mut w {
+              w.write(lib_nr, sch_nr.0, art, &sch)
+            }
             libs.sch.insert((lib_nr, sch_nr), sch);
           }
         }
       }
       self.sig.truncate(len);
+    }
+    if let Some(w) = w {
+      w.finish()
     }
     Ok(())
   }

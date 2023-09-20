@@ -1,3 +1,4 @@
+use crate::accom::SigBuilder;
 use crate::VisitMut;
 use enum_map::{Enum, EnumMap};
 use paste::paste;
@@ -1665,7 +1666,7 @@ impl ConditionalClusters {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConstrDef {
   pub def_nr: DefId,
-  // pub article: Article,
+  pub article: Article,
   pub constr: ConstrKind,
   pub primary: Box<[Type]>,
 }
@@ -2314,6 +2315,7 @@ mk_id! {
   AttrSymId(u32),
   StructSymId(u32),
   SelSymId(u32),
+  IdentId(u32),
 }
 
 impl ModeSymId {
@@ -2387,17 +2389,17 @@ impl From<(SymbolKindClass, u32)> for SymbolKind {
   }
 }
 
-impl SymbolKind {
-  fn _class(&self) -> SymbolKindClass {
-    match self {
-      SymbolKind::Func(_) => SymbolKindClass::Func,
-      SymbolKind::LeftBrk(_) => SymbolKindClass::LeftBrk,
-      SymbolKind::RightBrk(_) => SymbolKindClass::RightBrk,
-      SymbolKind::Pred(_) => SymbolKindClass::Pred,
-      SymbolKind::Mode(_) => SymbolKindClass::Mode,
-      SymbolKind::Attr(_) => SymbolKindClass::Attr,
-      SymbolKind::Struct(_) => SymbolKindClass::Struct,
-      SymbolKind::Sel(_) => SymbolKindClass::Sel,
+impl From<SymbolKind> for (SymbolKindClass, u32) {
+  fn from(kind: SymbolKind) -> Self {
+    match kind {
+      SymbolKind::Struct(StructSymId(n)) => (SymbolKindClass::Struct, n),
+      SymbolKind::LeftBrk(LeftBrkSymId(n)) => (SymbolKindClass::LeftBrk, n),
+      SymbolKind::RightBrk(RightBrkSymId(n)) => (SymbolKindClass::RightBrk, n),
+      SymbolKind::Mode(ModeSymId(n)) => (SymbolKindClass::Mode, n),
+      SymbolKind::Func(FuncSymId(n)) => (SymbolKindClass::Func, n),
+      SymbolKind::Pred(PredSymId(n)) => (SymbolKindClass::Pred, n),
+      SymbolKind::Sel(SelSymId(n)) => (SymbolKindClass::Sel, n),
+      SymbolKind::Attr(AttrSymId(n)) => (SymbolKindClass::Attr, n),
     }
   }
 }
@@ -2513,10 +2515,10 @@ impl FormatId {
 #[derive(Debug, Default)]
 pub struct Formats {
   pub formats: IdxVec<FormatId, Format>,
-  pub priority: Vec<(PriorityKind, u32)>,
+  // pub priority: Vec<(PriorityKind, u32)>,
 }
 
-#[derive(Debug, Enum)]
+#[derive(Clone, Copy, Debug, Enum)]
 pub enum PatternKindClass {
   Mode,
   Struct,
@@ -2575,8 +2577,8 @@ impl PatternKind {
 pub struct Pattern<F = FormatId> {
   pub kind: PatternKind,
   // pub pid: u32,
-  // pub article: Article,
-  // pub abs_nr: u32,
+  pub article: Article,
+  pub abs_nr: u32,
   pub fmt: F,
   // pub redefines: Option<u32>,
   pub primary: Box<[Type]>,
@@ -2625,8 +2627,7 @@ pub struct DepNotation {
 
 #[derive(Debug, Default)]
 pub struct AccumConstructors {
-  pub accum: Vec<(Article, ConstructorsBase)>,
-  pub base: ConstructorsBase,
+  pub sig: SigBuilder,
   pub constrs: Constructors,
 }
 

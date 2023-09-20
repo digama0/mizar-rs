@@ -27,7 +27,7 @@ impl Default for FormatterConfig {
 pub struct Formatter {
   pub dump: bool,
   pub cfg: FormatterConfig,
-  symbols: HashMap<SymbolKind, String>,
+  pub symbols: HashMap<SymbolKind, String>,
   pub formats: Box<IdxVec<FormatId, Format>>,
   mode: HashMap<ModeId, (u8, Box<[LocusId]>, FormatMode)>,
   struct_mode: HashMap<StructId, (u8, Box<[LocusId]>, FormatStruct)>,

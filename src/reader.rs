@@ -96,6 +96,9 @@ impl MizPath {
     if let Some(accom) = &mut v.accom {
       accom.accom_constructors(&mut v.g.constrs).unwrap();
       accom.accom_requirements(&v.g.constrs, &mut v.g.reqs).unwrap();
+      if cfg.xml_internals {
+        self.write_atr(&accom.sig, &v.g.constrs)
+      }
     } else {
       self.read_atr(&mut v.g.constrs).unwrap();
       self.read_ere(&mut v.g.reqs).unwrap();
@@ -159,6 +162,9 @@ impl MizPath {
       notations.iter().for_each(|pat| eprintln!("{pat:?}"))
     }
     v.lc.formatter.init_symbols(self, symbols);
+    if v.accom.is_some() {
+      self.write_dcx(&v.lc.formatter.symbols);
+    }
     v.lc.formatter.init();
     v.lc.formatter.extend(&v.g.constrs, &notations);
     if cfg.dump.constructors {
@@ -201,6 +207,9 @@ impl MizPath {
         }
         v.notations[pat.kind.class()].push(pat)
       }
+      if cfg.xml_internals && v.accom.is_some() {
+        self.write_eno(&v.notations);
+      }
     }
 
     // LoadDefinitions
@@ -209,6 +218,9 @@ impl MizPath {
         accom
           .accom_definitions(&v.g.constrs, DirectiveKind::Definitions, &mut v.definitions.0)
           .unwrap();
+        if cfg.xml_internals {
+          self.write_dfs(&v.definitions.0)
+        }
       } else {
         self.read_definitions(&v.g.constrs, false, "dfs", None, &mut v.definitions.0).unwrap();
       }
@@ -325,7 +337,7 @@ impl MizPath {
     // InLibraries
     if cfg.checker_enabled {
       if let Some(accom) = &mut v.accom {
-        accom.accom_theorems(&v.g.constrs, &mut v.def_map, &mut v.libs).unwrap();
+        accom.accom_theorems(cfg.xml_internals, &v.g.constrs, &mut v.def_map, &mut v.libs).unwrap();
       } else {
         self.read_eth(&v.g.constrs, refs, &mut v.libs).unwrap();
       }
@@ -333,7 +345,7 @@ impl MizPath {
       v.libs.thm.values_mut().for_each(|f| f.visit(cc));
       v.libs.def.values_mut().for_each(|f| f.visit(cc));
       if let Some(accom) = &mut v.accom {
-        accom.accom_schemes(&v.g.constrs, &mut v.libs).unwrap();
+        accom.accom_schemes(cfg.xml_internals, &v.g.constrs, &mut v.libs).unwrap();
       } else {
         self.read_esh(&v.g.constrs, refs, &mut v.libs).unwrap();
       }

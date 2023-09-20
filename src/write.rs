@@ -1,11 +1,14 @@
+use crate::accom::SigBuilder;
 use crate::types::*;
 use crate::{Global, MizPath};
 use enum_map::{Enum, EnumMap};
 use quick_xml::events::attributes::Attribute;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufWriter, ErrorKind, Write};
+use std::rc::Rc;
 
 const INDENT: usize = 0;
 
@@ -16,18 +19,18 @@ struct MizWriter {
 }
 
 impl MizPath {
-  fn create_xml(&self, new_prel: bool, ext: &str) -> io::Result<MizWriter> {
-    let w = BufWriter::new(self.create(new_prel, ext)?);
+  fn create_xml(&self, mml: bool, new_prel: bool, ext: &str) -> io::Result<MizWriter> {
+    let w = BufWriter::new(self.create(mml, new_prel, ext)?);
     let mut w = quick_xml::Writer::new_with_indent(w, b' ', INDENT);
     w.write_event(Event::Decl(BytesDecl::new("1.0", None, None))).unwrap();
     Ok(MizWriter { w, pending: None, depth: 0 })
   }
 
   pub fn write_dfr(&self, new_prel: bool, vocs: &Vocabularies, formats: &[Format]) {
-    let mut w = self.create_xml(new_prel, "dfr").unwrap();
+    let mut w = self.create_xml(false, new_prel, "dfr").unwrap();
     w.with0("Formats", |w| {
       w.write_vocabularies(vocs);
-      formats.iter().for_each(|fmt| w.write_format(fmt));
+      formats.iter().for_each(|fmt| w.write_format(None, fmt));
     });
     w.finish()
   }
@@ -36,7 +39,7 @@ impl MizPath {
     &self, new_prel: bool, base: &ConstructorsBase,
     DepConstructors { sig, counts, constrs }: &DepConstructors,
   ) {
-    let mut w = self.create_xml(new_prel, "dco").unwrap();
+    let mut w = self.create_xml(false, new_prel, "dco").unwrap();
     w.with0("Constructors", |w| {
       w.write_signature(sig);
       w.with0("ConstrCounts", |w| {
@@ -48,88 +51,46 @@ impl MizPath {
         w.write_constr_count(b'U', counts.selector);
         w.write_constr_count(b'G', counts.aggregate);
       });
-      let art = self.art.as_str().to_ascii_uppercase();
-      let art = art.as_bytes();
-      for (i, c) in constrs.attribute.enum_iter() {
-        w.write_ty_constructor(art, (b'V', i.0), base.attribute, c)
+
+      #[derive(Clone, Copy)]
+      struct S<'a> {
+        art: &'a [u8],
+        base: &'a ConstructorsBase,
       }
-      for (i, c) in constrs.functor.enum_iter() {
-        w.write_ty_constructor(art, (b'K', i.0), base.functor, c)
+      impl ForeachConstructor for S<'_> {
+        fn foreach<I: Idx, T>(
+          self, arr: &IdxVec<I, T>, base: impl Fn(&ConstructorsBase) -> u32,
+          mut body: impl FnMut(&[u8], u32, u32, &T),
+        ) {
+          let base = base(self.base);
+          for (i, c) in arr.enum_iter() {
+            let i = i.into_usize() as u32;
+            body(self.art, i, base + i, c)
+          }
+        }
       }
-      for (i, c) in constrs.mode.enum_iter() {
-        w.write_ty_constructor(art, (b'M', i.0), base.mode, c)
-      }
-      for (i, c) in constrs.predicate.enum_iter() {
-        w.write_constructor(art, (b'R', i.0), base.predicate, c, |_| {}, |_| {})
-      }
-      for (i, c) in constrs.struct_mode.enum_iter() {
-        let attrs = |w: &mut Elem| w.attr_str(b"structmodeaggrnr", c.aggr.0 + 1);
-        w.write_constructor(art, (b'L', i.0), base.struct_mode, c, attrs, |w| {
-          w.write_types(&c.parents);
-          w.write_fields(&c.fields);
-        })
-      }
-      for (i, c) in constrs.aggregate.enum_iter() {
-        let attrs = |w: &mut Elem| w.attr_str(b"aggregbase", c.base);
-        w.write_constructor(art, (b'G', i.0), base.aggregate, c, attrs, |w| {
-          w.write_type(&c.ty);
-          w.write_fields(&c.fields)
-        })
-      }
-      for (i, c) in constrs.selector.enum_iter() {
-        w.write_ty_constructor(art, (b'U', i.0), base.selector, c)
-      }
+      w.write_constructors(
+        constrs,
+        S { art: self.art.as_str().to_ascii_uppercase().as_bytes(), base },
+      )
     });
     w.finish()
   }
 
   pub fn write_dno(&self, new_prel: bool, DepNotation { sig, vocs, pats }: &DepNotation) {
-    let mut w = self.create_xml(new_prel, "dno").unwrap();
+    let mut w = self.create_xml(false, new_prel, "dno").unwrap();
     w.with0("Notations", |w| {
       w.write_signature(sig);
       w.write_vocabularies(vocs);
-      let art = self.art.as_str().to_ascii_uppercase();
-      let art = art.as_bytes();
-      let mut counts = EnumMap::<_, u32>::default();
       for pat in pats {
-        let rel_nr = counts[pat.kind.class()].fresh();
-        let (kind, nr) = match pat.kind {
-          PatternKind::Mode(ModeId(n)) => (b'M', n + 1),
-          PatternKind::ExpandableMode { .. } => (b'M', 0),
-          PatternKind::Struct(StructId(n)) => (b'L', n + 1),
-          PatternKind::Attr(AttrId(n)) => (b'V', n + 1),
-          PatternKind::Pred(PredId(n)) => (b'R', n + 1),
-          PatternKind::Func(FuncId(n)) => (b'K', n + 1),
-          PatternKind::Sel(SelId(n)) => (b'U', n + 1),
-          PatternKind::Aggr(AggrId(n)) => (b'G', n + 1),
-          PatternKind::SubAggr(StructId(n)) => (b'J', n + 1),
-        };
-        let attrs = |w: &mut Elem| {
-          w.attr(b"kind", &[kind][..]);
-          w.attr_str(b"nr", rel_nr + 1);
-          w.attr(b"aid", art);
-          w.attr(b"constrkind", &[kind][..]);
-          w.attr_str(b"constrnr", nr);
-          if !pat.pos {
-            w.attr(b"antonymic", &b"true"[..])
-          }
-          // w.attr_str(b"redefnr", redefines);
-        };
-        w.with("Pattern", attrs, |w| {
-          w.write_format(&pat.fmt);
-          w.write_arg_types(&pat.primary);
-          w.write_loci("Visible", &pat.visible);
-          if let PatternKind::ExpandableMode { expansion } = &pat.kind {
-            w.with0("Expansion", |w| w.write_type(expansion))
-          }
-        })
+        w.write_pattern(pat, None, |_| None, |w, fmt| w.write_format(None, fmt))
       }
     });
     w.finish()
   }
 
   pub fn write_dcl(&self, new_prel: bool, DepClusters { sig, cl }: &DepClusters) {
-    let mut w = self.create_xml(new_prel, "dcl").unwrap();
+    let mut w = self.create_xml(false, new_prel, "dcl").unwrap();
     w.with0("Registrations", |w| {
       w.write_signature(sig);
       let art = self.art.as_str().to_ascii_uppercase();
@@ -161,38 +122,16 @@ impl MizPath {
   }
 
   pub fn write_def(&self, new_prel: bool, sig: &[Article], def: &[Definiens]) {
-    let mut w = self.create_xml(new_prel, "def").unwrap();
+    let mut w = self.create_xml(false, new_prel, "def").unwrap();
     w.with0("Definientia", |w| {
       w.write_signature(sig);
-      let art = self.art.as_str().to_ascii_uppercase();
-      for def in def {
-        let attrs = |w: &mut Elem| {
-          let (kind, nr) = def.constr.discr_nr();
-          w.attr(b"constrkind", &[kind][..]);
-          w.attr_str(b"constrnr", nr + 1);
-          w.attr(b"aid", art.as_bytes());
-          w.attr_str(b"defnr", def.def_nr.0 + 1);
-          // w.attr_str(b"vid", lab_id);
-          // w.attr_str(b"relnr", rel_nr);
-        };
-        w.with("Definiens", attrs, |w| {
-          w.write_types(&def.primary);
-          w.write_loci("Essentials", &def.essential);
-          if !matches!(def.assumptions, Formula::True) {
-            w.write_formula(&def.assumptions)
-          }
-          match &def.value {
-            DefValue::Term(body) => w.write_def_body(b'e', body, |w, t| w.write_term(t)),
-            DefValue::Formula(body) => w.write_def_body(b'm', body, |w, f| w.write_formula(f)),
-          }
-        })
-      }
+      w.write_definitions(false, def)
     });
     w.finish()
   }
 
   pub fn write_did(&self, new_prel: bool, sig: &[Article], ids: &[IdentifyFunc]) {
-    let mut w = self.create_xml(new_prel, "did").unwrap();
+    let mut w = self.create_xml(false, new_prel, "did").unwrap();
     w.with0("IdentifyRegistrations", |w| {
       w.write_signature(sig);
       let art = self.art.as_str().to_ascii_uppercase();
@@ -222,7 +161,7 @@ impl MizPath {
   }
 
   pub fn write_drd(&self, new_prel: bool, sig: &[Article], reds: &[Reduction]) {
-    let mut w = self.create_xml(new_prel, "drd").unwrap();
+    let mut w = self.create_xml(false, new_prel, "drd").unwrap();
     w.with0("ReductionRegistrations", |w| {
       w.write_signature(sig);
       let art = self.art.as_str().to_ascii_uppercase();
@@ -243,7 +182,7 @@ impl MizPath {
   }
 
   pub fn write_dpr(&self, new_prel: bool, sig: &[Article], props: &[Property]) {
-    let mut w = self.create_xml(new_prel, "dpr").unwrap();
+    let mut w = self.create_xml(false, new_prel, "dpr").unwrap();
     w.with0("PropertyRegistration", |w| {
       w.write_signature(sig);
       let art = self.art.as_str().to_ascii_uppercase();
@@ -264,30 +203,30 @@ impl MizPath {
   }
 
   pub fn write_the(&self, new_prel: bool, DepTheorems { sig, thm }: &DepTheorems) {
-    let mut w = self.create_xml(new_prel, "the").unwrap();
+    let mut w = self.create_xml(false, new_prel, "the").unwrap();
     w.with0("Theorems", |w| {
       w.write_signature(sig);
-      for Theorem { pos: _, kind, stmt } in thm {
+      for thm in thm {
         let attrs = |w: &mut Elem| {
-          let k = match kind {
+          let k = match thm.kind {
             TheoremKind::Thm | TheoremKind::CanceledThm => b'T',
             TheoremKind::Def(_) | TheoremKind::CanceledDef => b'D',
           };
           w.attr(b"kind", &[k][..]);
-          if let TheoremKind::Def(c) = &kind {
+          if let TheoremKind::Def(c) = &thm.kind {
             let (k, nr) = c.discr_nr();
             w.attr(b"constrkind", &[k][..]);
             w.attr_str(b"constrnr", nr + 1);
           }
         };
-        w.with("Theorem", attrs, |w| w.write_formula(stmt))
+        w.with("Theorem", attrs, |w| w.write_formula(&thm.stmt))
       }
     });
     w.finish()
   }
 
   pub fn write_sch(&self, new_prel: bool, DepSchemes { sig, sch }: &DepSchemes) {
-    let mut w = self.create_xml(new_prel, "sch").unwrap();
+    let mut w = self.create_xml(false, new_prel, "sch").unwrap();
     w.with0("Schemes", |w| {
       w.write_signature(sig);
       for sch in sch {
@@ -304,6 +243,200 @@ impl MizPath {
     });
     w.finish()
   }
+
+  fn write_symbols<'a>(&self, ext: &str, iter: impl Iterator<Item = (u8, u32, &'a str)>) {
+    let mut w = self.create_xml(true, false, ext).unwrap();
+    w.with0("Symbols", |w| {
+      for (kind, n, s) in iter {
+        w.with_attr("Symbol", |e| {
+          e.attr(b"kind", &[kind][..]);
+          e.attr_str(b"nr", n + 1);
+          e.attr_escaped(b"name", s);
+        })
+      }
+    });
+    w.finish()
+  }
+
+  pub fn write_idx(&self, idents: &[Rc<str>]) {
+    self.write_symbols("idx", idents.iter().enumerate().map(|(i, id)| (b'I', i as u32, &**id)))
+  }
+
+  pub fn write_dcx(&self, symbols: &HashMap<SymbolKind, String>) {
+    let mut symbols = symbols.iter().map(|(&k, v)| (k, v)).collect::<Vec<_>>();
+    symbols.sort_by_key(|e| e.0);
+    let iter = symbols.into_iter().map(|(kind, s)| {
+      let (kind, n) = kind.into();
+      (kind.discr(), n, &**s)
+    });
+    self.write_symbols("dcx", iter)
+  }
+
+  pub fn write_formats(
+    &self, ext: &str, formats: &IdxVec<FormatId, Format>, func_prio: &HashMap<FuncSymId, u32>,
+  ) {
+    let mut w = self.create_xml(true, false, ext).unwrap();
+    w.with0("Formats", |w| {
+      for (i, fmt) in formats.enum_iter() {
+        w.write_format(Some(i.0), fmt);
+      }
+      let mut prio = func_prio.iter().map(|(&k, &v)| (k, v)).collect::<Vec<_>>();
+      prio.sort_by_key(|e| e.0);
+      for (id, prio) in prio {
+        w.with_attr("Priority", |e| {
+          e.attr(b"kind", &b"O"[..]);
+          e.attr_str(b"symbolnr", id.0 + 1);
+          e.attr_str(b"value", prio);
+        })
+      }
+    });
+    w.finish()
+  }
+
+  pub fn write_eno(&self, notas: &EnumMap<PatternKindClass, ExtVec<Pattern>>) {
+    let mut w = self.create_xml(true, false, "eno").unwrap();
+    w.xsl();
+    w.with0("Notations", |w| {
+      for (_, pats) in notas {
+        for (i, pat) in pats.vec.iter().enumerate() {
+          w.write_pattern(pat, Some(i as u32), |fmt| Some(fmt.0 + 1), |_, _| {});
+        }
+      }
+    });
+    w.finish()
+  }
+
+  pub fn write_atr(&self, sig: &SigBuilder, constrs: &Constructors) {
+    let mut w = self.create_xml(true, false, "atr").unwrap();
+    w.xsl();
+    w.with0("Constructors", |w| {
+      #[derive(Clone, Copy)]
+      struct S<'a>(&'a SigBuilder);
+      impl ForeachConstructor for S<'_> {
+        fn foreach<I: Idx, T>(
+          self, arr: &IdxVec<I, T>, base: impl Fn(&ConstructorsBase) -> u32,
+          mut body: impl FnMut(&[u8], u32, u32, &T),
+        ) {
+          for (i, &(art, ref lo)) in self.0.sig.enum_iter() {
+            let art = art.as_str().to_ascii_uppercase();
+            let art = art.as_bytes();
+            let lo = base(lo);
+            for j in lo..base(self.0.hi(i)) {
+              body(art, j - lo, j, &arr.0[j as usize])
+            }
+          }
+        }
+      }
+      w.write_constructors(constrs, S(sig))
+    });
+    w.finish()
+  }
+
+  pub fn write_dfs(&self, def: &[Definiens]) {
+    if def.is_empty() {
+      match std::fs::remove_file(self.to_path(true, false, "dfs")) {
+        Err(e) if e.kind() == ErrorKind::NotFound => {}
+        e => e.unwrap(),
+      }
+      return
+    }
+    let mut w = self.create_xml(true, false, "dfs").unwrap();
+    w.xsl();
+    w.with0("Definientia", |w| w.write_definitions(true, def));
+    w.finish()
+  }
+
+  pub fn write_eth(self) -> WriteEth { WriteEth(MizWriterPart::Empty(self)) }
+  pub fn write_esh(self) -> WriteEsh { WriteEsh(MizWriterPart::Empty(self)) }
+
+  pub fn write_xml(&self) { todo!() }
+}
+
+enum MizWriterPart {
+  Empty(MizPath),
+  Ready(MizWriter),
+}
+
+trait WritePart {
+  const EXT: &'static str;
+  const ROOT: &'static str;
+  fn write_part(w: &mut MizWriterPart) -> &mut MizWriter {
+    match w {
+      MizWriterPart::Empty(path) => {
+        *w = MizWriterPart::Ready(path.create_xml(true, false, Self::EXT).unwrap());
+        let MizWriterPart::Ready(w) = w else { unreachable!() };
+        w.xsl();
+        w.start(Self::ROOT);
+        w
+      }
+      MizWriterPart::Ready(w) => w,
+    }
+  }
+  fn finish_part(w: MizWriterPart) {
+    match w {
+      MizWriterPart::Empty(path) =>
+        match std::fs::remove_file(path.to_path(true, false, Self::EXT)) {
+          Err(e) if e.kind() == ErrorKind::NotFound => {}
+          e => e.unwrap(),
+        },
+      MizWriterPart::Ready(mut w) => {
+        w.end_tag(Self::ROOT);
+        w.finish()
+      }
+    }
+  }
+}
+
+#[must_use = "use finish() to close the file"]
+pub struct WriteEth(MizWriterPart);
+impl WritePart for WriteEth {
+  const EXT: &'static str = "eth";
+  const ROOT: &'static str = "Theorems";
+}
+impl WriteEth {
+  pub fn write(&mut self, art_id: ArticleId, abs_nr: u32, art: Article, thm: &Theorem) {
+    let w = Self::write_part(&mut self.0);
+    let attrs = |w: &mut Elem| {
+      w.attr_str(b"articlenr", art_id.0 + 1);
+      w.attr_str(b"nr", abs_nr + 1);
+      w.attr(b"aid", art.as_bytes());
+      let k = match thm.kind {
+        TheoremKind::Thm | TheoremKind::CanceledThm => b'T',
+        TheoremKind::Def(_) | TheoremKind::CanceledDef => b'D',
+      };
+      w.attr(b"kind", &[k][..]);
+      if let TheoremKind::Def(c) = &thm.kind {
+        let (k, nr) = c.discr_nr();
+        w.attr(b"constrkind", &[k][..]);
+        w.attr_str(b"constrnr", nr + 1);
+      }
+    };
+    w.with("Theorem", attrs, |w| w.write_formula(&thm.stmt))
+  }
+  pub fn finish(self) { Self::finish_part(self.0) }
+}
+
+#[must_use = "use finish() to close the file"]
+pub struct WriteEsh(MizWriterPart);
+impl WritePart for WriteEsh {
+  const EXT: &'static str = "esh";
+  const ROOT: &'static str = "Schemes";
+}
+impl WriteEsh {
+  pub fn write(&mut self, art_id: ArticleId, abs_nr: u32, art: Article, sch: &Scheme) {
+    let w = Self::write_part(&mut self.0);
+    let attrs = |w: &mut Elem| {
+      w.attr_str(b"articlenr", art_id.0 + 1);
+      w.attr_str(b"nr", abs_nr + 1);
+      w.attr(b"aid", art.as_bytes());
+    };
+    w.with("Scheme", attrs, |w| {
+      w.write_arg_types(&sch.sch_funcs);
+      w.write_formula(&sch.thesis);
+      w.write_formulas(&sch.prems)
+    })
+  }
+  pub fn finish(self) { Self::finish_part(self.0) }
 }
 
 struct Elem(BytesStart<'static>);
@@ -319,6 +452,13 @@ impl Elem {
     if let Some(value) = value {
       self.attr_str(key, value)
     }
+  }
+  fn attr_escaped(&mut self, key: &[u8], value: &str) {
+    let value = match quick_xml::escape::escape(value) {
+      Cow::Borrowed(s) => Cow::Borrowed(s.as_bytes()),
+      Cow::Owned(s) => Cow::Owned(s.into_bytes()),
+    };
+    self.attr(key, value)
   }
 }
 
@@ -338,6 +478,11 @@ impl MizWriter {
     assert!(self.pending.is_none());
     self.w.get_mut().write_all(b"\n").unwrap();
     self.w.get_mut().flush().unwrap()
+  }
+
+  pub fn xsl(&mut self) {
+    const XSL: &[u8] = b"\n<?xml-stylesheet type=\"text/xml\" href=\"../miz.xml\"?>";
+    self.w.get_mut().write_all(XSL).unwrap();
   }
 
   #[inline]
@@ -390,9 +535,10 @@ impl MizWriter {
     })
   }
 
-  fn write_format(&mut self, fmt: &Format) {
+  fn write_format(&mut self, nr: Option<u32>, fmt: &Format) {
     self.with_attr("Format", |e| {
       e.attr(b"kind", &[fmt.discr()][..]);
+      e.opt_attr_str(b"nr", nr.map(|x| x + 1));
       let (sym, args, left, rsym) = match *fmt {
         Format::Aggr(FormatAggr { sym: StructSymId(sym), args })
         | Format::Struct(FormatStruct { sym: StructSymId(sym), args })
@@ -412,6 +558,44 @@ impl MizWriter {
     })
   }
 
+  fn write_pattern<F>(
+    &mut self, pat: &Pattern<F>, rel_nr: Option<u32>, fmt_attr: impl FnOnce(&F) -> Option<u32>,
+    fmt_body: impl FnOnce(&mut Self, &F),
+  ) {
+    let (kind, nr) = match pat.kind {
+      PatternKind::Mode(ModeId(n)) => (b'M', n + 1),
+      PatternKind::ExpandableMode { .. } => (b'M', 0),
+      PatternKind::Struct(StructId(n)) => (b'L', n + 1),
+      PatternKind::Attr(AttrId(n)) => (b'V', n + 1),
+      PatternKind::Pred(PredId(n)) => (b'R', n + 1),
+      PatternKind::Func(FuncId(n)) => (b'K', n + 1),
+      PatternKind::Sel(SelId(n)) => (b'U', n + 1),
+      PatternKind::Aggr(AggrId(n)) => (b'G', n + 1),
+      PatternKind::SubAggr(StructId(n)) => (b'J', n + 1),
+    };
+    let attrs = |w: &mut Elem| {
+      w.attr(b"kind", &[kind][..]);
+      w.attr_str(b"nr", pat.abs_nr + 1);
+      w.attr(b"aid", pat.article.as_str().to_ascii_uppercase().as_bytes());
+      w.opt_attr_str(b"formatnr", fmt_attr(&pat.fmt));
+      w.attr(b"constrkind", &[kind][..]);
+      w.attr_str(b"constrnr", nr);
+      if !pat.pos {
+        w.attr(b"antonymic", &b"true"[..])
+      }
+      w.opt_attr_str(b"relnr", rel_nr.map(|x| x + 1));
+      // w.attr_str(b"redefnr", redefines);
+    };
+    self.with("Pattern", attrs, |w| {
+      fmt_body(w, &pat.fmt);
+      w.write_arg_types(&pat.primary);
+      w.write_loci("Visible", &pat.visible);
+      if let PatternKind::ExpandableMode { expansion } = &pat.kind {
+        w.with0("Expansion", |w| w.write_type(expansion))
+      }
+    })
+  }
+
   fn write_constr_count(&mut self, kind: u8, value: u32) {
     if value != 0 {
       self.with_attr("ConstrCount", |w| {
@@ -422,14 +606,14 @@ impl MizWriter {
   }
 
   fn write_constructor<I: Idx>(
-    &mut self, art: &[u8], (kind, nr): (u8, u32), base: u32, c: &Constructor<I>,
+    &mut self, art: &[u8], (kind, nr): (u8, u32), rel: u32, c: &Constructor<I>,
     attrs: impl FnOnce(&mut Elem), body: impl FnOnce(&mut Self),
   ) {
     let attrs = |w: &mut Elem| {
       w.attr(b"kind", &[kind][..]);
       w.attr_str(b"nr", nr + 1);
       w.attr(b"aid", art);
-      w.attr_str(b"relnr", base + nr + 1);
+      w.attr_str(b"relnr", rel + 1);
       if let Some(redef) = c.redefines {
         w.attr_str(b"redefnr", redef.into_usize() + 1);
         w.attr_str(b"superfluous", c.superfluous);
@@ -458,15 +642,65 @@ impl MizWriter {
   }
 
   fn write_ty_constructor<I: Idx>(
-    &mut self, art: &[u8], kind: (u8, u32), base: u32, c: &TyConstructor<I>,
+    &mut self, art: &[u8], kind: (u8, u32), rel: u32, c: &TyConstructor<I>,
   ) {
-    self.write_constructor(art, kind, base, c, |_| {}, |w| w.write_type(&c.ty))
+    self.write_constructor(art, kind, rel, c, |_| {}, |w| w.write_type(&c.ty))
   }
 
   fn write_fields(&mut self, fields: &[SelId]) {
     self.with0("Fields", |w| {
       fields.iter().for_each(|field| w.with_attr("Field", |w| w.attr_str(b"nr", field.0 + 1)))
     })
+  }
+
+  fn write_constructors(&mut self, constrs: &Constructors, body: impl ForeachConstructor) {
+    body.foreach(
+      &constrs.attribute,
+      |base| base.attribute,
+      |art, i, rel, c| self.write_ty_constructor(art, (b'V', i), rel, c),
+    );
+    body.foreach(
+      &constrs.functor,
+      |base| base.functor,
+      |art, i, rel, c| self.write_ty_constructor(art, (b'K', i), rel, c),
+    );
+    body.foreach(
+      &constrs.mode,
+      |base| base.mode,
+      |art, i, rel, c| self.write_ty_constructor(art, (b'M', i), rel, c),
+    );
+    body.foreach(
+      &constrs.predicate,
+      |base| base.predicate,
+      |art, i, rel, c| self.write_constructor(art, (b'R', i), rel, c, |_| {}, |_| {}),
+    );
+    body.foreach(
+      &constrs.struct_mode,
+      |base| base.struct_mode,
+      |art, i, rel, c| {
+        let attrs = |w: &mut Elem| w.attr_str(b"structmodeaggrnr", c.aggr.0 + 1);
+        self.write_constructor(art, (b'L', i), rel, c, attrs, |w| {
+          w.write_types(&c.parents);
+          w.write_fields(&c.fields);
+        })
+      },
+    );
+    body.foreach(
+      &constrs.aggregate,
+      |base| base.aggregate,
+      |art, i, rel, c| {
+        let attrs = |w: &mut Elem| w.attr_str(b"aggregbase", c.base);
+        self.write_constructor(art, (b'G', i), rel, c, attrs, |w| {
+          w.write_type(&c.ty);
+          w.write_fields(&c.fields)
+        })
+      },
+    );
+    body.foreach(
+      &constrs.selector,
+      |base| base.selector,
+      |art, i, rel, c| self.write_ty_constructor(art, (b'U', i), rel, c),
+    );
   }
 
   fn write_cluster(
@@ -497,6 +731,33 @@ impl MizWriter {
         elem(w, ow)
       }
     })
+  }
+
+  pub fn write_definitions(&mut self, rel: bool, def: &[Definiens]) {
+    for (i, def) in def.iter().enumerate() {
+      let attrs = |w: &mut Elem| {
+        let (kind, nr) = def.constr.discr_nr();
+        w.attr(b"constrkind", &[kind][..]);
+        w.attr_str(b"constrnr", nr + 1);
+        w.attr(b"aid", def.article.as_str().to_ascii_uppercase().as_bytes());
+        w.attr_str(b"defnr", def.def_nr.0 + 1);
+        // w.attr_str(b"vid", lab_id);
+        if rel {
+          w.attr_str(b"relnr", i + 1);
+        }
+      };
+      self.with("Definiens", attrs, |w| {
+        w.write_types(&def.primary);
+        w.write_loci("Essentials", &def.essential);
+        if !matches!(def.assumptions, Formula::True) {
+          w.write_formula(&def.assumptions)
+        }
+        match &def.value {
+          DefValue::Term(body) => w.write_def_body(b'e', body, |w, t| w.write_term(t)),
+          DefValue::Formula(body) => w.write_def_body(b'm', body, |w, f| w.write_formula(f)),
+        }
+      })
+    }
   }
 
   fn write_attrs(&mut self, attrs: &Attrs) {
@@ -630,4 +891,11 @@ impl MizWriter {
   fn write_loci(&mut self, tag: &'static str, args: &[LocusId]) {
     self.with0(tag, |w| args.iter().for_each(|n| w.with_attr("Int", |w| w.attr_str(b"x", n.0 + 1))))
   }
+}
+
+trait ForeachConstructor: Copy {
+  fn foreach<I: Idx, T>(
+    self, arr: &IdxVec<I, T>, base: impl Fn(&ConstructorsBase) -> u32,
+    body: impl FnMut(&[u8], u32, u32, &T),
+  );
 }

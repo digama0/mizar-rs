@@ -163,6 +163,9 @@ struct Cli {
   /// Produce exported statements to the `miz/prel/` directory (requires `-e`)
   #[arg(short = 'x', long)]
   xml_export: bool,
+  /// Produce XML files for internal data structures, in Mizar-compatible format
+  #[arg(short = 'X', long)]
+  xml_internals: bool,
   /// Disables the accomodator. (requires `-P`)
   #[arg(short = 'M', long)]
   no_accom: bool,
@@ -339,7 +342,6 @@ mk_dump! {
   }
 }
 
-// clap::builder::via_prelude::_ValueParserViaParse
 #[derive(Clone, Debug)]
 pub struct Config {
   pub top_item_header: bool,
@@ -363,6 +365,7 @@ pub struct Config {
   pub exporter_enabled: bool,
   pub verify_export: bool,
   pub xml_export: bool,
+  pub xml_internals: bool,
   pub overwrite_prel: bool,
   pub cache_prel: bool,
 
@@ -433,6 +436,7 @@ fn main() {
     exporter_enabled: if enable { cli.export } else { !cli.no_export },
     verify_export: cli.verify_export,
     xml_export: cli.xml_export,
+    xml_internals: cli.xml_internals,
     overwrite_prel: cli.overwrite_prel,
     cache_prel: Default::default(),
 

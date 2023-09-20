@@ -554,7 +554,7 @@ impl MizPath {
     with_open(self.to_path(true, false, ext), false, |file| {
       MizReader::with(file, MaybeMut::None, false, |r, buf| {
         r.read_start(buf, Some("Formats"))?;
-        r.parse_formats_body(buf, &mut formats.formats, Some(&mut formats.priority))?;
+        r.parse_formats_body(buf, &mut formats.formats, true)?;
         r.eof(buf)?;
         assert!(matches!(
           formats.formats.get(FormatId::STRICT),
@@ -572,7 +572,7 @@ impl MizPath {
       MizReader::with(file, MaybeMut::None, false, |r, buf| {
         r.read_start(buf, Some("Formats"))?;
         r.parse_vocabularies(buf, vocs)?;
-        r.parse_formats_body(buf, formats, None)?;
+        r.parse_formats_body(buf, formats, false)?;
         r.eof(buf)
       })
     })
@@ -630,11 +630,11 @@ impl MizPath {
             Article::from_upper(&e.try_get_attribute(b"name").unwrap().unwrap().value).unwrap();
           let mut counts = Default::default();
           r.parse_constr_counts_body(buf, &mut counts)?;
-          aco.accum.push((art, std::mem::replace(&mut aco.base, counts)))
+          aco.sig.sig.push((art, std::mem::replace(&mut aco.sig.base, counts)));
         }
         r.parse_constructors_body(buf, Some(&mut aco.constrs))?;
         r.eof(buf)?;
-        assert_eq!(aco.accum[0].0, Article::HIDDEN);
+        assert_eq!(aco.sig.sig.0[0].0, Article::HIDDEN);
         Ok(())
       })
     })
@@ -956,12 +956,12 @@ struct ConstructorAttrs {
 
 #[derive(Default)]
 struct PatternAttrs {
-  _article: Article,
-  _abs_nr: u32,
+  article: Article,
+  abs_nr: u32,
   kind: u8,
   fmt: FormatId,
   constr: u32,
-  redefines: Option<u32>,
+  _redefines: Option<u32>,
   pid: Option<u32>,
   pos: bool,
 }
@@ -1063,19 +1063,18 @@ impl MizReader<'_> {
   }
 
   pub fn parse_formats_body(
-    &mut self, buf: &mut Vec<u8>, formats: &mut IdxVec<FormatId, Format>,
-    mut priority: Option<&mut Vec<(PriorityKind, u32)>>,
+    &mut self, buf: &mut Vec<u8>, formats: &mut IdxVec<FormatId, Format>, allow_priority: bool,
   ) -> Result<()> {
+    let mut found_prio = false;
     loop {
       match self.parse_elem(buf)? {
         Elem::Format(fmt) => {
-          if let Some(prio) = &mut priority {
-            assert!(prio.is_empty(), "expected <Priority>");
+          if allow_priority {
+            assert!(found_prio, "expected <Priority>");
           }
           formats.push(fmt);
         }
-        Elem::Priority(kind, value) if priority.is_some() =>
-          priority.as_mut().unwrap().push((kind, value)),
+        Elem::Priority(_, _) if allow_priority => found_prio = true,
         Elem::End => break,
         _ => panic!("expected <Format> or <Priority>"),
       }
@@ -1175,15 +1174,15 @@ impl MizReader<'_> {
     for attr in e.attributes() {
       let attr = attr?;
       match attr.key.0 {
-        b"nr" => attrs._abs_nr = self.get_attr(&attr.value)?,
-        b"aid" => attrs._article = Article::from_upper(&attr.value).unwrap(),
+        b"nr" => attrs.abs_nr = self.get_attr::<u32>(&attr.value)? - 1,
+        b"aid" => attrs.article = Article::from_upper(&attr.value).unwrap(),
         b"kind" => attrs.kind = attr.value[0],
         b"formatnr" => attrs.fmt = FormatId(self.get_attr::<u32>(&attr.value)? - 1),
         b"constrkind" => constr_kind = attr.value[0],
         b"constrnr" => attrs.constr = self.get_attr(&attr.value)?,
         b"antonymic" => attrs.pos = &*attr.value != b"true",
         b"relnr" => attrs.pid = self.get_attr::<u32>(&attr.value)?.checked_sub(1),
-        b"redefnr" => attrs.redefines = self.get_attr::<u32>(&attr.value)?.checked_sub(1),
+        b"redefnr" => attrs._redefines = self.get_attr::<u32>(&attr.value)?.checked_sub(1),
         _ => {}
       }
     }
@@ -1192,7 +1191,8 @@ impl MizReader<'_> {
   }
 
   fn parse_pattern_body<F>(
-    &mut self, buf: &mut Vec<u8>, PatternAttrs { kind, fmt, constr, pos, .. }: PatternAttrs,
+    &mut self, buf: &mut Vec<u8>,
+    PatternAttrs { article, abs_nr, kind, fmt, constr, pos, .. }: PatternAttrs,
     map: impl FnOnce(FormatId) -> F,
   ) -> Result<Pattern<F>> {
     let primary = self.parse_arg_types(buf)?;
@@ -1216,7 +1216,7 @@ impl MizReader<'_> {
       _ => panic!("unknown pattern kind"),
     };
     self.end_tag(buf)?;
-    Ok(Pattern { kind, fmt: map(fmt), primary, visible, pos })
+    Ok(Pattern { article, abs_nr, kind, fmt: map(fmt), primary, visible, pos })
   }
 
   fn parse_constr_counts_body(
@@ -1381,7 +1381,7 @@ impl MizReader<'_> {
   }
 
   fn parse_definiens_body(
-    &mut self, buf: &mut Vec<u8>, (def_nr, _article, constr): (DefId, Article, ConstrKind),
+    &mut self, buf: &mut Vec<u8>, (def_nr, article, constr): (DefId, Article, ConstrKind),
   ) -> Result<Definiens> {
     let mut primary = vec![];
     let essential = loop {
@@ -1400,7 +1400,7 @@ impl MizReader<'_> {
       _ => panic!("expected <DefMeaning>"),
     };
     self.end_tag(buf)?;
-    let c = ConstrDef { def_nr, constr, primary: primary.into() };
+    let c = ConstrDef { def_nr, article, constr, primary: primary.into() };
     Ok(Definiens { c, essential, assumptions, value })
   }
 
@@ -1760,7 +1760,7 @@ impl MizReader<'_> {
             let attr = attr?;
             match attr.key.0 {
               b"kind" => kind = attr.value[0],
-              b"symbolnr" => sym = self.get_attr(&attr.value)?,
+              b"symbolnr" => sym = self.get_attr::<u32>(&attr.value)? - 1,
               b"value" => value = Some(self.get_attr(&attr.value)?),
               _ => {}
             }

@@ -1,3 +1,4 @@
+use crate::accom::SigBuilder;
 use crate::analyze::Analyzer;
 use crate::parser::{catch_missing, MaybeMut, PathResult};
 use crate::reader::DefiniensId;
@@ -11,7 +12,6 @@ const DOUBLE_CHECK: bool = false;
 
 #[derive(Default)]
 pub struct Exporter {
-  pub notations_base: EnumMap<PatternKindClass, u32>,
   pub constrs_base: ConstructorsBase,
   pub clusters_base: ClustersBase,
   pub definitions_base: DefiniensId,
@@ -116,8 +116,8 @@ struct MarkConstr<'a> {
 }
 
 impl<'a> MarkConstr<'a> {
-  fn new(accum: &'a [(Article, ConstructorsBase)], base: &'a ConstructorsBase, n: usize) -> Self {
-    Self { accum, base, used: vec![false; n + 1] }
+  fn new(sig: &'a SigBuilder, n: usize) -> Self {
+    Self { accum: &sig.sig.0, base: &sig.base, used: vec![false; n + 1] }
   }
 
   fn mark(&mut self, n: u32, key: impl Fn(&ConstructorsBase) -> u32) {
@@ -205,7 +205,7 @@ impl AccumConstructors {
   fn mark<T: for<'a> Visitable<MarkConstr<'a>> + Visitable<ApplyMarkConstr>>(
     &mut self, t: &mut T, n: usize, arts: &[Article],
   ) -> Vec<Article> {
-    let mut marks = MarkConstr::new(&self.accum, &self.base, n);
+    let mut marks = MarkConstr::new(&self.sig, n);
     t.visit(&mut marks);
     marks.closure(&mut self.constrs);
     marks.apply_with(|v| t.visit(v));
@@ -267,16 +267,15 @@ impl Analyzer<'_> {
     let (mut vocs1, mut aco) = <(Vocabularies, AccumConstructors)>::default();
     if let Some(accom) = &mut self.r.accom {
       accom.build_vocabularies(&mut vocs1);
-      aco.accum = std::mem::take(&mut accom.sig.sig.0);
-      aco.base = accom.sig.base;
-      aco.constrs.extend(&self.g.constrs.upto(&aco.base));
+      aco.sig = std::mem::take(&mut accom.sig);
+      aco.constrs.extend(&self.g.constrs.upto(&aco.sig.base));
       aco.constrs.visit(ep);
     } else {
       self.path.read_vcl(&mut vocs1).unwrap();
       self.path.read_aco(&mut aco).unwrap();
     }
     assert_eq!(self.export.constrs_base, aco.constrs.len());
-    assert_eq!(arts1.len(), aco.accum.len());
+    assert_eq!(arts1.len(), aco.sig.sig.len());
 
     // validating .dfr
     {
@@ -319,9 +318,9 @@ impl Analyzer<'_> {
         dco1.constrs = since1.to_owned();
         dco1.counts = dco1.constrs.len();
         dco1.constrs.visit(ep);
-        let base = aco.constrs.len();
+        assert_eq!(aco.sig.base, aco.constrs.len());
         aco.constrs.append(&mut dco1.constrs.clone());
-        let mut marks = MarkConstr::new(&aco.accum, &aco.base, arts1.len());
+        let mut marks = MarkConstr::new(&aco.sig, arts1.len());
         *marks.used.last_mut().unwrap() = true;
         dco1.constrs.visit(&mut marks);
         marks.closure(&mut aco.constrs);
@@ -337,15 +336,15 @@ impl Analyzer<'_> {
           process!(mode, struct_mode, attribute, predicate, functor, selector, aggregate);
         }
         if self.g.cfg.xml_export {
-          self.path.write_dco(new_prel, &base, &dco1);
+          self.path.write_dco(new_prel, &aco.sig.base, &dco1);
           if DOUBLE_CHECK {
             let mut dco3 = Default::default();
             self.path.read_dco(new_prel, &mut dco3, true).unwrap();
             assert_eq!(dco1, dco3);
           }
         }
-        aco.accum.push((self.article, aco.base));
-        aco.base = self.g.constrs.len();
+        aco.sig.sig.push((self.article, aco.sig.base));
+        aco.sig.base = self.g.constrs.len();
       }
       if self.g.cfg.cache_prel {
         self.path.with_cache(|c| &c.dco, dco1);
@@ -356,10 +355,11 @@ impl Analyzer<'_> {
     {
       let (mut dno1, mut dno2) = <(DepNotation, _)>::default();
       dno1.pats = (self.notations.iter())
-        .flat_map(|(i, nota)| &nota[self.export.notations_base[i] as usize..])
+        .flat_map(|(i, nota)| &nota[self.notations_base[i] as usize..])
         .map(|pat| {
-          let Pattern { kind, fmt, primary, visible, pos } = pat.visit_cloned(ep);
-          Pattern { kind, fmt: self.lc.formatter.formats[fmt], primary, visible, pos }
+          let Pattern { article, abs_nr, kind, fmt, primary, visible, pos } = pat.visit_cloned(ep);
+          let fmt = self.lc.formatter.formats[fmt];
+          Pattern { article, abs_nr, kind, fmt, primary, visible, pos }
         })
         .collect();
       let nonempty = !dno1.pats.is_empty();
@@ -368,7 +368,7 @@ impl Analyzer<'_> {
       }
       if nonempty {
         mark_formats(&vocs1, &mut dno1.vocs, &mut dno1.pats, |p| &mut p.fmt);
-        let mut marks = MarkConstr::new(&aco.accum, &aco.base, arts1.len());
+        let mut marks = MarkConstr::new(&aco.sig, arts1.len());
         dno1.pats.iter_mut().for_each(|p| p.visit(&mut marks));
         marks.closure(&mut aco.constrs);
         marks.apply_with(|v| dno1.pats.iter_mut().for_each(|p| p.visit(v)));

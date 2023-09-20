@@ -2962,8 +2962,8 @@ impl MizPath {
   }
 
   #[allow(clippy::unwrap_used)]
-  pub fn create(&self, new_prel: bool, ext: &str) -> io::Result<File> {
-    let path = self.to_path(false, new_prel, ext);
+  pub fn create(&self, mml: bool, new_prel: bool, ext: &str) -> io::Result<File> {
+    let path = self.to_path(mml, new_prel, ext);
     std::fs::create_dir_all(path.parent().unwrap())?;
     // eprintln!("writing {}", path.to_str().unwrap());
     File::create(path)

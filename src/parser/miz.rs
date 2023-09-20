@@ -386,7 +386,7 @@ pub struct Parser<'a> {
   max_mode_args: HashMap<ModeSymId, u8>,
   max_struct_args: HashMap<StructSymId, u8>,
   max_pred_rhs: HashMap<PredSymId, u8>,
-  func_prio: HashMap<FuncSymId, u32>,
+  pub func_prio: HashMap<FuncSymId, u32>,
   #[allow(clippy::box_collection)]
   pub format_lookup: Box<HashMap<Format, FormatId>>,
 }
