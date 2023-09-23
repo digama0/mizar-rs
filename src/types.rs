@@ -2164,6 +2164,16 @@ pub enum CancelKind {
   Sch,
 }
 
+impl CancelKind {
+  pub fn discr(self) -> u8 {
+    match self {
+      CancelKind::Def => b'D',
+      CancelKind::Thm => b'T',
+      CancelKind::Sch => b'S',
+    }
+  }
+}
+
 #[derive(Debug)]
 pub enum CaseKind {
   Case(Vec<Proposition>),
