@@ -440,8 +440,18 @@ fn conflict(msg: impl Display) -> ! {
   Cli::command().error(clap::error::ErrorKind::ArgumentConflict, msg).exit()
 }
 
-const MML_LAR_PATH: &str = "miz/mizshare/mml.lar";
-const MML_VCT_PATH: &str = "miz/mizshare/mml.vct";
+fn mizfiles() -> &'static str {
+  static MIZFILES: OnceCell<Option<String>> = OnceCell::new();
+  MIZFILES.get_or_init(|| std::env::var("MIZFILES").ok()).as_deref().unwrap_or("miz/mizshare")
+}
+
+fn mizbin() -> &'static str {
+  static MIZBIN: OnceCell<Option<String>> = OnceCell::new();
+  MIZBIN.get_or_init(|| std::env::var("MIZBIN").ok()).as_deref().unwrap_or("miz/mizbin")
+}
+
+fn mml_lar_path() -> String { format!("{}/mml.lar", mizfiles()) }
+fn mml_vct_path() -> String { format!("{}/mml.vct", mizfiles()) }
 
 fn main() {
   let cli = Cli::parse();
@@ -504,13 +514,14 @@ fn main() {
   }
   let one_file = cli.one_file;
 
-  let file = std::fs::read_to_string(MML_LAR_PATH).unwrap_or_else(|e| {
-    println!("IO error reading {MML_LAR_PATH}: {e}");
+  let file = std::fs::read_to_string(mml_lar_path()).unwrap_or_else(|e| {
+    println!("IO error reading {}: {e}", mml_lar_path());
     std::process::abort()
   });
   let mml_vct = &if cfg.accom_enabled {
-    std::fs::read(MML_VCT_PATH).unwrap_or_else(|e| {
-      println!("IO error reading {MML_VCT_PATH}: {e}");
+    let mml_vct_path = mml_vct_path();
+    std::fs::read(&mml_vct_path).unwrap_or_else(|e| {
+      println!("IO error reading {mml_vct_path}: {e}");
       std::process::abort()
     })
   } else {
@@ -588,7 +599,7 @@ fn main() {
           let path = match MizPath::new(s) {
             Ok(t) => t,
             Err(e) => {
-              println!("error: {MML_LAR_PATH}:{}: {e}", i + 1);
+              println!("error: {}:{}: {e}", mml_lar_path(), i + 1);
               has_errors.store(true, std::sync::atomic::Ordering::Relaxed);
               continue
             }
@@ -602,8 +613,9 @@ fn main() {
           let start = std::time::Instant::now();
           let result = std::panic::catch_unwind(|| -> io::Result<bool> {
             if cli.orig_mizar {
+              let mizbin = mizbin();
               if cfg.accom_enabled {
-                let mut cmd = std::process::Command::new("miz/mizbin/accom");
+                let mut cmd = std::process::Command::new(format!("{mizbin}/accom"));
                 cmd.arg("-lqs");
                 let output = cmd.arg(format!("{}.miz", path.mml().display())).output()?;
                 if !output.status.success() {
@@ -618,7 +630,7 @@ fn main() {
                 }
               }
               if cfg.analyzer_full || cfg.checker_enabled {
-                let mut cmd = std::process::Command::new("miz/mizbin/verifier");
+                let mut cmd = std::process::Command::new(format!("{mizbin}/verifier"));
                 let cmd = match (cfg.analyzer_full, cfg.checker_enabled) {
                   (true, false) => cmd.arg("-a"),
                   (false, true) => cmd.arg("-c"),

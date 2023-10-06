@@ -1,7 +1,7 @@
 use crate::bignum::Complex;
 use crate::format::Formatter;
 use crate::types::*;
-use crate::{stat, Config};
+use crate::{mizfiles, stat, Config};
 use enum_map::EnumMap;
 use itertools::EitherOrBoth;
 use std::cell::RefCell;
@@ -2936,15 +2936,15 @@ impl MizPath {
 
   pub fn mml(&self) -> PathBuf {
     let s = self.art.as_str();
-    format!("miz/mizshare/mml/{s}").into()
+    format!("{}/mml/{s}", mizfiles()).into()
   }
 
   fn prel(&self, new_prel: bool) -> PathBuf {
     let s = self.art.as_str();
     if new_prel {
-      format!("miz/prel/{}/{s}", &s[..1]).into()
+      format!("{}/../prel/{}/{s}", mizfiles(), &s[..1]).into()
     } else {
-      format!("miz/mizshare/prel/{}/{s}", &s[..1]).into()
+      format!("{}/prel/{}/{s}", mizfiles(), &s[..1]).into()
     }
   }
 

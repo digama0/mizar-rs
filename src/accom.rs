@@ -2,7 +2,7 @@ use crate::error::report_accom_warning;
 use crate::parser::{catch_missing, ParseError, PathResult};
 use crate::reader::DefiniensId;
 use crate::types::*;
-use crate::{mk_id, CmpStyle, MizPath, VisitMut, MML_VCT_PATH};
+use crate::{mk_id, CmpStyle, MizPath, VisitMut};
 use std::collections::HashMap;
 use std::io;
 
@@ -264,13 +264,14 @@ impl Accomodator {
         Ok(false) => {
           // TODO: private vocabularies
           println!(
-            "error: {MML_VCT_PATH}: vocabulary for {art} not found (TODO: private vocabularies)"
+            "error: {}: vocabulary for {art} not found (TODO: private vocabularies)",
+            crate::mml_vct_path()
           );
           self.has_errors = true;
           continue
         }
         Err(e) => {
-          e.report(MML_VCT_PATH.as_ref());
+          e.report(crate::mml_vct_path().as_ref());
           self.has_errors = true;
           continue
         }
