@@ -1026,9 +1026,9 @@ impl WriteXml {
     }
   }
 
-  pub fn let_(&mut self, lc: &LocalContext, start: u32) {
+  pub fn let_(&mut self, lc: &LocalContext, start: usize) {
     self.with0("Let", |w| {
-      for fv in &lc.fixed_var.0[start as usize..] {
+      for fv in &lc.fixed_var.0[start..] {
         w.write_type(lc, &fv.ty)
       }
     })
@@ -1038,12 +1038,12 @@ impl WriteXml {
   pub fn end_assume(&mut self) { self.end_tag("Assume") }
 
   pub fn given(
-    &mut self, lc: &LocalContext, pos: Position, start: u32,
+    &mut self, lc: &LocalContext, pos: Position, start: usize,
     conds: &[(Position, Option<LabelId>, Formula)], ex: &Formula,
   ) {
     self.with0("Given", |w| {
       w.write_proposition(lc, pos, None, ex);
-      for fv in &lc.fixed_var.0[start as usize..] {
+      for fv in &lc.fixed_var.0[start..] {
         w.write_type(lc, &fv.ty)
       }
       for &(pos, label, ref f) in conds {
@@ -1099,4 +1099,32 @@ impl WriteXml {
   }
   pub fn mid_suppose(&mut self) { self.end_tag("Suppose") }
   pub fn end_suppose(&mut self) { self.end_tag("SupposeBlock") }
+
+  pub fn start_scheme(&mut self, pos: Position) { self.0.start("SchemeBlock").pos(pos) }
+  pub fn end_scheme(&mut self, end: Position) {
+    self.end_pos(end);
+    self.end_tag("SchemeBlock")
+  }
+
+  pub fn decl_scheme_func(&mut self, lc: &LocalContext, ret: &Type) {
+    self.with0("SchemeFuncDecl", |w| {
+      w.0.write_arg_types(Some(lc), &lc.locus_ty.0);
+      w.0.write_type(Some(lc), ret)
+    })
+  }
+
+  pub fn decl_scheme_pred(&mut self, lc: &LocalContext) {
+    self.with0("SchemePredDecl", |w| w.0.write_arg_types(Some(lc), &lc.locus_ty.0))
+  }
+
+  pub fn start_scheme_prems(&mut self) { self.start_tag("SchemePremises") }
+  pub fn end_scheme_prems(&mut self) { self.end_tag("SchemePremises") }
+
+  pub fn start_proof(
+    &mut self, lc: &LocalContext, pos: Position, label: Option<LabelId>, thesis: &Formula,
+  ) {
+    self.0.start("Proof").pos_and_label(pos, label);
+    self.write_block_thesis(lc, std::iter::empty(), thesis)
+  }
+  pub fn end_proof(&mut self) { self.end_tag("Proof") }
 }
