@@ -287,6 +287,7 @@ impl Analyzer<'_> {
     self.set_pos(it.pos);
     if let Some(n) = self.g.cfg.first_verbose_line {
       if self.pos.line > n && self.g.cfg.one_item {
+        self.write_xml.finish();
         eprintln!("exiting");
         std::process::exit(0)
       }
@@ -326,9 +327,14 @@ impl Analyzer<'_> {
         let (f, block) = self.elab_formula_forall_reserved(&mut prop.f, true);
         Exportable.visit_formula(&f);
         if self.g.cfg.analyzer_full {
+          self.write_xml.on(|w| {
+            let label = prop.label.as_ref().and_then(|l| l.id.0);
+            w.start_theorem(&self.r.lc, it.pos, label, &f)
+          });
           let f = f.visit_cloned(&mut self.r.intern_const());
           let label = prop.label.as_ref().map(|l| l.id.clone());
           self.elab_justification_intro_reserved(label.as_ref(), &f, just, block);
+          self.write_xml.on(|w| w.end_theorem());
           self.push_prop(label, f)
         }
         assert!(self.reserved_extra_depth == 0);
@@ -404,20 +410,32 @@ impl Analyzer<'_> {
     &mut self, pos: Position, ast::SchemeBlock { end, head, items }: &mut ast::SchemeBlock,
   ) {
     let ast::SchemeHead { sym, nr, groups, concl, prems } = head;
+    let id = self.sch_names.1.fresh();
+    if let Some(sym) = sym {
+      if self.g.cfg.nameck_enabled {
+        self.sch_names.0.insert(sym.clone(), id);
+      }
+    }
+    if let Some(nr) = *nr {
+      assert_eq!(nr, id)
+    }
+    self.write_xml.on(|w| w.start_scheme(pos, id));
     assert!(self.sch_func_args.is_empty());
     assert!(self.sch_pred_args.is_empty());
     assert!(self.lc.sch_func_ty.is_empty());
     let infer_consts = self.lc.infer_const.get_mut().0.len();
     let mut func_id = SchFuncId::default();
     let mut pred_id = SchPredId::default();
-    self.write_xml.on(|w| w.start_scheme(pos));
     for group in groups {
       match group {
         ast::SchemeBinderGroup::Func { vars, tys, ret, .. } => {
           self.elab_intern_push_locus_tys(tys);
           let ret = self.elab_intern_type_no_reserve(ret);
           assert!(!vars.is_empty());
-          self.write_xml.on(|w| vars.iter().for_each(|_| w.decl_scheme_func(&self.r.lc, &ret)));
+          self.write_xml.on(|w| {
+            let mut func_id = func_id;
+            vars.iter().for_each(|_| w.decl_scheme_func(&self.r.lc, func_id.fresh(), &ret))
+          });
           for _ in 1..vars.len() {
             self.sch_func_args.push(self.r.lc.locus_ty.0.to_vec().into());
             self.r.lc.sch_func_ty.push(ret.clone());
@@ -437,7 +455,10 @@ impl Analyzer<'_> {
         ast::SchemeBinderGroup::Pred { vars, tys, .. } => {
           self.elab_intern_push_locus_tys(tys);
           assert!(!vars.is_empty());
-          self.write_xml.on(|w| vars.iter().for_each(|_| w.decl_scheme_pred(&self.r.lc)));
+          self.write_xml.on(|w| {
+            let mut pred_id = pred_id;
+            vars.iter().for_each(|_| w.decl_scheme_pred(&self.r.lc, pred_id.fresh()))
+          });
           for _ in 1..vars.len() {
             self.sch_pred_args.push(self.r.lc.locus_ty.0.to_vec().into());
           }
@@ -482,15 +503,6 @@ impl Analyzer<'_> {
     self.lc.infer_const.get_mut().truncate(infer_consts);
     self.sch_func_args.0.clear();
     self.sch_pred_args.0.clear();
-    let id = self.sch_names.1.fresh();
-    if let Some(sym) = sym {
-      if self.g.cfg.nameck_enabled {
-        self.sch_names.0.insert(sym.clone(), id);
-      }
-    }
-    if let Some(nr) = *nr {
-      assert_eq!(nr, id)
-    }
     self.libs.sch.insert((ArticleId::SELF, id), sch);
     if self.g.cfg.exporter_enabled {
       self.export.schemes.push(Some(id))
@@ -546,12 +558,14 @@ impl Analyzer<'_> {
       ast::ItemKind::Reconsider { vars, ty, just } => {
         let ty = self.elab_intern_type_no_reserve(ty);
         let mut conjs = self.g.cfg.analyzer_full.then(Vec::new);
+        self.write_xml.on(|w| w.start_reconsider());
         for var in vars {
           if let ast::ReconsiderVar::Var(v) = var {
             *var = ast::ReconsiderVar::Equality { var: v.clone(), tm: v.to_term() }
           }
           let ast::ReconsiderVar::Equality { var, tm } = var else { unreachable!() };
           let tm = Box::new(self.elab_intern_term_no_reserve(tm));
+          self.write_xml.on(|w| w.reconsider_var(&self.r.lc, &ty, &tm));
           if let Some(conjs) = &mut conjs {
             conjs.push(Formula::Is { term: tm.clone(), ty: Box::new(ty.clone()) });
           }
@@ -562,7 +576,9 @@ impl Analyzer<'_> {
         }
         if let Some(conjs) = conjs {
           let f = Formula::mk_and(conjs);
-          self.elab_justification(None, &f, just)
+          self.write_xml.on(|w| w.write_proposition(&self.r.lc, it.pos, None, &f));
+          self.elab_justification(None, &f, just);
+          self.write_xml.on(|w| w.end_reconsider());
         }
       }
       ast::ItemKind::Consider { vars, conds, just } => {
@@ -577,15 +593,18 @@ impl Analyzer<'_> {
             for prop in conds {
               let f = self.elab_formula_forall_reserved(&mut prop.f, true).0;
               f.clone().append_conjuncts_to(conjs);
-              to_push.push((prop.label.as_ref().map(|l| l.id.clone()), f))
+              to_push.push((prop.f.pos(), prop.label.as_ref().map(|l| l.id.clone()), f))
             }
           })
           .mk_neg();
           let end = self.lc.fixed_var.len();
           self.lc.mk_forall(start..end, istart, false, &mut f);
+          f = f.mk_neg();
+          self.write_xml.on(|w| w.start_consider(&self.r.lc, it.pos, None, &f));
           f.visit(&mut self.intern_const());
-          self.elab_justification(None, &f.mk_neg(), just);
-          for (label, mut f) in to_push {
+          self.elab_justification(None, &f, just);
+          self.write_xml.on(|w| w.end_consider(&self.r.lc, start, &to_push));
+          for (_, label, mut f) in to_push {
             f.visit(&mut self.intern_const());
             self.push_prop(label, f);
           }
@@ -605,6 +624,10 @@ impl Analyzer<'_> {
     match stmt {
       ast::Statement::Proposition { prop, just } => {
         let (mut f, block) = self.elab_formula_forall_reserved(&mut prop.f, true);
+        self.write_xml.on(|w| {
+          let label = prop.label.as_ref().and_then(|l| l.id.0);
+          w.write_proposition(&self.r.lc, pos, label, &f)
+        });
         f.visit(&mut self.r.intern_const());
         let label = prop.label.as_ref().map(|l| l.id.clone());
         self.elab_justification_intro_reserved(label.as_ref(), &f, just, block);
@@ -765,6 +788,7 @@ impl Analyzer<'_> {
           pos,
           refs: self.elab_references(refs),
         };
+        self.write_xml.on(|w| w.write_inference(&it));
         self.r.read_inference(thesis, &it)
       }
       ast::Justification::Block { pos, items } =>

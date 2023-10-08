@@ -136,12 +136,11 @@ impl ArticleParser<'_> {
     let mut refs = vec![];
     while let Ok(e) = self.r.try_read_start(&mut self.buf, Some("Ref"))? {
       let (pos, label) = self.r.get_pos_and_label(&e)?;
-      let (mut article_nr, mut nr, mut kind) = Default::default();
+      let (mut article_nr, mut kind) = Default::default();
       for attr in e.attributes() {
         let attr = attr?;
         match attr.key.0 {
           b"kind" => kind = attr.value[0],
-          b"nr" => nr = self.r.get_attr::<u32>(&attr.value)? - 1,
           b"articlenr" => article_nr = self.r.get_attr(&attr.value)?,
           _ => {}
         }
@@ -150,8 +149,8 @@ impl ArticleParser<'_> {
       #[allow(clippy::unwrap_used)]
       let kind = match kind {
         0 => ReferenceKind::Priv(label.expect("private reference missing label")),
-        b'T' => ReferenceKind::Thm((ArticleId(article_nr), ThmId(nr))),
-        b'D' => ReferenceKind::Def((ArticleId(article_nr), DefId(nr))),
+        b'T' => ReferenceKind::Thm((ArticleId(article_nr), ThmId(label.unwrap().0))),
+        b'D' => ReferenceKind::Def((ArticleId(article_nr), DefId(label.unwrap().0))),
         _ => panic!("unexpected inference kind"),
       };
       self.r.end_tag(&mut self.buf)?;
