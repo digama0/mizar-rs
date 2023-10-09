@@ -703,9 +703,9 @@ impl Reader {
         self.lc.formatter.extend(&self.g.constrs, patts)
       }
       Item::Definiens(df) => self.read_definiens(df),
-      Item::Block { kind, label, items, .. } => {
+      Item::Block { kind, items, .. } => {
         let check = matches!(kind, BlockKind::Definition | BlockKind::Registration);
-        self.scope(*label, check, |this| {
+        self.scope(None, check, |this| {
           for it in items {
             this.read_item(it);
           }

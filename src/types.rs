@@ -1926,7 +1926,7 @@ pub enum Justification {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum DefinitionKind {
-  PrAttr,
+  Attr,
   Mode,
   Pred,
   Func,
@@ -2110,6 +2110,17 @@ impl CorrCondKind {
       CorrCondKind::Reducibility => b"reducibility",
     }
   }
+
+  pub fn tag(self) -> &'static str {
+    match self {
+      CorrCondKind::Coherence => "Coherence",
+      CorrCondKind::Compatibility => "Compatibility",
+      CorrCondKind::Consistency => "Consistency",
+      CorrCondKind::Existence => "Existence",
+      CorrCondKind::Uniqueness => "Uniqueness",
+      CorrCondKind::Reducibility => "Reducibility",
+    }
+  }
 }
 
 impl TryFrom<&[u8]> for CorrCondKind {
@@ -2200,11 +2211,21 @@ pub struct PerCases {
   pub thesis: Option<Thesis>,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum BlockKind {
   Definition,
   Registration,
   Notation,
+}
+
+impl BlockKind {
+  pub fn name(self) -> &'static str {
+    match self {
+      Self::Definition => "DefinitionBlock",
+      Self::Registration => "RegistrationBlock",
+      Self::Notation => "NotationBlock",
+    }
+  }
 }
 
 #[derive(Debug)]
@@ -2246,7 +2267,6 @@ pub enum Item {
   Block {
     kind: BlockKind,
     pos: (Position, Position),
-    label: Option<LabelId>,
     items: Vec<Item>,
   },
 }

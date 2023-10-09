@@ -274,6 +274,7 @@ impl ArticleParser<'_> {
       match e.local_name().as_ref() {
         b"DefinitionBlock" => {
           let (start, label) = self.r.get_pos_and_label(&e)?;
+          assert!(label.is_none());
           let mut items = vec![];
           let end = loop {
             let e = self.parse_elem()?;
@@ -292,10 +293,11 @@ impl ArticleParser<'_> {
           };
           self.r.end_tag(&mut self.buf)?;
           let kind = BlockKind::Definition;
-          ArticleElem::Item(Item::Block { kind, pos: (start, end), label, items })
+          ArticleElem::Item(Item::Block { kind, pos: (start, end), items })
         }
         b"RegistrationBlock" => {
           let (start, label) = self.r.get_pos_and_label(&e)?;
+          assert!(label.is_none());
           let mut items = vec![];
           let end = loop {
             let e = self.parse_elem()?;
@@ -311,10 +313,11 @@ impl ArticleParser<'_> {
           };
           self.r.end_tag(&mut self.buf)?;
           let kind = BlockKind::Registration;
-          ArticleElem::Item(Item::Block { kind, pos: (start, end), label, items })
+          ArticleElem::Item(Item::Block { kind, pos: (start, end), items })
         }
         b"NotationBlock" => {
           let (start, label) = self.r.get_pos_and_label(&e)?;
+          assert!(label.is_none());
           let mut items = vec![];
           let end = loop {
             let e = self.parse_elem()?;
@@ -328,7 +331,7 @@ impl ArticleParser<'_> {
           };
           self.r.end_tag(&mut self.buf)?;
           let kind = BlockKind::Notation;
-          ArticleElem::Item(Item::Block { kind, pos: (start, end), label, items })
+          ArticleElem::Item(Item::Block { kind, pos: (start, end), items })
         }
         b"Reservation" => {
           // Note: <Var> elements inside reservations are seriously broken. For example, in:
@@ -579,7 +582,7 @@ impl ArticleParser<'_> {
             ArticleElem::DefStruct(DefStruct { pos, label, constrs, cl, conds, corr, patts })
           } else {
             let kind = match (expand, kind) {
-              (false, b'V') => DefinitionKind::PrAttr,
+              (false, b'V') => DefinitionKind::Attr,
               (false, b'M') => DefinitionKind::Mode,
               (false, b'R') => DefinitionKind::Pred,
               (false, b'K') => DefinitionKind::Func,

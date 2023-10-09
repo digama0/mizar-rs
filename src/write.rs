@@ -1,5 +1,5 @@
 use crate::accom::SigBuilder;
-use crate::types::*;
+use crate::types::{self, *};
 use crate::{Global, LocalContext, MizPath};
 use enum_map::{Enum, EnumMap};
 use quick_xml::events::attributes::Attribute;
@@ -1003,6 +1003,11 @@ enum State {
   Consider2(BlockKind),
   Reconsider1(BlockKind),
   Reconsider2(BlockKind),
+  Definition,
+  CorrCond1(CorrCondKind),
+  CorrCond2(CorrCondKind),
+  Correctness1,
+  Correctness2,
 }
 
 impl State {
@@ -1023,6 +1028,9 @@ enum Stack {
   Now(BlockKind),
   Consider(BlockKind),
   Reconsider(BlockKind),
+  Block(types::BlockKind),
+  CorrCond(CorrCondKind),
+  Correctness,
 }
 
 pub struct WriteXml(MizWriter, State, Vec<Stack>);
@@ -1074,14 +1082,17 @@ impl WriteXml {
       | State::Top
       | State::Block(_)
       | State::Consider1(_)
-      | State::Reconsider1(_) => {
+      | State::Reconsider1(_)
+      | State::CorrCond1(_)
+      | State::Correctness1 => {
         self.2.push(match *dbg!(&self.1) {
           State::SchemeBlock2 => Stack::SchemeBlock,
           State::Top => Stack::Top,
-          State::Block(kind @ (BlockKind::Diffuse | BlockKind::Proof)) =>
-            Stack::Reasoning(kind, false),
+          State::Block(kind) => Stack::Reasoning(kind, false),
           State::Consider1(kind) => Stack::Consider(kind),
           State::Reconsider1(kind) => Stack::Reconsider(kind),
+          State::CorrCond1(kind) => Stack::CorrCond(kind),
+          State::Correctness1 => Stack::Correctness,
           _ => unreachable!(),
         });
         self.1 = dbg!(State::Justification);
@@ -1217,7 +1228,7 @@ impl WriteXml {
 
   pub fn start_now(&mut self, pos: Position, label: Option<LabelId>) {
     match self.1 {
-      State::Block(kind @ (BlockKind::Proof | BlockKind::Diffuse)) => {
+      State::Block(kind) => {
         self.1 = dbg!(State::Block(BlockKind::Diffuse));
         self.2.push(Stack::Now(kind))
       }
@@ -1370,6 +1381,8 @@ impl WriteXml {
       Some(Stack::Reasoning(kind, false)) => self.1 = dbg!(State::Block(kind)),
       Some(Stack::Consider(kind)) => self.1 = dbg!(State::Consider2(kind)),
       Some(Stack::Reconsider(kind)) => self.1 = dbg!(State::Reconsider2(kind)),
+      Some(Stack::CorrCond(kind)) => self.1 = dbg!(State::CorrCond2(kind)),
+      Some(Stack::Correctness) => self.1 = dbg!(State::Correctness2),
       _ => unreachable!(),
     }
   }
@@ -1397,7 +1410,6 @@ impl WriteXml {
   }
 
   pub fn write_inference(&mut self, it: &Inference) {
-    self.dbg();
     match self.1 {
       State::Justification => self.pop_justification(),
       _ => unreachable!(),
@@ -1506,5 +1518,72 @@ impl WriteXml {
     assert!(matches!(self.1, State::Reconsider1(_)));
     self.write_type(lc, ty);
     self.write_term(lc, tm);
+  }
+
+  pub fn start_block(&mut self, kind: types::BlockKind, pos: Position) {
+    let State::Top = self.1 else { unreachable!() };
+    self.1 = State::Block(BlockKind::Block);
+    self.2.push(Stack::Block(kind));
+    self.0.start(kind.name()).pos(pos);
+  }
+  pub fn end_block(&mut self, kind: types::BlockKind) {
+    let State::EndBlock(BlockKind::Block) = self.1 else { unreachable!() };
+    let Some(Stack::Block(kind2)) = self.2.pop() else { unreachable!() };
+    assert!(kind == kind2);
+    self.1 = State::Top;
+    self.0.end_tag(kind.name())
+  }
+
+  pub fn start_def(
+    &mut self, kind: DefinitionKind, pos: Position, label: Option<LabelId>, redef: bool,
+  ) {
+    let State::Block(BlockKind::Block) = self.1 else { unreachable!() };
+    self.1 = State::Definition;
+    let w = self.0.start("Definition");
+    match kind {
+      DefinitionKind::Attr => w.attr(b"kind", &b"V"[..]),
+      DefinitionKind::Mode => w.attr(b"kind", &b"M"[..]),
+      DefinitionKind::Pred => w.attr(b"kind", &b"R"[..]),
+      DefinitionKind::Func => w.attr(b"kind", &b"K"[..]),
+      DefinitionKind::ExpandMode => {
+        w.attr(b"kind", &b"M"[..]);
+        w.attr(b"expandable", &b"true"[..])
+      }
+    }
+    if redef {
+      w.attr(b"redefinition", &b"true"[..])
+    }
+    w.pos_and_label(pos, label);
+  }
+  pub fn end_def(&mut self) {
+    let State::Definition = self.1 else { unreachable!() };
+    self.1 = State::Block(BlockKind::Block);
+    self.0.end_tag("Definition")
+  }
+
+  pub fn start_corr_cond(&mut self, kind: CorrCondKind) {
+    self.1 = State::CorrCond1(kind);
+    self.0.start(kind.tag());
+  }
+  pub fn end_corr_cond(&mut self, kind: CorrCondKind) {
+    let State::CorrCond2(kind2) = self.1 else { unreachable!() };
+    assert!(kind == kind2);
+    self.1 = State::Definition;
+    self.0.end_tag(kind.tag())
+  }
+
+  pub fn start_correctness(&mut self) {
+    self.1 = State::Correctness1;
+    self.0.start("Correctness");
+  }
+  pub fn end_correctness(&mut self) {
+    let State::Correctness2 = self.1 else { unreachable!() };
+    self.1 = State::Definition;
+    self.0.end_tag("Correctness")
+  }
+
+  pub fn simple_corr_cond(&mut self, lc: &LocalContext, kind: CorrCondKind, f: &Formula) {
+    assert!(matches!(self.1, State::Correctness1));
+    self.0.with0(kind.tag(), |w| w.write_formula(Some(lc), f));
   }
 }

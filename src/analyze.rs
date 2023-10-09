@@ -316,9 +316,11 @@ impl Analyzer<'_> {
     match &mut it.kind {
       ast::ItemKind::Section => {}
       ast::ItemKind::Block { end, kind, items } => {
+        self.write_xml.on(|w| w.start_block(*kind, it.pos));
         let mut br = BlockReader::new(*kind, &self.lc);
         let check = matches!(kind, BlockKind::Definition | BlockKind::Registration);
         self.scope(false, false, check, |this| br.elab_proof(this, items, *end));
+        self.write_xml.on(|w| w.end_block(*kind));
         br.after_scope(self)
       }
       ast::ItemKind::SchemeBlock(bl) =>
@@ -802,19 +804,28 @@ impl Analyzer<'_> {
     if self.g.cfg.analyzer_full {
       for cond in conds {
         let mut thesis = cc.0[cond.kind].take().unwrap();
+        self.write_xml.on(|w| {
+          w.start_corr_cond(cond.kind);
+          w.write_proposition(&self.r.lc, cond.pos, None, &thesis)
+        });
         thesis.visit(&mut self.intern_const());
         self.elab_justification(None, &thesis, &mut cond.just);
+        self.write_xml.on(|w| w.end_corr_cond(cond.kind));
       }
       if let Some(corr) = corr {
+        self.write_xml.on(|w| w.start_correctness());
         let mut thesis = Formula::mk_and_with(|conjs| {
-          for (_, stmt) in &mut cc.0 {
+          for (kind, stmt) in &mut cc.0 {
             if let Some(stmt) = stmt.take() {
+              self.write_xml.on(|w| w.simple_corr_cond(&self.r.lc, kind, &stmt));
               stmt.append_conjuncts_to(conjs);
             }
           }
         });
+        self.write_xml.on(|w| w.write_proposition(&self.r.lc, corr.pos, None, &thesis));
         thesis.visit(&mut self.intern_const());
         self.elab_justification(None, &thesis, &mut corr.just);
+        self.write_xml.on(|w| w.end_correctness());
       }
       assert!(cc.0.iter().all(|p| p.1.is_none()));
     }
@@ -3681,6 +3692,10 @@ impl BlockReader {
     &mut self, elab: &mut Analyzer, loc: Position, pat: &mut ast::PatternFunc,
     it: &mut ast::DefinitionBody, spec: Option<&ast::Type>, def: &mut Option<Box<ast::Definiens>>,
   ) {
+    elab.write_xml.on(|w| {
+      let label = def.as_ref().and_then(|d| d.label.as_deref()?.id.0);
+      w.start_def(DefinitionKind::Func, loc, label, it.redef)
+    });
     let fmt = elab.formats[&Format::Func(pat.to_format())];
     let mut cc = CorrConds::new();
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
@@ -3802,13 +3817,18 @@ impl BlockReader {
       let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.clone());
       self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Func(n), df, label, thm })));
     }
-    elab.push_pattern(true, PKC::Func, PatternKind::Func(n), fmt, primary, visible, true)
+    elab.push_pattern(true, PKC::Func, PatternKind::Func(n), fmt, primary, visible, true);
+    elab.write_xml.on(|w| w.end_def())
   }
 
   fn elab_pred_def(
     &mut self, elab: &mut Analyzer, loc: Position, pat: &mut ast::PatternPred,
     it: &mut ast::DefinitionBody, def: &mut Option<Box<ast::Definiens>>,
   ) {
+    elab.write_xml.on(|w| {
+      let label = def.as_ref().and_then(|d| d.label.as_deref()?.id.0);
+      w.start_def(DefinitionKind::Pred, loc, label, it.redef)
+    });
     let fmt = elab.formats[&Format::Pred(pat.to_format())];
     let mut cc = CorrConds::new();
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
@@ -3885,7 +3905,8 @@ impl BlockReader {
       let label = def.as_deref_mut().unwrap().label.as_ref().map(|l| l.id.clone());
       self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Pred(n), df, label, thm })));
     }
-    elab.push_pattern(true, PKC::Pred, PatternKind::Pred(n), fmt, primary, visible, pos)
+    elab.push_pattern(true, PKC::Pred, PatternKind::Pred(n), fmt, primary, visible, pos);
+    elab.write_xml.on(|w| w.end_def())
   }
 
   fn elab_mode_def(
@@ -3900,6 +3921,7 @@ impl BlockReader {
     let mut properties = PropertiesBuilder::new(&visible);
     match kind {
       ast::DefModeKind::Expandable { expansion } => {
+        elab.write_xml.on(|w| w.start_def(DefinitionKind::ExpandMode, loc, None, it.redef));
         let mut expansion = Box::new(elab.elab_type(expansion));
         elab.elab_corr_conds(cc, &mut it.conds, &mut it.corr);
         properties.elab_properties(elab, &mut it.props);
@@ -3908,6 +3930,10 @@ impl BlockReader {
         elab.push_pattern(true, PKC::Mode, kind, fmt, primary, visible, true)
       }
       ast::DefModeKind::Standard { spec, def } => {
+        elab.write_xml.on(|w| {
+          let label = def.as_deref().and_then(|d| d.label.as_deref()?.id.0);
+          w.start_def(DefinitionKind::Mode, loc, label, it.redef)
+        });
         let (redefines, superfluous, it_type);
         if it.redef {
           let args: Box<[_]> = pat.args.iter().map(|v| Term::Const(v.var())).collect();
@@ -4019,12 +4045,17 @@ impl BlockReader {
         elab.push_pattern(true, PKC::Mode, PatternKind::Mode(n), fmt, primary, visible, true)
       }
     }
+    elab.write_xml.on(|w| w.end_def())
   }
 
   fn elab_attr_def(
     &mut self, elab: &mut Analyzer, loc: Position, pat: &mut ast::PatternAttr,
     it: &mut ast::DefinitionBody, mut def: Option<&mut ast::Definiens>,
   ) {
+    elab.write_xml.on(|w| {
+      let label = def.as_deref().and_then(|d| d.label.as_deref()?.id.0);
+      w.start_def(DefinitionKind::Attr, loc, label, it.redef)
+    });
     let fmt = elab.formats[&Format::Attr(pat.to_format())];
     let mut cc = CorrConds::new();
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
@@ -4094,7 +4125,8 @@ impl BlockReader {
       let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.clone());
       self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Attr(n), df, label, thm })));
     }
-    elab.push_pattern(true, PKC::Attr, PatternKind::Attr(n), fmt, primary, visible, pos)
+    elab.push_pattern(true, PKC::Attr, PatternKind::Attr(n), fmt, primary, visible, pos);
+    elab.write_xml.on(|w| w.end_def())
   }
 
   fn elab_struct_def(&mut self, elab: &mut Analyzer, it: &mut ast::DefStruct) {
