@@ -673,7 +673,7 @@ impl MsmParser {
       }
       b"Property" => {
         let props = items.last_mut().and_then(|it| it.kind.property_mut()).unwrap();
-        props.push(Property { kind: property.unwrap(), just: self.parse_justification()? });
+        props.push(Property { pos, kind: property.unwrap(), just: self.parse_justification()? });
         self.r.end_tag(&mut self.buf)?;
         return Ok(true)
       }

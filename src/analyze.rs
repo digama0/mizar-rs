@@ -144,8 +144,10 @@ impl Reader {
     for (i, pats) in &elab.r.notations {
       elab.notations_base[i] = pats.len() as u32
     }
-    if elab.g.cfg.exporter_enabled {
+    if elab.g.cfg.exporter_enabled || elab.g.cfg.xml_internals {
       elab.export.constrs_base = elab.g.constrs.len();
+    }
+    if elab.g.cfg.exporter_enabled {
       elab.export.clusters_base = elab.g.clusters.len();
       elab.export.definitions_base = elab.definitions.peek();
       elab.export.identify_base = elab.identify.len() as u32;
@@ -255,7 +257,7 @@ impl Analyzer<'_> {
     &self, c: PatternKindClass, kind: PatternKind, fmt: FormatId, primary: Box<[Type]>,
     visible: Box<[LocusId]>, pos: bool,
   ) -> Pattern {
-    let abs_nr = self.notations[c].vec.len() as u32 - self.notations_base[c];
+    let abs_nr = self.notations[c].ext_len() as u32 - self.notations_base[c];
     Pattern { article: self.article, abs_nr, kind, fmt, primary, visible, pos }
   }
 
@@ -268,6 +270,7 @@ impl Analyzer<'_> {
     if check_access {
       pat.check_access();
     }
+    self.write_xml.on(|w| w.write_pattern(self.r.notations[c].ext_len() as u32, &pat));
     self.r.lc.formatter.push(&self.r.g.constrs, &pat);
     self.r.notations[c].push_ext(pat)
   }
@@ -802,6 +805,7 @@ impl Analyzer<'_> {
     &mut self, mut cc: CorrConds, conds: &mut [ast::CorrCond], corr: &mut Option<ast::Correctness>,
   ) {
     if self.g.cfg.analyzer_full {
+      self.write_xml.on(|w| w.step_corr_cond());
       for cond in conds {
         let mut thesis = cc.0[cond.kind].take().unwrap();
         self.write_xml.on(|w| {
@@ -826,6 +830,8 @@ impl Analyzer<'_> {
         thesis.visit(&mut self.intern_const());
         self.elab_justification(None, &thesis, &mut corr.just);
         self.write_xml.on(|w| w.end_correctness());
+      } else {
+        self.write_xml.on(|w| w.skip_correctness());
       }
       assert!(cc.0.iter().all(|p| p.1.is_none()));
     }
@@ -2352,6 +2358,10 @@ impl<'a> PropertiesBuilder<'a> {
           (PropertyKind::Abstractness, _) => unreachable!(),
           (k, tgt) => panic!("property {k:?} is not applicable to {tgt:?}"),
         };
+        elab.write_xml.on(|w| {
+          w.start_property(prop.kind);
+          w.write_proposition(&elab.r.lc, prop.pos, None, &thesis)
+        });
         elab.elab_justification(None, &thesis, &mut prop.just);
       }
       self.props.set(match self.kind {
@@ -3775,6 +3785,14 @@ impl BlockReader {
         c: Constructor { primary, redefines, superfluous, properties: properties.props },
         ty: (*it_type).clone(),
       };
+      elab.write_xml.on(|w| {
+        w.write_func_constructor(
+          elab.r.article,
+          elab.export.constrs_base.functor,
+          elab.r.g.constrs.functor.peek(),
+          &c,
+        )
+      });
       c.visit(&mut elab.intern_const());
       n = elab.g.constrs.functor.push(c);
       elab.push_constr(ConstrKind::Func(n));
@@ -3880,6 +3898,14 @@ impl BlockReader {
     } else {
       let p = primary.clone();
       let mut c = Constructor { primary: p, redefines, superfluous, properties: properties.props };
+      elab.write_xml.on(|w| {
+        w.write_pred_constructor(
+          elab.r.article,
+          elab.export.constrs_base.predicate,
+          elab.r.g.constrs.predicate.peek(),
+          &c,
+        )
+      });
       c.visit(&mut elab.intern_const());
       n = elab.g.constrs.predicate.push(c);
       elab.push_constr(ConstrKind::Pred(n));
@@ -4005,6 +4031,14 @@ impl BlockReader {
             c: Constructor { primary, redefines, superfluous, properties: properties.props },
             ty: (*it_type).clone(),
           };
+          elab.write_xml.on(|w| {
+            w.write_mode_constructor(
+              elab.r.article,
+              elab.export.constrs_base.mode,
+              elab.r.g.constrs.mode.peek(),
+              &c,
+            )
+          });
           c.visit(&mut elab.intern_const());
           n = elab.g.constrs.mode.push(c);
           elab.push_constr(ConstrKind::Mode(n));
@@ -4099,6 +4133,14 @@ impl BlockReader {
         c: Constructor { primary: p, redefines, superfluous, properties: properties.props },
         ty: self.primary.0.last().unwrap().clone(),
       };
+      elab.write_xml.on(|w| {
+        w.write_attr_constructor(
+          elab.r.article,
+          elab.export.constrs_base.attribute,
+          elab.r.g.constrs.attribute.peek(),
+          &c,
+        )
+      });
       c.visit(&mut elab.intern_const());
       n = elab.g.constrs.attribute.push(c);
       elab.push_constr(ConstrKind::Attr(n));

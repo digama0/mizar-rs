@@ -617,6 +617,7 @@ pub struct Correctness {
 
 #[derive(Debug)]
 pub struct Property {
+  pub pos: Position,
   pub kind: PropertyKind,
   pub just: Box<Justification>,
 }

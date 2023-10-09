@@ -1432,8 +1432,8 @@ impl<'a> Parser<'a> {
   fn parse_properties(&mut self) -> Vec<Property> {
     let mut props = vec![];
     while let TokenKind::Property(kind) = self.scan.peek().kind {
-      self.scan.next();
-      props.push(Property { kind, just: Box::new(self.parse_justification_semi(None)) });
+      let pos = self.scan.next().pos;
+      props.push(Property { pos, kind, just: Box::new(self.parse_justification_semi(None)) });
     }
     props
   }
