@@ -2213,7 +2213,7 @@ pub enum Item {
   /// itExemplificationWithEquality
   TakeAsVar(Type, Term),
   PerCases(PerCases),
-  AuxiliaryItem(AuxiliaryItem),
+  Auxiliary(AuxiliaryItem),
   Registration(Registration),
   Scheme(SchemeBlock),
   Theorem {
@@ -2248,7 +2248,7 @@ impl Item {
       Item::Thus(stmt) => Some(stmt.pos()),
       Item::Assume(prop) => Some(prop[0].pos),
       Item::PerCases(it) => Some(it.pos.0),
-      Item::AuxiliaryItem(it) => it.pos(),
+      Item::Auxiliary(it) => it.pos(),
       Item::Scheme(it) => Some(it.pos.0),
       Item::Theorem { prop, .. } | Item::DefTheorem { prop, .. } => Some(prop.pos),
       Item::Definition(it) => Some(it.pos),
@@ -2591,9 +2591,6 @@ impl<V: VisitMut, F> Visitable<V> for Pattern<F> {
     self.primary.visit(v);
   }
 }
-
-#[derive(Debug, Default)]
-pub struct Notations<F>(pub Vec<Pattern<F>>);
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct SymbolsBase(pub EnumMap<SymbolKindClass, u32>);

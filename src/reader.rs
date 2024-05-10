@@ -532,7 +532,7 @@ impl Reader {
     let result = path.read_xml(|it| {
       assert!(matches!(
         it,
-        Item::AuxiliaryItem(_)
+        Item::Auxiliary(_)
           | Item::Scheme(_)
           | Item::Theorem { .. }
           | Item::DefTheorem { .. }
@@ -584,7 +584,7 @@ impl Reader {
           Item::Take(_) => eprintln!("Take"),
           Item::TakeAsVar(_, _) => eprintln!("TakeAsVar"),
           Item::PerCases(it) => eprintln!("PerCases @ {:?}", it.pos.0),
-          Item::AuxiliaryItem(it) => match it {
+          Item::Auxiliary(it) => match it {
             AuxiliaryItem::Statement(it) => match it {
               Statement::Proposition { .. } => eprintln!("Proposition @ {:?}", it.pos()),
               Statement::IterEquality { .. } => eprintln!("IterEquality @ {:?}", it.pos()),
@@ -644,28 +644,28 @@ impl Reader {
         });
         self.push_prop(*label, self.intern(block_thesis))
       }
-      Item::AuxiliaryItem(AuxiliaryItem::Statement(it)) | Item::Thus(it) => self.read_stmt(it),
-      Item::AuxiliaryItem(AuxiliaryItem::Consider { prop, just, fixed, intro }) => {
+      Item::Auxiliary(AuxiliaryItem::Statement(it)) | Item::Thus(it) => self.read_stmt(it),
+      Item::Auxiliary(AuxiliaryItem::Consider { prop, just, fixed, intro }) => {
         self.read_just_prop(prop, just, false);
         self.read_fixed_vars(fixed);
         intro.iter().for_each(|prop| self.read_proposition(prop));
       }
-      Item::AuxiliaryItem(AuxiliaryItem::Set { ty, .. }) => self.push_fixed_var(ty),
-      Item::AuxiliaryItem(AuxiliaryItem::Reconsider { terms, prop, just }) => {
+      Item::Auxiliary(AuxiliaryItem::Set { ty, .. }) => self.push_fixed_var(ty),
+      Item::Auxiliary(AuxiliaryItem::Reconsider { terms, prop, just }) => {
         for (ty, tm) in terms {
           let fv = FixedVar { ty: self.intern(ty), def: Some((Box::new(self.intern(tm)), false)) };
           self.lc.fixed_var.push(fv);
         }
         self.read_just_prop(prop, just, false);
       }
-      Item::AuxiliaryItem(AuxiliaryItem::DefFunc { args, ty, value }) => {
+      Item::Auxiliary(AuxiliaryItem::DefFunc { args, ty, value }) => {
         self.lc.priv_func.push(FuncDef {
           primary: self.intern(args),
           ty: Box::new(self.intern(ty)),
           value: Box::new(self.intern(value)),
         });
       }
-      Item::AuxiliaryItem(AuxiliaryItem::DefPred { .. }) => {}
+      Item::Auxiliary(AuxiliaryItem::DefPred { .. }) => {}
       Item::Registration(reg) => match reg {
         Registration::Cluster(cl) => self.read_cluster_decl(cl),
         Registration::Identify { kind, conds, corr } => {
@@ -1010,7 +1010,7 @@ impl Reader {
     }
   }
 
-  #[allow(clippy::blocks_in_if_conditions)]
+  #[allow(clippy::blocks_in_conditions)]
   fn _dbg_scope_check(&self) {
     let ic = self.lc.infer_const.borrow();
     let infer_const = ic.len();

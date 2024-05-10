@@ -173,13 +173,14 @@ impl XmlReader {
 impl MsmParser {
   fn new(path: PathBuf, msm: bool) -> PathResult<MsmParser> {
     let mut buf = vec![];
-    match (|| {
+    let result = (|| {
       let file = File::open(&path)?;
       let mut r = XmlReader::new(file, &mut buf)?;
       assert!(matches!(r.read_event(&mut buf)?,
         Event::Start(e) if e.local_name().as_ref() == b"Text-Proper"));
       Ok(r)
-    })() {
+    })();
+    match result {
       Ok(r) => Ok(MsmParser { r, path, buf, msm }),
       Err(e) => Err((path, e)),
     }

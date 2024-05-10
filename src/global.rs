@@ -2236,6 +2236,7 @@ impl IdentifyFunc {
     let mut subst = Subst::new(self.primary.len());
     subst.eq(g, lc, lhs, tm).then_some(())?;
     subst.check_loci_types::<false>(g, lc, &self.primary, false).then_some(())?;
+    #[allow(clippy::assigning_clones)]
     for &(x, y) in &*self.eq_args {
       let (ux, uy) = (Idx::into_usize(x), Idx::into_usize(y));
       assert!(subst.subst_term[uy].is_none());

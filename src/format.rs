@@ -124,7 +124,7 @@ impl Formula {
 }
 
 thread_local! {
-  static LOCAL_CONTEXT: Cell<*const LocalContext> = Cell::new(std::ptr::null());
+  static LOCAL_CONTEXT: Cell<*const LocalContext> = const { Cell::new(std::ptr::null()) };
 }
 
 impl LocalContext {

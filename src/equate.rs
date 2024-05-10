@@ -360,7 +360,7 @@ impl VisitMut for Y<'_, '_> {
           *self.eq.infers.get_mut_extending(nr) = Some(self.eq.terms[et].mark);
           let ty = {
             let ic = self.eq.lc.infer_const.borrow();
-            self.eq.terms[et].number = ic[nr].number.clone();
+            self.eq.terms[et].number.clone_from(&ic[nr].number);
             ic[nr].ty.visit_cloned(&mut ExpandPrivFunc(&self.eq.g.constrs, self.eq.lc))
           };
           y_try!(self, self.insert_type(ty, et));

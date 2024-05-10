@@ -40,7 +40,7 @@ impl From<ArticleElem> for Item {
   fn from(value: ArticleElem) -> Self {
     match value {
       ArticleElem::Item(it) => it,
-      ArticleElem::AuxiliaryItem(it) => Item::AuxiliaryItem(it),
+      ArticleElem::AuxiliaryItem(it) => Item::Auxiliary(it),
       ArticleElem::Let(it) => Item::Let(it),
       ArticleElem::Assume(it) => Item::Assume(it),
       ArticleElem::Given(it) => Item::Given(it),
@@ -87,7 +87,7 @@ impl ArticleParser<'_> {
 
   fn finish_proposition(&mut self, prop: Proposition) -> Result<Item> {
     let s = Statement::Proposition { prop, just: self.parse_justification()? };
-    Ok(Item::AuxiliaryItem(AuxiliaryItem::Statement(s)))
+    Ok(Item::Auxiliary(AuxiliaryItem::Statement(s)))
   }
 
   fn parse_block_thesis(&mut self) -> Result<Option<Formula>> {

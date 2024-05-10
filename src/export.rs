@@ -75,7 +75,7 @@ fn mark_formats<T>(
 ) {
   let mut trans = EnumMap::<_, Vec<_>>::default();
   let (mut hi, mut new) = <(SymbolsBase, SymbolsBase)>::default();
-  for (_, (art, counts)) in vocs.0.iter().enumerate() {
+  for (art, counts) in &vocs.0 {
     let lo = hi;
     hi += counts;
     let used = fmts.iter_mut().any(|fmt| {

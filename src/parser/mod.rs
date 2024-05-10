@@ -1855,6 +1855,7 @@ enum Elem {
   Proposition(Proposition),
   Thesis(Thesis),
   Format(Format),
+  #[allow(dead_code)]
   Priority(PriorityKind, u32),
   Other,
   End,
