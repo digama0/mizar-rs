@@ -1359,7 +1359,7 @@ impl Analyzer<'_> {
       ) -> Self {
         use Formula::*;
         match (f1.skip_priv_pred(), f2.skip_priv_pred()) {
-          (True, True) => Self::bool(true),
+          (True, True) => Self::Same,
           (Neg { f: f1 }, Neg { f: f2 }) => Self::eq_formula(ctx, ic, f1, f2),
           (Is { term: t1, ty: ty1 }, Is { term: t2, ty: ty2 }) => Self::eq_term(ctx, ic, t1, t2)
             .and_then(&ctx.g.constrs, || Self::eq_type(ctx, ic, ty1, ty2)),
@@ -1389,7 +1389,7 @@ impl Analyzer<'_> {
           (FlexAnd { terms: t1, scope: sc1, .. }, FlexAnd { terms: t2, scope: sc2, .. }) =>
             Self::eq_terms(ctx, ic, &**t1, &**t2)
               .and_then(&ctx.g.constrs, || Self::eq_formula(ctx, ic, sc1, sc2)),
-          _ => Self::bool(false),
+          _ => Self::Fail,
         }
       }
     }

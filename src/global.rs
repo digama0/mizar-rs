@@ -896,6 +896,8 @@ pub trait Equate {
     self.eq_type(ctx, dom1, dom2) && ctx.enter(1, |ctx| self.eq_formula(ctx, sc1, sc2))
   }
 
+  /// on (): EqFrm
+  /// on Subst: EsFrm
   fn eq_formula(&mut self, ctx: &mut EqCtx<'_>, f1: &Formula, f2: &Formula) -> bool {
     use Formula::*;
     match (f1.skip_priv_pred(), f2.skip_priv_pred()) {
@@ -920,8 +922,10 @@ pub trait Equate {
         self.eq_forall(ctx, dom1, dom2, sc1, sc2),
       (FlexAnd { terms: t1, scope: sc1, .. }, FlexAnd { terms: t2, scope: sc2, .. }) =>
         self.eq_terms(ctx, &**t1, &**t2) && self.eq_formula(ctx, sc1, sc2),
-      (LegacyFlexAnd { orig: args1, .. }, LegacyFlexAnd { orig: args2, .. }) =>
-        self.eq_formulas(ctx, &**args1, &**args2),
+      (
+        LegacyFlexAnd { orig: args1, expansion: e1, .. },
+        LegacyFlexAnd { orig: args2, expansion: e2, .. },
+      ) => self.eq_formulas(ctx, &**args1, &**args2) && self.eq_formula(ctx, e1, e2),
       _ => false,
     }
     // vprintln!("eq_formula {f1:?} <> {f2:?} -> {res}");
