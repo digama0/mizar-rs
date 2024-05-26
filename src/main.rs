@@ -5,6 +5,8 @@ use clap::{ArgAction, CommandFactory, Parser, ValueEnum};
 use enum_map::EnumMap;
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use itertools::Itertools;
+use once_cell::sync::OnceCell;
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
@@ -32,9 +34,22 @@ mod write;
 
 pub use global::*;
 
+thread_local! {
+  static JOB_ID: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
 #[allow(clippy::unwrap_used)]
-pub fn stat(s: &'static str) {
+pub fn stat(s: &'static str, fail: bool) {
   *STATS.lock().unwrap().get_or_insert_with(HashMap::new).entry(s).or_default() += 1;
+  if fail {
+    if let Some((failures, _)) = JOBS.get() {
+      JOB_ID.with(|job_id| {
+        if let Some(job_id) = job_id.get() {
+          failures[job_id].store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+      })
+    }
+  }
 }
 
 #[macro_export]
@@ -64,6 +79,8 @@ pub fn set_verbose(b: bool) { VERBOSE.store(b, std::sync::atomic::Ordering::SeqC
 
 static STATS: Mutex<Option<HashMap<&'static str, u32>>> = Mutex::new(None);
 
+static JOBS: OnceCell<(Vec<AtomicBool>, Vec<String>)> = OnceCell::new();
+
 fn print_stats_and_exit(has_errors: bool) {
   #[allow(clippy::unwrap_used)]
   let mut g = STATS.lock().unwrap();
@@ -71,6 +88,17 @@ fn print_stats_and_exit(has_errors: bool) {
   vec.sort();
   for (s, i) in vec {
     println!("{s}: {i}");
+  }
+  if let Some((failures, jobs)) = JOBS.get() {
+    let mut first = true;
+    for (fail, job) in failures.iter().zip(jobs) {
+      if fail.load(std::sync::atomic::Ordering::SeqCst) {
+        if std::mem::take(&mut first) {
+          println!("failed articles:")
+        }
+        println!("  {job}")
+      }
+    }
   }
   std::process::exit(has_errors as i32)
 }
@@ -526,10 +554,13 @@ fn main() {
   } else {
     None
   };
-
+  JOBS.get_or_init(|| {
+    let failures = std::iter::repeat_with(<_>::default).take(jobs.len()).collect();
+    (failures, jobs.iter().map(|(i, s)| format!("{i}: {s}")).collect())
+  });
   let _ = ctrlc::set_handler(|| print_stats_and_exit(true));
 
-  let jobs = &Mutex::new(jobs.into_iter());
+  let jobs = &Mutex::new(jobs.into_iter().enumerate());
   let running = &*std::iter::repeat_with(|| {
     (progress.as_ref().filter(|_| !cli.other.no_multi_progress))
       .map(|p| p.multi.insert(0, ProgressBar::hidden()).with_style(p.style.clone()))
@@ -548,11 +579,12 @@ fn main() {
     let has_errors = &has_errors;
     for thread in running {
       s.spawn(move || {
-        while let Some((i, s)) = {
+        while let Some((job, (i, s))) = {
           #[allow(clippy::unwrap_used)]
           let mut lock = jobs.lock().unwrap();
           lock.next()
         } {
+          JOB_ID.set(Some(job));
           let path = match MizPath::new(s) {
             Ok(t) => t,
             Err(e) => {
@@ -579,7 +611,7 @@ fn main() {
                   std::io::stderr().write_all(&output.stderr)?;
                   std::io::stdout().write_all(&output.stdout)?;
                   std::io::stdout().flush()?;
-                  stat("fail");
+                  stat("fail", true);
                   if cfg.panic_on_fail {
                     std::process::abort()
                   }
@@ -598,7 +630,7 @@ fn main() {
                 std::io::stderr().write_all(&output.stderr)?;
                 std::io::stdout().write_all(&output.stdout)?;
                 std::io::stdout().flush()?;
-                stat("fail");
+                stat("fail", true);
                 if cfg.panic_on_fail {
                   std::process::abort()
                 }
@@ -620,14 +652,14 @@ fn main() {
               },
             Ok(Err(err)) => {
               println!("error: {i}: {s} IO error: {err}");
-              stat("panic");
+              stat("panic", true);
               if cfg.panic_on_fail {
                 std::process::abort()
               }
             }
             Err(_payload) => {
               println!("error: {i}: {s} panicked");
-              stat("panic");
+              stat("panic", true);
               if cfg.panic_on_fail {
                 std::process::abort()
               }

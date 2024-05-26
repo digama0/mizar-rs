@@ -972,7 +972,7 @@ impl Reader {
       return
     }
     if !self.no_suppress_checker {
-      stat("skipped by $V-");
+      stat("skipped by $V-", false);
       return
     }
     self.set_pos(it.pos);

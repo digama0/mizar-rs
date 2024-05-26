@@ -1485,7 +1485,7 @@ impl TermCollection {
   pub fn open_scope(&mut self) {
     // vprintln!("[{}] open scope", self.scope);
     if self.scope == 0 && self.terms.len() > crate::GC_THRESHOLD {
-      stat("gc");
+      stat("gc", false);
       self.terms.clear()
     }
     self.scope += 1

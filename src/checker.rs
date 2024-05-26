@@ -114,7 +114,7 @@ impl<'a> Checker<'a> {
             f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
           );
         }
-        stat("failure");
+        stat("failure", true);
         println!("failed to justify {:?}:{:?}.{i}", self.article, self.pos);
         if self.g.cfg.panic_on_fail {
           panic!("failed to justify {:?}:{:?}.{i}", self.article, self.pos);
@@ -123,7 +123,7 @@ impl<'a> Checker<'a> {
       }
     }
     if !err {
-      stat("success");
+      stat("success", false);
     }
     self.lc.fixed_var.0.truncate(fixed_var);
     self.lc.infer_const.get_mut().truncate(infer_const);
@@ -223,12 +223,12 @@ impl<'a> Checker<'a> {
     if ctx.eq_formula(&sch.thesis, thesis, true)
       && (sch.prems.iter().zip(premises.iter())).all(|(f1, f2)| ctx.eq_formula(f1, f2, true))
     {
-      stat("success");
+      stat("success", false);
       if self.g.cfg.checker_result {
         eprintln!("proved sch {:?}:{:?}!", self.article, self.pos);
       }
     } else {
-      stat("failure");
+      stat("failure", true);
       if self.g.cfg.checker_result {
         eprintln!("FAILED TO JUSTIFY sch {:?}:{:?}", self.article, self.pos);
       }
