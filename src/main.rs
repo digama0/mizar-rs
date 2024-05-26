@@ -110,15 +110,6 @@ const fn bool_to_str(b: bool) -> &'static str {
   }
 }
 
-#[derive(Debug, clap::Args)]
-struct CliPasses;
-#[derive(Debug, clap::Args)]
-struct CliOther;
-#[derive(Debug, clap::Args)]
-struct CliDebug;
-#[derive(Debug, clap::Args)]
-struct CliUnsound;
-
 /// Mizar verifier toolchain. Common usage cases:
 ///
 ///   * mizar-rs -dex --overwrite-prel
@@ -138,7 +129,56 @@ struct Cli {
   first_verbose_line: Option<u32>,
 
   #[command(flatten, next_help_heading = "Pass selection options")]
-  _passes: CliPasses,
+  passes: CliPasses,
+
+  /// Strictly follow dependency order, instead of using `prel/`
+  #[arg(short = 'd', long)]
+  dep_order: bool,
+
+  /// The number of threads to use (currently only file level parallelism is supported)
+  #[arg(short = 'j', long, default_value_t = if DEBUG { 1 } else { num_cpus::get() })]
+  parallelism: usize,
+
+  /// Use `mizar-rs` as a frontend for the original mizar `verifier`
+  #[arg(long)]
+  orig_mizar: bool,
+
+  /// Exit after processing the first verbose item
+  #[arg(long, num_args = 0..=1, action = ArgAction::Set, default_value = "true",
+    require_equals = true, default_missing_value = "true", hide_possible_values = true)]
+  one_item: bool,
+
+  /// Exit after processing the first selected file
+  #[arg(long, num_args = 0..=1, action = ArgAction::Set, default_value = bool_to_str(DEBUG),
+    require_equals = true, default_missing_value = "true", hide_possible_values = true)]
+  one_file: bool,
+
+  /// Index of the last file to process, if specified
+  #[arg(long)]
+  last_file: Option<usize>,
+
+  /// Disable the checker while not in verbose mode
+  #[arg(long, num_args = 0..=1, action = ArgAction::Set, default_value = bool_to_str(DEBUG),
+    require_equals = true, default_missing_value = "true", hide_possible_values = true)]
+  skip_to_verbose: bool,
+
+  #[command(flatten, next_help_heading = "Other options")]
+  other: CliOther,
+
+  #[command(flatten, next_help_heading = "Debugging tools")]
+  debug: CliDebug,
+
+  /// Dump the contents of various system components,
+  /// or `--dump` without arguments to print everything
+  #[arg(long, value_delimiter = ',', num_args = 0..)]
+  dump: Option<Vec<DumpKind>>,
+
+  #[command(flatten, next_help_heading = "Bugs and unsound flags")]
+  unsound: CliUnsound,
+}
+
+#[derive(Debug, clap::Args)]
+struct CliPasses {
   /// Enables (only) the checker, checking 'by' proofs straight from .xml
   #[arg(short = 'c', long)]
   checker: bool,
@@ -175,40 +215,10 @@ struct Cli {
   /// Disables name resolution, reading .msx instead of .wsx (requires `-P`)
   #[arg(short = 'N', long)]
   no_nameck: bool,
+}
 
-  /// Strictly follow dependency order, instead of using `prel/`
-  #[arg(short = 'd', long)]
-  dep_order: bool,
-
-  /// The number of threads to use (currently only file level parallelism is supported)
-  #[arg(short = 'j', long, default_value_t = if DEBUG { 1 } else { num_cpus::get() })]
-  parallelism: usize,
-
-  /// Use `mizar-rs` as a frontend for the original mizar `verifier`
-  #[arg(long)]
-  orig_mizar: bool,
-
-  /// Exit after processing the first verbose item
-  #[arg(long, num_args = 0..=1, action = ArgAction::Set, default_value = "true",
-    require_equals = true, default_missing_value = "true", hide_possible_values = true)]
-  one_item: bool,
-
-  /// Exit after processing the first selected file
-  #[arg(long, num_args = 0..=1, action = ArgAction::Set, default_value = bool_to_str(DEBUG),
-    require_equals = true, default_missing_value = "true", hide_possible_values = true)]
-  one_file: bool,
-
-  /// Index of the last file to process, if specified
-  #[arg(long)]
-  last_file: Option<usize>,
-
-  /// Disable the checker while not in verbose mode
-  #[arg(long, num_args = 0..=1, action = ArgAction::Set, default_value = bool_to_str(DEBUG),
-    require_equals = true, default_missing_value = "true", hide_possible_values = true)]
-  skip_to_verbose: bool,
-
-  #[command(flatten, next_help_heading = "Other options")]
-  _other: CliOther,
+#[derive(Debug, clap::Args)]
+struct CliOther {
   /// Panic on the first error
   #[arg(long, num_args = 0..=1, action = ArgAction::Set, default_value = bool_to_str(DEBUG),
     require_equals = true, default_missing_value = "true", hide_possible_values = true)]
@@ -228,9 +238,10 @@ struct Cli {
   /// Don't show the fancy progress bar
   #[arg(long)]
   no_progress: bool,
+}
 
-  #[command(flatten, next_help_heading = "Debugging tools")]
-  _debug: CliDebug,
+#[derive(Debug, clap::Args)]
+struct CliDebug {
   /// Print a header at every top level item
   #[arg(long, num_args = 0..=1, action = ArgAction::Set, default_value = bool_to_str(false),
     require_equals = true, default_missing_value = "true", hide_possible_values = true)]
@@ -267,14 +278,10 @@ struct Cli {
   #[arg(long, num_args = 0..=1, action = ArgAction::Set, default_value = bool_to_str(DEBUG),
     require_equals = true, default_missing_value = "true", hide_possible_values = true)]
   unify_insts: bool,
+}
 
-  /// Dump the contents of various system components,
-  /// or `--dump` without arguments to print everything
-  #[arg(long, value_delimiter = ',', num_args = 0..)]
-  dump: Option<Vec<DumpKind>>,
-
-  #[command(flatten, next_help_heading = "Bugs and unsound flags")]
-  _unsound: CliUnsound,
+#[derive(Debug, clap::Args)]
+struct CliUnsound {
   /// This is an UNSOUND FLAG that enables checking of `P[a] & ... & P[b]`
   /// equality by checking only the endpoints `P[a]` and `P[b]`.
   /// This is needed to check some MML proofs
@@ -410,41 +417,41 @@ const MML_VCT_PATH: &str = "miz/mizshare/mml.vct";
 
 fn main() {
   let cli = Cli::parse();
-  let enable = cli.analyzer || cli.checker || cli.export;
-  let disable = cli.no_analyzer || cli.no_checker || cli.no_export;
+  let enable = cli.passes.analyzer || cli.passes.checker || cli.passes.export;
+  let disable = cli.passes.no_analyzer || cli.passes.no_checker || cli.passes.no_export;
   if enable && disable {
     conflict("can't use positive and negative pass selectors together")
   }
   let mut cfg = Config {
-    accom_enabled: !cli.no_accom,
-    parser_enabled: !cli.no_parser,
-    nameck_enabled: !cli.no_nameck,
-    analyzer_enabled: if enable { cli.analyzer } else { !cli.no_analyzer },
+    accom_enabled: !cli.passes.no_accom,
+    parser_enabled: !cli.passes.no_parser,
+    nameck_enabled: !cli.passes.no_nameck,
+    analyzer_enabled: if enable { cli.passes.analyzer } else { !cli.passes.no_analyzer },
     analyzer_full: Default::default(),
-    checker_enabled: if enable { cli.checker } else { !cli.no_checker },
-    exporter_enabled: if enable { cli.export } else { !cli.no_export },
-    verify_export: cli.verify_export,
-    xml_export: cli.xml_export,
-    xml_internals: cli.xml_internals,
-    overwrite_prel: cli.overwrite_prel,
+    checker_enabled: if enable { cli.passes.checker } else { !cli.passes.no_checker },
+    exporter_enabled: if enable { cli.passes.export } else { !cli.passes.no_export },
+    verify_export: cli.passes.verify_export,
+    xml_export: cli.passes.xml_export,
+    xml_internals: cli.passes.xml_internals,
+    overwrite_prel: cli.other.overwrite_prel,
     cache_prel: Default::default(),
 
-    top_item_header: cli.top_item_header,
-    always_verbose_item: cli.always_verbose_item,
-    item_header: cli.item_header,
-    checker_inputs: cli.checker_inputs,
-    checker_header: cli.checker_header,
-    checker_conjuncts: cli.checker_conjuncts,
-    checker_result: cli.checker_result,
-    unify_header: cli.unify_header,
-    unify_insts: cli.unify_insts,
+    top_item_header: cli.debug.top_item_header,
+    always_verbose_item: cli.debug.always_verbose_item,
+    item_header: cli.debug.item_header,
+    checker_inputs: cli.debug.checker_inputs,
+    checker_header: cli.debug.checker_header,
+    checker_conjuncts: cli.debug.checker_conjuncts,
+    checker_result: cli.debug.checker_result,
+    unify_header: cli.debug.unify_header,
+    unify_insts: cli.debug.unify_insts,
 
     dump: (&cli.dump).into(),
 
-    legacy_flex_handling: cli.legacy_flex_handling,
-    attr_sort_bug: cli.attr_sort_bug,
+    legacy_flex_handling: cli.unsound.legacy_flex_handling,
+    attr_sort_bug: cli.unsound.attr_sort_bug,
 
-    panic_on_fail: cli.panic_on_fail,
+    panic_on_fail: cli.other.panic_on_fail,
     first_verbose_line: cli.first_verbose_line, // None,
     one_item: cli.one_item,
     skip_to_verbose: cli.skip_to_verbose,
@@ -461,7 +468,7 @@ fn main() {
   cfg.accom_enabled |= cfg.parser_enabled; // parser needs accom
   cfg.nameck_enabled |= cfg.parser_enabled; // parser needs nameck
   cfg.analyzer_full |= cfg.checker_enabled; // checker needs analyzer_full (if analyzer is used)
-  cfg.cache_prel = !cfg.one_item && !cli.no_cache;
+  cfg.cache_prel = !cfg.one_item && !cli.other.no_cache;
   cfg.exporter_enabled &= cfg.xml_export || cfg.verify_export || cfg.cache_prel;
   cfg.analyzer_enabled |= cfg.exporter_enabled; // exporter needs (quick) analyzer
   if cfg.cache_prel && cli.dep_order && cfg.verify_export {
@@ -514,7 +521,7 @@ fn main() {
     std::process::exit(0)
   }
   let parallelism = cli.parallelism.min(jobs.len());
-  let progress = &if !cli.no_progress {
+  let progress = &if !cli.other.no_progress {
     Progress::new(jobs.len(), cfg.parser_enabled && READ_MAX_LINE_COUNT)
   } else {
     None
@@ -524,7 +531,7 @@ fn main() {
 
   let jobs = &Mutex::new(jobs.into_iter());
   let running = &*std::iter::repeat_with(|| {
-    (progress.as_ref().filter(|_| !cli.no_multi_progress))
+    (progress.as_ref().filter(|_| !cli.other.no_multi_progress))
       .map(|p| p.multi.insert(0, ProgressBar::hidden()).with_style(p.style.clone()))
   })
   .take(parallelism)
