@@ -289,18 +289,9 @@ impl Expand<'_> {
               let mut epf = ExpandPrivFunc(&self.g.constrs, self.lc);
               let terms2 = (*terms).visit_cloned(&mut epf);
               let scope2 = (*scope).visit_cloned(&mut epf);
-              let scope3 = if self.g.cfg.flex_expansion_bug {
-                let mut f = (*scope2).clone().mk_neg();
-                if f.conjuncts().len() > 1 {
-                  stat("flex expansion bug");
-                  f = f.conjuncts()[0].clone()
-                }
-                Box::new(f.mk_neg())
-              } else {
-                scope2.clone()
-              };
               let nat = std::mem::take(nat);
-              let f2 = Global::expand_flex_and(nat.clone(), *le, (*terms2).clone(), scope3, 0);
+              let f2 =
+                Global::expand_flex_and(nat.clone(), *le, (*terms2).clone(), scope2.clone(), 0);
               let f1 = Formula::FlexAnd { nat, le: *le, terms: terms2, scope: scope2 };
               conjs.push(f1.maybe_neg(pos));
               f2.maybe_neg(pos).append_conjuncts_to(conjs);

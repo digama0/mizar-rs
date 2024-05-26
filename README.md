@@ -238,11 +238,6 @@ Bugs and unsound flags:
 
           [default: true]
 
-      --flex-expansion-bug[=<FLEX_EXPANSION_BUG>]
-          This is completely wrong and UNSOUND behavior, when expanding a flex-and only the first conjunct is used, but aofa_l00 can't be checked without it (the proof should be patched)
-
-          [default: true]
-
       --attr-sort-bug[=<ATTR_SORT_BUG>]
           This is buggy behavior, but not unsound. It is required to interpret some MML files
 

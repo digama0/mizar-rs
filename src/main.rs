@@ -282,13 +282,6 @@ struct Cli {
     require_equals = true, default_missing_value = "true", hide_possible_values = true)]
   legacy_flex_handling: bool,
 
-  /// This is completely wrong and UNSOUND behavior, when expanding a flex-and
-  /// only the first conjunct is used, but aofa_l00 can't be checked without
-  /// it (the proof should be patched).
-  #[arg(long, num_args = 0..=1, action = ArgAction::Set, default_value = bool_to_str(true),
-    require_equals = true, default_missing_value = "true", hide_possible_values = true)]
-  flex_expansion_bug: bool,
-
   /// This is buggy behavior, but not unsound. It is required to interpret some MML files.
   #[arg(long, num_args = 0..=1, action = ArgAction::Set, default_value = bool_to_str(true),
     require_equals = true, default_missing_value = "true", hide_possible_values = true)]
@@ -374,10 +367,6 @@ pub struct Config {
   /// only the endpoints `P[a]` and `P[b]`. This is unsound, but needed to
   /// check some proofs
   pub legacy_flex_handling: bool,
-  /// This is completely wrong and unsound behavior, when expanding a flex-and
-  /// only the first conjunct is used, but aofa_l00 can't be checked without
-  /// it (the proof should be patched).
-  pub flex_expansion_bug: bool,
 
   /// Cluster lists in `Attrs` are supposed to be sorted, but Mizar fails
   /// to re-sort after some operations that can change relative sort order,
@@ -453,7 +442,6 @@ fn main() {
     dump: (&cli.dump).into(),
 
     legacy_flex_handling: cli.legacy_flex_handling,
-    flex_expansion_bug: cli.flex_expansion_bug,
     attr_sort_bug: cli.attr_sort_bug,
 
     panic_on_fail: cli.panic_on_fail,
