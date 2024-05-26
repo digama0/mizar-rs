@@ -185,7 +185,10 @@ impl<'a> Scanner<'a> {
       push1(s, TokenKind::Keyword(kind))
     }
     for prop in (0..PropertyKind::LENGTH).map(PropertyKind::from_usize) {
-      push1(prop.to_lower(), TokenKind::Property(prop))
+      // 'abstractness' is not a keyword
+      if prop != PropertyKind::Abstractness {
+        push1(prop.to_lower(), TokenKind::Property(prop))
+      }
     }
     for cc in (0..CorrCondKind::LENGTH).map(CorrCondKind::from_usize) {
       push1(cc.name(), TokenKind::CorrCond(cc))
