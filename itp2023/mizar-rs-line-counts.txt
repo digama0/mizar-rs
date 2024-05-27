@@ -1,0 +1,28 @@
+accom: 613
+   613 accom.rs
+parser: 2781
+  1957 parser/miz.rs
+   824 ast.rs
+analyzer: 6353
+  4694 analyze.rs
+  1659 parser/msm.rs
+checker: 13631
+  2976 global.rs
+  2791 types.rs
+  2644 equate.rs
+  1358 unify.rs
+  1072 checker.rs
+  1056 reader.rs
+   776 parser/article.rs
+   586 equate/polynomial.rs
+   372 bignum.rs
+general: 5214
+  1892 parser/mod.rs
+   901 write.rs
+   702 main.rs
+   640 format.rs
+   630 export.rs
+   293 cache.rs
+    99 util.rs
+    57 error.rs
+total: 28592

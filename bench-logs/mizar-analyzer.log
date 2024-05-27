@@ -1,0 +1,1470 @@
+   6: xfamily  in 0.011s
+  10: subset   in 0.016s
+   2: boole    in 0.018s
+   0: tarski   in 0.029s
+   7: xregular in 0.047s
+   1: xboole_0 in 0.049s
+   5: xtuple_0 in 0.101s
+   9: subset_1 in 0.103s
+  14: grfunc_1 in 0.095s
+   3: xboole_1 in 0.138s
+   4: enumset1 in 0.139s
+  11: setfam_1 in 0.179s
+  15: relat_2  in 0.163s
+  18: relset_1 in 0.124s
+  16: ordinal1 in 0.200s
+   8: zfmisc_1 in 0.257s
+  12: relat_1  in 0.304s
+  24: domain_1 in 0.129s
+  23: binop_1  in 0.142s
+  17: wellord1 in 0.279s
+  29: numerals in 0.014s
+  27: realset1 in 0.082s
+  21: wellord2 in 0.202s
+  19: partfun1 in 0.236s
+  13: funct_1  in 0.344s
+  20: mcart_1  in 0.258s
+  34: schems_1 in 0.040s
+  33: multop_1 in 0.077s
+  32: wellset1 in 0.206s
+  35: sysrel   in 0.205s
+  37: card_1   in 0.214s
+  36: finset_1 in 0.253s
+  31: ordinal3 in 0.306s
+  41: gate_2   in 0.102s
+  25: funct_3  in 0.437s
+  26: funcop_1 in 0.416s
+  22: funct_2  in 0.538s
+  40: gate_1   in 0.155s
+  45: finsub_1 in 0.074s
+  39: pboole   in 0.310s
+  44: gate_5   in 0.114s
+  42: gate_3   in 0.170s
+  43: gate_4   in 0.146s
+  30: ordinal2 in 0.450s
+  38: classes1 in 0.405s
+  28: funct_4  in 0.484s
+  55: arytm_1  in 0.084s
+  48: fraenkel in 0.250s
+  56: numbers  in 0.178s
+  50: partfun2 in 0.247s
+  59: arithm   in 0.043s
+  62: real     in 0.022s
+  60: xxreal_0 in 0.100s
+  58: xcmplx_0 in 0.227s
+  46: orders_1 in 0.437s
+  53: arytm_3  in 0.352s
+  61: xreal_0  in 0.143s
+  57: arytm_0  in 0.329s
+  66: real_1   in 0.032s
+  49: funct_5  in 0.445s
+  65: axioms   in 0.066s
+  54: arytm_2  in 0.398s
+  63: xcmplx_1 in 0.235s
+  52: funct_6  in 0.507s
+  67: square_1 in 0.159s
+  47: setwiseo in 0.612s
+  71: membered in 0.143s
+  51: card_3   in 0.639s
+  70: rat_1    in 0.266s
+  69: int_1    in 0.276s
+  74: absvalue in 0.201s
+  75: int_2    in 0.231s
+  68: nat_1    in 0.448s
+  64: xreal_1  in 0.509s
+  73: complex1 in 0.414s
+  84: supinf_1 in 0.080s
+  78: binop_2  in 0.360s
+  76: nat_d    in 0.415s
+  81: xxreal_2 in 0.335s
+  86: classes2 in 0.232s
+  85: quin_1   in 0.277s
+  77: xprimes0 in 0.641s
+  82: xxreal_3 in 0.503s
+  87: ordinal4 in 0.357s
+  79: xxreal_1 in 0.678s
+  80: card_2   in 0.699s
+  83: member_1 in 0.638s
+  72: valued_0 in 1.062s
+  97: xboolean in 0.177s
+  90: eqrel_1  in 0.723s
+  89: recdef_1 in 0.824s
+ 101: toler_1  in 0.269s
+ 100: margrel1 in 0.573s
+  92: finseqop in 1.228s
+  91: finseq_2 in 1.295s
+  98: comseq_2 in 1.132s
+  99: seq_2    in 1.054s
+ 102: trees_1  in 1.030s
+ 104: finsop_1 in 0.757s
+ 105: setwop_2 in 0.857s
+  96: comseq_1 in 1.985s
+  95: seq_1    in 2.194s
+ 110: card_5   in 1.158s
+ 103: finseq_4 in 2.037s
+ 109: card_4   in 1.348s
+  88: finseq_1 in 4.460s
+ 116: rcomp_1  in 1.519s
+ 106: rfunct_1 in 3.707s
+ 111: trees_2  in 3.045s
+  93: finseq_3 in 5.424s
+ 108: newton   in 4.902s
+ 107: rvsum_1  in 6.347s
+ 114: rfinseq  in 5.073s
+ 113: seqm_3   in 7.012s
+ 120: fcont_2  in 4.322s
+  94: valued_1 in 9.388s
+ 117: rfunct_2 in 5.720s
+ 124: finseq_5 in 2.547s
+ 122: rolle    in 4.606s
+ 125: rewrite1 in 1.759s
+ 127: scheme1  in 1.845s
+ 128: abian    in 1.997s
+ 129: power    in 1.723s
+ 130: polyeq_1 in 1.357s
+ 118: cfunct_1 in 8.124s
+ 135: rpr_1    in 0.663s
+ 137: trees_a  in 1.010s
+ 119: fcont_1  in 9.732s
+ 115: seq_4    in 12.254s
+ 138: pre_ff   in 1.591s
+ 136: supinf_2 in 2.873s
+ 112: valued_2 in 13.482s
+ 126: funct_7  in 6.229s
+ 123: prepower in 8.618s
+ 140: partit1  in 1.325s
+ 142: card_fil in 1.008s
+ 146: mboolean in 0.347s
+ 143: binarith in 1.623s
+ 133: cfcont_1 in 5.459s
+ 121: fdiff_1  in 12.031s
+ 141: trees_4  in 2.064s
+ 149: pzfmisc1 in 0.993s
+ 132: comseq_3 in 7.403s
+ 144: pre_circ in 3.146s
+ 153: mssubfam in 0.889s
+ 139: trees_3  in 4.496s
+ 151: binari_2 in 1.978s
+ 154: relset_2 in 0.787s
+ 131: series_1 in 8.500s
+ 155: recdef_2 in 0.888s
+ 147: wsierp_1 in 3.403s
+ 156: prob_1   in 0.985s
+ 148: glib_000 in 3.746s
+ 152: trees_9  in 3.921s
+ 150: genealg1 in 4.247s
+ 157: prob_2   in 2.609s
+ 160: seqfunc  in 3.182s
+ 134: cfdiff_1 in 10.963s
+ 167: measure1 in 1.795s
+ 168: measure2 in 1.585s
+ 163: limfunc4 in 4.771s
+ 172: measure5 in 0.332s
+ 170: measure4 in 1.877s
+ 162: fcont_3  in 6.216s
+ 164: l_hospit in 6.633s
+ 169: measure3 in 4.118s
+ 161: limfunc3 in 7.957s
+ 159: limfunc2 in 9.448s
+ 158: limfunc1 in 9.584s
+ 174: measure6 in 4.122s
+ 175: extreal1 in 3.466s
+ 178: mesfunc1 in 3.068s
+ 176: measure7 in 4.439s
+ 183: sin_cos4 in 1.009s
+ 177: rfunct_4 in 4.423s
+ 145: finseq_6 in 15.424s
+ 182: sin_cos3 in 2.190s
+ 180: mesfunc2 in 3.242s
+ 188: polyeq_2 in 0.666s
+ 184: sin_cos5 in 1.403s
+ 187: complex2 in 1.536s
+ 190: polyeq_4 in 1.000s
+ 181: sin_cos2 in 3.973s
+ 186: comptrig in 2.361s
+ 193: euler_1  in 1.057s
+ 189: polyeq_3 in 2.480s
+ 192: sin_cos6 in 2.502s
+ 171: rfunct_3 in 12.005s
+ 194: euler_2  in 2.982s
+ 191: polyeq_5 in 3.653s
+ 201: nat_2    in 0.410s
+ 173: rearran1 in 12.462s
+ 197: series_4 in 2.959s
+ 185: asympt_0 in 6.534s
+ 198: series_5 in 2.858s
+ 199: quaterni in 2.347s
+ 202: pepin    in 1.613s
+ 196: series_3 in 5.829s
+ 179: sin_cos  in 11.844s
+ 203: irrat_1  in 3.134s
+ 205: holder_1 in 3.141s
+ 200: afinsq_1 in 5.674s
+ 207: fdiff_5  in 3.735s
+ 211: sin_cos7 in 1.862s
+ 212: sin_cos8 in 1.494s
+ 165: fdiff_2  in 21.458s
+ 216: catalan1 in 0.371s
+ 214: bvfunc_2 in 0.886s
+ 213: bvfunc_1 in 1.548s
+ 217: pythtrip in 0.799s
+ 210: fdiff_8  in 3.429s
+ 220: partit_2 in 0.621s
+ 206: fdiff_4  in 5.808s
+ 222: bvfunc_4 in 0.293s
+ 221: bvfunc_3 in 1.019s
+ 209: fdiff_7  in 4.511s
+ 223: bvfunc_5 in 0.675s
+ 204: taylor_1 in 7.406s
+ 225: bvfunc11 in 0.896s
+ 219: fib_num  in 2.160s
+ 231: arrow    in 0.768s
+ 228: finseq_7 in 1.539s
+ 227: bvfunc25 in 1.793s
+ 215: taylor_2 in 4.031s
+ 166: fdiff_3  in 26.470s
+ 229: prgcor_1 in 2.993s
+ 208: fdiff_6  in 9.438s
+ 226: bvfunc14 in 3.378s
+ 224: bvfunc_6 in 4.970s
+ 230: fdiff_9  in 4.434s
+ 236: prgcor_2 in 1.810s
+ 233: fdiff_10 in 4.352s
+ 242: finseq_8 in 1.619s
+ 218: series_2 in 9.126s
+ 241: rvsum_2  in 2.582s
+ 238: sincos10 in 5.076s
+ 232: real_3   in 7.238s
+ 246: rfinseq2 in 2.460s
+ 243: pnproc_1 in 4.240s
+ 195: asympt_1 in 22.234s
+ 240: mesfunc4 in 7.082s
+ 252: card_lar in 0.687s
+ 237: sin_cos9 in 9.315s
+ 254: kurato_0 in 0.590s
+ 245: integra2 in 6.172s
+ 253: fuzzy_1  in 2.550s
+ 255: partfun3 in 2.000s
+ 239: mesfunc3 in 12.701s
+ 258: setlim_1 in 1.373s
+ 256: fuzzy_2  in 3.713s
+ 257: fuzzy_4  in 2.900s
+ 251: integra8 in 6.928s
+ 249: integra5 in 8.889s
+ 263: dynkin   in 0.623s
+ 261: setlim_2 in 1.654s
+ 235: pre_poly in 17.986s
+ 234: hfdiff_1 in 18.586s
+ 260: rinfsup1 in 3.900s
+ 248: integra4 in 12.423s
+ 262: prob_3   in 3.831s
+ 259: diff_1   in 6.459s
+ 264: prob_4   in 5.544s
+ 267: diff_2   in 4.617s
+ 268: int_6    in 4.533s
+ 250: integr12 in 16.025s
+ 265: kolmog01 in 7.584s
+ 272: mesfunc7 in 4.646s
+ 275: rinfsup2 in 3.663s
+ 270: mesfunc6 in 8.593s
+ 271: diff_3   in 9.041s
+ 281: gobrd10  in 1.465s
+ 244: integra1 in 25.775s
+ 279: matrix_0 in 3.992s
+ 278: mesfun10 in 5.819s
+ 276: mesfunc8 in 7.182s
+ 273: mesfun6c in 9.589s
+ 274: diff_4   in 10.678s
+ 277: mesfunc9 in 12.491s
+ 283: integr14 in 7.901s
+ 285: nat_3    in 7.722s
+ 287: xprimet1 in 7.895s
+ 290: ordinal5 in 1.877s
+ 289: fib_num3 in 3.580s
+ 291: ordinal6 in 2.265s
+ 294: zf_model in 0.557s
+ 295: zf_colla in 0.400s
+ 280: afinsq_2 in 14.139s
+ 293: zf_lang  in 2.031s
+ 282: integr13 in 12.450s
+ 296: zfmodel1 in 1.927s
+ 299: zfrefle1 in 0.886s
+ 298: zf_refle in 1.669s
+ 288: fib_num2 in 10.549s
+ 302: qc_lang3 in 0.852s
+ 301: qc_lang2 in 0.920s
+ 300: qc_lang1 in 1.549s
+ 307: lukasi_1 in 0.332s
+ 308: procal_1 in 0.317s
+ 303: cqc_lang in 1.427s
+ 297: zf_lang1 in 3.723s
+ 304: cqc_the1 in 1.805s
+ 311: cqc_the2 in 0.853s
+ 310: intpro_1 in 1.204s
+ 313: hilbert1 in 0.758s
+ 305: valuat_1 in 2.697s
+ 312: zf_fund2 in 1.457s
+ 309: zf_fund1 in 2.187s
+ 306: zfmodel2 in 3.008s
+ 316: cqc_the3 in 0.742s
+ 269: bor_cant in 29.288s
+ 317: qc_lang4 in 1.298s
+ 284: stirl2_1 in 17.819s
+ 320: substut2 in 1.128s
+ 314: cqc_sim1 in 3.291s
+ 318: substut1 in 2.793s
+ 322: calcul_2 in 1.824s
+ 247: integra3 in 43.721s
+ 323: henmodel in 1.984s
+ 319: sublemma in 3.842s
+ 324: goedelcp in 2.506s
+ 315: modal_1  in 4.593s
+ 330: classes3 in 0.667s
+ 328: newton01 in 1.811s
+ 334: struct_0 in 0.389s
+ 325: qc_trans in 3.134s
+ 335: algstr_0 in 0.238s
+ 337: pre_topc in 0.479s
+ 336: incsp_1  in 0.632s
+ 329: polnot_1 in 2.996s
+ 338: orders_2 in 0.643s
+ 341: petri    in 0.471s
+ 331: intpro_2 in 3.048s
+ 342: net_1    in 0.209s
+ 340: cat_1    in 1.017s
+ 321: calcul_1 in 6.821s
+ 343: lattices in 0.436s
+ 266: mesfunc5 in 37.504s
+ 344: tops_1   in 0.421s
+ 339: graph_1  in 1.795s
+ 345: connsp_1 in 0.762s
+ 351: algstr_1 in 0.576s
+ 346: tops_2   in 1.231s
+ 348: rlsub_1  in 1.401s
+ 326: ntalgo_1 in 6.563s
+ 350: vectsp_1 in 1.441s
+ 353: parsp_1  in 0.731s
+ 352: complfld in 0.828s
+ 349: group_1  in 1.812s
+ 358: midsp_1  in 0.364s
+ 356: compts_1 in 0.704s
+ 354: symsp_1  in 1.202s
+ 347: rlvect_1 in 2.820s
+ 357: rlsub_2  in 1.042s
+ 355: ortsp_1  in 1.239s
+ 362: lattice2 in 0.660s
+ 360: vectsp_2 in 1.094s
+ 361: filter_0 in 0.937s
+ 364: qmax_1   in 0.783s
+ 365: parsp_2  in 0.856s
+ 363: robbins1 in 1.038s
+ 369: diraf    in 0.316s
+ 370: aff_1    in 0.360s
+ 367: analoaf  in 0.782s
+ 373: collsp   in 0.176s
+ 371: aff_2    in 0.594s
+ 372: aff_3    in 0.503s
+ 376: tdgroup  in 0.313s
+ 374: pasch    in 0.555s
+ 359: funcsdom in 2.889s
+ 368: metric_1 in 1.597s
+ 375: real_lat in 0.750s
+ 379: translac in 0.612s
+ 380: anproj_1 in 0.750s
+ 377: transgeo in 1.597s
+ 378: cat_2    in 1.839s
+ 386: normsp_0 in 0.142s
+ 327: aescip_1 in 11.263s
+ 382: rlvect_3 in 1.753s
+ 384: vectsp_4 in 1.457s
+ 385: vectsp_5 in 1.204s
+ 381: anproj_2 in 2.791s
+ 390: vectsp_7 in 1.296s
+ 391: analmetr in 1.109s
+ 393: projdes1 in 0.276s
+ 387: normsp_1 in 1.939s
+ 383: group_2  in 3.519s
+ 397: connsp_2 in 0.543s
+ 392: group_3  in 1.739s
+ 388: vfunct_1 in 3.402s
+ 389: vectsp_6 in 3.443s
+ 396: realset2 in 1.740s
+ 401: midsp_2  in 0.690s
+ 398: matrix_1 in 1.637s
+ 394: group_4  in 2.911s
+ 366: rlvect_2 in 8.222s
+ 286: nat_4    in 34.820s
+ 406: algseq_1 in 0.430s
+ 402: grcat_1  in 1.577s
+ 409: complsp1 in 0.173s
+ 407: homothet in 0.703s
+ 403: mod_2    in 1.444s
+ 408: afvect0  in 0.647s
+ 410: realset3 in 0.610s
+ 395: gr_cy_1  in 4.134s
+ 412: metric_2 in 0.443s
+ 399: fvsum_1  in 3.398s
+ 414: hessenbe in 0.326s
+ 416: afvect01 in 0.224s
+ 415: incproj  in 0.431s
+ 411: algstr_2 in 0.824s
+ 419: algstr_3 in 0.201s
+ 417: normform in 0.665s
+ 420: projred1 in 0.764s
+ 413: metric_3 in 1.531s
+ 422: rmod_3   in 0.777s
+ 418: o_ring_1 in 1.319s
+ 421: rmod_2   in 1.302s
+ 333: xprimes2 in 17.602s
+ 429: pardepap in 0.116s
+ 426: conaffm  in 0.745s
+ 425: projred2 in 0.820s
+ 332: xprimes1 in 18.429s
+ 430: semi_af1 in 0.413s
+ 428: papdesaf in 0.722s
+ 400: matrix_3 in 5.158s
+ 431: aff_4    in 0.690s
+ 427: conmetr  in 1.143s
+ 436: euclmetr in 0.678s
+ 424: geomtrap in 2.031s
+ 432: afproj   in 1.252s
+ 433: heyting1 in 1.192s
+ 438: conmetr1 in 0.833s
+ 435: oppcat_1 in 1.250s
+ 439: nat_lat  in 0.667s
+ 423: rmod_4   in 3.303s
+ 444: ali2     in 0.470s
+ 441: cat_3    in 1.252s
+ 443: pcomps_1 in 1.199s
+ 446: bhsp_2   in 0.782s
+ 437: filter_1 in 2.625s
+ 447: bhsp_3   in 1.293s
+ 445: bhsp_1   in 1.674s
+ 442: nattra_1 in 2.534s
+ 450: tbsp_1   in 1.237s
+ 448: ens_1    in 1.896s
+ 440: group_5  in 3.445s
+ 454: rusub_2  in 1.269s
+ 404: matrlin  in 9.058s
+ 449: borsuk_1 in 2.745s
+ 455: rlvect_4 in 1.396s
+ 451: group_6  in 2.318s
+ 459: t_0topsp in 0.523s
+ 460: cantor_1 in 0.458s
+ 453: rusub_1  in 2.799s
+ 452: monoid_0 in 3.094s
+ 461: tsep_1   in 1.087s
+ 462: tdlat_1  in 1.146s
+ 456: rusub_3  in 2.342s
+ 465: tdlat_3  in 0.605s
+ 463: lattice3 in 1.096s
+ 466: tops_3   in 0.387s
+ 468: unialg_1 in 0.257s
+ 458: rusub_4  in 1.922s
+ 457: rlvect_5 in 2.846s
+ 434: prelamb  in 7.247s
+ 473: yellow_0 in 0.686s
+ 464: tdlat_2  in 1.789s
+ 467: urysohn1 in 1.286s
+ 476: orders_3 in 0.613s
+ 470: lang1    in 1.286s
+ 469: unialg_2 in 1.488s
+ 292: descip_1 in 37.815s
+ 475: altcat_1 in 0.949s
+ 405: polynom1 in 11.843s
+ 477: yellow_1 in 0.808s
+ 483: yellow_4 in 0.592s
+ 485: tex_1    in 0.497s
+ 480: yellow_2 in 0.811s
+ 478: waybel_0 in 1.516s
+ 482: yellow_3 in 1.199s
+ 479: quantal1 in 1.649s
+ 474: cat_5    in 2.448s
+ 490: tsp_1    in 0.529s
+ 489: tex_4    in 0.815s
+ 491: yellow_8 in 0.473s
+ 488: tex_2    in 1.211s
+ 481: waybel_1 in 2.210s
+ 492: topmetr  in 1.313s
+ 486: waybel_2 in 2.362s
+ 472: pralg_1  in 3.957s
+ 484: tmap_1   in 2.543s
+ 497: msualg_1 in 0.941s
+ 487: waybel_3 in 2.400s
+ 502: yellow_5 in 0.518s
+ 494: treal_1  in 1.780s
+ 493: heine    in 2.057s
+ 498: pralg_2  in 1.474s
+ 495: borsuk_2 in 2.250s
+ 499: msualg_2 in 2.035s
+ 508: waybel_8 in 1.030s
+ 507: waybel_7 in 1.377s
+ 503: yellow_7 in 2.016s
+ 496: yellow_6 in 3.410s
+ 500: msualg_3 in 2.604s
+ 504: alg_1    in 2.326s
+ 513: rusub_5  in 1.291s
+ 509: waybel_9 in 2.389s
+ 505: waybel_4 in 2.962s
+ 506: waybel_6 in 3.825s
+ 517: msafree1 in 1.142s
+ 512: topgrp_1 in 2.979s
+ 511: yellow_9 in 3.167s
+ 501: waybel_5 in 5.622s
+ 471: dtconstr in 9.801s
+ 522: lattice4 in 0.731s
+ 518: msafree2 in 2.366s
+ 521: closure2 in 1.485s
+ 516: msualg_4 in 3.464s
+ 510: waybel11 in 4.240s
+ 520: hahnban  in 2.292s
+ 528: yellow13 in 0.872s
+ 525: yellow12 in 1.166s
+ 514: convex1  in 4.636s
+ 515: msafree  in 4.588s
+ 523: waybel12 in 2.229s
+ 532: topmetr2 in 0.525s
+ 519: msualg_5 in 3.977s
+ 524: waybel14 in 2.107s
+ 530: rsspace  in 1.554s
+ 527: yellow11 in 2.353s
+ 531: euclid   in 2.033s
+ 529: rltopsp1 in 3.222s
+ 536: topreal4 in 2.992s
+ 534: topreal3 in 3.509s
+ 541: jordan1  in 2.731s
+ 537: goboard1 in 5.034s
+ 535: topreal2 in 5.588s
+ 540: sppol_2  in 5.013s
+ 533: topreal1 in 5.884s
+ 538: goboard2 in 5.507s
+ 542: goboard5 in 4.589s
+ 526: lattice5 in 7.951s
+ 551: mod_3    in 0.827s
+ 539: sppol_1  in 6.630s
+ 552: analort  in 1.226s
+ 554: vectsp_8 in 0.899s
+ 556: t_1topsp in 0.329s
+ 547: rsspace3 in 2.861s
+ 550: ranknull in 3.062s
+ 557: borsuk_3 in 1.225s
+ 549: vectsp_9 in 3.236s
+ 546: rsspace2 in 5.132s
+ 553: prvect_1 in 2.423s
+ 555: msualg_7 in 1.894s
+ 545: pscomp_1 in 5.859s
+ 561: modcat_1 in 0.547s
+ 563: ff_siec  in 0.549s
+ 560: ringcat1 in 0.740s
+ 564: e_siec   in 0.738s
+ 562: metric_6 in 1.084s
+ 558: toprns_1 in 2.306s
+ 570: lmod_6   in 0.305s
+ 565: commacat in 1.094s
+ 571: dirort   in 0.313s
+ 559: isocat_1 in 2.133s
+ 567: midsp_3  in 1.171s
+ 577: tsep_2   in 0.416s
+ 568: gr_cy_2  in 1.643s
+ 543: goboard6 in 9.284s
+ 572: mod_4    in 1.626s
+ 573: pcomps_2 in 1.688s
+ 578: fin_topo in 0.946s
+ 548: lopban_1 in 6.441s
+ 569: isocat_2 in 2.841s
+ 579: coh_sp   in 1.224s
+ 581: lmod_7   in 0.815s
+ 583: openlatt in 0.872s
+ 587: tex_3    in 0.544s
+ 576: cat_4    in 2.871s
+ 544: goboard7 in 10.170s
+ 584: lopclset in 1.350s
+ 585: boolmark in 1.176s
+ 589: boolealg in 0.566s
+ 592: projpl_1 in 0.332s
+ 591: tsp_2    in 0.793s
+ 590: autgroup in 0.965s
+ 593: sgraph1  in 0.939s
+ 594: grsolv_1 in 1.157s
+ 595: filter_2 in 1.126s
+ 582: hahnban1 in 3.119s
+ 598: decomp_1 in 0.569s
+ 600: autalg_1 in 0.732s
+ 602: extens_1 in 0.767s
+ 599: msuhom_1 in 1.157s
+ 575: goboard4 in 5.918s
+ 586: freealg  in 3.822s
+ 566: bhsp_4   in 6.989s
+ 580: monoid_1 in 4.788s
+ 607: unialg_3 in 0.621s
+ 588: bintree1 in 4.198s
+ 606: latsubgr in 0.787s
+ 597: msaterm  in 3.841s
+ 574: goboard3 in 7.837s
+ 609: weierstr in 1.764s
+ 608: index_1  in 2.000s
+ 604: circcomb in 2.978s
+ 613: endalg   in 0.854s
+ 618: connsp_3 in 0.352s
+ 617: altcat_2 in 0.893s
+ 596: fsm_1    in 5.492s
+ 611: cohsp_1  in 2.804s
+ 619: closure1 in 1.032s
+ 615: triang_1 in 2.581s
+ 601: circuit1 in 5.777s
+ 610: facirc_1 in 3.914s
+ 605: graph_2  in 4.848s
+ 622: msualg_8 in 1.442s
+ 612: pua2mss1 in 4.503s
+ 614: goboard8 in 3.692s
+ 625: functor1 in 1.335s
+ 616: goboard9 in 4.080s
+ 623: msscyc_2 in 2.426s
+ 629: msinst_1 in 1.361s
+ 627: msalimit in 2.016s
+ 603: circuit2 in 7.471s
+ 621: msscyc_1 in 3.472s
+ 624: functor0 in 2.865s
+ 626: pralg_3  in 2.967s
+ 632: knaster  in 1.397s
+ 628: msualg_9 in 2.667s
+ 620: msualg_6 in 4.483s
+ 638: altcat_3 in 0.636s
+ 639: wellfnd1 in 0.642s
+ 630: gobrd11  in 2.833s
+ 633: twoscomp in 1.912s
+ 636: waybel10 in 1.564s
+ 642: substlat in 0.686s
+ 645: functor2 in 0.833s
+ 640: waybel13 in 1.631s
+ 635: instalg1 in 3.169s
+ 648: birkhoff in 1.219s
+ 646: yoneda_1 in 1.651s
+ 637: catalg_1 in 3.282s
+ 649: closure3 in 1.077s
+ 643: equation in 2.729s
+ 631: gobrd12  in 4.933s
+ 644: msafree3 in 3.343s
+ 655: waybel15 in 1.408s
+ 657: topreal5 in 1.238s
+ 654: altcat_4 in 1.927s
+ 647: gcd_1    in 4.241s
+ 658: uniform1 in 2.196s
+ 653: jordan5c in 4.008s
+ 656: jordan2b in 3.538s
+ 651: jordan5a in 4.598s
+ 641: jordan4  in 6.798s
+ 662: functor3 in 2.146s
+ 663: waybel16 in 1.197s
+ 652: jordan5b in 6.004s
+ 665: binari_3 in 1.775s
+ 667: yellow10 in 1.654s
+ 666: bintree2 in 2.627s
+ 661: jordan6  in 5.210s
+ 659: sprect_1 in 6.045s
+ 670: frechet  in 1.948s
+ 664: waybel17 in 3.797s
+ 650: graph_3  in 8.757s
+ 668: waybel18 in 3.209s
+ 634: jordan3  in 11.905s
+ 674: waybel19 in 2.133s
+ 672: group_7  in 3.475s
+ 669: quofield in 5.077s
+ 676: waybel21 in 2.201s
+ 677: waybel22 in 2.307s
+ 684: taxonom2 in 0.497s
+ 678: graph_4  in 2.609s
+ 675: waybel20 in 3.103s
+ 682: conlat_1 in 1.522s
+ 683: taxonom1 in 1.683s
+ 660: sprect_2 in 9.653s
+ 681: mssublat in 2.346s
+ 688: heyting2 in 1.297s
+ 687: waybel23 in 1.768s
+ 690: yellow15 in 2.463s
+ 694: yellow20 in 1.949s
+ 671: jordan5d in 8.361s
+ 692: convex3  in 2.731s
+ 689: convex2  in 4.528s
+ 693: yellow18 in 3.762s
+ 673: jordan7  in 9.043s
+ 698: matrix_5 in 1.676s
+ 686: vectmetr in 6.204s
+ 680: idea_1   in 8.306s
+ 697: matrix_4 in 3.059s
+ 695: binom    in 3.813s
+ 685: sprect_3 in 8.157s
+ 691: graph_5  in 6.925s
+ 704: pencil_1 in 2.456s
+ 706: hallmar1 in 1.500s
+ 707: revrot_1 in 3.352s
+ 699: matrixr1 in 6.315s
+ 710: circcmb2 in 3.190s
+ 709: combgras in 3.607s
+ 696: card_fin in 10.155s
+ 714: matroid0 in 2.094s
+ 700: complsp2 in 9.259s
+ 679: jgraph_1 in 17.168s
+ 702: matrprob in 9.163s
+ 701: matrixc1 in 9.916s
+ 708: jgraph_2 in 7.795s
+ 703: rlaffin1 in 9.813s
+ 711: circcmb3 in 6.550s
+ 719: polynom4 in 4.492s
+ 724: group_8  in 0.966s
+ 722: matrix_7 in 5.378s
+ 705: chain_1  in 15.526s
+ 715: dickson  in 9.068s
+ 728: hilbert2 in 1.552s
+ 718: bagorder in 12.277s
+ 729: int_3    in 3.121s
+ 727: group_10 in 5.985s
+ 716: polynom2 in 14.338s
+ 717: polynom3 in 16.528s
+ 720: polynom5 in 15.963s
+ 726: weddwitt in 10.766s
+ 732: simplex0 in 4.152s
+ 730: moebius1 in 5.806s
+ 734: matrix_6 in 2.026s
+ 731: int_4    in 7.126s
+ 737: matrix10 in 2.553s
+ 712: comput_1 in 23.797s
+ 735: matrix_9 in 5.637s
+ 721: uproots  in 21.282s
+ 733: rlaffin2 in 8.732s
+ 725: uniroots in 17.962s
+ 741: vectsp10 in 3.748s
+ 744: matrix_8 in 2.128s
+ 747: topgen_2 in 1.003s
+ 748: euclid_2 in 1.808s
+ 749: matrix12 in 2.057s
+ 739: hurwitz  in 9.042s
+ 740: laplace  in 8.407s
+ 736: matrix11 in 12.654s
+ 738: matrixr2 in 12.972s
+ 753: frechet2 in 2.887s
+ 752: sprect_4 in 3.919s
+ 746: matrlin2 in 8.228s
+ 758: topmetr3 in 2.626s
+ 750: matrix14 in 8.372s
+ 760: fscirc_1 in 1.036s
+ 713: aofa_000 in 38.458s
+ 754: topreal6 in 6.486s
+ 761: urysohn2 in 1.606s
+ 759: topreal7 in 3.531s
+ 723: group_9  in 35.070s
+ 762: jct_misc in 2.858s
+ 763: borsuk_4 in 2.533s
+ 764: borsuk_5 in 1.877s
+ 755: jgraph_3 in 9.049s
+ 769: jordan17 in 0.955s
+ 767: hausdorf in 1.698s
+ 766: jordan1k in 2.407s
+ 768: jordan16 in 1.419s
+ 765: hilbert3 in 3.907s
+ 771: jordan21 in 1.992s
+ 757: jgraph_5 in 11.277s
+ 745: matrixj1 in 19.959s
+ 777: topalg_2 in 1.681s
+ 775: urysohn3 in 3.199s
+ 778: topalg_3 in 3.589s
+ 770: jordan20 in 6.992s
+ 743: matrix15 in 25.311s
+ 742: matrix13 in 27.280s
+ 773: jgraph_7 in 7.505s
+ 779: topalg_4 in 3.942s
+ 774: borsuk_6 in 7.941s
+ 756: jgraph_4 in 17.117s
+ 785: partfun4 in 1.056s
+ 781: topreala in 2.807s
+ 751: jordan2c in 22.336s
+ 780: topreal9 in 4.730s
+ 789: jordan24 in 1.327s
+ 776: topalg_1 in 9.128s
+ 791: jordan8  in 2.321s
+ 794: lattice6 in 2.820s
+ 795: waybel24 in 2.565s
+ 788: jgraph_8 in 6.444s
+ 793: gobrd14  in 4.854s
+ 787: tietze   in 7.287s
+ 792: gobrd13  in 6.762s
+ 796: yellow14 in 2.749s
+ 786: brouwer  in 8.935s
+ 797: topreal8 in 3.426s
+ 783: rcomp_3  in 10.367s
+ 799: jordan10 in 2.889s
+ 801: conlat_2 in 2.039s
+ 802: radix_1  in 2.526s
+ 807: waybel28 in 0.944s
+ 804: algspec1 in 1.825s
+ 803: yellow16 in 2.549s
+ 800: waybel25 in 4.359s
+ 811: lattice7 in 0.998s
+ 810: waybel31 in 1.588s
+ 813: yellow17 in 0.769s
+ 782: toprealb in 14.758s
+ 805: waybel26 in 4.091s
+ 815: orders_4 in 0.882s
+ 806: waybel27 in 4.359s
+ 814: waybel32 in 1.273s
+ 809: waybel30 in 3.008s
+ 784: topalg_5 in 15.010s
+ 820: fintopo2 in 0.578s
+ 812: radix_2  in 4.090s
+ 808: waybel29 in 5.143s
+ 822: sprect_5 in 1.855s
+ 821: jordan1c in 2.136s
+ 819: jordan1b in 2.387s
+ 817: heyting3 in 2.770s
+ 798: jordan9  in 10.819s
+ 829: yellow19 in 1.160s
+ 826: polyalg1 in 1.507s
+ 816: lattice8 in 4.892s
+ 823: jordan1d in 3.585s
+ 818: jordan1a in 4.422s
+ 830: waybel33 in 2.046s
+ 831: yellow21 in 2.279s
+ 772: jgraph_6 in 28.762s
+ 833: jordan1e in 2.713s
+ 827: circtrm1 in 4.918s
+ 835: pencil_2 in 3.621s
+ 836: jordan1f in 3.256s
+ 840: fsm_2    in 2.241s
+ 832: waybel34 in 5.905s
+ 841: jordan1i in 3.636s
+ 828: turing_1 in 9.638s
+ 834: polynom6 in 8.249s
+ 839: polynom7 in 5.765s
+ 844: jordan11 in 3.273s
+ 842: facirc_2 in 4.883s
+ 849: jordan18 in 1.204s
+ 837: jordan1g in 8.802s
+ 850: osalg_1  in 1.364s
+ 845: jordan12 in 3.774s
+ 851: osalg_2  in 1.478s
+ 852: osalg_3  in 0.942s
+ 847: jordan14 in 3.125s
+ 843: jordan1j in 6.733s
+ 858: necklace in 1.889s
+ 846: jordan13 in 6.395s
+ 856: bilinear in 2.978s
+ 855: armstrng in 4.539s
+ 838: jordan1h in 13.584s
+ 861: radix_3  in 1.935s
+ 824: ideal_1  in 19.562s
+ 790: jordan   in 34.890s
+ 863: bhsp_5   in 1.418s
+ 853: osalg_4  in 7.029s
+ 866: oposet_1 in 0.405s
+ 862: radix_4  in 2.053s
+ 865: waybel35 in 1.164s
+ 870: bhsp_7   in 1.278s
+ 864: binari_4 in 3.122s
+ 859: termord  in 5.756s
+ 867: bhsp_6   in 2.335s
+ 825: hilbasis in 22.390s
+ 872: neckla_2 in 1.361s
+ 876: robbins2 in 0.487s
+ 875: kurato_1 in 1.411s
+ 871: euclid_3 in 3.121s
+ 868: fscirc_2 in 4.132s
+ 880: euclid_5 in 1.631s
+ 881: lfuzzy_0 in 2.261s
+ 857: hermitan in 12.862s
+ 878: abcmiz_0 in 3.755s
+ 879: euclid_4 in 3.560s
+ 886: radix_6  in 0.888s
+ 885: radix_5  in 1.242s
+ 882: kurato_2 in 2.756s
+ 848: jordan15 in 18.494s
+ 869: graphsp  in 9.691s
+ 854: osafree  in 16.263s
+ 883: jordan_a in 4.089s
+ 877: convfun1 in 8.301s
+ 888: roughs_1 in 3.301s
+ 894: fintopo3 in 0.529s
+ 892: cfuncdom in 2.020s
+ 890: clvect_1 in 3.652s
+ 889: rsspace4 in 4.996s
+ 887: lfuzzy_1 in 6.309s
+ 897: clvect_2 in 2.850s
+ 891: lopban_2 in 5.254s
+ 893: csspace  in 4.634s
+ 860: polyred  in 20.255s
+ 873: groeb_1  in 15.644s
+ 900: csspace3 in 3.268s
+ 896: neckla_3 in 6.931s
+ 874: groeb_2  in 17.623s
+ 898: lopban_4 in 6.881s
+ 905: nfcont_1 in 3.386s
+ 910: latsum_1 in 0.345s
+ 906: nfcont_2 in 4.344s
+ 899: csspace2 in 9.086s
+ 912: sheffer1 in 0.499s
+ 902: csspace4 in 7.420s
+ 913: sheffer2 in 0.603s
+ 895: lopban_3 in 11.647s
+ 903: clvect_3 in 8.125s
+ 915: fintopo4 in 1.173s
+ 901: clopban1 in 9.216s
+ 904: clopban2 in 7.654s
+ 917: vfunct_2 in 3.179s
+ 884: jordan19 in 20.668s
+ 911: nagata_1 in 6.311s
+ 907: clopban3 in 8.911s
+ 919: lp_space in 3.932s
+ 924: topgen_1 in 0.638s
+ 923: pencil_4 in 1.156s
+ 914: ndiff_2  in 6.062s
+ 908: clopban4 in 9.600s
+ 927: robbins3 in 1.146s
+ 928: mathmorp in 1.088s
+ 930: isomichi in 0.888s
+ 909: ndiff_1  in 10.754s
+ 932: fintopo5 in 1.143s
+ 926: topgen_3 in 3.267s
+ 921: ncfcont2 in 6.612s
+ 918: ncfcont1 in 8.185s
+ 935: topgen_4 in 0.973s
+ 933: filerec1 in 1.975s
+ 922: pencil_3 in 6.161s
+ 934: circled1 in 1.959s
+ 938: ring_1   in 1.322s
+ 920: jordan22 in 9.131s
+ 929: jordan23 in 4.860s
+ 931: euclidlp in 4.901s
+ 941: glib_002 in 2.755s
+ 916: nagata_2 in 12.689s
+ 937: gfacirc1 in 5.177s
+ 946: fintopo6 in 2.795s
+ 939: real_ns1 in 6.499s
+ 947: polynom8 in 5.156s
+ 942: glib_003 in 8.526s
+ 952: normsp_2 in 1.519s
+ 953: bcialg_1 in 1.141s
+ 949: modelc_1 in 6.137s
+ 936: topgen_5 in 11.764s
+ 954: flang_1  in 1.373s
+ 955: flang_2  in 1.176s
+ 943: glib_004 in 12.217s
+ 925: groeb_3  in 17.768s
+ 940: glib_001 in 13.420s
+ 960: rewrite2 in 1.116s
+ 961: compact1 in 0.879s
+ 964: bcialg_3 in 0.702s
+ 962: bcialg_2 in 1.743s
+ 965: bspace   in 1.480s
+ 958: prvect_2 in 5.355s
+ 963: pcs_0    in 2.467s
+ 945: chord    in 15.566s
+ 951: integra6 in 10.995s
+ 969: flang_3  in 0.704s
+ 944: glib_005 in 17.230s
+ 956: integra7 in 7.947s
+ 971: bcialg_4 in 1.495s
+ 967: lopban_5 in 3.531s
+ 976: bciideal in 0.650s
+ 972: gfacirc2 in 4.164s
+ 948: catalan2 in 18.390s
+ 957: pdiff_1  in 11.766s
+ 959: entropy1 in 11.408s
+ 973: helly    in 5.230s
+ 979: quatern2 in 1.904s
+ 970: compl_sp in 7.548s
+ 966: polyform in 9.660s
+ 984: bcialg_5 in 1.090s
+ 950: lexbfs   in 21.313s
+ 985: robbins4 in 1.901s
+ 981: ramsey_1 in 4.495s
+ 974: euclid_6 in 9.140s
+ 977: c0sp1    in 7.035s
+ 983: modelc_2 in 5.214s
+ 989: integr10 in 2.196s
+ 978: convex4  in 9.565s
+ 975: int_7    in 12.879s
+ 986: numeral1 in 7.254s
+ 994: bcialg_6 in 1.954s
+ 992: matrix16 in 4.741s
+ 997: lopban_6 in 1.625s
+ 990: pdiff_2  in 7.094s
+ 995: ftacell1 in 3.365s
+ 968: int_5    in 18.731s
+ 987: vectsp11 in 9.382s
+ 993: lpspace1 in 6.689s
+1001: quatern3 in 1.543s
+1002: petri_2  in 1.222s
+ 991: modelc_3 in 10.852s
+1003: pdiff_3  in 4.913s
+ 996: fdiff_11 in 7.821s
+1009: gr_cy_3  in 2.069s
+ 999: integra9 in 9.222s
+1008: metrizts in 4.317s
+1004: mesfun7c in 9.763s
+ 982: abcmiz_1 in 22.639s
+1006: random_1 in 10.012s
+1007: mesfun9c in 8.473s
+1012: rewrite3 in 2.648s
+ 980: aofa_i00 in 25.340s
+1013: dist_1   in 2.307s
+1018: group_11 in 1.117s
+1016: fsm_3    in 2.030s
+ 988: matrixj2 in 23.335s
+1000: integr11 in 15.506s
+1005: nat_5    in 13.877s
+1022: interva1 in 0.993s
+1017: topdim_1 in 3.668s
+1010: cfdiff_2 in 9.512s
+1020: dilworth in 5.028s
+1015: funct_8  in 7.387s
+1028: poset_1  in 1.363s
+1019: topdim_2 in 7.299s
+1023: funct_9  in 5.851s
+1029: grnilp_1 in 3.156s
+1011: measure8 in 13.774s
+ 998: euclid_7 in 24.614s
+1031: fib_num4 in 2.874s
+1026: algstr_4 in 7.385s
+1025: c0sp2    in 7.749s
+1035: tops_4   in 1.822s
+1030: abcmiz_a in 6.372s
+1032: euclid_9 in 6.286s
+1038: cardfin2 in 4.358s
+1014: integr15 in 17.761s
+1027: pdiff_4  in 12.706s
+1043: groupp_1 in 1.903s
+1021: integr1c in 17.678s
+1033: pdiff_5  in 9.772s
+1039: integr16 in 6.765s
+1044: integr18 in 3.034s
+1045: group_12 in 2.592s
+1037: simplex1 in 10.022s
+1046: mycielsk in 2.701s
+1047: nfcont_3 in 3.651s
+1052: cgames_1 in 1.201s
+1049: rlvect_x in 3.817s
+1036: toprealc in 15.252s
+1040: pdiff_6  in 12.168s
+1051: ndiff_3  in 6.155s
+1050: pdiff_8  in 6.864s
+1053: exchsort in 5.735s
+1041: random_2 in 14.216s
+1056: ltlaxio1 in 3.655s
+1024: euclid_8 in 27.238s
+1057: cc0sp1   in 5.121s
+1058: mazurulm in 4.464s
+1034: lpspace2 in 23.394s
+1048: prvect_3 in 17.612s
+1054: matrtop1 in 14.450s
+1059: ec_pf_1  in 9.826s
+1055: matrtop2 in 13.894s
+1068: cayley   in 0.756s
+1064: fomodel1 in 7.746s
+1060: rlaffin3 in 12.466s
+1062: brouwer2 in 11.492s
+1071: finance1 in 3.306s
+1061: simplex2 in 12.901s
+1070: stacks_1 in 4.041s
+1069: nfcont_4 in 5.688s
+1077: morph_01 in 1.402s
+1063: fomodel0 in 14.766s
+1079: matrix17 in 1.835s
+1042: pdiff_7  in 29.859s
+1072: fvaluat1 in 7.127s
+1073: cc0sp2   in 5.589s
+1076: zmodul01 in 5.485s
+1083: mmlquery in 1.899s
+1084: menelaus in 1.435s
+1087: goedcpuc in 1.374s
+1085: scmyciel in 5.126s
+1088: zmodul02 in 3.500s
+1065: fomodel2 in 22.444s
+1089: ltlaxio2 in 4.548s
+1086: ratfunc1 in 8.863s
+1090: ltlaxio3 in 4.676s
+1078: ndiff_4  in 16.716s
+1092: friends1 in 3.073s
+1081: ec_pf_2  in 15.602s
+1091: ltlaxio4 in 7.260s
+1096: lopban_7 in 2.494s
+1095: int_8    in 4.870s
+1066: fomodel3 in 32.114s
+1100: altcat_5 in 0.748s
+1080: integr19 in 20.971s
+1094: dist_2   in 8.341s
+1097: zmodul03 in 7.354s
+1103: mfold_0  in 5.263s
+1104: mfold_1  in 5.594s
+1074: matrtop3 in 32.621s
+1098: cayldick in 12.776s
+1067: fomodel4 in 37.788s
+1082: pdiff_9  in 31.593s
+1105: mfold_2  in 9.596s
+1099: ordeq_01 in 17.496s
+1110: lpspacc1 in 6.249s
+1075: ndiff_5  in 39.639s
+1109: group_14 in 7.091s
+1101: tietze_2 in 16.680s
+1116: roughs_2 in 1.228s
+1114: mmlquer2 in 2.387s
+1112: ckspace1 in 5.584s
+1093: msafree4 in 27.124s
+1119: topgen_6 in 1.431s
+1113: random_3 in 4.900s
+1118: nbvectsp in 2.916s
+1121: ndiff_6  in 2.402s
+1124: topalg_7 in 1.909s
+1115: hurwitz2 in 6.189s
+1123: gaussint in 3.941s
+1107: borsuk_7 in 17.810s
+1117: group_17 in 9.236s
+1122: numpoly1 in 6.772s
+1120: numeral2 in 8.940s
+1132: latticea in 1.077s
+1106: topalg_6 in 22.546s
+1128: dblseq_1 in 5.834s
+1130: cat_6    in 3.433s
+1134: compos_0 in 1.752s
+1137: ami_2    in 0.593s
+1133: prefer_1 in 2.435s
+1136: scm_inst in 1.197s
+1127: moebius2 in 8.726s
+1141: scmfsa_i in 0.633s
+1125: huffman1 in 10.260s
+1131: group_18 in 5.292s
+1140: ami_3    in 1.165s
+1145: scmpds_1 in 0.282s
+1138: memstr_0 in 1.637s
+1139: extpro_1 in 1.569s
+1144: scmpds_i in 1.018s
+1146: scmring1 in 0.602s
+1143: scmfsa_1 in 1.384s
+1142: scmringi in 1.454s
+1149: amistd_4 in 0.431s
+1148: amistd_2 in 1.192s
+1153: scm_1    in 1.286s
+1154: fib_fusc in 1.072s
+1152: amistd_5 in 1.648s
+1150: compos_2 in 1.786s
+1135: compos_1 in 5.275s
+1129: integr21 in 10.980s
+1151: amistd_3 in 2.678s
+1156: ami_4    in 1.361s
+1157: ami_5    in 1.577s
+1126: integr20 in 14.413s
+1161: scmfsa_3 in 1.615s
+1147: amistd_1 in 5.021s
+1159: reloc    in 2.751s
+1163: scmfsa_4 in 1.559s
+1160: scmfsa_2 in 2.559s
+1155: scm_comp in 3.408s
+1164: scmfsa_5 in 1.771s
+1158: ami_6    in 3.643s
+1165: scmfsa_7 in 1.963s
+1167: scmfsa6a in 2.235s
+1170: scmfsa6c in 2.080s
+1169: scmfsa6b in 2.550s
+1166: scmfsa_m in 3.758s
+1162: scmfsa10 in 5.961s
+1171: scmfsa7b in 3.903s
+1172: scmfsa8a in 3.974s
+1173: scmfsa_x in 3.217s
+1168: sf_mastr in 4.905s
+1177: sfmastr1 in 1.694s
+1176: scmfsa_9 in 3.761s
+1179: sfmastr2 in 2.194s
+1174: scmfsa8b in 5.231s
+1175: scmfsa8c in 5.193s
+1184: scmring2 in 1.266s
+1188: scmpds_3 in 1.096s
+1187: scmpds_2 in 1.837s
+1102: brouwer3 in 46.925s
+1186: scmring4 in 2.776s
+1181: scm_halt in 5.450s
+1178: scmfsa9a in 6.665s
+1190: scmpds_5 in 1.717s
+1189: scmpds_4 in 2.236s
+1185: scmring3 in 5.522s
+1192: scmp_gcd in 2.255s
+1191: scmpds_6 in 5.229s
+1183: scmisort in 9.873s
+1195: scpisort in 4.159s
+1182: scmbsort in 10.294s
+1194: scmpds_8 in 4.776s
+1200: altcat_6 in 0.752s
+1199: scmpds_9 in 1.404s
+1198: ami_wstd in 4.132s
+1180: sfmastr3 in 12.149s
+1193: scmpds_7 in 6.949s
+1201: petri_3  in 2.560s
+1197: scpinvar in 6.252s
+1205: poset_2  in 2.923s
+1207: absred_0 in 2.793s
+1212: roughs_4 in 1.450s
+1206: petri_df in 5.852s
+1211: srings_2 in 3.405s
+1108: aofa_a00 in 51.614s
+1213: hilbert4 in 2.170s
+1215: nat_6    in 2.490s
+1210: srings_1 in 6.789s
+1202: ndiff_7  in 10.452s
+1216: ballot_1 in 3.179s
+1219: gtarski1 in 0.797s
+1196: scpqsort in 15.078s
+1214: lagra4sq in 3.970s
+1204: zmodul04 in 12.082s
+1220: graph_3a in 2.424s
+1209: dualsp01 in 11.278s
+1218: rvsum_3  in 3.940s
+1225: lattad_1 in 1.541s
+1222: finance2 in 3.935s
+1203: ordeq_02 in 14.434s
+1208: dblseq_2 in 14.174s
+1226: vsdiff_1 in 3.995s
+1230: euclid10 in 2.326s
+1223: normsp_3 in 6.253s
+1231: fuznum_1 in 2.785s
+1235: srings_3 in 3.706s
+1232: cat_7    in 5.140s
+1229: dualsp02 in 8.147s
+1238: euclid11 in 1.143s
+1233: group_19 in 5.470s
+1236: normsp_4 in 5.866s
+1237: group_20 in 3.885s
+1243: nelson_1 in 1.358s
+1221: zmodul05 in 16.435s
+1227: zmodul06 in 13.625s
+1242: srings_4 in 4.301s
+1245: grzlog_1 in 1.592s
+1241: diophan1 in 7.243s
+1228: ring_2   in 16.117s
+1247: asympt_2 in 4.020s
+1246: cardfil2 in 4.641s
+1252: cardfil3 in 2.155s
+1248: newton02 in 5.868s
+1244: group_1a in 8.785s
+1253: fintopo7 in 1.281s
+1250: dualsp04 in 5.797s
+1256: peterson in 0.509s
+1249: dualsp03 in 11.310s
+1258: cat_8    in 6.031s
+1254: zmodul07 in 8.986s
+1260: ltlaxio5 in 1.825s
+1240: eulrpart in 21.545s
+1224: aofa_l00 in 33.832s
+1261: latstone in 1.393s
+1259: asympt_3 in 5.638s
+1263: euclid12 in 3.122s
+1251: dblseq_3 in 16.442s
+1264: euclid13 in 4.026s
+1239: flexary1 in 27.471s
+1262: finance3 in 7.538s
+1265: zmodul08 in 7.207s
+1272: roughs_3 in 1.800s
+1268: group_21 in 8.359s
+1269: bagord_2 in 8.927s
+1273: gtarski2 in 4.346s
+1257: ring_3   in 22.558s
+1234: zmatrlin in 42.043s
+1274: topmetr4 in 3.245s
+1111: aofa_a01 in 101.898s
+1278: uniform2 in 1.845s
+1276: newton03 in 2.987s
+1267: measur10 in 14.612s
+1279: uniform3 in 3.645s
+1275: cardfil4 in 8.126s
+1270: cousin   in 18.140s
+1285: pl_axiom in 2.395s
+1277: integr22 in 10.374s
+1284: leibniz1 in 6.368s
+1271: srings_5 in 18.550s
+1255: measure9 in 39.366s
+1282: integr23 in 14.268s
+1283: newton04 in 15.898s
+1287: niven    in 9.222s
+1289: polydiff in 7.870s
+1290: liouvil1 in 8.215s
+1296: fuznorm1 in 2.697s
+1291: liouvil2 in 6.866s
+1297: finance4 in 2.721s
+1280: ring_4   in 23.746s
+1266: zmodlat1 in 38.608s
+1281: anproj_8 in 24.589s
+1293: realalg1 in 9.862s
+1295: polyvie1 in 9.694s
+1286: algnum_1 in 21.300s
+1300: basel_1  in 5.031s
+1292: anproj_9 in 15.022s
+1298: pascal   in 10.222s
+1306: pells_eq in 2.367s
+1307: nomin_1  in 1.726s
+1310: fuzimpl1 in 2.225s
+1303: vectsp12 in 7.581s
+1301: basel_2  in 12.097s
+1299: orders_5 in 13.902s
+1309: mesfun11 in 5.908s
+1312: finance5 in 3.498s
+1315: gtarski3 in 1.174s
+1308: cousin2  in 8.053s
+1318: partpr_1 in 1.578s
+1314: diophan2 in 3.606s
+1304: dualsp05 in 15.634s
+1294: zmodlat2 in 25.724s
+1217: msafree5 in 97.186s
+1311: realalg2 in 10.924s
+1317: finance6 in 8.128s
+1313: ndiff_8  in 10.190s
+1324: newton05 in 2.137s
+1316: hilb10_1 in 9.688s
+1327: partpr_2 in 0.857s
+1329: nomin_3  in 0.726s
+1330: nomin_4  in 1.122s
+1328: nomin_2  in 2.653s
+1332: roughs_5 in 1.108s
+1333: robbins5 in 0.546s
+1325: glib_006 in 6.003s
+1302: zmodlat3 in 28.154s
+1326: glib_007 in 7.259s
+1322: moebius3 in 11.797s
+1336: binari_6 in 2.919s
+1305: ring_5   in 27.752s
+1339: fuzimpl2 in 2.154s
+1338: music_s1 in 3.952s
+1323: hilb10_2 in 14.146s
+1335: tops_5   in 6.202s
+1340: topzari1 in 2.879s
+1337: lopban_8 in 5.503s
+1334: finseq_9 in 8.029s
+1288: measur11 in 52.148s
+1348: gtarski4 in 0.896s
+1331: hilb10_3 in 11.973s
+1319: bkmodel1 in 22.243s
+1343: pdiffeq1 in 6.451s
+1347: mesfun13 in 5.289s
+1345: anproj10 in 6.996s
+1342: lopban_9 in 7.866s
+1349: ntalgo_2 in 5.371s
+1352: lopban13 in 5.274s
+1346: lopban11 in 11.398s
+1357: nomin_5  in 0.906s
+1351: lopban12 in 8.879s
+1320: bkmodel2 in 31.205s
+1358: nomin_6  in 0.996s
+1354: field_2  in 7.962s
+1350: field_1  in 13.418s
+1353: ndiff_9  in 11.183s
+1355: ordinal7 in 10.351s
+1344: lopban10 in 19.743s
+1365: glib_011 in 3.945s
+1341: rvsum_4  in 23.368s
+1368: roughif1 in 2.163s
+1366: ec_pf_3  in 6.088s
+1363: glib_009 in 10.315s
+1369: bkmodel3 in 4.511s
+1367: aimloop  in 10.102s
+1356: glib_008 in 22.500s
+1359: hilb10_4 in 18.280s
+1375: prsubset in 1.144s
+1373: wallace1 in 4.402s
+1321: mesfun12 in 49.107s
+1362: field_4  in 19.868s
+1371: glibpre0 in 9.287s
+1364: glib_010 in 17.621s
+1377: roughif2 in 3.691s
+1370: bkmodel4 in 12.802s
+1381: glib_013 in 4.141s
+1374: ringfrac in 8.498s
+1378: number01 in 7.348s
+1372: glib_012 in 13.566s
+1384: nomin_7  in 2.818s
+1379: fuzimpl3 in 6.857s
+1382: glib_014 in 6.586s
+1385: complex3 in 3.422s
+1383: glunir00 in 5.944s
+1387: fintopo8 in 2.229s
+1390: seqfunc2 in 2.378s
+1391: nomin_8  in 2.311s
+1392: nomin_9  in 3.447s
+1361: field_3  in 31.592s
+1386: latquasi in 7.402s
+1394: ndiff10  in 6.039s
+1388: counters in 9.315s
+1399: pappus   in 3.955s
+1397: c0sp3    in 5.986s
+1393: ringder1 in 9.702s
+1400: latwal_1 in 7.688s
+1402: ideal_2  in 5.787s
+1360: hilb10_5 in 43.041s
+1398: number02 in 11.645s
+1401: ascoli   in 7.641s
+1403: fuzzy_5  in 6.343s
+1380: field_5  in 26.478s
+1408: anproj11 in 3.948s
+1407: lattba_1 in 5.760s
+1404: real_ns2 in 11.873s
+1414: prvect_4 in 3.334s
+1412: hilb10_6 in 6.661s
+1376: measur12 in 36.950s
+1409: real_ns3 in 11.972s
+1406: binpack1 in 13.666s
+1395: glibpre1 in 29.471s
+1416: integr25 in 5.548s
+1420: classes4 in 1.352s
+1389: field_6  in 35.626s
+1411: integr24 in 16.263s
+1422: group_22 in 3.987s
+1417: neurons1 in 9.749s
+1423: lopban15 in 7.052s
+1396: field_7  in 39.421s
+1405: field_8  in 27.612s
+1410: mesfun14 in 27.674s
+1426: number03 in 6.982s
+1430: primreci in 2.199s
+1425: fuzzy_6  in 10.680s
+1431: lmod_xx1 in 6.140s
+1427: ndiff11  in 10.987s
+1418: field_10 in 25.921s
+1419: mesfun15 in 25.054s
+1434: number06 in 5.202s
+1421: lopban14 in 23.682s
+1433: number05 in 10.578s
+1438: rusub_7  in 2.813s
+1441: number07 in 1.568s
+1424: glcolo00 in 26.799s
+1435: hilb10_8 in 12.385s
+1443: rusub_6  in 3.253s
+1415: glib_015 in 41.938s
+1444: fuzzy_7  in 8.093s
+1439: polyalgx in 17.821s
+1445: alggeo_1 in 8.709s
+1442: glenum00 in 18.597s
+1446: glib_016 in 11.835s
+1451: ring_emb in 6.210s
+1448: group_23 in 12.858s
+1437: field_12 in 35.126s
+1450: integr26 in 12.667s
+1453: number09 in 7.906s
+1447: number08 in 22.280s
+1456: surreal0 in 2.338s
+1457: surrealo in 1.831s
+1429: field_11 in 56.414s
+1454: number10 in 10.086s
+1458: surrealr in 4.342s
+1455: measur13 in 13.739s
+1452: fuzimpl4 in 21.309s
+1462: fuzzy_8  in 6.706s
+1464: gtarski5 in 1.130s
+1460: number12 in 9.414s
+1463: mesfun16 in 13.436s
+1440: fdiff_12 in 61.705s
+1413: field_9  in 100.187s
+1436: polynom9 in 78.712s
+1449: field_13 in 58.211s
+1428: hilb10_7 in 98.288s
+1465: realalg3 in 34.631s
+1461: field_14 in 47.342s
+1432: number04 in 111.081s
+1459: number11 in 76.604s
+________________________________________________________
+Executed in  803.24 secs    fish           external
+   usr time  129.90 mins    0.00 millis  129.90 mins
+   sys time    1.50 mins    1.58 millis    1.50 mins
