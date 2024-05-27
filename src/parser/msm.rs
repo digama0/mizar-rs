@@ -661,7 +661,7 @@ impl MsmParser {
       b"Correctness" => {
         self.r.read_start(&mut self.buf, Some("CorrectnessConditions"))?;
         // let mut conds = vec![];
-        while let Ok(_e) = self.r.try_read_start(&mut self.buf, Some("Correctness")) {
+        while let Ok(_e) = self.r.try_read_start(&mut self.buf, Some("Correctness"))? {
           // conds.push((*e.try_get_attribute(b"condition").unwrap().unwrap().value).try_into().unwrap());
           self.r.end_tag(&mut self.buf)?;
         }

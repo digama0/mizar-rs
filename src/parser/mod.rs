@@ -485,6 +485,10 @@ fn with_open<T>(
   }
 }
 
+fn with_open0(path: PathBuf, f: impl FnOnce(File) -> Result<()>) -> PathResult<()> {
+  catch_missing(with_open(path, true, f)).map(|_| ())
+}
+
 impl MizPath {
   pub fn read_evl(&self, dirs: &mut Directives) -> PathResult<()> {
     with_open(self.to_path(true, false, "evl"), false, |file| {
@@ -568,7 +572,7 @@ impl MizPath {
   pub fn read_dfr_uncached(
     &self, new_prel: bool, vocs: &mut Vocabularies, formats: &mut IdxVec<FormatId, Format>,
   ) -> PathResult<()> {
-    with_open(self.to_path(false, new_prel, "dfr"), true, |file| {
+    with_open0(self.to_path(false, new_prel, "dfr"), |file| {
       MizReader::with(file, MaybeMut::None, false, |r, buf| {
         r.read_start(buf, Some("Formats"))?;
         r.parse_vocabularies(buf, vocs)?;
@@ -593,7 +597,7 @@ impl MizPath {
   }
 
   pub fn read_dno_uncached(&self, new_prel: bool, dno: &mut DepNotation) -> PathResult<()> {
-    with_open(self.to_path(false, new_prel, "dno"), true, |file| {
+    with_open0(self.to_path(false, new_prel, "dno"), |file| {
       MizReader::with(file, MaybeMut::None, false, |r, buf| {
         r.read_start(buf, Some("Notations"))?;
         r.parse_signature(buf, &mut dno.sig)?;
@@ -643,7 +647,7 @@ impl MizPath {
   pub fn read_dco_uncached(
     &self, new_prel: bool, dco: &mut DepConstructors, read_constrs: bool,
   ) -> PathResult<()> {
-    with_open(self.to_path(false, new_prel, "dco"), true, |file| {
+    with_open0(self.to_path(false, new_prel, "dco"), |file| {
       MizReader::with(file, MaybeMut::None, false, |r, buf| {
         r.read_start(buf, Some("Constructors"))?;
         r.parse_signature(buf, &mut dco.sig)?;
@@ -692,7 +696,7 @@ impl MizPath {
   }
 
   pub fn read_dcl_uncached(&self, new_prel: bool, dcl: &mut DepClusters) -> PathResult<()> {
-    with_open(self.to_path(false, new_prel, "dcl"), true, |file| {
+    with_open0(self.to_path(false, new_prel, "dcl"), |file| {
       MizReader::with(file, MaybeMut::None, false, |r, buf| {
         r.read_start(buf, Some("Registrations"))?;
         r.parse_signature(buf, &mut dcl.sig)?;
@@ -712,7 +716,7 @@ impl MizPath {
     &self, ctx: impl Into<MaybeMut<'a, Constructors>>, new_prel: bool, ext: &str,
     sig: Option<&mut Vec<Article>>, defs: &mut Vec<Definiens>,
   ) -> PathResult<()> {
-    with_open(self.to_path(sig.is_none(), new_prel, ext), true, |file| {
+    with_open0(self.to_path(sig.is_none(), new_prel, ext), |file| {
       MizReader::with(file, ctx, false, |r, buf| {
         if sig.is_none() {
           r.read_pi(buf)?;
@@ -734,7 +738,7 @@ impl MizPath {
     &self, ctx: impl Into<MaybeMut<'a, Constructors>>, new_prel: bool, ext: &str,
     sig: Option<&mut Vec<Article>>, props: &mut Vec<Property>,
   ) -> PathResult<()> {
-    with_open(self.to_path(sig.is_none(), new_prel, ext), true, |file| {
+    with_open0(self.to_path(sig.is_none(), new_prel, ext), |file| {
       MizReader::with(file, ctx, false, |r, buf| {
         if sig.is_none() {
           r.read_pi(buf)?
@@ -756,7 +760,7 @@ impl MizPath {
     &self, ctx: impl Into<MaybeMut<'a, Constructors>>, new_prel: bool, ext: &str,
     sig: Option<&mut Vec<Article>>, ids: &mut Vec<IdentifyFunc>,
   ) -> PathResult<()> {
-    with_open(self.to_path(sig.is_none(), new_prel, ext), true, |file| {
+    with_open0(self.to_path(sig.is_none(), new_prel, ext), |file| {
       MizReader::with(file, ctx, false, |r, buf| {
         if sig.is_none() {
           r.read_pi(buf)?
@@ -778,7 +782,7 @@ impl MizPath {
     &self, ctx: impl Into<MaybeMut<'a, Constructors>>, new_prel: bool, ext: &str,
     sig: Option<&mut Vec<Article>>, reds: &mut Vec<Reduction>,
   ) -> PathResult<()> {
-    with_open(self.to_path(sig.is_none(), new_prel, ext), true, |file| {
+    with_open0(self.to_path(sig.is_none(), new_prel, ext), |file| {
       MizReader::with(file, ctx, false, |r, buf| {
         if sig.is_none() {
           r.read_pi(buf)?
@@ -799,7 +803,7 @@ impl MizPath {
   pub fn read_eth(
     &self, ctx: &Constructors, refs: Option<&References>, libs: &mut Libraries,
   ) -> PathResult<()> {
-    let result = with_open(self.to_path(true, false, "eth"), true, |file| {
+    with_open0(self.to_path(true, false, "eth"), |file| {
       MizReader::with(file, ctx, false, |r, buf| {
         r.read_pi(buf)?;
         r.read_start(buf, Some("Theorems"))?;
@@ -831,12 +835,11 @@ impl MizPath {
         }
         r.eof(buf)
       })
-    });
-    catch_missing(result).map(|_| ())
+    })
   }
 
   pub fn read_the_uncached(&self, new_prel: bool, thms: &mut DepTheorems) -> PathResult<()> {
-    with_open(self.to_path(false, new_prel, "the"), true, |file| {
+    with_open0(self.to_path(false, new_prel, "the"), |file| {
       MizReader::with(file, MaybeMut::None, false, |r, buf| {
         r.read_start(buf, Some("Theorems"))?;
         r.parse_signature(buf, &mut thms.sig)?;
@@ -866,7 +869,7 @@ impl MizPath {
   pub fn read_esh(
     &self, ctx: &Constructors, refs: Option<&References>, libs: &mut Libraries,
   ) -> PathResult<()> {
-    let result = with_open(self.to_path(true, false, "esh"), true, |file| {
+    with_open0(self.to_path(true, false, "esh"), |file| {
       MizReader::with(file, ctx, false, |r, buf| {
         r.read_pi(buf)?;
         r.read_start(buf, Some("Schemes"))?;
@@ -896,12 +899,11 @@ impl MizPath {
         }
         r.eof(buf)
       })
-    });
-    catch_missing(result).map(|_| ())
+    })
   }
 
   pub fn read_sch_uncached(&self, new_prel: bool, schs: &mut DepSchemes) -> PathResult<()> {
-    with_open(self.to_path(false, new_prel, "sch"), true, |file| {
+    with_open0(self.to_path(false, new_prel, "sch"), |file| {
       MizReader::with(file, MaybeMut::None, false, |r, buf| {
         r.read_start(buf, Some("Schemes"))?;
         r.parse_signature(buf, &mut schs.sig)?;
@@ -929,7 +931,7 @@ impl MizPath {
   }
 
   pub fn read_xml(&self, mut f: impl FnMut(Item)) -> PathResult<()> {
-    with_open(self.to_path(true, false, "xml"), true, |file| {
+    with_open0(self.to_path(true, false, "xml"), |file| {
       let (mut r, mut buf) = MizReader::new(file, MaybeMut::None, true)?;
       r.read_pi(&mut buf)?;
       r.read_start(&mut buf, Some("Article"))?;
@@ -1070,7 +1072,7 @@ impl MizReader<'_> {
       match self.parse_elem(buf)? {
         Elem::Format(fmt) => {
           if allow_priority {
-            assert!(found_prio, "expected <Priority>");
+            assert!(!found_prio, "expected <Priority>");
           }
           formats.push(fmt);
         }
