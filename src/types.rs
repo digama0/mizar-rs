@@ -1,8 +1,9 @@
+use crate::accom::SigBuilder;
 use crate::VisitMut;
 use enum_map::{Enum, EnumMap};
 use paste::paste;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::marker::PhantomData;
 use std::ops::{Index, IndexMut, Range};
 
@@ -71,6 +72,11 @@ impl<I, T: Clone> Clone for IdxVec<I, T> {
   fn clone(&self) -> Self { Self(self.0.clone(), PhantomData) }
 }
 
+impl<I, T: PartialEq> PartialEq for IdxVec<I, T> {
+  fn eq(&self, other: &Self) -> bool { self.0 == other.0 }
+}
+impl<I, T: Eq> Eq for IdxVec<I, T> {}
+
 impl<I, T> IdxVec<I, T> {
   /// Construct a new empty [`IdxVec`].
   #[must_use]
@@ -110,7 +116,7 @@ impl<I, T> IdxVec<I, T> {
   }
 
   /// Returns the value that would be returned by the next call to `push`.
-  pub fn peek(&mut self) -> I
+  pub fn peek(&self) -> I
   where I: Idx {
     I::from_usize(self.0.len())
   }
@@ -176,15 +182,18 @@ impl<I, T> Default for IdxVec<I, T> {
 
 impl<I: Idx, T> Index<I> for IdxVec<I, T> {
   type Output = T;
+  #[track_caller]
   fn index(&self, index: I) -> &Self::Output { &self.0[I::into_usize(index)] }
 }
 
 impl<I: Idx, T> IndexMut<I> for IdxVec<I, T> {
+  #[track_caller]
   fn index_mut(&mut self, index: I) -> &mut Self::Output { &mut self.0[I::into_usize(index)] }
 }
 
 impl<I: Idx, T> Index<Range<I>> for IdxVec<I, T> {
   type Output = [T];
+  #[track_caller]
   fn index(&self, r: Range<I>) -> &Self::Output {
     &self.0[I::into_usize(r.start)..I::into_usize(r.end)]
   }
@@ -192,7 +201,7 @@ impl<I: Idx, T> Index<Range<I>> for IdxVec<I, T> {
 
 #[macro_export]
 macro_rules! mk_id {
-  ($($id:ident($ty:ty),)*) => {
+  ($($id:ident($ty:ty) $(+ Visit($visit:ident))?,)*) => {
     $(
       #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
       pub struct $id(pub $ty);
@@ -201,12 +210,23 @@ macro_rules! mk_id {
         fn into_usize(self) -> usize { self.0 as usize }
       }
       impl std::fmt::Debug for $id {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.0.fmt(f) }
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+          std::fmt::Debug::fmt(&self.0, f)
+        }
       }
       impl std::str::FromStr for $id {
         type Err = std::num::ParseIntError;
         fn from_str(s: &str) -> Result<Self, Self::Err> { <$ty>::from_str(s).map($id) }
       }
+      impl $crate::parser::FromStrPos for $id {
+        fn to_err(_: Self::Err, pos: usize) -> $crate::parser::ParseError {
+          $crate::parser::ParseError::BadInteger(pos)
+        }
+      }
+
+      $(impl<V: VisitMut> Visitable<V> for $id {
+        fn visit(&mut self, v: &mut V) { v.$visit(self) }
+      })?
     )*
   };
 }
@@ -280,16 +300,43 @@ impl<I: Idx, T> SortedIdxVec<I, T> {
   }
 }
 
+#[derive(Clone, Debug)]
+pub struct ExtVec<T> {
+  pub vec: Vec<T>,
+  pub limit: usize,
+}
+impl<T> Default for ExtVec<T> {
+  fn default() -> Self { Self { vec: vec![], limit: 0 } }
+}
+impl<T> std::ops::Deref for ExtVec<T> {
+  type Target = [T];
+  fn deref(&self) -> &Self::Target { &self.vec[..self.limit] }
+}
+impl<T> std::ops::DerefMut for ExtVec<T> {
+  fn deref_mut(&mut self) -> &mut Self::Target { &mut self.vec[..self.limit] }
+}
+impl<T> ExtVec<T> {
+  pub fn push(&mut self, t: T) {
+    assert!(self.vec.len() == self.limit);
+    self.vec.push(t);
+    self.up();
+  }
+  pub fn push_ext(&mut self, t: T) { self.vec.push(t) }
+  pub fn up(&mut self) { self.limit = self.vec.len() }
+  pub fn len(&self) -> usize { self.limit }
+  pub fn ext_len(&self) -> usize { self.vec.len() }
+}
+
 mk_id! {
-  ModeId(u32),
-  StructId(u32),
-  AttrId(u32),
-  PredId(u32),
+  ModeId(u32) + Visit(visit_mode_id),
+  StructId(u32) + Visit(visit_struct_id),
+  AttrId(u32) + Visit(visit_attr_id),
+  PredId(u32) + Visit(visit_pred_id),
   SchPredId(u32),
   PrivPredId(u32),
-  FuncId(u32),
-  SelId(u32),
-  AggrId(u32),
+  FuncId(u32) + Visit(visit_func_id),
+  SelId(u32) + Visit(visit_sel_id),
+  AggrId(u32) + Visit(visit_aggr_id),
   BoundId(u32),
   ConstId(u32),
   FVarId(u32),
@@ -381,6 +428,10 @@ impl From<FuncId> for RequirementKind {
 }
 
 macro_rules! mk_requirements {
+  (@to_kind FuncId $e:tt) => { ConstrKind::Func($e) };
+  (@to_kind AttrId $e:tt) => { ConstrKind::Attr($e) };
+  (@to_kind PredId $e:tt) => { ConstrKind::Pred($e) };
+  (@to_kind ModeId $e:tt) => { ConstrKind::Mode($e) };
   (@is_func FuncId) => { true };
   (@is_func $_:tt) => { false };
   ($($(#[$attr:meta])* $id:ident: $ty:tt,)*) => {
@@ -402,6 +453,13 @@ macro_rules! mk_requirements {
       pub fn get(&self, req: Requirement) -> Option<RequirementKind> {
         match req {
           $(Requirement::$id => self.get_raw(req).map(|x| $ty(x).into()),)*
+        }
+      }
+
+      pub fn set(&mut self, req: Requirement, value: ConstrKind) {
+        match (req, value) {
+          $((Requirement::$id, mk_requirements!(@to_kind $ty n)) => self.fwd[req] = n.0 + 1,)*
+          _ => panic!("incorrect type for requirement"),
         }
       }
     }
@@ -517,23 +575,29 @@ pub trait Visitable<V> {
   }
 }
 
-impl<V, T: Visitable<V>> Visitable<V> for &mut T {
+impl<V> Visitable<V> for () {
+  fn visit(&mut self, _: &mut V) {}
+}
+impl<V, T: Visitable<V> + ?Sized> Visitable<V> for &mut T {
   fn visit(&mut self, v: &mut V) { (**self).visit(v) }
 }
-impl<V, T: Visitable<V>> Visitable<V> for Box<T> {
+impl<V, T: Visitable<V> + ?Sized> Visitable<V> for Box<T> {
   fn visit(&mut self, v: &mut V) { (**self).visit(v) }
 }
-impl<V, T: Visitable<V>> Visitable<V> for Box<[T]> {
+impl<V, T: Visitable<V>> Visitable<V> for [T] {
   fn visit(&mut self, v: &mut V) { self.iter_mut().for_each(|t| t.visit(v)) }
 }
 impl<V, T: Visitable<V>, const N: usize> Visitable<V> for [T; N] {
-  fn visit(&mut self, v: &mut V) { self.iter_mut().for_each(|t| t.visit(v)) }
+  fn visit(&mut self, v: &mut V) { <[T]>::visit(self, v) }
 }
 impl<V, T: Visitable<V>> Visitable<V> for Option<T> {
   fn visit(&mut self, v: &mut V) { self.iter_mut().for_each(|t| t.visit(v)) }
 }
 impl<V, T: Visitable<V>> Visitable<V> for Vec<T> {
-  fn visit(&mut self, v: &mut V) { self.iter_mut().for_each(|t| t.visit(v)) }
+  fn visit(&mut self, v: &mut V) { (**self).visit(v) }
+}
+impl<V, T: Visitable<V>> Visitable<V> for ExtVec<T> {
+  fn visit(&mut self, v: &mut V) { self.vec.visit(v) }
 }
 impl<I, V, T: Visitable<V>> Visitable<V> for IdxVec<I, T> {
   fn visit(&mut self, v: &mut V) { self.0.visit(v) }
@@ -548,7 +612,7 @@ impl<V, A: Visitable<V>, B: Visitable<V>> Visitable<V> for (A, B) {
 /// This type alias is used to indicate that the term might have a Qua at the top level.
 pub type TermQua = Term;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Term {
   /// Invariant: nr != 0. Zero is not a numeral (!),
   /// it is a `Functor` using Requirement::ZeroNumber
@@ -558,7 +622,7 @@ pub enum Term {
   /// Bound var numbers are shifted from mizar to start at 0
   Bound(BoundId),
   /// Constant numbers are shifted from mizar to start at 0
-  Constant(ConstId),
+  Const(ConstId),
   /// ikEqConst: This is used by the equalizer, it is not read in
   EqClass(EqClassId),
   /// Not in mizar. Used for term sharing in the equalizer
@@ -635,6 +699,12 @@ impl Term {
       _ => self,
     }
   }
+  pub fn unqua<'a>(self: &'a TermQua) -> &'a Term {
+    match self {
+      Term::Qua { value, .. } => value,
+      _ => self,
+    }
+  }
 }
 
 impl<V: VisitMut> Visitable<V> for Term {
@@ -646,7 +716,7 @@ impl Term {
     match self {
       Term::Locus(_) => b'A',
       Term::Bound(_) => b'B',
-      Term::Constant(_) => b'C',
+      Term::Const(_) => b'C',
       Term::Infer(_) => b'D',
       Term::EqClass(..) => b'E',
       Term::EqMark(_) => b'M', // NEW
@@ -665,7 +735,7 @@ impl Term {
   }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct Type {
   /// The kind of type (either Mode or Struct), and the id
   pub kind: TypeKind,
@@ -732,7 +802,7 @@ impl TypeKind {
   }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Formula {
   SchPred {
     nr: SchPredId,
@@ -773,11 +843,15 @@ pub enum Formula {
   },
   /// ikFrmFlexConj
   FlexAnd {
+    nat: Box<Type>,
+    le: PredId,
     terms: Box<[Term; 2]>,
     scope: Box<Formula>,
   },
   LegacyFlexAnd {
     orig: Box<[Formula; 2]>,
+    terms: Box<[Term; 2]>,
+    expansion: Box<Formula>,
   },
   /// ikFrmVerum
   True,
@@ -899,7 +973,7 @@ impl Formula {
   }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Attrs {
   Inconsistent,
   Consistent(Vec<Attr>),
@@ -923,7 +997,7 @@ impl<V: VisitMut> Visitable<V> for Attrs {
   fn visit(&mut self, v: &mut V) { v.visit_attrs(self) }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Attr {
   pub nr: AttrId,
   pub pos: bool,
@@ -938,8 +1012,9 @@ impl<V: VisitMut> Visitable<V> for Attr {
   fn visit(&mut self, v: &mut V) { self.args.visit(v) }
 }
 
-#[derive(Copy, Clone, Default, PartialEq, Eq)]
-pub struct Article([u8; 8]);
+pub const MAX_ARTICLE_LEN: usize = 8;
+#[derive(Hash, Copy, Clone, Default, PartialEq, Eq)]
+pub struct Article([u8; MAX_ARTICLE_LEN]);
 
 impl std::fmt::Debug for Article {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -950,76 +1025,150 @@ impl std::fmt::Debug for Article {
 impl std::fmt::Display for Article {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.as_str().fmt(f) }
 }
-impl Article {
-  pub fn from_bytes(s: &[u8]) -> Article {
-    let mut arr = [0; 8];
-    arr[..s.len()].copy_from_slice(s);
-    Article(arr)
-  }
-  pub fn as_str(&self) -> &str {
-    std::str::from_utf8(&self.0[..self.0.iter().position(|&x| x == 0).unwrap_or(8)]).unwrap()
-  }
-}
 
-#[derive(Copy, Clone, Debug, Enum)]
-pub enum PropertyKind {
-  /// Applicable to PredId. Means: `∀ x y, P[x, y] -> P[y, x]`
-  Symmetry,
-  /// Applicable to PredId. Means: `∀ x, P[x, x]`
-  Reflexivity,
-  /// Applicable to PredId. Means: `∀ x, !P[x, x]`
-  Irreflexivity,
-  /// unused
-  Associativity,
-  /// unused
-  Transitivity,
-  /// Applicable to FuncId. Means: `∀ x y, F(x, y) = F(y, x)`
-  Commutativity,
-  /// Applicable to PredId. Means: `∀ x y, !P[x, y] -> P[y, x]`
-  Connectedness,
-  /// Applicable to PredId. Means: `∀ x y, P[x, y] -> !P[y, x]`
-  Asymmetry,
-  /// Applicable to FuncId. Means: `∀ x, F(x, x) = x`
-  Idempotence,
-  /// Applicable to FuncId. Means: `∀ x, F(F(x)) = x`
-  Involutiveness,
-  /// Applicable to FuncId. Means: `∀ x, F(F(x)) = F(x)`
-  Projectivity,
-  /// Applicable to ModeId. Means: `∃ S:set, ∀ x:M, x ∈ S`
-  Sethood,
-  /// Special property for AttrId, not in source text.
-  /// Means "not strict", where "strict" is an adjective on structure types
-  /// meaning no additional fields are present.
-  Abstractness,
+#[derive(Debug)]
+pub enum ToArticleError {
+  TooLong,
+  NotAscii,
 }
-
-impl TryFrom<&[u8]> for PropertyKind {
-  type Error = ();
-  fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-    match value {
-      b"Symmetry" | b"symmetry" => Ok(PropertyKind::Symmetry),
-      b"Reflexivity" | b"reflexivity" => Ok(PropertyKind::Reflexivity),
-      b"Irreflexivity" | b"irreflexivity" => Ok(PropertyKind::Irreflexivity),
-      b"Associativity" | b"associativity" => Ok(PropertyKind::Associativity),
-      b"Transitivity" | b"transitivity" => Ok(PropertyKind::Transitivity),
-      b"Commutativity" | b"commutativity" => Ok(PropertyKind::Commutativity),
-      b"Connectedness" | b"connectedness" => Ok(PropertyKind::Connectedness),
-      b"Asymmetry" | b"asymmetry" => Ok(PropertyKind::Asymmetry),
-      b"Idempotence" | b"idempotence" => Ok(PropertyKind::Idempotence),
-      b"Involutiveness" | b"involutiveness" => Ok(PropertyKind::Involutiveness),
-      b"Projectivity" | b"projectivity" => Ok(PropertyKind::Projectivity),
-      b"Sethood" | b"sethood" => Ok(PropertyKind::Sethood),
-      b"Abstractness" | b"abstractness" => Ok(PropertyKind::Abstractness),
-      _ => Err(()),
+impl std::fmt::Display for ToArticleError {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      ToArticleError::NotAscii => write!(f, "non-ASCII characters in article name"),
+      ToArticleError::TooLong =>
+        write!(f, "article names can only be {MAX_ARTICLE_LEN} characters"),
     }
   }
 }
 
-#[derive(Copy, Clone, Default)]
+impl Article {
+  pub const HIDDEN: Article = Article(*b"hidden\0\0");
+  pub fn from_lower(s: &[u8]) -> Result<Article, ToArticleError> {
+    if s.len() > MAX_ARTICLE_LEN {
+      return Err(ToArticleError::TooLong)
+    }
+    let mut arr = [0; MAX_ARTICLE_LEN];
+    arr[..s.len()].copy_from_slice(s);
+    if !arr.iter().all(u8::is_ascii) {
+      return Err(ToArticleError::NotAscii)
+    }
+    Ok(Article(arr))
+  }
+  pub fn from_upper(s: &[u8]) -> Result<Article, ToArticleError> {
+    if s.len() > MAX_ARTICLE_LEN {
+      return Err(ToArticleError::TooLong)
+    }
+    let mut arr = [0; MAX_ARTICLE_LEN];
+    arr[..s.len()].copy_from_slice(s);
+    if !arr.iter().all(u8::is_ascii) {
+      return Err(ToArticleError::NotAscii)
+    }
+    std::str::from_utf8_mut(&mut arr[..s.len()])
+      .map_err(|_| ToArticleError::NotAscii)?
+      .make_ascii_lowercase();
+    Ok(Article(arr))
+  }
+  pub fn as_bytes(&self) -> &[u8] { &self.0[..self.0.iter().position(|&x| x == 0).unwrap_or(8)] }
+  pub fn as_str(&self) -> &str { std::str::from_utf8(self.as_bytes()).unwrap() }
+}
+
+macro_rules! mk_property_kind {
+  (enum $ty:ident { $($(#[$attr:meta])* $id:ident = $upper:literal | $lower:literal,)* }) => {
+    #[derive(Copy, Clone, Debug, Enum, PartialEq, Eq)]
+    pub enum $ty {
+      $($(#[$attr])* $id,)*
+    }
+    impl $ty {
+      pub fn to_upper(self) -> &'static str {
+        match self {
+          $(Self::$id => stringify!($id),)*
+        }
+      }
+      pub fn to_lower(self) -> &'static [u8] {
+        match self {
+          $(Self::$id => $lower,)*
+        }
+      }
+    }
+    impl TryFrom<&[u8]> for $ty {
+      type Error = ();
+      fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        match value {
+          $($lower | $upper => Ok($ty::$id),)*
+          _ => Err(()),
+        }
+      }
+    }
+  }
+}
+mk_property_kind! {
+  enum PropertyKind {
+    /// Applicable to PredId. Means: `∀ x y, P[x, y] -> P[y, x]`
+    Symmetry = b"Symmetry" | b"symmetry",
+    /// Applicable to PredId. Means: `∀ x, P[x, x]`
+    Reflexivity = b"Reflexivity" | b"reflexivity",
+    /// Applicable to PredId. Means: `∀ x, !P[x, x]`
+    Irreflexivity = b"Irreflexivity" | b"irreflexivity",
+    /// unused
+    Associativity = b"Associativity" | b"associativity",
+    /// unused
+    Transitivity = b"Transitivity" | b"transitivity",
+    /// Applicable to FuncId. Means: `∀ x y, F(x, y) = F(y, x)`
+    Commutativity = b"Commutativity" | b"commutativity",
+    /// Applicable to PredId. Means: `∀ x y, !P[x, y] -> P[y, x]`
+    Connectedness = b"Connectedness" | b"connectedness",
+    /// Applicable to PredId. Means: `∀ x y, P[x, y] -> !P[y, x]`
+    Asymmetry = b"Asymmetry" | b"asymmetry",
+    /// Applicable to FuncId. Means: `∀ x, F(x, x) = x`
+    Idempotence = b"Idempotence" | b"idempotence",
+    /// Applicable to FuncId. Means: `∀ x, F(F(x)) = x`
+    Involutiveness = b"Involutiveness" | b"involutiveness",
+    /// Applicable to FuncId. Means: `∀ x, F(F(x)) = F(x)`
+    Projectivity = b"Projectivity" | b"projectivity",
+    /// Applicable to ModeId. Means: `∃ S:set, ∀ x:M, x ∈ S`
+    Sethood = b"Sethood" | b"sethood",
+    /// Special property for AttrId, not in source text.
+    /// Means "not strict", where "strict" is an adjective on structure types
+    /// meaning no additional fields are present.
+    Abstractness = b"Abstractness" | b"abstractness",
+  }
+}
+
+impl PropertyKind {
+  pub fn flip(self) -> Self {
+    match self {
+      Self::Reflexivity => Self::Irreflexivity,
+      Self::Irreflexivity => Self::Reflexivity,
+      Self::Connectedness => Self::Asymmetry,
+      Self::Asymmetry => Self::Connectedness,
+      _ => self,
+    }
+  }
+}
+
+#[derive(Copy, Clone, Default, PartialEq, Eq)]
 pub struct PropertySet(u16);
 
 impl PropertySet {
   pub const EMPTY: Self = Self(0);
+  const USES_ARG2: Self = Self(
+    1 << PropertyKind::Symmetry as u16
+      | 1 << PropertyKind::Reflexivity as u16
+      | 1 << PropertyKind::Irreflexivity as u16
+      | 1 << PropertyKind::Connectedness as u16
+      | 1 << PropertyKind::Asymmetry as u16
+      | 1 << PropertyKind::Commutativity as u16
+      | 1 << PropertyKind::Idempotence as u16
+      | 1 << PropertyKind::Associativity as u16
+      | 1 << PropertyKind::Transitivity as u16,
+  );
+  const USES_ARG1: Self = Self(
+    Self::USES_ARG2.0
+      | 1 << PropertyKind::Involutiveness as u16
+      | 1 << PropertyKind::Projectivity as u16,
+  );
+  pub const fn uses_arg1(self) -> bool { self.0 & Self::USES_ARG1.0 != 0 }
+  pub const fn uses_arg2(self) -> bool { self.0 & Self::USES_ARG2.0 != 0 }
 }
 
 impl std::fmt::Debug for PropertySet {
@@ -1035,7 +1184,7 @@ impl PropertySet {
   pub fn set(&mut self, prop: PropertyKind) { self.0 |= 1 << prop as u16 }
 }
 
-#[derive(Clone, Copy, Default, Debug)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct Properties {
   pub properties: PropertySet,
   pub arg1: u8,
@@ -1049,14 +1198,29 @@ impl std::ops::Deref for Properties {
 
   fn deref(&self) -> &Self::Target { &self.properties }
 }
+
 impl Properties {
   pub const EMPTY: Self = Self { properties: PropertySet::EMPTY, arg1: 0, arg2: 0 };
-  pub const fn offset(self, n: u8) -> Self {
-    Self { properties: self.properties, arg1: self.arg1 + n, arg2: self.arg2 + n }
+  pub const fn offset(mut self, n: u8) -> Self {
+    if self.properties.uses_arg1() {
+      self.arg1 += n
+    }
+    if self.properties.uses_arg2() {
+      self.arg2 += n
+    }
+    self
+  }
+  pub fn trim(&mut self) {
+    if !self.properties.uses_arg1() {
+      self.arg1 = 0
+    }
+    if !self.properties.uses_arg2() {
+      self.arg2 = 0
+    }
   }
 }
 
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct Constructor<I> {
   // pub article: Article,
   // /// number of constructor in article
@@ -1072,11 +1236,13 @@ impl<I> Constructor<I> {
     Self { primary, redefines: None, superfluous: 0, properties: Properties::EMPTY }
   }
 }
-impl<I, V: VisitMut> Visitable<V> for Constructor<I> {
-  fn visit(&mut self, v: &mut V) { v.with_locus_tys(&mut self.primary, |_| {}) }
+impl<V: VisitMut, I: Visitable<V>> Visitable<V> for Constructor<I> {
+  fn visit(&mut self, v: &mut V) {
+    v.with_locus_tys(&mut self.primary, |v| self.redefines.visit(v))
+  }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TyConstructor<I> {
   pub c: Constructor<I>,
   pub ty: Type,
@@ -1086,16 +1252,22 @@ impl<I> std::ops::Deref for TyConstructor<I> {
   type Target = Constructor<I>;
   fn deref(&self) -> &Self::Target { &self.c }
 }
-impl<I, V: VisitMut> Visitable<V> for TyConstructor<I> {
-  fn visit(&mut self, v: &mut V) { v.with_locus_tys(&mut self.c.primary, |v| self.ty.visit(v)) }
+impl<V: VisitMut, I: Visitable<V>> Visitable<V> for TyConstructor<I> {
+  fn visit(&mut self, v: &mut V) {
+    v.with_locus_tys(&mut self.c.primary, |v| {
+      self.c.redefines.visit(v);
+      self.ty.visit(v)
+    })
+  }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StructMode {
   pub c: Constructor<StructId>,
-  // These are guaranteed to be struct types
+  /// These are guaranteed to be struct types
   pub parents: Box<[Type]>,
   pub aggr: AggrId,
+  /// sorted by id
   pub fields: Box<[SelId]>,
 }
 
@@ -1105,18 +1277,30 @@ impl std::ops::Deref for StructMode {
 }
 impl<V: VisitMut> Visitable<V> for StructMode {
   fn visit(&mut self, v: &mut V) {
-    v.with_locus_tys(&mut self.c.primary, |v| self.parents.visit(v));
+    v.with_locus_tys(&mut self.c.primary, |v| {
+      self.c.redefines.visit(v);
+      self.parents.visit(v);
+    });
+    self.aggr.visit(v);
+    self.fields.visit(v);
+    if V::MODIFY_IDS {
+      self.fields.sort_unstable();
+    }
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Aggregate {
   pub c: TyConstructor<AggrId>,
   pub base: u8,
+  /// ordered the same as the constructor arguments
   pub fields: Box<[SelId]>,
 }
 impl<V: VisitMut> Visitable<V> for Aggregate {
-  fn visit(&mut self, v: &mut V) { self.c.visit(v) }
+  fn visit(&mut self, v: &mut V) {
+    self.c.visit(v);
+    self.fields.visit(v);
+  }
 }
 
 impl std::ops::Deref for Aggregate {
@@ -1127,52 +1311,115 @@ impl std::ops::DerefMut for Aggregate {
   fn deref_mut(&mut self) -> &mut Self::Target { &mut self.c }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct Constructors {
-  pub mode: IdxVec<ModeId, TyConstructor<ModeId>>,
-  pub struct_mode: IdxVec<StructId, StructMode>,
-  /// Invariant: The `ty` field is always equal to `primary.last()`
-  pub attribute: IdxVec<AttrId, TyConstructor<AttrId>>,
-  pub predicate: IdxVec<PredId, Constructor<PredId>>,
-  pub functor: IdxVec<FuncId, TyConstructor<FuncId>>,
-  pub selector: IdxVec<SelId, TyConstructor<SelId>>,
-  pub aggregate: IdxVec<AggrId, Aggregate>,
-}
-impl<V: VisitMut> Visitable<V> for Constructors {
-  fn visit(&mut self, v: &mut V) {
-    self.mode.visit(v);
-    self.struct_mode.visit(v);
-    self.attribute.visit(v);
-    self.predicate.visit(v);
-    self.functor.visit(v);
-    self.selector.visit(v);
-    self.aggregate.visit(v);
-  }
+macro_rules! impl_constructors {
+  (struct Constructors {
+    $($(#[$attr:meta])* $variant:ident($field:ident): IdxVec<$id:ty, $ty:ty> = $lit:expr,)*
+  }) => {
+    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    pub struct Constructors { $($(#[$attr])* pub $field: IdxVec<$id, $ty>),* }
+
+    impl<V: VisitMut> Visitable<V> for Constructors {
+      fn visit(&mut self, v: &mut V) { $(self.$field.visit(v));* }
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct ConstructorsBase { $(pub $field: u32),* }
+
+    impl std::ops::AddAssign for ConstructorsBase {
+      fn add_assign(&mut self, rhs: Self) { $(self.$field += rhs.$field);* }
+    }
+    impl std::ops::Sub for ConstructorsBase {
+      type Output = Self;
+      fn sub(self, rhs: Self) -> Self { Self { $($field: self.$field - rhs.$field),* } }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct ConstructorsRef<'a> { $(pub $field: &'a [$ty]),* }
+
+    #[derive(Clone, Debug)]
+    pub enum ConstructorDef { $($variant($ty),)* }
+    impl<V: VisitMut> Visitable<V> for ConstructorDef {
+      fn visit(&mut self, v: &mut V) { match self { $(Self::$variant(c) => c.visit(v)),* } }
+    }
+
+    impl Constructors {
+      pub fn push(&mut self, c: ConstructorDef) -> ConstrKind {
+        match c { $(ConstructorDef::$variant(c) => ConstrKind::$variant(self.$field.push(c))),* }
+      }
+
+      pub fn append(&mut self, other: &mut Constructors) {
+        $(self.$field.0.append(&mut other.$field.0));*
+      }
+
+      pub fn visit_at<V: VisitMut>(&mut self, v: &mut V, k: ConstrKind) {
+        match k { $(ConstrKind::$variant(k) => self.$field[k].visit(v)),* }
+      }
+
+      pub fn visit_range<V: VisitMut>(&mut self, v: &mut V, r: std::ops::Range<&ConstructorsBase>) {
+        $(self.$field.0[r.start.$field as usize..r.end.$field as usize].visit(v));*
+      }
+
+      pub fn since(&self, base: &ConstructorsBase) -> ConstructorsRef<'_> {
+        ConstructorsRef { $($field: &self.$field.0[base.$field as usize..]),* }
+      }
+
+      pub fn upto(&self, base: &ConstructorsBase) -> ConstructorsRef<'_> {
+        ConstructorsRef { $($field: &self.$field.0[..base.$field as usize]),* }
+      }
+
+      pub fn extend(&mut self, other: &ConstructorsRef<'_>) {
+        $(self.$field.0.extend_from_slice(other.$field));*
+      }
+
+      pub fn len(&self) -> ConstructorsBase {
+        ConstructorsBase { $($field: self.$field.len() as u32),* }
+      }
+
+      pub fn as_ref(&self) -> ConstructorsRef<'_> {
+        ConstructorsRef { $($field: &self.$field.0),* }
+      }
+    }
+
+    impl ConstructorsRef<'_> {
+      pub fn is_empty(&self) -> bool { $(self.$field.is_empty())&&* }
+
+      pub fn len(&self) -> ConstructorsBase {
+        ConstructorsBase { $($field: self.$field.len() as u32),* }
+      }
+
+      pub fn to_owned(self) -> Constructors {
+        Constructors { $($field: IdxVec::from(self.$field.to_vec())),* }
+      }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    pub enum ConstrKind { $($variant($id),)* }
+    impl<V: VisitMut> Visitable<V> for ConstrKind {
+      fn visit(&mut self, v: &mut V) { match self { $(Self::$variant(c) => c.visit(v)),* } }
+    }
+
+    impl ConstrKind {
+      pub fn discr_nr(&self) -> (u8, u32) {
+        match *self { $(Self::$variant(n) => ($lit, n.0),)* }
+      }
+
+      pub fn lt(self, base: &ConstructorsBase) -> bool {
+        match self { $(Self::$variant(c) => c.0 < base.$field),* }
+      }
+    }
+  };
 }
 
-impl Constructors {
-  pub fn push(&mut self, c: ConstructorDef) -> ConstrKind {
-    match c {
-      ConstructorDef::Mode(c) => ConstrKind::Mode(self.mode.push(c)),
-      ConstructorDef::StructMode(c) => ConstrKind::Struct(self.struct_mode.push(c)),
-      ConstructorDef::Attr(c) => ConstrKind::Attr(self.attribute.push(c)),
-      ConstructorDef::Pred(c) => ConstrKind::Pred(self.predicate.push(c)),
-      ConstructorDef::Func(c) => ConstrKind::Func(self.functor.push(c)),
-      ConstructorDef::Sel(c) => ConstrKind::Sel(self.selector.push(c)),
-      ConstructorDef::Aggr(c) => ConstrKind::Aggr(self.aggregate.push(c)),
-    }
-  }
-
-  pub fn visit_at<V: VisitMut>(&mut self, v: &mut V, k: ConstrKind) {
-    match k {
-      ConstrKind::Mode(k) => self.mode[k].visit(v),
-      ConstrKind::Struct(k) => self.struct_mode[k].visit(v),
-      ConstrKind::Attr(k) => self.attribute[k].visit(v),
-      ConstrKind::Pred(k) => self.predicate[k].visit(v),
-      ConstrKind::Func(k) => self.functor[k].visit(v),
-      ConstrKind::Sel(k) => self.selector[k].visit(v),
-      ConstrKind::Aggr(k) => self.aggregate[k].visit(v),
-    }
+impl_constructors! {
+  struct Constructors {
+    Mode(mode): IdxVec<ModeId, TyConstructor<ModeId>> = b'M',
+    Struct(struct_mode): IdxVec<StructId, StructMode> = b'S',
+    /// Invariant: The `ty` field is always equal to `primary.last()`
+    Attr(attribute): IdxVec<AttrId, TyConstructor<AttrId>> = b'V',
+    Pred(predicate): IdxVec<PredId, Constructor<PredId>> = b'R',
+    Func(functor): IdxVec<FuncId, TyConstructor<FuncId>> = b'K',
+    Sel(selector): IdxVec<SelId, TyConstructor<SelId>> = b'U',
+    Aggr(aggregate): IdxVec<AggrId, Aggregate> = b'G',
   }
 }
 
@@ -1183,8 +1430,94 @@ pub struct Clusters {
   pub functor: SortedIdxVec<usize, FunctorCluster>,
   pub conditional: ConditionalClusters,
 }
+impl<V: VisitMut> Visitable<V> for Clusters {
+  fn visit(&mut self, v: &mut V) {
+    self.registered.visit(v);
+    self.functor.visit(v);
+    self.conditional.vec.visit(v);
+  }
+}
 
-#[derive(Clone)]
+impl Clusters {
+  pub fn len(&self) -> ClustersBase {
+    ClustersBase {
+      registered: self.registered.len() as u32,
+      functor: self.functor.len() as u32,
+      conditional: self.conditional.len() as u32,
+    }
+  }
+
+  pub fn since(&self, base: &ClustersBase) -> ClustersRef<'_> {
+    ClustersRef {
+      registered: &self.registered[base.registered as usize..],
+      functor: &self.functor.0[base.functor as usize..],
+      conditional: &self.conditional.vec[base.conditional as usize..],
+    }
+  }
+
+  pub fn append(&mut self, ctx: &Constructors, other: &mut ClustersRaw) {
+    self.registered.append(&mut other.registered);
+    self.functor.0.append(&mut other.functor);
+    for cc in &other.conditional {
+      self.conditional.update_attr_clusters(ctx, &cc.antecedent);
+    }
+    self.conditional.vec.append(&mut other.conditional)
+  }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ClustersBase {
+  pub registered: u32,
+  pub functor: u32,
+  pub conditional: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClustersRef<'a> {
+  pub registered: &'a [RegisteredCluster],
+  pub functor: &'a [FunctorCluster],
+  pub conditional: &'a [ConditionalCluster],
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ClustersRaw {
+  pub registered: Vec<RegisteredCluster>,
+  pub functor: Vec<FunctorCluster>,
+  pub conditional: Vec<ConditionalCluster>,
+}
+impl<V: VisitMut> Visitable<V> for ClustersRaw {
+  fn visit(&mut self, v: &mut V) {
+    self.registered.visit(v);
+    self.functor.visit(v);
+    self.conditional.visit(v);
+  }
+}
+
+impl ClustersRef<'_> {
+  pub fn is_empty(&self) -> bool {
+    self.registered.is_empty() && self.functor.is_empty() && self.conditional.is_empty()
+  }
+
+  pub fn to_owned(self) -> ClustersRaw {
+    ClustersRaw {
+      registered: self.registered.to_owned(),
+      functor: self.functor.to_owned(),
+      conditional: self.conditional.to_owned(),
+    }
+  }
+}
+
+impl ClustersRaw {
+  pub fn as_ref(&self) -> ClustersRef<'_> {
+    ClustersRef {
+      registered: &self.registered,
+      functor: &self.functor,
+      conditional: &self.conditional,
+    }
+  }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub struct Cluster {
   /// nPrimaryList
   pub primary: Box<[Type]>,
@@ -1197,7 +1530,7 @@ pub struct Cluster {
 }
 impl<V: VisitMut> Visitable<V> for Cluster {
   fn visit(&mut self, v: &mut V) {
-    v.with_locus_tys(&mut self.primary, |v| self.consequent.visit(v));
+    v.with_locus_tys(&mut self.primary, |v| v.visit_attr_pair(&mut self.consequent));
   }
 }
 
@@ -1213,7 +1546,7 @@ impl std::fmt::Debug for Cluster {
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegisteredCluster {
   pub cl: Cluster,
   pub ty: Box<Type>,
@@ -1229,13 +1562,13 @@ impl std::ops::DerefMut for RegisteredCluster {
 impl<V: VisitMut> Visitable<V> for RegisteredCluster {
   fn visit(&mut self, v: &mut V) {
     v.with_locus_tys(&mut self.cl.primary, |v| {
-      self.cl.consequent.visit(v);
+      v.visit_attr_pair(&mut self.cl.consequent);
       self.ty.visit(v);
     });
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConditionalCluster {
   pub cl: Cluster,
   pub ty: Box<Type>,
@@ -1251,14 +1584,14 @@ impl std::ops::DerefMut for ConditionalCluster {
 impl<V: VisitMut> Visitable<V> for ConditionalCluster {
   fn visit(&mut self, v: &mut V) {
     v.with_locus_tys(&mut self.cl.primary, |v| {
-      self.cl.consequent.visit(v);
+      v.visit_attr_pair(&mut self.cl.consequent);
       self.ty.visit(v);
       self.antecedent.visit(v);
     });
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FunctorCluster {
   pub cl: Cluster,
   pub ty: Option<Box<Type>>,
@@ -1275,7 +1608,7 @@ impl std::ops::DerefMut for FunctorCluster {
 impl<V: VisitMut> Visitable<V> for FunctorCluster {
   fn visit(&mut self, v: &mut V) {
     v.with_locus_tys(&mut self.cl.primary, |v| {
-      self.cl.consequent.visit(v);
+      v.visit_attr_pair(&mut self.cl.consequent);
       self.ty.visit(v);
       self.term.visit(v);
     });
@@ -1303,7 +1636,7 @@ pub struct ConditionalClusters {
   pub attr_clusters: EnumMap<bool, BTreeMap<AttrId, BTreeSet<u32>>>,
 }
 impl std::ops::Deref for ConditionalClusters {
-  type Target = Vec<ConditionalCluster>;
+  type Target = [ConditionalCluster];
   fn deref(&self) -> &Self::Target { &self.vec }
 }
 impl std::ops::DerefMut for ConditionalClusters {
@@ -1314,8 +1647,8 @@ impl<V: VisitMut> Visitable<V> for ConditionalClusters {
 }
 
 impl ConditionalClusters {
-  pub fn push(&mut self, ctx: &Constructors, cc: ConditionalCluster) {
-    if let Attrs::Consistent(attrs) = &cc.antecedent {
+  pub fn update_attr_clusters(&mut self, ctx: &Constructors, attrs: &Attrs) {
+    if let Attrs::Consistent(attrs) = attrs {
       for attr in attrs {
         self.attr_clusters[attr.pos]
           .entry(attr.adjusted_nr(ctx))
@@ -1323,47 +1656,28 @@ impl ConditionalClusters {
           .insert(self.vec.len() as u32);
       }
     }
+  }
+  pub fn push(&mut self, ctx: &Constructors, cc: ConditionalCluster) {
+    self.update_attr_clusters(ctx, &cc.antecedent);
     self.vec.push(cc)
   }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ConstrKind {
-  Mode(ModeId),
-  Struct(StructId),
-  Attr(AttrId),
-  Pred(PredId),
-  Func(FuncId),
-  Sel(SelId),
-  Aggr(AggrId),
-}
-
-impl ConstrKind {
-  pub fn discr(&self) -> u8 {
-    match self {
-      ConstrKind::Mode(_) => b'M',
-      ConstrKind::Struct(_) => b'S',
-      ConstrKind::Pred(_) => b'R',
-      ConstrKind::Attr(_) => b'V',
-      ConstrKind::Func(_) => b'K',
-      ConstrKind::Sel(_) => b'U',
-      ConstrKind::Aggr(_) => b'G',
-    }
-  }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConstrDef {
-  // pub def_nr: u32,
-  // pub article: Article,
+  pub def_nr: DefId,
+  pub article: Article,
   pub constr: ConstrKind,
   pub primary: Box<[Type]>,
 }
 impl<V: VisitMut> Visitable<V> for ConstrDef {
-  fn visit(&mut self, v: &mut V) { v.with_locus_tys(&mut self.primary, |_| {}) }
+  fn visit(&mut self, v: &mut V) {
+    self.constr.visit(v);
+    v.with_locus_tys(&mut self.primary, |_| {})
+  }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DefCase<T> {
   pub case: T,
   pub guard: Formula,
@@ -1375,7 +1689,7 @@ impl<V: VisitMut, T: Visitable<V>> Visitable<V> for DefCase<T> {
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DefBody<T> {
   /// nPartialDefinientia
   pub cases: Box<[DefCase<T>]>,
@@ -1388,7 +1702,7 @@ impl<V: VisitMut, T: Visitable<V>> Visitable<V> for DefBody<T> {
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DefValue {
   Term(DefBody<Term>),
   Formula(DefBody<Formula>),
@@ -1411,31 +1725,7 @@ impl DefValue {
   }
 }
 
-#[derive(Clone, Debug)]
-pub enum ConstructorDef {
-  Mode(TyConstructor<ModeId>),
-  StructMode(StructMode),
-  Attr(TyConstructor<AttrId>),
-  Pred(Constructor<PredId>),
-  Func(TyConstructor<FuncId>),
-  Sel(TyConstructor<SelId>),
-  Aggr(Aggregate),
-}
-impl<V: VisitMut> Visitable<V> for ConstructorDef {
-  fn visit(&mut self, v: &mut V) {
-    match self {
-      ConstructorDef::Mode(c) => c.visit(v),
-      ConstructorDef::StructMode(c) => c.visit(v),
-      ConstructorDef::Attr(c) => c.visit(v),
-      ConstructorDef::Pred(c) => c.visit(v),
-      ConstructorDef::Func(c) => c.visit(v),
-      ConstructorDef::Sel(c) => c.visit(v),
-      ConstructorDef::Aggr(c) => c.visit(v),
-    }
-  }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Definiens {
   pub c: ConstrDef,
   // pub lab_id: Option<LabelId>,
@@ -1451,6 +1741,7 @@ impl std::ops::Deref for Definiens {
 
 impl<V: VisitMut> Visitable<V> for Definiens {
   fn visit(&mut self, v: &mut V) {
+    self.c.constr.visit(v);
     v.with_locus_tys(&mut self.c.primary, |v| {
       self.assumptions.visit(v);
       self.value.visit(v)
@@ -1458,7 +1749,7 @@ impl<V: VisitMut> Visitable<V> for Definiens {
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Property {
   // pub article: Article,
   // pub abs_nr: u32,
@@ -1470,7 +1761,7 @@ impl<V: VisitMut> Visitable<V> for Property {
   fn visit(&mut self, v: &mut V) { v.with_locus_tys(&mut self.primary, |v| self.ty.visit(v)) }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdentifyFunc {
   // pub article: Article,
   // pub abs_nr: u32,
@@ -1489,7 +1780,7 @@ impl<V: VisitMut> Visitable<V> for IdentifyFunc {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reduction {
   // pub article: Article,
   // pub abs_nr: u32,
@@ -1524,12 +1815,12 @@ pub type SchRef = (ArticleId, SchId);
 
 #[derive(Default, Debug)]
 pub struct References {
-  pub thm: HashMap<ThmRef, u32>,
-  pub def: HashMap<DefRef, u32>,
-  pub sch: HashMap<SchRef, u32>,
+  pub thm: HashSet<ThmRef>,
+  pub def: HashSet<DefRef>,
+  pub sch: HashSet<SchRef>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Scheme {
   pub sch_funcs: Box<[Type]>,
   pub prems: Box<[Formula]>,
@@ -1558,10 +1849,15 @@ impl<V: VisitMut> Visitable<V> for Libraries {
   }
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, Eq)]
 pub struct Position {
   pub line: u32,
   pub col: u32,
+}
+
+impl PartialEq for Position {
+  /// When used in export verification, we don't compare positions
+  fn eq(&self, _: &Self) -> bool { true }
 }
 
 impl std::fmt::Debug for Position {
@@ -1592,7 +1888,7 @@ pub enum InferenceKind {
 
 #[derive(Debug, Clone, Copy)]
 pub enum ReferenceKind {
-  Priv(Option<LabelId>),
+  Priv(LabelId),
   Thm(ThmRef),
   Def(DefRef),
 }
@@ -1772,6 +2068,18 @@ pub enum AuxiliaryItem {
     value: Formula,
   },
 }
+impl AuxiliaryItem {
+  pub fn pos(&self) -> Option<Position> {
+    match self {
+      AuxiliaryItem::Statement(stmt) => Some(stmt.pos()),
+      AuxiliaryItem::Consider { prop, .. } => Some(prop.pos),
+      AuxiliaryItem::Set { .. }
+      | AuxiliaryItem::Reconsider { .. }
+      | AuxiliaryItem::DefFunc { .. }
+      | AuxiliaryItem::DefPred { .. } => None,
+    }
+  }
+}
 
 #[derive(Debug)]
 pub enum Registration {
@@ -1781,7 +2089,7 @@ pub enum Registration {
   Property { kind: Property, prop: Proposition, just: Justification },
 }
 
-#[derive(Clone, Copy, Debug, Enum)]
+#[derive(Clone, Copy, Debug, Enum, PartialEq, Eq)]
 pub enum CorrCondKind {
   Coherence,
   Compatibility,
@@ -1789,6 +2097,19 @@ pub enum CorrCondKind {
   Existence,
   Uniqueness,
   Reducibility,
+}
+
+impl CorrCondKind {
+  pub fn name(self) -> &'static [u8] {
+    match self {
+      CorrCondKind::Coherence => b"coherence",
+      CorrCondKind::Compatibility => b"compatibility",
+      CorrCondKind::Consistency => b"consistency",
+      CorrCondKind::Existence => b"existence",
+      CorrCondKind::Uniqueness => b"uniqueness",
+      CorrCondKind::Reducibility => b"reducibility",
+    }
+  }
 }
 
 impl TryFrom<&[u8]> for CorrCondKind {
@@ -1836,7 +2157,7 @@ pub struct SchemeBlock {
   pub just: Justification,
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum CancelKind {
   Def,
   Thm,
@@ -1892,7 +2213,7 @@ pub enum Item {
   /// itExemplificationWithEquality
   TakeAsVar(Type, Term),
   PerCases(PerCases),
-  AuxiliaryItem(AuxiliaryItem),
+  Auxiliary(AuxiliaryItem),
   Registration(Registration),
   Scheme(SchemeBlock),
   Theorem {
@@ -1920,6 +2241,71 @@ pub enum Item {
   },
 }
 
+impl Item {
+  pub fn pos(&self) -> Option<Position> {
+    match self {
+      Item::Given(it) => Some(it.prop.pos),
+      Item::Thus(stmt) => Some(stmt.pos()),
+      Item::Assume(prop) => Some(prop[0].pos),
+      Item::PerCases(it) => Some(it.pos.0),
+      Item::Auxiliary(it) => it.pos(),
+      Item::Scheme(it) => Some(it.pos.0),
+      Item::Theorem { prop, .. } | Item::DefTheorem { prop, .. } => Some(prop.pos),
+      Item::Definition(it) => Some(it.pos),
+      Item::DefStruct(it) => Some(it.pos),
+      Item::Block { pos, .. } => Some(pos.0),
+      Item::Let(_)
+      | Item::Take(_)
+      | Item::TakeAsVar(..)
+      | Item::Registration(_)
+      | Item::Reservation { .. }
+      | Item::Canceled(_)
+      | Item::Definiens(_)
+      | Item::Pattern(_) => None,
+    }
+  }
+}
+
+#[derive(Clone, Copy, Debug, Enum, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SymbolKindClass {
+  Struct,
+  LeftBrk,
+  RightBrk,
+  Mode,
+  Func,
+  Pred,
+  Sel,
+  Attr,
+}
+
+impl SymbolKindClass {
+  pub fn discr(&self) -> u8 {
+    match self {
+      SymbolKindClass::Struct => b'G',
+      SymbolKindClass::LeftBrk => b'K',
+      SymbolKindClass::RightBrk => b'L',
+      SymbolKindClass::Mode => b'M',
+      SymbolKindClass::Func => b'O',
+      SymbolKindClass::Pred => b'R',
+      SymbolKindClass::Sel => b'U',
+      SymbolKindClass::Attr => b'V',
+    }
+  }
+  pub fn parse(c: u8) -> Self {
+    match c {
+      b'G' => SymbolKindClass::Struct,
+      b'K' => SymbolKindClass::LeftBrk,
+      b'L' => SymbolKindClass::RightBrk,
+      b'M' => SymbolKindClass::Mode,
+      b'O' => SymbolKindClass::Func,
+      b'R' => SymbolKindClass::Pred,
+      b'U' => SymbolKindClass::Sel,
+      b'V' => SymbolKindClass::Attr,
+      _ => panic!("unexpected symbol kind {:?}", c as char),
+    }
+  }
+}
+
 mk_id! {
   FuncSymId(u32),
   LeftBrkSymId(u32),
@@ -1929,21 +2315,43 @@ mk_id! {
   AttrSymId(u32),
   StructSymId(u32),
   SelSymId(u32),
+  IdentId(u32),
 }
 
-#[derive(Hash, PartialEq, Eq, Debug)]
+impl ModeSymId {
+  pub const SET: Self = Self(0); // set
+}
+impl PredSymId {
+  pub const EQUAL: Self = Self(0); // =
+}
+impl LeftBrkSymId {
+  pub const LBRACK: Self = Self(0); // [
+  pub const LBRACE: Self = Self(1); // {
+  pub const LPAREN: Self = Self(2); // (
+}
+impl RightBrkSymId {
+  pub const RBRACK: Self = Self(0); // ]
+  pub const RBRACE: Self = Self(1); // }
+  pub const RPAREN: Self = Self(2); // )
+}
+impl AttrSymId {
+  // The "strict" (a.k.a "not abstract") builtin attribute
+  pub const STRICT: Self = Self(0);
+}
+
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum SymbolKind {
-  Functor(FuncSymId),
+  Func(FuncSymId),
   LeftBrk(LeftBrkSymId),
   RightBrk(RightBrkSymId),
   Pred(PredSymId),
   Mode(ModeSymId),
   Attr(AttrSymId),
   Struct(StructSymId),
-  Selector(SelSymId),
+  Sel(SelSymId),
 }
 impl From<FuncSymId> for SymbolKind {
-  fn from(v: FuncSymId) -> Self { Self::Functor(v) }
+  fn from(v: FuncSymId) -> Self { Self::Func(v) }
 }
 impl From<LeftBrkSymId> for SymbolKind {
   fn from(v: LeftBrkSymId) -> Self { Self::LeftBrk(v) }
@@ -1964,63 +2372,80 @@ impl From<StructSymId> for SymbolKind {
   fn from(v: StructSymId) -> Self { Self::Struct(v) }
 }
 impl From<SelSymId> for SymbolKind {
-  fn from(v: SelSymId) -> Self { Self::Selector(v) }
+  fn from(v: SelSymId) -> Self { Self::Sel(v) }
 }
-
-impl SymbolKind {
-  fn _discr(&self) -> u8 {
-    match self {
-      SymbolKind::Functor(_) => b'O',
-      SymbolKind::LeftBrk(_) => b'K',
-      SymbolKind::RightBrk(_) => b'L',
-      SymbolKind::Pred(_) => b'R',
-      SymbolKind::Mode(_) => b'M',
-      SymbolKind::Attr(_) => b'V',
-      SymbolKind::Struct(_) => b'G',
-      SymbolKind::Selector(_) => b'U',
+impl From<(SymbolKindClass, u32)> for SymbolKind {
+  fn from((kind, n): (SymbolKindClass, u32)) -> Self {
+    match kind {
+      SymbolKindClass::Struct => Self::Struct(StructSymId(n)),
+      SymbolKindClass::LeftBrk => Self::LeftBrk(LeftBrkSymId(n)),
+      SymbolKindClass::RightBrk => Self::RightBrk(RightBrkSymId(n)),
+      SymbolKindClass::Mode => Self::Mode(ModeSymId(n)),
+      SymbolKindClass::Func => Self::Func(FuncSymId(n)),
+      SymbolKindClass::Pred => Self::Pred(PredSymId(n)),
+      SymbolKindClass::Sel => Self::Sel(SelSymId(n)),
+      SymbolKindClass::Attr => Self::Attr(AttrSymId(n)),
     }
   }
 }
 
-#[derive(Debug, Default)]
-pub struct Symbols(pub Vec<(SymbolKind, String)>);
+impl From<SymbolKind> for (SymbolKindClass, u32) {
+  fn from(kind: SymbolKind) -> Self {
+    match kind {
+      SymbolKind::Struct(StructSymId(n)) => (SymbolKindClass::Struct, n),
+      SymbolKind::LeftBrk(LeftBrkSymId(n)) => (SymbolKindClass::LeftBrk, n),
+      SymbolKind::RightBrk(RightBrkSymId(n)) => (SymbolKindClass::RightBrk, n),
+      SymbolKind::Mode(ModeSymId(n)) => (SymbolKindClass::Mode, n),
+      SymbolKind::Func(FuncSymId(n)) => (SymbolKindClass::Func, n),
+      SymbolKind::Pred(PredSymId(n)) => (SymbolKindClass::Pred, n),
+      SymbolKind::Sel(SelSymId(n)) => (SymbolKindClass::Sel, n),
+      SymbolKind::Attr(AttrSymId(n)) => (SymbolKindClass::Attr, n),
+    }
+  }
+}
 
-#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
+pub type Symbols = Vec<(SymbolKind, String)>;
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct FormatAggr {
   pub sym: StructSymId,
   pub args: u8,
 }
 
-#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct FormatStruct {
   pub sym: StructSymId,
   pub args: u8,
 }
-#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct FormatMode {
   pub sym: ModeSymId,
   pub args: u8,
 }
-#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct FormatAttr {
   pub sym: AttrSymId,
   pub args: u8,
 }
+impl FormatAttr {
+  // The "strict" (a.k.a "not abstract") builtin attribute
+  pub const STRICT: Self = Self { sym: AttrSymId::STRICT, args: 1 };
+}
 
-#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum FormatFunc {
   Func { sym: FuncSymId, left: u8, right: u8 },
   Bracket { lsym: LeftBrkSymId, rsym: RightBrkSymId, args: u8 },
 }
 
-#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct FormatPred {
   pub sym: PredSymId,
   pub left: u8,
   pub right: u8,
 }
 
-#[derive(Clone, Copy, Debug, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum Format {
   Aggr(FormatAggr),
   SubAggr(StructSymId),
@@ -2032,7 +2457,31 @@ pub enum Format {
   Pred(FormatPred),
 }
 
+macro_rules! impl_format_visit {
+  ($visit:ident$(, $mutbl:tt)?) => {
+    pub fn $visit(&$($mutbl)? self, mut f: impl FnMut(SymbolKindClass, $(&$mutbl)? u32)) {
+      match self {
+        Format::Mode(fmt) => f(SymbolKindClass::Mode, $(&$mutbl)? fmt.sym.0),
+        Format::Struct(FormatStruct { sym, .. })
+        | Format::Aggr(FormatAggr { sym, .. })
+        | Format::SubAggr(sym) => f(SymbolKindClass::Struct, $(&$mutbl)? sym.0),
+        Format::Sel(sym) => f(SymbolKindClass::Sel, $(&$mutbl)? sym.0),
+        Format::Attr(fmt) => f(SymbolKindClass::Attr, $(&$mutbl)? fmt.sym.0),
+        Format::Func(FormatFunc::Func { sym, .. }) => f(SymbolKindClass::Func, $(&$mutbl)? sym.0),
+        Format::Func(FormatFunc::Bracket { lsym, rsym, .. }) => {
+          f(SymbolKindClass::LeftBrk, $(&$mutbl)? lsym.0);
+          f(SymbolKindClass::RightBrk, $(&$mutbl)? rsym.0)
+        }
+        Format::Pred(fmt) => f(SymbolKindClass::Pred, $(&$mutbl)? fmt.sym.0),
+      }
+    }
+  }
+}
+
 impl Format {
+  impl_format_visit!(visit);
+  impl_format_visit!(visit_mut, mut);
+
   pub fn discr(&self) -> u8 {
     match self {
       Format::Aggr(_) => b'G',
@@ -2048,7 +2497,7 @@ impl Format {
   }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum PriorityKind {
   Functor(FuncSymId),
   LeftBrk(LeftBrkSymId),
@@ -2066,10 +2515,22 @@ impl FormatId {
 #[derive(Debug, Default)]
 pub struct Formats {
   pub formats: IdxVec<FormatId, Format>,
-  pub priority: Vec<(PriorityKind, u32)>,
+  // pub priority: Vec<(PriorityKind, u32)>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, Enum)]
+pub enum PatternKindClass {
+  Mode,
+  Struct,
+  Attr,
+  Pred,
+  Func,
+  Sel,
+  Aggr,
+  SubAggr,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PatternKind {
   Mode(ModeId),
   ExpandableMode { expansion: Box<Type> },
@@ -2081,34 +2542,250 @@ pub enum PatternKind {
   Aggr(AggrId),
   SubAggr(StructId),
 }
-
-impl PatternKind {
-  fn _discr(&self) -> u8 {
+impl<V: VisitMut> Visitable<V> for PatternKind {
+  fn visit(&mut self, v: &mut V) {
     match self {
-      PatternKind::Mode(_) | PatternKind::ExpandableMode { .. } => b'M',
-      PatternKind::Struct(_) => b'L',
-      PatternKind::Attr(_) => b'V',
-      PatternKind::Pred(_) => b'R',
-      PatternKind::Func(_) => b'K',
-      PatternKind::Sel(_) => b'U',
-      PatternKind::Aggr(_) => b'G',
-      PatternKind::SubAggr(_) => b'J',
+      Self::Mode(nr) => nr.visit(v),
+      Self::ExpandableMode { expansion } => expansion.visit(v),
+      Self::Struct(nr) => nr.visit(v),
+      Self::Attr(nr) => nr.visit(v),
+      Self::Pred(nr) => nr.visit(v),
+      Self::Func(nr) => nr.visit(v),
+      Self::Sel(nr) => nr.visit(v),
+      Self::Aggr(nr) => nr.visit(v),
+      Self::SubAggr(nr) => nr.visit(v),
     }
   }
 }
 
-#[derive(Debug)]
-pub struct Pattern {
+impl PatternKind {
+  pub fn class(&self) -> PatternKindClass {
+    match self {
+      Self::Mode(_) | Self::ExpandableMode { .. } => PatternKindClass::Mode,
+      Self::Struct(_) => PatternKindClass::Struct,
+      Self::Attr(_) => PatternKindClass::Attr,
+      Self::Pred(_) => PatternKindClass::Pred,
+      Self::Func(_) => PatternKindClass::Func,
+      Self::Sel(_) => PatternKindClass::Sel,
+      Self::Aggr(_) => PatternKindClass::Aggr,
+      Self::SubAggr(_) => PatternKindClass::SubAggr,
+    }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pattern<F = FormatId> {
   pub kind: PatternKind,
   // pub pid: u32,
-  // pub article: Article,
-  // pub abs_nr: u32,
-  pub fmt: FormatId,
+  pub article: Article,
+  pub abs_nr: u32,
+  pub fmt: F,
   // pub redefines: Option<u32>,
   pub primary: Box<[Type]>,
   pub visible: Box<[LocusId]>,
   pub pos: bool,
 }
+impl<V: VisitMut, F> Visitable<V> for Pattern<F> {
+  fn visit(&mut self, v: &mut V) {
+    self.kind.visit(v);
+    self.primary.visit(v);
+  }
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct SymbolsBase(pub EnumMap<SymbolKindClass, u32>);
+
+impl std::ops::AddAssign<&Self> for SymbolsBase {
+  fn add_assign(&mut self, rhs: &Self) {
+    for (i, val) in &rhs.0 {
+      self.0[i] += val
+    }
+  }
+}
+impl std::ops::Sub<&Self> for SymbolsBase {
+  type Output = Self;
+  fn sub(mut self, rhs: &Self) -> Self::Output {
+    for (i, val) in rhs.0 {
+      self.0[i] -= val
+    }
+    self
+  }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Vocabularies(pub Vec<(Article, SymbolsBase)>);
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DepNotation {
+  pub sig: Vec<Article>,
+  pub vocs: Vocabularies,
+  pub pats: Vec<Pattern<Format>>,
+}
 
 #[derive(Debug, Default)]
-pub struct Notations(pub Vec<Pattern>);
+pub struct AccumConstructors {
+  pub sig: SigBuilder,
+  pub constrs: Constructors,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct DepConstructors {
+  pub sig: Vec<Article>,
+  pub counts: ConstructorsBase,
+  // The indexes here are offset by `counts`
+  pub constrs: Constructors,
+}
+
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
+pub struct DepClusters {
+  pub sig: Vec<Article>,
+  pub cl: ClustersRaw,
+}
+
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct DepIdentify {
+  pub sig: Vec<Article>,
+  pub defs: Vec<Definiens>,
+}
+
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct DepReductions {
+  pub sig: Vec<Article>,
+  pub defs: Vec<Definiens>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TheoremKind {
+  CanceledThm,
+  CanceledDef,
+  Def(ConstrKind),
+  Thm,
+}
+impl<V: VisitMut> Visitable<V> for TheoremKind {
+  fn visit(&mut self, v: &mut V) {
+    if let Self::Def(k) = self {
+      k.visit(v)
+    }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Theorem {
+  pub pos: Position,
+  pub kind: TheoremKind,
+  pub stmt: Formula,
+}
+impl<V: VisitMut> Visitable<V> for Theorem {
+  fn visit(&mut self, v: &mut V) {
+    self.kind.visit(v);
+    self.stmt.visit(v)
+  }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DepTheorems {
+  pub sig: Vec<Article>,
+  pub thm: Vec<Theorem>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DepSchemes {
+  pub sig: Vec<Article>,
+  pub sch: Vec<Option<Scheme>>,
+}
+
+#[derive(Clone, Copy, Debug, Enum, PartialEq, Eq)]
+pub enum DirectiveKind {
+  Vocabularies,
+  Notations,
+  Definitions,
+  Theorems,
+  Schemes,
+  Registrations,
+  Constructors,
+  Requirements,
+  Equalities,
+  Expansions,
+}
+
+impl DirectiveKind {
+  pub fn name(self) -> &'static str {
+    match self {
+      Self::Vocabularies => "vocabularies",
+      Self::Notations => "notations",
+      Self::Definitions => "definitions",
+      Self::Theorems => "theorems",
+      Self::Schemes => "schemes",
+      Self::Registrations => "registrations",
+      Self::Constructors => "constructors",
+      Self::Requirements => "requirements",
+      Self::Equalities => "equalities",
+      Self::Expansions => "expansions",
+    }
+  }
+}
+
+#[derive(Debug, Default)]
+pub struct Directives(pub EnumMap<DirectiveKind, Vec<(Position, Article)>>);
+
+#[derive(Clone, Debug)]
+pub struct DepRequirement {
+  pub req: Requirement,
+  pub kind: ConstrKind,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct DepRequirements {
+  pub sig: Vec<Article>,
+  pub reqs: Vec<DepRequirement>,
+}
+
+pub const DEFAULT_PRIO: u32 = 64;
+pub enum SymbolDataKind<'a> {
+  Struct,
+  LeftBrk,
+  RightBrk,
+  Mode,
+  Func { prio: u32 },
+  Pred { infinitive: Option<&'a str> },
+  Sel,
+  Attr,
+}
+impl<'a> SymbolDataKind<'a> {
+  pub fn class(&self) -> SymbolKindClass {
+    match *self {
+      SymbolDataKind::Struct => SymbolKindClass::Struct,
+      SymbolDataKind::LeftBrk => SymbolKindClass::LeftBrk,
+      SymbolDataKind::RightBrk => SymbolKindClass::RightBrk,
+      SymbolDataKind::Mode => SymbolKindClass::Mode,
+      SymbolDataKind::Func { .. } => SymbolKindClass::Func,
+      SymbolDataKind::Pred { .. } => SymbolKindClass::Pred,
+      SymbolDataKind::Sel => SymbolKindClass::Sel,
+      SymbolDataKind::Attr => SymbolKindClass::Attr,
+    }
+  }
+}
+
+pub struct SymbolData<'a> {
+  pub kind: SymbolDataKind<'a>,
+  pub token: &'a str,
+}
+
+impl SymbolData<'static> {
+  pub const BUILTIN_SYMBOLS: &'static [(SymbolKindClass, &'static str)] = &[
+    (SymbolKindClass::Mode, "set"),
+    (SymbolKindClass::Pred, "="),
+    (SymbolKindClass::LeftBrk, "["),
+    (SymbolKindClass::RightBrk, "]"),
+    (SymbolKindClass::LeftBrk, "{"),
+    (SymbolKindClass::RightBrk, "}"),
+    (SymbolKindClass::LeftBrk, "("),
+    (SymbolKindClass::RightBrk, ")"),
+  ];
+}
+
+#[derive(Default)]
+pub struct Vocabulary<'a> {
+  pub base: SymbolsBase,
+  pub symbols: Vec<SymbolData<'a>>,
+}

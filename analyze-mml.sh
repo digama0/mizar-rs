@@ -1,14 +1,6 @@
 #!/bin/sh
-MIZFILES=miz/mizshare
-if [ "$1" = "" ]; then
-  if command -v parallel; then
-    parallel --progress -a miz/mizshare/mml.lar ./analyze-mml.sh
-  else
-    for base in `cat miz/mizshare/mml.lar`; do
-      ./analyze-mml.sh $base
-    done
-  fi
-else
-  miz/mizbin/accom miz/mizshare/mml/$1.miz > /dev/null
-  miz/mizbin/verifier -a miz/mizshare/mml/$1.miz > /dev/null
-fi
+# disable the multi progress bar because it goes too fast and looks noisy
+cargo run --release -- -dex --no-multi-progress
+echo 'copying prel/ files to mizshare/prel/'
+cp -r miz/prel/* miz/mizshare/prel/
+rm -rf miz/prel

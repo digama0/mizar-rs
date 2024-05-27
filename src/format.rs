@@ -5,21 +5,30 @@ use std::borrow::Cow;
 use std::cell::Cell;
 use std::collections::HashMap;
 
-const ENABLE_FORMATTER: bool = true;
-const SHOW_INFER: bool = false;
-const SHOW_ONLY_INFER: bool = false;
-const SHOW_PRIV: bool = false;
-const SHOW_MARKS: bool = false;
-const SHOW_INVISIBLE: bool = false;
-const SHOW_ORIG: bool = false;
-const UPPER_CLUSTERS: bool = false;
-const BOTH_CLUSTERS: bool = false;
-const NEGATION_SUGAR: bool = true;
+#[derive(Debug)]
+pub struct FormatterConfig {
+  pub enable_formatter: bool,
+  pub show_infer: bool,
+  pub show_only_infer: bool,
+  pub show_priv: bool,
+  pub show_marks: bool,
+  pub show_invisible: bool,
+  pub show_orig: bool,
+  pub upper_clusters: bool,
+  pub both_clusters: bool,
+  pub negation_sugar: bool,
+}
+
+impl Default for FormatterConfig {
+  fn default() -> Self { Self::DEFAULT }
+}
 
 #[derive(Default, Debug)]
 pub struct Formatter {
-  symbols: HashMap<SymbolKind, String>,
-  formats: IdxVec<FormatId, Format>,
+  pub dump: bool,
+  pub cfg: FormatterConfig,
+  pub symbols: HashMap<SymbolKind, String>,
+  pub formats: Box<IdxVec<FormatId, Format>>,
   mode: HashMap<ModeId, (u8, Box<[LocusId]>, FormatMode)>,
   struct_mode: HashMap<StructId, (u8, Box<[LocusId]>, FormatStruct)>,
   attr: HashMap<AttrId, (u8, Box<[LocusId]>, FormatAttr)>,
@@ -31,11 +40,11 @@ pub struct Formatter {
 
 impl Formatter {
   pub fn push(&mut self, ctx: &Constructors, pat: &Pattern) {
-    if !ENABLE_FORMATTER {
+    if !self.cfg.enable_formatter {
       return
     }
-    if crate::DUMP_FORMATTER {
-      eprintln!("{pat:#?}")
+    if self.dump {
+      eprintln!("{pat:?}")
     }
     fn ins<I: Idx, F: std::fmt::Debug>(
       c: &Constructor<I>, map: &mut HashMap<I, (u8, Box<[LocusId]>, F)>, pat: &Pattern, i: I, f: F,
@@ -69,18 +78,20 @@ impl Formatter {
     pats.iter().for_each(|pat| self.push(ctx, pat))
   }
 
-  pub fn init(&mut self, path: &MizPath, formats: Option<IdxVec<FormatId, Format>>) {
-    if !ENABLE_FORMATTER {
+  pub fn init_symbols(&mut self, path: &MizPath, symbols: Option<Vec<(SymbolKind, String)>>) {
+    if self.cfg.enable_formatter {
+      self.symbols.extend(symbols.unwrap_or_else(|| {
+        let mut symbols = Default::default();
+        path.read_dcx(&mut symbols).unwrap();
+        symbols
+      }))
+    }
+  }
+
+  pub fn init(&mut self) {
+    if !self.cfg.enable_formatter {
       return
     }
-    let mut symbols = Default::default();
-    path.read_dcx(&mut symbols).unwrap();
-    self.symbols = symbols.0.into_iter().collect();
-    self.formats = formats.unwrap_or_else(|| {
-      let mut formats = Default::default();
-      path.read_formats("frx", &mut formats).unwrap();
-      formats.formats
-    });
     for f in &self.formats.0 {
       match f {
         Format::Aggr(f) => assert!(self.symbols.contains_key(&f.sym.into())),
@@ -106,14 +117,14 @@ impl Formula {
       Formula::Neg { f } => f.is_positive(!pos),
       Formula::And { args } => args.iter().all(|f| f.is_positive(pos)),
       Formula::ForAll { scope, .. } | Formula::FlexAnd { scope, .. } => scope.is_positive(pos),
-      Formula::LegacyFlexAnd { orig } => orig.iter().all(|f| f.is_positive(pos)),
+      Formula::LegacyFlexAnd { orig, .. } => orig.iter().all(|f| f.is_positive(pos)),
       _ => pos,
     }
   }
 }
 
 thread_local! {
-  static LOCAL_CONTEXT: Cell<*const LocalContext> = Cell::new(std::ptr::null());
+  static LOCAL_CONTEXT: Cell<*const LocalContext> = const { Cell::new(std::ptr::null()) };
 }
 
 impl LocalContext {
@@ -136,6 +147,7 @@ impl LocalContext {
 
 struct Pretty<'a> {
   lc: Option<&'a LocalContext>,
+  cfg: &'a FormatterConfig,
   arena: &'a Arena<'a>,
   comma: Doc<'a>,
 }
@@ -143,7 +155,9 @@ struct Pretty<'a> {
 impl Pretty<'_> {
   fn with_lc<R>(lc: Option<&LocalContext>, f: impl for<'b> FnOnce(&'b Pretty<'b>) -> R) -> R {
     let arena = Arena::new();
-    f(&Pretty { lc, arena: &arena, comma: arena.text(",").append(arena.line()) })
+    let cfg = lc.map_or(&FormatterConfig::DEFAULT, |lc| &lc.formatter.cfg);
+    let lc = lc.filter(|_| cfg.enable_formatter);
+    f(&Pretty { lc, cfg, arena: &arena, comma: arena.text(",").append(arena.line()) })
   }
 
   fn with<R>(f: impl for<'b> FnOnce(&'b Pretty<'b>) -> R) -> R {
@@ -159,6 +173,8 @@ impl<'a> std::ops::Deref for Pretty<'a> {
 type Doc<'a> = DocBuilder<'a, Arena<'a>>;
 
 impl<'a> Pretty<'a> {
+  fn depth(&self) -> u32 { self.lc.map_or(0, |lc| lc.bound_var.len() as u32) }
+
   fn commas(&self, docs: impl IntoIterator<Item = Doc<'a>>) -> Doc<'a> {
     self.intersperse(docs, self.comma.clone()).nest(2).group()
   }
@@ -184,8 +200,20 @@ impl<'a> Pretty<'a> {
     args: &[Term], depth: u32, lift: u32,
   ) -> Doc<'a> {
     let lc = self.lc.unwrap();
+    let symdoc = if self.cfg.show_orig {
+      self.text(format!("{}[{}]", &lc.formatter.symbols[&sym], orig))
+    } else {
+      self.text(&lc.formatter.symbols[&sym])
+    };
     assert_eq!(len as usize, args.len());
-    let vis = (!SHOW_INVISIBLE || vis.len() == args.len()).then_some(vis);
+    // if len as usize != args.len() {
+    //   return self
+    //     .text(format!("??{len} "))
+    //     .append(symdoc)
+    //     .append(self.terms(None, args, depth, lift).parens())
+    //     .brackets()
+    // }
+    let vis = (!self.cfg.show_invisible || vis.len() == args.len()).then_some(vis);
     let (left, right) = if let Some(vis) = vis {
       assert_eq!(vis.len(), (left + right) as usize);
       (left, right)
@@ -198,11 +226,7 @@ impl<'a> Pretty<'a> {
       (_, Some(vis)) =>
         self.terms(Some(&vis[..left as usize]), args, depth, lift).parens().append(self.space()),
     };
-    let doc = if SHOW_ORIG {
-      doc.append(self.text(format!("{}[{}]", &lc.formatter.symbols[&sym], orig)))
-    } else {
-      doc.append(self.text(&lc.formatter.symbols[&sym]))
-    };
+    let doc = doc.append(symdoc);
     let doc = match right {
       0 => doc,
       1 => {
@@ -221,11 +245,11 @@ impl<'a> Pretty<'a> {
     match tm {
       Term::Locus(nr) => self.text(format!("a{}", nr.0)),
       Term::Bound(nr) => self.text(format!("b{}", nr.0 + lift)),
-      Term::Constant(nr) => self.text(format!("c{}", nr.0)),
+      Term::Const(nr) => self.text(format!("c{}", nr.0)),
       Term::EqClass(nr) => self.text(format!("e{}", nr.0)),
       Term::EqMark(nr) => {
         if let Some(lc) = self.lc {
-          return if SHOW_MARKS {
+          return if self.cfg.show_marks {
             self.text(format!("{:?}'", lc.marks[*nr].1)).append(self.term(
               true,
               &lc.marks[*nr].0,
@@ -239,13 +263,17 @@ impl<'a> Pretty<'a> {
         self.text(format!("m{}", nr.0))
       }
       Term::Infer(nr) => {
-        if !SHOW_ONLY_INFER {
-          if let Some(ic) = self.lc.and_then(|lc| lc.infer_const.try_borrow().ok()) {
-            return if SHOW_INFER {
-              let doc = self.term(true, &ic[*nr].def, depth, depth);
-              self.text(format!("?{}=", nr.0)).append(doc)
-            } else {
-              self.term(prec, &ic[*nr].def, depth, depth)
+        if let Some(lc) = self.lc {
+          if !self.cfg.show_only_infer {
+            if let Ok(ic) = lc.infer_const.try_borrow() {
+              return match ic.get(*nr) {
+                None => self.text(format!("?{}=??", nr.0)),
+                Some(asgn) if self.cfg.show_infer => {
+                  let doc = self.term(true, &asgn.def, depth, depth);
+                  self.text(format!("?{}=", nr.0)).append(doc)
+                }
+                Some(asgn) => self.term(prec, &asgn.def, depth, depth),
+              }
             }
           }
         }
@@ -259,12 +287,12 @@ impl<'a> Pretty<'a> {
           if let Some(&(len, ref vis, FormatAggr { sym, args: n })) = lc.formatter.aggr.get(nr) {
             assert_eq!(len as usize, args.len());
             assert_eq!(vis.len(), n as usize);
-            doc = Some(if SHOW_ORIG {
+            ovis = (!self.cfg.show_invisible || vis.len() == args.len()).then_some(&**vis);
+            doc = Some(if self.cfg.show_orig {
               self.text(format!("{}[{}]", lc.formatter.symbols[&sym.into()], nr.0))
             } else {
               self.text(&lc.formatter.symbols[&sym.into()])
             });
-            ovis = Some(&**vis)
           }
         }
         let doc = doc.unwrap_or_else(|| self.text(format!("G{}", nr.0)));
@@ -273,7 +301,7 @@ impl<'a> Pretty<'a> {
       Term::PrivFunc { nr, args, value } => {
         let doc =
           self.text(format!("$F{}", nr.0)).append(self.terms(None, args, depth, lift).parens());
-        if SHOW_PRIV {
+        if self.cfg.show_priv {
           doc.append("=").append(self.term(true, value, depth, lift))
         } else {
           doc
@@ -289,7 +317,7 @@ impl<'a> Pretty<'a> {
             Some(&(len, ref vis, FormatFunc::Bracket { lsym, rsym, args: n })) => {
               assert_eq!(len as usize, args.len());
               assert_eq!(vis.len(), n as usize);
-              let left = if SHOW_ORIG {
+              let left = if self.cfg.show_orig {
                 self.text(format!("{}[{}] ", &lc.formatter.symbols[&lsym.into()], nr.0))
               } else {
                 self.text(&*lc.formatter.symbols[&lsym.into()])
@@ -319,7 +347,7 @@ impl<'a> Pretty<'a> {
           }
         }
         let doc = self.text(match s {
-          Some(sym) if SHOW_ORIG => format!("the {sym}[{}] of", nr.0),
+          Some(sym) if self.cfg.show_orig => format!("the {sym}[{}] of", nr.0),
           Some(sym) => format!("the {sym} of"),
           None => format!("the Sel{} of", nr.0),
         });
@@ -359,16 +387,23 @@ impl<'a> Pretty<'a> {
   fn adjective(&self, nr: AttrId, args: &[Term], depth: u32, lift: u32) -> Doc<'a> {
     if let Some(lc) = self.lc {
       if let Some(&(len, ref vis, FormatAttr { sym, args: n })) = lc.formatter.attr.get(&nr) {
-        assert_eq!(len as usize, args.len() + 1);
-        assert_eq!(vis.len(), n as usize);
-        let (v0, vis) = vis.split_last().unwrap();
-        assert_eq!(v0.0 as usize, args.len());
-        let vis = (!SHOW_INVISIBLE || vis.len() == args.len()).then_some(vis);
-        let sym = if SHOW_ORIG {
+        let sym = if self.cfg.show_orig {
           self.text(format!("{}[{}]", lc.formatter.symbols[&sym.into()], nr.0))
         } else {
           self.text(&lc.formatter.symbols[&sym.into()])
         };
+        assert_eq!(len as usize, args.len() + 1);
+        // if len as usize != args.len() + 1 {
+        //   return self
+        //     .text(format!("??{len} "))
+        //     .append(sym)
+        //     .append(self.terms(None, args, depth, lift).parens())
+        //     .brackets()
+        // }
+        assert_eq!(vis.len(), n as usize);
+        let (v0, vis) = vis.split_last().unwrap();
+        assert_eq!(v0.0 as usize, args.len());
+        let vis = (!self.cfg.show_invisible || vis.len() == args.len()).then_some(vis);
         return match (vis, args) {
           (None, []) | (Some([]), _) => sym,
           (Some(&[v]), _) => self.term(true, &args[v.0 as usize], depth, lift).append(sym),
@@ -408,8 +443,8 @@ impl<'a> Pretty<'a> {
           {
             assert_eq!(len as usize, ty.args.len());
             assert_eq!(vis.len(), args as usize);
-            ovis = (!SHOW_INVISIBLE || vis.len() == ty.args.len()).then_some(&**vis);
-            s = Some(if SHOW_ORIG {
+            ovis = (!self.cfg.show_invisible || vis.len() == ty.args.len()).then_some(&**vis);
+            s = Some(if self.cfg.show_orig {
               Cow::Owned(format!("{}({})", &*lc.formatter.symbols[&sym.into()], n.0))
             } else {
               Cow::Borrowed(&*lc.formatter.symbols[&sym.into()])
@@ -417,22 +452,29 @@ impl<'a> Pretty<'a> {
           },
         TypeKind::Mode(n) =>
           if let Some(&(len, ref vis, FormatMode { sym, args })) = lc.formatter.mode.get(&n) {
-            assert_eq!(len as usize, ty.args.len());
-            assert_eq!(vis.len(), args as usize);
-            ovis = (!SHOW_INVISIBLE || vis.len() == ty.args.len()).then_some(&**vis);
-            s = Some(if SHOW_ORIG {
+            let sym = if self.cfg.show_orig {
               Cow::Owned(format!("{}[{}]", &*lc.formatter.symbols[&sym.into()], n.0))
             } else {
               Cow::Borrowed(&*lc.formatter.symbols[&sym.into()])
-            })
+            };
+            assert_eq!(len as usize, ty.args.len());
+            assert_eq!(vis.len(), args as usize);
+            // if len as usize != ty.args.len() {
+            //   return self
+            //     .text(format!("??{len} {sym} of "))
+            //     .append(self.terms(None, &ty.args, depth, lift).parens())
+            //     .brackets()
+            // }
+            ovis = (!self.cfg.show_invisible || vis.len() == ty.args.len()).then_some(&**vis);
+            s = Some(sym)
           },
       }
     }
-    let doc = if BOTH_CLUSTERS {
+    let doc = if self.cfg.both_clusters {
       self.attrs(&ty.attrs.0, false, depth, lift).append(self.attrs(&ty.attrs.1, true, depth, lift))
     } else {
-      let attrs = if UPPER_CLUSTERS { &ty.attrs.1 } else { &ty.attrs.0 };
-      self.attrs(attrs, UPPER_CLUSTERS, depth, lift)
+      let attrs = if self.cfg.upper_clusters { &ty.attrs.1 } else { &ty.attrs.0 };
+      self.attrs(attrs, self.cfg.upper_clusters, depth, lift)
     };
     let doc = doc.append(match s {
       Some(sym) => self.text(sym),
@@ -453,7 +495,7 @@ impl<'a> Pretty<'a> {
 
   fn formula(&self, prec: bool, pos: bool, fmla: &Formula, depth: u32, lift: u32) -> Doc<'a> {
     match (pos, fmla) {
-      (false, _) if !NEGATION_SUGAR =>
+      (false, _) if !self.cfg.negation_sugar =>
         self.text("¬").append(self.formula(true, true, fmla, depth, lift)),
       (pos, Formula::Neg { f }) => self.formula(prec, !pos, f, depth, lift),
       (false, Formula::And { args }) => {
@@ -497,7 +539,7 @@ impl<'a> Pretty<'a> {
           .append(self.line().append(self.formula(false, pos, f, depth, lift)).nest(2));
         self.parens_if(prec, doc.group())
       }
-      (pos, Formula::FlexAnd { terms, scope }) => {
+      (pos, Formula::FlexAnd { terms, scope, .. }) => {
         let doc = self
           .text(format!("{} [b{depth}=", if pos { "⋀" } else { "⋁" }))
           .append(self.term(false, &terms[0], depth, lift))
@@ -507,7 +549,7 @@ impl<'a> Pretty<'a> {
           .append(self.line().append(self.formula(false, pos, scope, depth + 1, lift)).nest(2));
         self.parens_if(prec, doc.group())
       }
-      (pos, Formula::LegacyFlexAnd { orig }) => {
+      (pos, Formula::LegacyFlexAnd { orig, .. }) => {
         let doc = self
           .formula(false, pos, &orig[0], depth, lift)
           .append(if pos { " ∧ ... ∧" } else { " ∨ ... ∨" })
@@ -538,7 +580,7 @@ impl<'a> Pretty<'a> {
       (true, Formula::PrivPred { nr, args, value }) => {
         let doc =
           self.text(format!("$P{}", nr.0)).append(self.terms(None, args, depth, lift).brackets());
-        if SHOW_PRIV {
+        if self.cfg.show_priv {
           doc.append("=").append(self.formula(true, true, value, depth, lift))
         } else {
           doc
@@ -554,28 +596,45 @@ impl<'a> Pretty<'a> {
   }
 }
 
-impl std::fmt::Debug for Term {
+trait EnvDebug {
+  fn pp_fmt<'a>(&self, p: &Pretty<'a>) -> Doc<'a>;
+}
+
+impl<T: EnvDebug> EnvDebug for Box<T> {
+  fn pp_fmt<'a>(&self, p: &Pretty<'a>) -> Doc<'a> { (**self).pp_fmt(p) }
+}
+
+macro_rules! impl_env_debug {
+  ($($ty:ty: |$self:ident, $p:ident| $e:expr;)*) => {
+    $(
+      impl EnvDebug for $ty {
+        fn pp_fmt<'a>(&$self, $p: &Pretty<'a>) -> Doc<'a> { $e }
+      }
+      impl std::fmt::Debug for $ty {
+        fn fmt(&$self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+          Pretty::with(|$p| $e.nest(2).render_fmt(100, f))
+        }
+      }
+    )*
+  };
+}
+
+impl_env_debug! {
+  Term: |self, p| p.term(false, self, p.depth(), 0);
+  Formula: |self, p| p.formula(false, true, self, p.depth(), 0);
+  Attr: |self, p| p.attr(self, false, p.depth(), 0);
+  Attrs: |self, p| p.attrs(self, false, p.depth(), 0);
+  Type: |self, p| p.ty(self, p.depth(), 0);
+}
+
+pub struct Display<'a, T>(Option<&'a LocalContext>, &'a T);
+
+impl<T: EnvDebug> std::fmt::Display for Display<'_, T> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.term(false, self, 0, 0).nest(2).render_fmt(100, f))
+    Pretty::with_lc(self.0, |p| self.1.pp_fmt(p).nest(2).render_fmt(100, f))
   }
 }
-impl std::fmt::Debug for Formula {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.formula(false, true, self, 0, 0).nest(2).render_fmt(100, f))
-  }
-}
-impl std::fmt::Debug for Attr {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.attr(self, false, 0, 0).nest(2).render_fmt(100, f))
-  }
-}
-impl std::fmt::Debug for Attrs {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.attrs(self, false, 0, 0).nest(2).render_fmt(100, f))
-  }
-}
-impl std::fmt::Debug for Type {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Pretty::with(|p| p.ty(self, 0, 0).nest(2).render_fmt(100, f))
-  }
+
+impl LocalContext {
+  pub fn pp<'a, T>(&'a self, t: &'a T) -> Display<'a, T> { Display(Some(self), t) }
 }
