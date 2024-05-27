@@ -323,11 +323,11 @@ struct CliUnsound {
   attr_sort_bug: bool,
 }
 
-impl Cli {
-  fn die(message: impl Display) -> ! {
-    Cli::command().error(clap::error::ErrorKind::ArgumentConflict, message).exit()
-  }
-}
+// impl Cli {
+//   fn die(message: impl Display) -> ! {
+//     Cli::command().error(clap::error::ErrorKind::ArgumentConflict, message).exit()
+//   }
+// }
 
 macro_rules! mk_dump {
   (struct $dump:ident {
@@ -617,25 +617,27 @@ fn main() {
                   }
                 }
               }
-              let mut cmd = std::process::Command::new("miz/mizbin/verifier");
-              let cmd = match (cfg.analyzer_enabled, cfg.checker_enabled) {
-                (true, false) => cmd.arg("-a"),
-                (false, true) => cmd.arg("-c"),
-                (true, true) => &mut cmd,
-                (false, false) => Cli::die("-a and -c cannot be used together"),
-              };
-              let output = cmd.arg(format!("{}.miz", path.mml().display())).output()?;
-              if !output.status.success() {
-                eprintln!("\nfile {} failed. Output:", path.art);
-                std::io::stderr().write_all(&output.stderr)?;
-                std::io::stdout().write_all(&output.stdout)?;
-                std::io::stdout().flush()?;
-                stat("fail", true);
-                if cfg.panic_on_fail {
-                  std::process::abort()
+              if cfg.analyzer_full || cfg.checker_enabled {
+                let mut cmd = std::process::Command::new("miz/mizbin/verifier");
+                let cmd = match (cfg.analyzer_full, cfg.checker_enabled) {
+                  (true, false) => cmd.arg("-a"),
+                  (false, true) => cmd.arg("-c"),
+                  (true, true) => &mut cmd,
+                  (false, false) => unreachable!(),
+                };
+                let output = cmd.arg(format!("{}.miz", path.mml().display())).output()?;
+                if !output.status.success() {
+                  eprintln!("\nfile {} failed. Output:", path.art);
+                  std::io::stderr().write_all(&output.stderr)?;
+                  std::io::stdout().write_all(&output.stdout)?;
+                  std::io::stdout().flush()?;
+                  stat("fail", true);
+                  if cfg.panic_on_fail {
+                    std::process::abort()
+                  }
                 }
+                // println!("{}", String::from_utf8(output.stdout)?);
               }
-              // println!("{}", String::from_utf8(output.stdout)?);
               Ok(false)
             } else if cfg.parser_enabled || cfg.analyzer_enabled {
               path.with_reader(cfg, thread.as_ref(), mml_vct, &mut |v, p| v.run_analyzer(&path, p))
