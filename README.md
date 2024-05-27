@@ -17,57 +17,58 @@ the theory exports for each article. This breaks the dependencies between files 
 allows everything to be processed in parallel.
 ```shell
 $ time ./analyze-mml.sh
-Executed in   34.97 secs    fish           external
-   usr time  156.45 secs  462.00 micros  156.44 secs
-   sys time    3.04 secs   93.00 micros    3.04 secs
+Executed in   21.52 secs    fish           external
+   usr time  192.45 secs  454.00 micros  192.45 secs
+   sys time    4.22 secs  122.00 micros    4.22 secs
 ```
 
 You can then test the checker on the MML. You should get a result like this:
 ```shell
 $ time cargo run --release
-   6: xfamily  in 0.004s
-   2: boole    in 0.005s
-   0: tarski   in 0.006s
   10: subset   in 0.006s
+   6: xfamily  in 0.007s
+   2: boole    in 0.008s
+   0: tarski   in 0.010s
 ...
-1411: integr25 in 7.381s
-1406: integr24 in 17.492s
-1410: glib_015 in 15.041s
-1408: field_9  in 30.482s
-1367: wallace1 in 92.534s
-flex expansion bug: 6
-success: 1215274
+1465: realalg3 in 35.913s
+1461: field_14 in 65.490s
+1436: polynom9 in 160.927s
+1428: hilb10_7 in 190.613s
+1459: number11 in 124.127s
+success: 1362727
 ________________________________________________________
-Executed in  755.23 secs    fish           external
-   usr time   88.83 mins  415.00 micros   88.83 mins
-   sys time    0.20 mins   78.00 micros    0.20 mins
+Executed in   16.62 mins    fish           external
+   usr time  167.58 mins  742.00 micros  167.58 mins
+   sys time    0.22 mins    0.00 micros    0.22 mins
 ```
 
-Here is a performance comparison of running the original Mizar checker vs the new `mizar-rs` checker on the entire MML, on 8 cores:
+Here is a performance comparison of running the original Mizar checker vs the new `mizar-rs` checker on the entire MML, on 12 cores:
 
 |                               | `mizar-rs` | `verifier` | speedup |
 |-------------------------------|------------|------------|---------|
-| real time, analyzer           | 2.42 min   | 18.28 min  | 7.56x   |
-| CPU time, analyzer            | 13.14 min  | 66.25 min  | 5.04x   |
-| real time, checker            | 11.33 min  | 57.37 min  | 5.06x   |
-| CPU time, checker             | 73.70 min  | 417.57 min | 5.67x   |
-| real time, analyzer + checker | 11.71 min  | 71.38 min  | 6.10x   |
-| CPU time, analyzer + checker  | 81.93 min  | 490.55 min | 5.99x   |
+| real time, analyzer           |   1.61 min |  13.39 min | 8.33x   |
+| CPU time, analyzer            |  15.34 min | 129.90 min | 8.47x   |
+| real time, checker            |  14.73 min |  68.43 min | 4.65x   |
+| CPU time, checker             | 142.75 min | 698.58 min | 4.89x   |
+| real time, analyzer + checker |  16.17 min |  71.46 min | 4.42x   |
+| CPU time, analyzer + checker  | 165.00 min | 748.40 min | 4.54x   |
+| real time, full               |  83.59 min |  16.62 min | 5.03x   |
+| CPU time, full                | 167.58 min | 798.38 min | 4.76x   |
 
 Note that, compared to `verifier`, `mizar-rs` benefits more from running both parts together rather than separately (the `analyzer + checker` row is less than `analyzer` plus `checker`), because `mizar-rs` does not do two passes.
 See [#2](https://github.com/digama0/mizar-rs/issues/2#issuecomment-1467281905) for more detailed plots and per-file measurements.
 
-Here some additional mizar-rs modes, together with the time taken to check the MML on 8 threads:
+Here some additional mizar-rs modes, together with the time taken to check the MML on 12 threads:
 
 |                            | command    | real time | CPU time   |
 |----------------------------|------------|-----------|------------|
-| accom + export             | `-ex`      | 28.88 sec | 3.44 min   |
-| export                     | `-PMex`    | 31.22 sec | 3.71 min   |
-| accom + analyzer           | `-a`       | 1.75 min  | 12.99 min  |
-| analyzer                   | `-PMa`     | 1.70 min  | 12.83 min  |
-| checker                    | `-PMc`     | 11.33 min | 73.70 min  |
-| accom + analyzer + checker |  (default) | 11.86 min | 88.87 min  |
-| analyzer + checker         | `-PM`      | 12.45 min | 91.84 min  |
+| accom + export             | `-ex`      | 34.09 sec |   5.40 min |
+| export                     | `-PMex`    | 19.85 sec |   3.19 min |
+| accom + analyzer           | `-a`       |  1.35 min |  13.80 min |
+| analyzer                   | `-PMa`     |  1.60 min |  15.34 min |
+| checker                    | `-PMc`     | 14.73 min | 142.75 min |
+| accom + analyzer + checker |  (default) | 16.62 min | 167.58 min |
+| analyzer + checker         | `-PM`      | 16.17 min | 165.00 min |
 
 * The "export" mode also includes running the analyzer in "quick" mode, which does just enough analysis to construct theorem statements. This constructs the `prel/` data for dependent articles, and represents the not-trivially-parallelizable part of MML processing when generating data files from scratch.
 
