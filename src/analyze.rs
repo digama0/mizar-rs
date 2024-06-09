@@ -644,13 +644,26 @@ impl Analyzer<'_> {
         if let Formula::Pred { nr, ref args } = f {
           if let (nr, [lhs, rhs]) = Formula::adjust_pred(nr, args, Some(&self.g.constrs)) {
             if self.g.reqs.equals_to() == Some(nr) {
+              self.write_xml.on(|w| {
+                let label = prop.label.as_ref().and_then(|l| l.id.0);
+                w.start_iter_equality(&self.r.lc, pos, label, lhs);
+                w.start_iter_step(&self.r.lc, rhs);
+              });
               self.elab_justification(None, &self.g.reqs.mk_eq(lhs.clone(), rhs.clone()), just);
               let mut mid = rhs.clone();
               for ast::IterStep { rhs, just, .. } in steps {
                 let rhs = self.elab_intern_term_no_reserve(rhs);
+                self.write_xml.on(|w| {
+                  w.end_iter_step();
+                  w.start_iter_step(&self.r.lc, &rhs);
+                });
                 self.elab_justification(None, &self.g.reqs.mk_eq(mid, rhs.clone()), just);
                 mid = rhs;
               }
+              self.write_xml.on(|w| {
+                w.end_iter_step();
+                w.end_iter_equality()
+              });
               let f = self.g.reqs.mk_eq(lhs.clone(), mid);
               self.push_prop(prop.label.as_ref().map(|l| l.id.clone()), f.clone());
               return f
@@ -805,7 +818,6 @@ impl Analyzer<'_> {
     &mut self, mut cc: CorrConds, conds: &mut [ast::CorrCond], corr: &mut Option<ast::Correctness>,
   ) {
     if self.g.cfg.analyzer_full {
-      self.write_xml.on(|w| w.step_corr_cond());
       for cond in conds {
         let mut thesis = cc.0[cond.kind].take().unwrap();
         self.write_xml.on(|w| {
@@ -2363,6 +2375,7 @@ impl<'a> PropertiesBuilder<'a> {
           w.write_proposition(&elab.r.lc, prop.pos, None, &thesis)
         });
         elab.elab_justification(None, &thesis, &mut prop.just);
+        elab.write_xml.on(|w| w.end_property());
       }
       self.props.set(match self.kind {
         PropertyDeclKind::Pred(_, false) => prop.kind.flip(),
@@ -2870,11 +2883,12 @@ trait ReadProof {
           self.thus(elab, f.into_conjuncts())
         },
       ast::ItemKind::PerCases { just, kind: CaseKind::Case, blocks } => {
+        const CK: CaseKind = CaseKind::Case;
         elab.write_xml.on(|w| w.start_cases(it.pos));
         let mut iter = self.new_cases(elab);
         let f = Formula::mk_and_with(|disjs| {
           for bl in blocks {
-            elab.write_xml.on(|w| w.start_case(&elab.r.lc, it.pos, elab.thesis.as_deref()));
+            elab.write_xml.on(|w| w.start_case(&elab.r.lc, CK, it.pos, elab.thesis.as_deref()));
             let (case, o) = elab.scope(false, true, false, |elab| {
               let case = Formula::mk_and_with(|conjs| {
                 for prop in bl.hyp.conds() {
@@ -2885,12 +2899,12 @@ trait ReadProof {
                   });
                   f.append_conjuncts_to(conjs);
                 }
-                elab.write_xml.on(|w| w.mid_case());
+                elab.write_xml.on(|w| w.mid_case(CK));
                 self.new_case(elab, &mut iter, conjs)
               });
               (case, self.elab_proof(elab, &mut bl.items, bl.end))
             });
-            elab.write_xml.on(|w| w.end_case());
+            elab.write_xml.on(|w| w.end_case(CK));
             case.mk_neg().append_conjuncts_to(disjs);
             self.end_case(elab, &mut iter, o);
           }
@@ -2905,11 +2919,12 @@ trait ReadProof {
       }
       ast::ItemKind::Unfold(refs) => self.unfold(elab, refs),
       ast::ItemKind::PerCases { just, kind: CaseKind::Suppose, blocks } => {
+        const CK: CaseKind = CaseKind::Suppose;
         elab.write_xml.on(|w| w.start_cases(it.pos));
         let mut recv = self.new_supposes(elab);
         let f = Formula::mk_and_with(|disjs| {
           for bl in blocks {
-            elab.write_xml.on(|w| w.start_suppose(&elab.r.lc, it.pos, elab.thesis.as_deref()));
+            elab.write_xml.on(|w| w.start_case(&elab.r.lc, CK, it.pos, elab.thesis.as_deref()));
             let (case, o) = elab.scope(false, true, false, |elab| {
               let case = Formula::mk_and_with(|conjs| {
                 for prop in bl.hyp.conds() {
@@ -2920,12 +2935,12 @@ trait ReadProof {
                   });
                   f.append_conjuncts_to(conjs);
                 }
-                elab.write_xml.on(|w| w.mid_suppose());
+                elab.write_xml.on(|w| w.mid_case(CK));
                 self.new_suppose(elab, &mut recv, conjs);
               });
               (case, self.elab_proof(elab, &mut bl.items, bl.end))
             });
-            elab.write_xml.on(|w| w.end_suppose());
+            elab.write_xml.on(|w| w.end_case(CK));
             case.mk_neg().append_conjuncts_to(disjs);
             self.end_suppose(elab, &mut recv, o);
           }
@@ -3276,7 +3291,20 @@ impl ReadProof for WithThesis {
     self.end_supposes(elab, expansions, end)
   }
 
-  fn new_supposes(&mut self, _: &mut Analyzer) -> Self::SupposeRecv { vec![] }
+  fn new_supposes(&mut self, elab: &mut Analyzer) -> Self::SupposeRecv {
+    elab.write_xml.on(|w| {
+      let f = elab.thesis.as_deref().unwrap();
+      w.write_block_thesis(&elab.r.lc, std::iter::empty(), f)
+    });
+    vec![]
+  }
+
+  fn new_suppose(&mut self, elab: &mut Analyzer, _: &mut Self::SupposeRecv, _: &[Formula]) {
+    elab.write_xml.on(|w| {
+      let f = elab.thesis.as_deref().unwrap();
+      w.write_thesis(&elab.r.lc, f, &[])
+    });
+  }
 
   fn end_supposes(&mut self, elab: &mut Analyzer, expansions: Self::SupposeRecv, end: Position) {
     let thesis = elab.thesis.as_deref_mut().unwrap();
@@ -3622,6 +3650,10 @@ impl BlockReader {
         let id = elab.r.definitions.peek();
         elab.r.read_definiens(&df);
         if elab.g.cfg.analyzer_full {
+          elab.write_xml.on(|w| {
+            w.write_definiens(&df);
+            w.write_defthm(&elab.r.lc, &kind, pos, label.as_ref().and_then(|l| l.0), &thm);
+          });
           let thm2 = (*thm).visit_cloned(&mut elab.intern_const());
           if let Some((Some(label), _)) = label {
             elab.local_def_map.insert(label, id);
@@ -3778,7 +3810,8 @@ impl BlockReader {
     self.to_locus(elab, |l| it_type.visit(l));
     let n;
     if it.redef && spec.is_none() && superfluous == 0 && it.props.is_empty() {
-      n = redefines.unwrap()
+      n = redefines.unwrap();
+      elab.write_xml.on(|w| w.skip_constructor());
     } else {
       let primary = primary.clone();
       let mut c = TyConstructor {
@@ -3894,7 +3927,8 @@ impl BlockReader {
     properties.elab_properties(elab, &mut it.props);
     let n;
     if it.redef && superfluous == 0 && it.props.is_empty() {
-      n = redefines.unwrap()
+      n = redefines.unwrap();
+      elab.write_xml.on(|w| w.skip_constructor());
     } else {
       let p = primary.clone();
       let mut c = Constructor { primary: p, redefines, superfluous, properties: properties.props };
@@ -3951,6 +3985,7 @@ impl BlockReader {
         let mut expansion = Box::new(elab.elab_type(expansion));
         elab.elab_corr_conds(cc, &mut it.conds, &mut it.corr);
         properties.elab_properties(elab, &mut it.props);
+        elab.write_xml.on(|w| w.skip_constructor());
         self.to_locus(elab, |l| expansion.visit(l));
         let kind = PatternKind::ExpandableMode { expansion };
         elab.push_pattern(true, PKC::Mode, kind, fmt, primary, visible, true)
@@ -4024,7 +4059,8 @@ impl BlockReader {
         self.to_locus(elab, |l| it_type.visit(l));
         let n;
         if it.redef && spec.is_none() && superfluous == 0 {
-          n = redefines.unwrap()
+          n = redefines.unwrap();
+          elab.write_xml.on(|w| w.skip_constructor());
         } else {
           let primary = primary.clone();
           let mut c = TyConstructor {
@@ -4126,7 +4162,8 @@ impl BlockReader {
     properties.elab_properties(elab, &mut it.props);
     let n;
     if it.redef && superfluous == 0 && it.props.is_empty() {
-      n = redefines.unwrap()
+      n = redefines.unwrap();
+      elab.write_xml.on(|w| w.skip_constructor());
     } else {
       let p = primary.clone();
       let mut c = TyConstructor {
@@ -4382,16 +4419,18 @@ impl BlockReader {
       }
       _ => (ty.kind, &*ty.args),
     };
-    let mut ty2 = Type { kind, attrs: ty.attrs.clone(), args: args.to_vec() };
-    let mut cc = CorrConds::new();
-    cc.0[CorrCondKind::Existence] = Some(Box::new(Formula::forall(ty, f.mk_neg()).mk_neg()));
-    elab.elab_corr_conds(cc, conds, corr);
-
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
+    let mut ty2 = Type { kind, attrs: ty.attrs.clone(), args: args.to_vec() };
     self.to_locus(elab, |l| {
       attrs.visit(l);
       ty2.visit(l);
     });
+    elab.write_xml.on(|w| w.start_rcluster(&primary, &ty2, &attrs));
+
+    let mut cc = CorrConds::new();
+    cc.0[CorrCondKind::Existence] = Some(Box::new(Formula::forall(ty, f.mk_neg()).mk_neg()));
+    elab.elab_corr_conds(cc, conds, corr);
+
     CheckAccess::with(&primary, |occ| {
       occ.visit_attrs(&attrs);
       occ.visit_terms(&ty2.args);
@@ -4399,6 +4438,7 @@ impl BlockReader {
     std::mem::swap(&mut self.primary, &mut elab.lc.locus_ty);
     elab.register_cluster(attrs, primary, ty2);
     std::mem::swap(&mut self.primary, &mut elab.lc.locus_ty);
+    elab.write_xml.on(|w| w.end_registration());
   }
 
   fn elab_cond_reg(
@@ -4433,16 +4473,18 @@ impl BlockReader {
       });
       f.mk_neg().append_conjuncts_to(conjs)
     });
-    let mut cc = CorrConds::new();
-    cc.0[CorrCondKind::Coherence] = Some(Box::new(Formula::forall(ty, f.mk_neg())));
-    elab.elab_corr_conds(cc, conds, corr);
-
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     self.to_locus(elab, |l| {
       attrs1.visit(l);
       attrs2.visit(l);
       ty2.visit(l);
     });
+    elab.write_xml.on(|w| w.start_ccluster(&primary, &attrs1, &ty2, &attrs2));
+
+    let mut cc = CorrConds::new();
+    cc.0[CorrCondKind::Coherence] = Some(Box::new(Formula::forall(ty, f.mk_neg())));
+    elab.elab_corr_conds(cc, conds, corr);
+
     CheckAccess::with(&primary, |occ| {
       occ.visit_attrs(&attrs1);
       occ.visit_terms(&ty2.args);
@@ -4455,6 +4497,7 @@ impl BlockReader {
       antecedent: attrs1,
     });
     self.needs_round_up = true;
+    elab.write_xml.on(|w| w.end_registration());
   }
 
   fn elab_func_reg(
@@ -4496,7 +4539,6 @@ impl BlockReader {
         }
       })
     }));
-    elab.elab_corr_conds(cc, conds, corr);
 
     let mut attrs = ty.attrs.0.clone();
     for attr in concl {
@@ -4514,6 +4556,9 @@ impl BlockReader {
       attrs.visit(l);
       ty.visit(l);
     });
+    elab.write_xml.on(|w| w.start_fcluster(&primary, &term2, &attrs1, oty.map(|_| &ty)));
+    elab.elab_corr_conds(cc, conds, corr);
+
     CheckAccess::with(&primary, |occ| occ.visit_term(&term2));
     elab.read_functor_cluster(FunctorCluster {
       cl: Cluster { primary, consequent: (attrs1, attrs) },
@@ -4524,6 +4569,7 @@ impl BlockReader {
     std::mem::swap(&mut self.primary, &mut elab.lc.locus_ty);
     elab.r.g.round_up_term_cache(&mut elab.r.lc);
     std::mem::swap(&mut self.primary, &mut elab.lc.locus_ty);
+    elab.write_xml.on(|w| w.end_registration());
   }
 
   fn elab_identify_pattern_func(
@@ -4601,13 +4647,16 @@ impl BlockReader {
       conjs.push(f.mk_neg());
     });
     cc.0[CorrCondKind::Compatibility] = Some(Box::new(f.mk_neg()));
+    let lhs = Term::Functor { nr: lhs_pat.nr, args: lhs_args };
+    let rhs = Term::Functor { nr: rhs_pat.nr, args: rhs_args };
+    let eq_args: Box<[_]> =
+      eq_args.into_iter().map(|(c1, c2)| (self.locus(c1), self.locus(c2))).collect();
+    let primary = self.primary.0.iter().cloned().collect();
+    let id = IdentifyFunc { primary, lhs, rhs, eq_args };
+    elab.write_xml.on(|w| w.start_identify_func(&id));
     elab.elab_corr_conds(cc, &mut it.conds, &mut it.corr);
-    elab.r.push_identify(&IdentifyFunc {
-      primary: self.primary.0.iter().cloned().collect(),
-      lhs: Term::Functor { nr: lhs_pat.nr, args: lhs_args },
-      rhs: Term::Functor { nr: rhs_pat.nr, args: rhs_args },
-      eq_args: eq_args.into_iter().map(|(c1, c2)| (self.locus(c1), self.locus(c2))).collect(),
-    });
+    elab.r.push_identify(&id);
+    elab.write_xml.on(|w| w.end_identify_func());
   }
 
   fn elab_reduction(&mut self, elab: &mut Analyzer, it: &mut ast::Reduction) {
@@ -4640,26 +4689,30 @@ impl BlockReader {
     assert!(reduction_allowed, "Right term must be a subterm of the left term");
     let mut cc = CorrConds::new();
     cc.0[CorrCondKind::Reducibility] = Some(Box::new(elab.g.reqs.mk_eq(from.clone(), to.clone())));
-    elab.elab_corr_conds(cc, &mut it.conds, &mut it.corr);
+    let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     self.to_locus(elab, |l| {
       from.visit(l);
       to.visit(l)
     });
-    let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     CheckAccess::with(&primary, |occ| occ.visit_term(&from));
-    elab.r.reductions.push(Reduction { primary, terms: [from, to] });
+    let red = Reduction { primary, terms: [from, to] };
+    elab.write_xml.on(|w| w.start_reduction(&red));
+    elab.elab_corr_conds(cc, &mut it.conds, &mut it.corr);
+    elab.r.reductions.push(red);
+    elab.write_xml.on(|w| w.end_reduction());
   }
 
   fn elab_sethood_registration(
-    &mut self, elab: &mut Analyzer, ty: &ast::Type, just: &mut ast::Justification,
+    &mut self, elab: &mut Analyzer, pos: Position, ty: &ast::Type, just: &mut ast::Justification,
   ) {
-    let mut ty = elab.elab_type(ty);
+    let ty = elab.elab_type(ty);
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
+    let mut prop = Property { primary, ty, kind: PropertyKind::Sethood };
     if elab.g.cfg.analyzer_full {
       let mut property = Formula::mk_neg(Formula::forall(
         Type::SET,
         Formula::mk_neg(Formula::forall(
-          ty.clone(),
+          prop.ty.clone(),
           Formula::Pred {
             nr: elab.g.reqs.belongs_to().unwrap(),
             args: Box::new([Term::Bound(BoundId(1)), Term::Bound(BoundId(0))]),
@@ -4667,11 +4720,18 @@ impl BlockReader {
         )),
       ));
       property.visit(&mut elab.intern_const());
+      self.to_locus(elab, |l| prop.ty.visit(l));
+      elab.write_xml.on(|w| {
+        w.start_sethood_registration(&prop);
+        w.write_proposition(&elab.r.lc, pos, None, &property)
+      });
       elab.elab_justification(None, &property, just);
+      elab.write_xml.on(|w| w.end_sethood_registration());
+    } else {
+      self.to_locus(elab, |l| prop.ty.visit(l));
     }
-    self.to_locus(elab, |l| ty.visit(l));
-    CheckAccess::with(&primary, |occ| occ.visit_type(&ty));
-    elab.properties.push(Property { primary, ty, kind: PropertyKind::Sethood })
+    CheckAccess::with(&prop.primary, |occ| occ.visit_type(&prop.ty));
+    elab.properties.push(prop)
   }
 
   fn elab_pred_notation(
@@ -4901,7 +4961,7 @@ impl ReadProof for BlockReader {
         self.elab_identify_func(elab, it),
       (BlockKind::Registration, ast::ItemKind::Reduction(it)) => self.elab_reduction(elab, it),
       (BlockKind::Registration, ast::ItemKind::SethoodRegistration { ty, just }) =>
-        self.elab_sethood_registration(elab, ty, just),
+        self.elab_sethood_registration(elab, it.pos, ty, just),
       (BlockKind::Definition, &mut ast::ItemKind::Pragma(Pragma::Canceled(CancelKind::Def, n))) =>
         self.elab_canceled_def(elab, it.pos, n),
       (

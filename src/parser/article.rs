@@ -651,6 +651,7 @@ impl ArticleParser<'_> {
         }
         b"PerCasesReasoning" => {
           let (start, label) = self.r.get_pos_and_label(&e)?;
+          assert!(label.is_none());
           let mut block_thesis = None;
           let mut cases = vec![];
           let (prop, just) = loop {
@@ -671,7 +672,7 @@ impl ArticleParser<'_> {
             None => self.parse_block_thesis()?.unwrap(),
           };
           self.r.end_tag(&mut self.buf)?;
-          ArticleElem::PerCases(PerCases { label, cases, prop, just, thesis, pos, block_thesis })
+          ArticleElem::PerCases(PerCases { cases, prop, just, thesis, pos, block_thesis })
         }
         b"PerCases" => {
           let prop = self.r.parse_proposition(&mut self.buf, false)?.unwrap();

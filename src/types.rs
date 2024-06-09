@@ -2203,7 +2203,6 @@ pub struct CaseBlock {
 #[derive(Debug)]
 pub struct PerCases {
   pub pos: (Position, Position),
-  pub label: Option<LabelId>,
   pub block_thesis: Formula,
   pub cases: Vec<CaseBlock>,
   pub prop: Proposition,

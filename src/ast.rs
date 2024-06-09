@@ -336,6 +336,20 @@ pub enum CaseKind {
   Case,
   Suppose,
 }
+impl CaseKind {
+  pub fn name(self) -> &'static str {
+    match self {
+      CaseKind::Case => "Case",
+      CaseKind::Suppose => "Suppose",
+    }
+  }
+  pub fn block_name(self) -> &'static str {
+    match self {
+      CaseKind::Case => "CaseBlock",
+      CaseKind::Suppose => "SupposeBlock",
+    }
+  }
+}
 
 #[derive(Debug)]
 pub struct Field {

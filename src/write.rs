@@ -1,4 +1,5 @@
 use crate::accom::SigBuilder;
+use crate::ast::CaseKind;
 use crate::types::{self, *};
 use crate::{Global, LocalContext, MizPath};
 use enum_map::{Enum, EnumMap};
@@ -143,19 +144,7 @@ impl MizPath {
           w.attr_str(b"nr", i + 1);
           w.attr(b"constrkind", &b"K"[..]);
         };
-        w.with("Identify", attrs, |w| {
-          w.write_types(None, &id.primary);
-          w.write_term(None, &id.lhs);
-          w.write_term(None, &id.rhs);
-          w.with0("EqArgs", |w| {
-            for &(x, y) in &*id.eq_args {
-              w.with_attr("Pair", |w| {
-                w.attr_str(b"x", x.0 + 1);
-                w.attr_str(b"y", y.0 + 1)
-              })
-            }
-          })
-        })
+        w.with("Identify", attrs, |w| w.write_identify_body(id))
       }
     });
     w.finish()
@@ -172,11 +161,7 @@ impl MizPath {
           w.attr(b"aid", art);
           w.attr_str(b"nr", i + 1);
         };
-        w.with("Reduction", attrs, |w| {
-          w.write_types(None, &red.primary);
-          w.write_term(None, &red.terms[0]);
-          w.write_term(None, &red.terms[1])
-        })
+        w.with("Reduction", attrs, |w| w.write_reduction_body(&red))
       }
     });
     w.finish()
@@ -215,9 +200,7 @@ impl MizPath {
           };
           w.attr(b"kind", &[k][..]);
           if let TheoremKind::Def(c) = &thm.kind {
-            let (k, nr) = c.discr_nr();
-            w.attr(b"constrkind", &[k][..]);
-            w.attr_str(b"constrnr", nr + 1);
+            w.constr_kind(c)
           }
         };
         w.with("Theorem", attrs, |w| w.write_formula(None, &thm.stmt))
@@ -405,9 +388,7 @@ impl WriteEth {
       };
       w.attr(b"kind", &[k][..]);
       if let TheoremKind::Def(c) = &thm.kind {
-        let (k, nr) = c.discr_nr();
-        w.attr(b"constrkind", &[k][..]);
-        w.attr_str(b"constrnr", nr + 1);
+        w.constr_kind(c)
       }
     };
     w.with("Theorem", attrs, |w| w.write_formula(None, &thm.stmt))
@@ -469,6 +450,12 @@ impl Elem {
   fn pos_and_label(&mut self, pos: Position, label: Option<LabelId>) {
     self.pos(pos);
     self.label(label)
+  }
+
+  fn constr_kind(&mut self, c: &ConstrKind) {
+    let (k, nr) = c.discr_nr();
+    self.attr(b"constrkind", &[k][..]);
+    self.attr_str(b"constrnr", nr + 1);
   }
 }
 
@@ -750,31 +737,53 @@ impl MizWriter {
     })
   }
 
+  pub fn write_definiens(&mut self, rel: Option<usize>, def: &Definiens) {
+    let attrs = |w: &mut Elem| {
+      w.constr_kind(&def.constr);
+      w.attr(b"aid", def.article.as_str().to_ascii_uppercase().as_bytes());
+      w.attr_str(b"defnr", def.def_nr.0 + 1);
+      // w.attr_str(b"vid", lab_id);
+      if let Some(i) = rel {
+        w.attr_str(b"relnr", i + 1);
+      }
+    };
+    self.with("Definiens", attrs, |w| {
+      w.write_types(None, &def.primary);
+      w.write_loci("Essentials", &def.essential);
+      if !matches!(def.assumptions, Formula::True) {
+        w.write_formula(None, &def.assumptions)
+      }
+      match &def.value {
+        DefValue::Term(body) => w.write_def_body(b'e', body, |w, t| w.write_term(None, t)),
+        DefValue::Formula(body) => w.write_def_body(b'm', body, |w, f| w.write_formula(None, f)),
+      }
+    })
+  }
+
   pub fn write_definitions(&mut self, rel: bool, def: &[Definiens]) {
     for (i, def) in def.iter().enumerate() {
-      let attrs = |w: &mut Elem| {
-        let (kind, nr) = def.constr.discr_nr();
-        w.attr(b"constrkind", &[kind][..]);
-        w.attr_str(b"constrnr", nr + 1);
-        w.attr(b"aid", def.article.as_str().to_ascii_uppercase().as_bytes());
-        w.attr_str(b"defnr", def.def_nr.0 + 1);
-        // w.attr_str(b"vid", lab_id);
-        if rel {
-          w.attr_str(b"relnr", i + 1);
-        }
-      };
-      self.with("Definiens", attrs, |w| {
-        w.write_types(None, &def.primary);
-        w.write_loci("Essentials", &def.essential);
-        if !matches!(def.assumptions, Formula::True) {
-          w.write_formula(None, &def.assumptions)
-        }
-        match &def.value {
-          DefValue::Term(body) => w.write_def_body(b'e', body, |w, t| w.write_term(None, t)),
-          DefValue::Formula(body) => w.write_def_body(b'm', body, |w, f| w.write_formula(None, f)),
-        }
-      })
+      self.write_definiens(rel.then(|| i + 1), def)
     }
+  }
+
+  fn write_identify_body(&mut self, id: &IdentifyFunc) {
+    self.write_types(None, &id.primary);
+    self.write_term(None, &id.lhs);
+    self.write_term(None, &id.rhs);
+    self.with0("EqArgs", |w| {
+      for &(x, y) in &*id.eq_args {
+        w.with_attr("Pair", |w| {
+          w.attr_str(b"x", x.0 + 1);
+          w.attr_str(b"y", y.0 + 1)
+        })
+      }
+    })
+  }
+
+  fn write_reduction_body(&mut self, red: &Reduction) {
+    self.write_types(None, &red.primary);
+    self.write_term(None, &red.terms[0]);
+    self.write_term(None, &red.terms[1])
   }
 
   fn write_attrs(&mut self, lc: Option<&LocalContext>, attrs: &Attrs) {
@@ -926,13 +935,19 @@ impl MizWriter {
     self.with0(tag, |w| args.iter().for_each(|n| w.with_attr("Int", |w| w.attr_str(b"x", n.0 + 1))))
   }
 
-  pub fn write_pairs(&mut self, xs: &[(u32, u32)]) {
+  fn write_pairs(&mut self, xs: &[(u32, u32)]) {
     for &(x, y) in xs {
       self.with_attr("Pair", |w| {
         w.attr_str(b"x", x);
         w.attr_str(b"y", y)
       })
     }
+  }
+
+  fn write_proposition(
+    &mut self, lc: Option<&LocalContext>, pos: Position, label: Option<LabelId>, f: &Formula,
+  ) {
+    self.with("Proposition", |w| w.pos_and_label(pos, label), |w| w.write_formula(lc, f))
   }
 }
 
@@ -951,8 +966,9 @@ impl MizPath {
       let mut w = self.create_xml(true, false, "xml").unwrap();
       w.two_clusters = true;
       w.xsl();
-      w.start("Article").attr(b"aid", self.art.as_str().to_ascii_uppercase().as_bytes());
-      Box::new(WriteXml(w, State::Top, vec![]))
+      let art = self.art.as_str().to_ascii_uppercase();
+      w.start("Article").attr(b"aid", art.as_bytes());
+      Box::new(WriteXml { w, state: State::Block(BlockKind::Top), stack: vec![], art })
     }))
   }
 }
@@ -969,14 +985,15 @@ impl OWriteXml {
 
   pub fn finish(&mut self) {
     if let Some(mut w) = self.0.take() {
-      w.0.end_tag("Article");
-      w.0.finish()
+      w.w.end_tag("Article");
+      w.w.finish()
     }
   }
 }
 
 #[derive(Debug, Clone, Copy)]
 enum BlockKind {
+  Top,
   Block,
   Diffuse,
   Proof,
@@ -986,14 +1003,25 @@ enum BlockKind {
 enum PropKind {
   Consider(BlockKind),
   Reconsider(BlockKind),
-  CorrCond(CorrCondKind),
-  Correctness,
+  CorrCond(CorrectnessState, CorrCondKind),
+  Correctness(CorrectnessState),
   Property,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RegistrationKind {
+  Reg,
+  Identify,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CorrectnessState {
+  Definition,
+  Registration(RegistrationKind),
 }
 
 #[derive(Debug)]
 enum State {
-  Top,
   SchemeBlock1,
   SchemePremises,
   SchemeBlock2,
@@ -1008,12 +1036,25 @@ enum State {
   EndBlock(BlockKind),
   Assume(BlockKind),
   InnerAssume,
+  IterEquality(BlockKind),
+  AfterIterStep(BlockKind),
+  PerCases0Proof,
+  PerCases1(BlockKind),
+  PerCases2(BlockKind),
+  PerCases3(BlockKind),
+  PerCases4(BlockKind),
+  PerCases5(BlockKind),
+  PerCases6Diffuse,
+  AfterPerCases(BlockKind),
+  Case1(BlockKind, CaseKind),
   Prop1(PropKind),
   Prop2(PropKind),
-  Definition,
-  Definition1,
-  Definition2,
-  Definition3,
+  Correctness1(CorrectnessState),
+  DefProperties,
+  DefEnd,
+  RegistrationEnd(RegistrationKind),
+  SethoodRegistration1,
+  SethoodRegistration2,
 }
 
 impl State {
@@ -1029,29 +1070,37 @@ impl State {
 enum Stack {
   SchemeBlock,
   Thus(BlockKind),
-  Top,
   Reasoning(BlockKind, bool),
   Now(BlockKind),
   Prop(PropKind),
-  Reconsider(BlockKind),
+  IterEquality(BlockKind),
+  Case(CaseKind),
+  PerCases(BlockKind),
+  // Reconsider(BlockKind),
   Block(types::BlockKind),
-  CorrCond(CorrCondKind),
-  Correctness,
+  // CorrCond(CorrCondKind),
+  // Correctness,
+  SethoodRegistration,
 }
 
-pub struct WriteXml(MizWriter, State, Vec<Stack>);
+pub struct WriteXml {
+  w: MizWriter,
+  state: State,
+  stack: Vec<Stack>,
+  art: String,
+}
 
 impl WriteXml {
-  pub fn start_tag(&mut self, tag: &'static str) { self.0.start(tag); }
-  pub fn end_tag(&mut self, tag: &'static str) { self.0.end_tag(tag) }
+  pub fn start_tag(&mut self, tag: &'static str) { self.w.start(tag); }
+  pub fn end_tag(&mut self, tag: &'static str) { self.w.end_tag(tag) }
 
   #[inline]
   fn with(
     &mut self, tag: &'static str, attrs: impl FnOnce(&mut Elem), body: impl FnOnce(&mut Self),
   ) {
-    attrs(self.0.start(tag));
+    attrs(self.w.start(tag));
     body(self);
-    self.0.end_tag(tag)
+    self.w.end_tag(tag)
   }
 
   #[inline]
@@ -1060,52 +1109,59 @@ impl WriteXml {
   }
 
   pub fn end_pos(&mut self, pos: Position) {
-    match self.1 {
-      State::SchemeBlock3 => self.1 = dbg!(State::SchemeBlock4),
-      State::Block(kind) => self.1 = dbg!(State::EndBlock(kind)),
+    match self.state {
+      State::SchemeBlock3 => self.state = dbg!(State::SchemeBlock4),
+      State::Block(kind) => self.state = dbg!(State::EndBlock(kind)),
+      State::PerCases4(kind) => self.state = dbg!(State::PerCases5(kind)),
+      State::AfterPerCases(kind) => self.state = dbg!(State::EndBlock(kind)),
       _ => unreachable!(),
     }
-    self.0.with_attr("EndPosition", |w| w.pos(pos))
+    self.w.with_attr("EndPosition", |w| w.pos(pos))
   }
 
-  pub fn write_term(&mut self, lc: &LocalContext, tm: &Term) { self.0.write_term(Some(lc), tm) }
+  pub fn write_term(&mut self, lc: &LocalContext, tm: &Term) { self.w.write_term(Some(lc), tm) }
   pub fn write_terms(&mut self, lc: &LocalContext, tms: &[Term]) {
-    self.0.write_terms(Some(lc), tms)
+    self.w.write_terms(Some(lc), tms)
   }
-  pub fn write_type(&mut self, lc: &LocalContext, ty: &Type) { self.0.write_type(Some(lc), ty) }
+  pub fn write_type(&mut self, lc: &LocalContext, ty: &Type) { self.w.write_type(Some(lc), ty) }
   pub fn write_types(&mut self, lc: &LocalContext, tys: &[Type]) {
-    self.0.write_types(Some(lc), tys)
+    self.w.write_types(Some(lc), tys)
   }
   pub fn write_formula(&mut self, lc: &LocalContext, f: &Formula) {
-    self.0.write_formula(Some(lc), f)
+    self.w.write_formula(Some(lc), f)
   }
   pub fn write_proposition(
     &mut self, lc: &LocalContext, pos: Position, label: Option<LabelId>, f: &Formula,
   ) {
-    match self.1 {
-      State::SchemePremises | State::Assume(_) | State::InnerAssume => {}
-      State::SchemeBlock2 | State::Top | State::Block(_) | State::Prop1(_) => {
-        self.2.push(match *dbg!(&self.1) {
+    match self.state {
+      State::SchemePremises | State::Assume(_) | State::InnerAssume | State::Case1(_, _) => {}
+      State::SchemeBlock2
+      | State::Block(_)
+      | State::Prop1(_)
+      | State::PerCases2(_)
+      | State::SethoodRegistration1 => {
+        self.stack.push(match *dbg!(&self.state) {
           State::SchemeBlock2 => Stack::SchemeBlock,
-          State::Top => Stack::Top,
           State::Block(kind) => Stack::Reasoning(kind, false),
           State::Prop1(kind) => Stack::Prop(kind),
+          State::PerCases2(kind) => Stack::PerCases(kind),
+          State::SethoodRegistration1 => Stack::SethoodRegistration,
           _ => unreachable!(),
         });
-        self.1 = dbg!(State::Justification);
+        self.state = dbg!(State::Justification);
       }
-      _ => unreachable!("{:?}", self.1),
+      _ => unreachable!("{:?}", self.state),
     }
-    self.with("Proposition", |w| w.pos_and_label(pos, label), |w| w.write_formula(lc, f))
+    self.w.write_proposition(Some(lc), pos, label, f)
   }
 
   pub fn write_thesis(&mut self, lc: &LocalContext, thesis: &Formula, expansions: &[(u32, u32)]) {
-    match self.1 {
-      State::BlockThesis => {}
-      State::AfterReasoning => self.1 = dbg!(State::Block(BlockKind::Proof)),
+    match dbg!(&self.state) {
+      State::BlockThesis | State::PerCases4(BlockKind::Proof) => {}
+      State::AfterReasoning => self.state = dbg!(State::Block(BlockKind::Proof)),
       _ => unreachable!(),
     }
-    self.0.with0("Thesis", |w| {
+    self.w.with0("Thesis", |w| {
       w.write_formula(Some(lc), thesis);
       w.with0("ThesisExpansions", |w| w.write_pairs(expansions))
     })
@@ -1114,34 +1170,35 @@ impl WriteXml {
   pub fn write_block_thesis<'a>(
     &mut self, lc: &LocalContext, theses: impl Iterator<Item = &'a Formula>, res: &Formula,
   ) {
-    let state = match self.1 {
+    let state = match self.state {
       State::Reasoning1 => dbg!(State::Block(BlockKind::Proof)),
       State::EndBlock(BlockKind::Diffuse) => dbg!(State::AfterBlockThesis),
+      State::PerCases0Proof => dbg!(State::PerCases1(BlockKind::Proof)),
+      State::Case1(BlockKind::Proof, ck) => dbg!(State::Case1(BlockKind::Proof, ck)),
+      State::PerCases5(BlockKind::Diffuse) => dbg!(State::PerCases6Diffuse),
       _ => unreachable!(),
     };
-    self.1 = State::BlockThesis;
+    self.state = State::BlockThesis;
     self.with0("BlockThesis", |w| {
       for f in theses {
         w.write_thesis(lc, f, &[])
       }
       w.write_formula(lc, res)
     });
-    self.1 = state;
+    self.state = state;
   }
 
   pub fn canceled(&mut self, kind: CancelKind, n: u32) {
-    match self.1 {
-      State::Top => {}
-      _ => unreachable!(),
-    }
+    assert!(matches!(self.state, State::Block(BlockKind::Top)));
     for _ in 0..n {
-      self.0.with_attr("Canceled", |w| w.attr(b"kind", &[kind.discr()][..]))
+      self.w.with_attr("Canceled", |w| w.attr(b"kind", &[kind.discr()][..]))
     }
+    self.w.newline()
   }
 
   pub fn let_(&mut self, lc: &LocalContext, start: usize) {
-    let State::Block(kind) = self.1 else { unreachable!() };
-    self.1 = dbg!(State::after_reasoning(kind));
+    let State::Block(kind) = self.state else { unreachable!() };
+    self.state = dbg!(State::after_reasoning(kind));
     self.with0("Let", |w| {
       for fv in &lc.fixed_var.0[start..] {
         w.write_type(lc, &fv.ty)
@@ -1150,15 +1207,15 @@ impl WriteXml {
   }
 
   pub fn start_assume(&mut self) {
-    match self.1 {
-      State::Block(kind) => self.1 = dbg!(State::Assume(kind)),
+    match self.state {
+      State::Block(kind) => self.state = dbg!(State::Assume(kind)),
       _ => unreachable!(),
     }
     self.start_tag("Assume")
   }
   pub fn end_assume(&mut self) {
-    match self.1 {
-      State::Assume(kind) => self.1 = dbg!(State::after_reasoning(kind)),
+    match self.state {
+      State::Assume(kind) => self.state = dbg!(State::after_reasoning(kind)),
       _ => unreachable!(),
     }
     self.end_tag("Assume")
@@ -1168,11 +1225,11 @@ impl WriteXml {
     &mut self, lc: &LocalContext, pos: Position, start: usize,
     conds: &[(Position, Option<LabelId>, Formula)], ex: &Formula,
   ) {
-    let kind = match self.1 {
+    let kind = match self.state {
       State::Block(kind) => kind,
       _ => unreachable!(),
     };
-    self.1 = dbg!(State::InnerAssume);
+    self.state = dbg!(State::InnerAssume);
     self.with0("Given", |w| {
       w.write_proposition(lc, pos, None, ex);
       for fv in &lc.fixed_var.0[start..] {
@@ -1182,20 +1239,20 @@ impl WriteXml {
         w.write_proposition(lc, pos, label, f)
       }
     });
-    self.1 = dbg!(State::after_reasoning(kind));
+    self.state = dbg!(State::after_reasoning(kind));
   }
 
   pub fn take(&mut self, lc: &LocalContext, tm: &Term) {
-    match self.1 {
-      State::Block(kind) => self.1 = dbg!(State::after_reasoning(kind)),
+    match self.state {
+      State::Block(kind) => self.state = dbg!(State::after_reasoning(kind)),
       _ => unreachable!(),
     }
     self.with0("Take", |w| w.write_term(lc, tm))
   }
 
   pub fn take_as_var(&mut self, lc: &LocalContext, ty: &Type, tm: &Term) {
-    match self.1 {
-      State::Block(kind) => self.1 = dbg!(State::after_reasoning(kind)),
+    match self.state {
+      State::Block(kind) => self.state = dbg!(State::after_reasoning(kind)),
       _ => unreachable!(),
     }
     self.with0("TakeAsVar", |w| {
@@ -1205,178 +1262,179 @@ impl WriteXml {
   }
 
   pub fn start_thus(&mut self) {
-    match self.1 {
+    match self.state {
       State::Block(kind @ (BlockKind::Proof | BlockKind::Diffuse)) => {
-        self.1 = dbg!(State::Block(BlockKind::Proof));
-        self.2.push(Stack::Thus(kind))
+        self.state = dbg!(State::Block(BlockKind::Proof));
+        self.stack.push(Stack::Thus(kind))
       }
       _ => unreachable!(),
     }
     self.start_tag("Conclusion")
   }
   pub fn end_thus(&mut self) {
-    assert!(matches!(self.1, State::Block(BlockKind::Proof)));
-    match self.2.pop() {
-      Some(Stack::Thus(kind)) => self.1 = dbg!(State::after_reasoning(kind)),
+    assert!(matches!(self.state, State::Block(BlockKind::Proof)));
+    match self.stack.pop() {
+      Some(Stack::Thus(kind)) => self.state = dbg!(State::after_reasoning(kind)),
       _ => unreachable!(),
     }
     self.end_tag("Conclusion")
   }
 
   pub fn start_now(&mut self, pos: Position, label: Option<LabelId>) {
-    match self.1 {
-      State::Block(kind) => {
-        self.1 = dbg!(State::Block(BlockKind::Diffuse));
-        self.2.push(Stack::Now(kind))
-      }
-      _ => unreachable!("{:?}", self.1),
-    }
-    self.0.start("Now").pos_and_label(pos, label)
+    let State::Block(kind @ (BlockKind::Diffuse | BlockKind::Proof | BlockKind::Top)) = self.state
+    else {
+      unreachable!("{:?}", self.state)
+    };
+    self.state = dbg!(State::Block(BlockKind::Diffuse));
+    self.stack.push(Stack::Now(kind));
+    self.w.start("Now").pos_and_label(pos, label)
   }
   pub fn end_now(&mut self) {
-    assert!(matches!(self.1, State::AfterBlockThesis));
-    match self.2.pop() {
-      Some(Stack::Now(kind)) => self.1 = dbg!(State::Block(kind)),
+    assert!(matches!(self.state, State::AfterBlockThesis));
+    match self.stack.pop() {
+      Some(Stack::Now(kind)) => self.state = dbg!(State::Block(kind)),
       _ => unreachable!(),
     }
     self.end_tag("Now")
   }
 
+  pub fn start_iter_equality(
+    &mut self, lc: &LocalContext, pos: Position, label: Option<LabelId>, lhs: &Term,
+  ) {
+    let State::Block(kind @ (BlockKind::Diffuse | BlockKind::Proof | BlockKind::Top)) = self.state
+    else {
+      unreachable!()
+    };
+    self.state = dbg!(State::IterEquality(kind));
+    self.w.start("IterEquality").pos_and_label(pos, label);
+    self.write_term(lc, lhs)
+  }
+  pub fn end_iter_equality(&mut self) {
+    let State::IterEquality(kind) = self.state else { unreachable!() };
+    self.state = dbg!(State::Block(kind));
+    self.end_tag("IterEquality")
+  }
+
+  pub fn start_iter_step(&mut self, lc: &LocalContext, rhs: &Term) {
+    let State::IterEquality(kind) = self.state else { unreachable!() };
+    self.stack.push(Stack::IterEquality(kind));
+    self.state = dbg!(State::Justification);
+    self.w.start("IterStep");
+    self.write_term(lc, rhs)
+  }
+  pub fn end_iter_step(&mut self) {
+    let State::AfterIterStep(kind) = self.state else { unreachable!() };
+    self.state = dbg!(State::IterEquality(kind));
+    self.end_tag("IterStep")
+  }
+
   pub fn start_cases(&mut self, pos: Position) {
-    match self.1 {
+    self.state = match self.state {
+      State::Block(BlockKind::Proof) => dbg!(State::PerCases0Proof),
+      State::Block(kind @ BlockKind::Diffuse) => dbg!(State::PerCases1(kind)),
       _ => unreachable!(),
-    }
-    self.0.start("PerCasesReasoning").pos(pos)
+    };
+    self.w.start("PerCasesReasoning").pos(pos)
   }
   pub fn end_cases(&mut self) {
-    match self.1 {
+    self.state = match self.state {
+      State::PerCases5(BlockKind::Proof) => dbg!(State::AfterPerCases(BlockKind::Proof)),
+      State::PerCases6Diffuse => dbg!(State::AfterPerCases(BlockKind::Diffuse)),
       _ => unreachable!(),
-    }
+    };
     self.end_tag("PerCasesReasoning")
   }
 
   pub fn start_cases_just(&mut self, lc: &LocalContext, pos: Position, f: &Formula) {
-    match self.1 {
-      _ => unreachable!(),
-    }
+    let State::PerCases1(diff) = self.state else { unreachable!() };
+    self.state = dbg!(State::PerCases2(diff));
     self.start_tag("PerCases");
     self.write_proposition(lc, pos, None, f)
   }
   pub fn end_cases_just(&mut self) {
-    match self.1 {
-      _ => unreachable!(),
-    }
+    let State::PerCases3(diff) = self.state else { unreachable!() };
+    self.state = dbg!(State::PerCases4(diff));
     self.end_tag("PerCases")
   }
 
-  pub fn start_case(&mut self, lc: &LocalContext, pos: Position, thesis: Option<&Formula>) {
-    match self.1 {
-      _ => unreachable!(),
-    }
-    self.0.start("CaseBlock").pos(pos);
+  pub fn start_case(
+    &mut self, lc: &LocalContext, ck: CaseKind, pos: Position, thesis: Option<&Formula>,
+  ) {
+    let State::PerCases1(diff) = self.state else { unreachable!() };
+    self.state = dbg!(State::Case1(diff, ck));
+    self.w.start(ck.block_name()).pos(pos);
     if let Some(f) = thesis {
       self.write_block_thesis(lc, std::iter::empty(), f)
     }
-    self.start_tag("Case")
+    self.start_tag(ck.name())
   }
-  pub fn mid_case(&mut self) {
-    match self.1 {
-      _ => unreachable!(),
-    }
-    self.end_tag("Case")
+  pub fn mid_case(&mut self, ck: CaseKind) {
+    let State::Case1(kind, ck2) = self.state else { unreachable!() };
+    assert_eq!(ck, ck2);
+    self.state = dbg!(State::after_reasoning(kind));
+    self.stack.push(Stack::Case(ck));
+    self.end_tag(ck.name())
   }
-  pub fn end_case(&mut self) {
-    match self.1 {
+  pub fn end_case(&mut self, ck: CaseKind) {
+    self.state = match self.state {
+      State::EndBlock(BlockKind::Proof) => dbg!(State::PerCases1(BlockKind::Proof)),
+      State::AfterBlockThesis => dbg!(State::PerCases1(BlockKind::Diffuse)),
       _ => unreachable!(),
-    }
-    self.end_tag("CaseBlock")
-  }
-
-  pub fn start_suppose(&mut self, lc: &LocalContext, pos: Position, thesis: Option<&Formula>) {
-    match self.1 {
-      _ => unreachable!(),
-    }
-    self.0.start("SupposeBlock").pos(pos);
-    if let Some(f) = thesis {
-      self.write_block_thesis(lc, std::iter::empty(), f)
-    }
-    self.start_tag("Suppose")
-  }
-  pub fn mid_suppose(&mut self) {
-    match self.1 {
-      _ => unreachable!(),
-    }
-    self.end_tag("Suppose")
-  }
-  pub fn end_suppose(&mut self) {
-    match self.1 {
-      _ => unreachable!(),
-    }
-    self.end_tag("SupposeBlock")
+    };
+    assert!(matches!(self.stack.pop(), Some(Stack::Case(ck2)) if ck2 == ck));
+    self.end_tag(ck.block_name())
   }
 
   pub fn start_scheme(&mut self, pos: Position, nr: SchId) {
-    match self.1 {
-      State::Top => self.1 = dbg!(State::SchemeBlock1),
-      _ => unreachable!(),
-    }
-    let w = self.0.start("SchemeBlock");
+    assert!(matches!(self.state, State::Block(BlockKind::Top)));
+    self.state = dbg!(State::SchemeBlock1);
+    let w = self.w.start("SchemeBlock");
     w.pos(pos);
     w.attr_str(b"schemenr", nr.0 + 1)
   }
   pub fn end_scheme(&mut self, end: Position) {
     self.end_pos(end);
-    match self.1 {
-      State::SchemeBlock4 => self.1 = State::Top,
-      _ => unreachable!(),
-    }
+    assert!(matches!(self.state, State::SchemeBlock4));
+    self.state = State::Block(BlockKind::Top);
     self.end_tag("SchemeBlock");
-    self.0.newline()
+    self.w.newline()
   }
 
   pub fn decl_scheme_func(&mut self, lc: &LocalContext, id: SchFuncId, ret: &Type) {
-    match self.1 {
-      State::SchemeBlock1 => {}
-      _ => unreachable!(),
-    }
+    assert!(matches!(self.state, State::SchemeBlock1));
     let attrs = |w: &mut Elem| w.attr_str(b"nr", id.0 + 1);
     self.with("SchemeFuncDecl", attrs, |w| {
-      w.0.write_arg_types(Some(lc), &lc.locus_ty.0);
-      w.0.write_type(Some(lc), ret)
+      w.w.write_arg_types(Some(lc), &lc.locus_ty.0);
+      w.w.write_type(Some(lc), ret)
     })
   }
 
   pub fn decl_scheme_pred(&mut self, lc: &LocalContext, id: SchPredId) {
-    match self.1 {
-      State::SchemeBlock1 => {}
-      _ => unreachable!(),
-    }
+    assert!(matches!(self.state, State::SchemeBlock1));
     let attrs = |w: &mut Elem| w.attr_str(b"nr", id.0 + 1);
-    self.with("SchemePredDecl", attrs, |w| w.0.write_arg_types(Some(lc), &lc.locus_ty.0))
+    self.with("SchemePredDecl", attrs, |w| w.w.write_arg_types(Some(lc), &lc.locus_ty.0))
   }
 
   pub fn start_scheme_prems(&mut self) {
-    match self.1 {
-      State::SchemeBlock1 => self.1 = dbg!(State::SchemePremises),
-      _ => unreachable!(),
-    }
+    assert!(matches!(self.state, State::SchemeBlock1));
+    self.state = dbg!(State::SchemePremises);
     self.start_tag("SchemePremises")
   }
   pub fn end_scheme_prems(&mut self) {
-    match self.1 {
-      State::SchemePremises => self.1 = dbg!(State::SchemeBlock2),
-      _ => unreachable!(),
-    }
+    assert!(matches!(self.state, State::SchemePremises));
+    self.state = dbg!(State::SchemeBlock2);
     self.end_tag("SchemePremises")
   }
 
   fn pop_justification(&mut self) {
-    match self.2.pop() {
-      Some(Stack::SchemeBlock) => self.1 = dbg!(State::SchemeBlock3),
-      Some(Stack::Top) => self.1 = dbg!(State::Top),
-      Some(Stack::Reasoning(kind, true)) => self.1 = dbg!(State::after_reasoning(kind)),
-      Some(Stack::Reasoning(kind, false)) => self.1 = dbg!(State::Block(kind)),
-      Some(Stack::Prop(kind)) => self.1 = dbg!(State::Prop2(kind)),
+    self.state = match self.stack.pop() {
+      Some(Stack::SchemeBlock) => dbg!(State::SchemeBlock3),
+      Some(Stack::Reasoning(kind, true)) => dbg!(State::after_reasoning(kind)),
+      Some(Stack::Reasoning(kind, false)) => dbg!(State::Block(kind)),
+      Some(Stack::Prop(kind)) => dbg!(State::Prop2(kind)),
+      Some(Stack::PerCases(kind)) => dbg!(State::PerCases3(kind)),
+      Some(Stack::IterEquality(kind)) => dbg!(State::AfterIterStep(kind)),
+      Some(Stack::SethoodRegistration) => dbg!(State::SethoodRegistration2),
       _ => unreachable!(),
     }
   }
@@ -1384,15 +1442,13 @@ impl WriteXml {
   pub fn start_proof(
     &mut self, lc: &LocalContext, pos: Position, label: Option<LabelId>, thesis: &Formula,
   ) {
-    match self.1 {
-      State::Justification => self.1 = dbg!(State::Reasoning1),
-      _ => unreachable!(),
-    }
-    self.0.start("Proof").pos_and_label(pos, label);
+    assert!(matches!(self.state, State::Justification));
+    self.state = dbg!(State::Reasoning1);
+    self.w.start("Proof").pos_and_label(pos, label);
     self.write_block_thesis(lc, std::iter::empty(), thesis)
   }
   pub fn end_proof(&mut self) {
-    match self.1 {
+    match self.state {
       State::EndBlock(BlockKind::Proof) | State::AfterBlockThesis => self.pop_justification(),
       _ => unreachable!(),
     }
@@ -1400,11 +1456,11 @@ impl WriteXml {
   }
 
   pub fn dbg(&self) {
-    eprintln!("{:?} {:?}\n{:?}", self.1, self.2, backtrace::Backtrace::new());
+    eprintln!("{:?} {:?}\n{:?}", self.state, self.stack, backtrace::Backtrace::new());
   }
 
   pub fn write_inference(&mut self, it: &Inference) {
-    match self.1 {
+    match dbg!(&self.state) {
       State::Justification => self.pop_justification(),
       _ => unreachable!(),
     }
@@ -1436,7 +1492,7 @@ impl WriteXml {
           }
           w.pos(it.pos)
         };
-        self.0.with("By", attrs, body)
+        self.w.with("By", attrs, body)
       }
       InferenceKind::From { sch } => {
         let attrs = |w: &mut Elem| {
@@ -1444,7 +1500,7 @@ impl WriteXml {
           w.attr_str(b"nr", sch.1 .0 + 1);
           w.pos(it.pos)
         };
-        self.0.with("From", attrs, body)
+        self.w.with("From", attrs, body)
       }
     };
   }
@@ -1452,28 +1508,25 @@ impl WriteXml {
   pub fn start_theorem(
     &mut self, lc: &LocalContext, pos: Position, label: Option<LabelId>, f: &Formula,
   ) {
-    match self.1 {
-      State::Top => self.1 = State::Block(BlockKind::Proof),
-      _ => unreachable!(),
-    }
+    assert!(matches!(self.state, State::Block(BlockKind::Top)));
+    self.state = State::Block(BlockKind::Proof);
     self.start_tag("JustifiedTheorem");
     self.write_proposition(lc, pos, label, f)
   }
   pub fn end_theorem(&mut self) {
-    match self.1 {
-      State::Block(BlockKind::Proof) => self.1 = State::Top,
-      _ => unreachable!(),
-    }
-    self.end_tag("JustifiedTheorem")
+    assert!(matches!(self.state, State::Block(BlockKind::Proof)));
+    self.state = State::Block(BlockKind::Top);
+    self.end_tag("JustifiedTheorem");
+    self.w.newline()
   }
 
   pub fn start_consider(
     &mut self, lc: &LocalContext, pos: Position, label: Option<LabelId>, f: &Formula,
   ) {
-    match self.1 {
-      State::Block(kind) => self.1 = State::Prop1(PropKind::Consider(kind)),
+    self.state = match self.state {
+      State::Block(kind) => State::Prop1(PropKind::Consider(kind)),
       _ => unreachable!(),
-    }
+    };
     self.start_tag("Consider");
     self.write_proposition(lc, pos, label, f);
   }
@@ -1482,58 +1535,73 @@ impl WriteXml {
     &mut self, lc: &LocalContext, start: usize,
     assums: &[(Position, Option<(Option<LabelId>, Rc<str>)>, Formula)],
   ) {
-    let State::Prop2(PropKind::Consider(kind)) = self.1 else { unreachable!() };
+    let State::Prop2(PropKind::Consider(kind)) = self.state else { unreachable!() };
     for fv in &lc.fixed_var.0[start..] {
       self.write_type(lc, &fv.ty)
     }
-    self.1 = dbg!(State::InnerAssume);
+    self.state = dbg!(State::InnerAssume);
     for &(pos, ref label, ref f) in assums {
       let label = label.as_ref().and_then(|l| l.0);
       self.write_proposition(lc, pos, label, f)
     }
-    self.1 = dbg!(State::Block(kind));
+    self.state = dbg!(State::Block(kind));
     self.end_tag("Consider")
   }
 
   pub fn start_reconsider(&mut self) {
-    match self.1 {
-      State::Block(kind) => self.1 = State::Prop1(PropKind::Reconsider(kind)),
+    self.state = match self.state {
+      State::Block(kind) => dbg!(State::Prop1(PropKind::Reconsider(kind))),
       _ => unreachable!(),
-    }
+    };
     self.start_tag("Reconsider");
   }
   pub fn end_reconsider(&mut self) {
-    let State::Prop2(PropKind::Reconsider(kind)) = self.1 else { unreachable!() };
-    self.1 = dbg!(State::Block(kind));
+    let State::Prop2(PropKind::Reconsider(kind)) = self.state else { unreachable!() };
+    self.state = dbg!(State::Block(kind));
     self.end_tag("Reconsider")
   }
 
   pub fn reconsider_var(&mut self, lc: &LocalContext, ty: &Type, tm: &Term) {
-    assert!(matches!(self.1, State::Prop1(PropKind::Reconsider(_))));
+    assert!(matches!(self.state, State::Prop1(PropKind::Reconsider(_))));
     self.write_type(lc, ty);
     self.write_term(lc, tm);
   }
 
   pub fn start_block(&mut self, kind: types::BlockKind, pos: Position) {
-    let State::Top = self.1 else { unreachable!() };
-    self.1 = State::Block(BlockKind::Block);
-    self.2.push(Stack::Block(kind));
-    self.0.start(kind.name()).pos(pos);
+    assert!(matches!(self.state, State::Block(BlockKind::Top)));
+    self.state = dbg!(State::Block(BlockKind::Block));
+    self.stack.push(Stack::Block(kind));
+    self.w.start(kind.name()).pos(pos);
   }
   pub fn end_block(&mut self, kind: types::BlockKind) {
-    let State::EndBlock(BlockKind::Block) = self.1 else { unreachable!() };
-    let Some(Stack::Block(kind2)) = self.2.pop() else { unreachable!() };
+    assert!(matches!(self.state, State::EndBlock(BlockKind::Block)));
+    let Some(Stack::Block(kind2)) = self.stack.pop() else { unreachable!() };
     assert!(kind == kind2);
-    self.1 = State::Top;
-    self.0.end_tag(kind.name())
+    self.state = dbg!(State::Block(BlockKind::Top));
+    self.w.end_tag(kind.name());
+    self.w.newline()
+  }
+
+  pub fn write_definiens(&mut self, def: &Definiens) {
+    assert!(matches!(self.state, State::Block(BlockKind::Top)));
+    self.w.write_definiens(None, def)
+  }
+
+  pub fn write_defthm(
+    &mut self, lc: &LocalContext, kind: &ConstrKind, pos: Position, label: Option<LabelId>,
+    f: &Formula,
+  ) {
+    assert!(matches!(self.state, State::Block(BlockKind::Top)));
+    let attrs = |w: &mut Elem| w.constr_kind(kind);
+    self.w.with("DefTheorem", attrs, |w| w.write_proposition(Some(lc), pos, label, f))
   }
 
   pub fn start_def(
     &mut self, kind: DefinitionKind, pos: Position, label: Option<LabelId>, redef: bool,
   ) {
-    let State::Block(BlockKind::Block) = self.1 else { unreachable!() };
-    self.1 = State::Definition;
-    let w = self.0.start("Definition");
+    let State::Block(BlockKind::Block) = self.state else { unreachable!() };
+    self.state = dbg!(State::Correctness1(CorrectnessState::Definition));
+    let w = self.w.start("Definition");
     match kind {
       DefinitionKind::Attr => w.attr(b"kind", &b"V"[..]),
       DefinitionKind::Mode => w.attr(b"kind", &b"M"[..]),
@@ -1550,67 +1618,160 @@ impl WriteXml {
     w.pos_and_label(pos, label);
   }
   pub fn end_def(&mut self) {
-    let State::Definition3 = self.1 else { unreachable!() };
-    self.1 = State::Block(BlockKind::Block);
-    self.0.end_tag("Definition")
+    let State::DefEnd = self.state else { unreachable!() };
+    self.state = dbg!(State::Block(BlockKind::Block));
+    self.w.end_tag("Definition")
   }
 
-  pub fn step_corr_cond(&mut self) {
-    assert!(matches!(self.1, State::Definition));
-    self.1 = State::Definition1;
+  fn start_registration(&mut self) {
+    let State::Block(BlockKind::Block) = self.state else { unreachable!() };
+    self.state = dbg!(State::Correctness1(CorrectnessState::Registration(RegistrationKind::Reg)));
+    self.w.start("Registration");
   }
+  pub fn end_registration(&mut self) {
+    let State::RegistrationEnd(RegistrationKind::Reg) = self.state else { unreachable!() };
+    self.state = dbg!(State::Block(BlockKind::Block));
+    self.w.end_tag("Registration")
+  }
+
+  pub fn start_identify_func(&mut self, id: &IdentifyFunc) {
+    let State::Block(BlockKind::Block) = self.state else { unreachable!() };
+    self.state =
+      dbg!(State::Correctness1(CorrectnessState::Registration(RegistrationKind::Identify)));
+    self.w.start("IdentifyRegistration");
+    self.w.with("Identify", |w| w.attr(b"constrkind", &b"K"[..]), |w| w.write_identify_body(id))
+  }
+  pub fn end_identify_func(&mut self) {
+    let State::RegistrationEnd(RegistrationKind::Identify) = self.state else { unreachable!() };
+    self.state = dbg!(State::Block(BlockKind::Block));
+    self.w.end_tag("IdentifyRegistration")
+  }
+
+  pub fn start_reduction(&mut self, red: &Reduction) {
+    let State::Block(BlockKind::Block) = self.state else { unreachable!() };
+    self.state =
+      dbg!(State::Correctness1(CorrectnessState::Registration(RegistrationKind::Identify)));
+    self.w.start("ReductionRegistration");
+    self.w.with0("Reduction", |w| w.write_reduction_body(red))
+  }
+  pub fn end_reduction(&mut self) {
+    let State::RegistrationEnd(RegistrationKind::Identify) = self.state else { unreachable!() };
+    self.state = dbg!(State::Block(BlockKind::Block));
+    self.w.end_tag("ReductionRegistration")
+  }
+
+  pub fn start_rcluster(&mut self, primary: &[Type], ty: &Type, attrs: &Attrs) {
+    self.start_registration();
+    self.w.with0("RCluster", |w| {
+      w.write_arg_types(None, primary);
+      w.write_type(None, ty);
+      w.write_attrs(None, attrs)
+    })
+  }
+
+  pub fn start_fcluster(
+    &mut self, primary: &[Type], term: &Term, attrs: &Attrs, ty: Option<&Type>,
+  ) {
+    self.start_registration();
+    self.w.with0("FCluster", |w| {
+      w.write_arg_types(None, primary);
+      w.write_term(None, term);
+      w.write_attrs(None, attrs);
+      if let Some(ty) = ty {
+        w.write_type(None, ty)
+      }
+    })
+  }
+
+  pub fn start_ccluster(
+    &mut self, primary: &[Type], antecedent: &Attrs, ty: &Type, consequent: &Attrs,
+  ) {
+    self.start_registration();
+    self.w.with0("CCluster", |w| {
+      w.write_arg_types(None, primary);
+      w.write_attrs(None, antecedent);
+      w.write_type(None, ty);
+      w.write_attrs(None, consequent)
+    })
+  }
+
+  pub fn start_sethood_registration(&mut self, prop: &Property) {
+    let State::Block(BlockKind::Block) = self.state else { unreachable!() };
+    self.state = dbg!(State::SethoodRegistration1);
+    self.w.start("PropertyRegistration");
+    let attrs = |w: &mut Elem| w.attr_str(b"x", prop.kind as u8 + 1);
+    self.w.with("Property", attrs, |w| {
+      w.write_arg_types(None, &prop.primary);
+      w.write_type(None, &prop.ty)
+    })
+  }
+  pub fn end_sethood_registration(&mut self) {
+    let State::SethoodRegistration2 = self.state else { unreachable!() };
+    self.state = dbg!(State::Block(BlockKind::Block));
+    self.w.end_tag("PropertyRegistration")
+  }
+
   pub fn start_corr_cond(&mut self, kind: CorrCondKind) {
-    assert!(matches!(self.1, State::Definition1));
-    self.1 = State::Prop1(PropKind::CorrCond(kind));
-    self.0.start(kind.tag());
+    let State::Correctness1(state) = self.state else { unreachable!() };
+    self.state = dbg!(State::Prop1(PropKind::CorrCond(state, kind)));
+    self.w.start(kind.tag());
   }
   pub fn end_corr_cond(&mut self, kind: CorrCondKind) {
-    let State::Prop2(PropKind::CorrCond(kind2)) = self.1 else { unreachable!() };
+    let State::Prop2(PropKind::CorrCond(state, kind2)) = self.state else { unreachable!() };
     assert!(kind == kind2);
-    self.1 = State::Definition1;
-    self.0.end_tag(kind.tag())
+    self.state = dbg!(State::Correctness1(state));
+    self.w.end_tag(kind.tag())
   }
 
   pub fn skip_correctness(&mut self) {
-    assert!(matches!(self.1, State::Definition1));
-    self.1 = State::Definition2;
+    let State::Correctness1(state) = self.state else { unreachable!() };
+    self.state = match state {
+      CorrectnessState::Definition => dbg!(State::DefProperties),
+      CorrectnessState::Registration(kind) => dbg!(State::RegistrationEnd(kind)),
+    }
   }
   pub fn start_correctness(&mut self) {
-    assert!(matches!(self.1, State::Definition1));
-    self.1 = State::Prop1(PropKind::Correctness);
-    self.0.start("Correctness");
+    let State::Correctness1(state) = self.state else { unreachable!() };
+    self.state = dbg!(State::Prop1(PropKind::Correctness(state)));
+    self.w.start("Correctness");
   }
   pub fn end_correctness(&mut self) {
-    let State::Prop2(PropKind::Correctness) = self.1 else { unreachable!() };
-    self.1 = State::Definition2;
-    self.0.end_tag("Correctness")
+    let State::Prop2(PropKind::Correctness(state)) = self.state else { unreachable!() };
+    self.w.end_tag("Correctness");
+    self.state = dbg!(State::Correctness1(state));
+    self.skip_correctness()
   }
 
   pub fn simple_corr_cond(&mut self, lc: &LocalContext, kind: CorrCondKind, f: &Formula) {
-    assert!(matches!(self.1, State::Prop1(PropKind::Correctness)));
-    self.0.with0(kind.tag(), |w| w.write_formula(Some(lc), f));
+    assert!(matches!(self.state, State::Prop1(PropKind::Correctness(_))));
+    self.w.with0(kind.tag(), |w| w.write_formula(Some(lc), f));
   }
 
   pub fn start_property(&mut self, kind: PropertyKind) {
-    assert!(matches!(self.1, State::Definition2));
-    self.1 = State::Prop1(PropKind::Property);
-    self.0.start("JustifiedProperty");
-    self.0.with0(kind.to_upper(), |_| {});
+    assert!(matches!(self.state, State::DefProperties));
+    self.state = dbg!(State::Prop1(PropKind::Property));
+    self.w.start("JustifiedProperty");
+    self.w.with0(kind.to_upper(), |_| {});
   }
   pub fn end_property(&mut self) {
-    let State::Prop2(PropKind::Property) = self.1 else { unreachable!() };
-    self.1 = State::Definition2;
-    self.0.end_tag("JustifiedProperty")
+    let State::Prop2(PropKind::Property) = self.state else { unreachable!() };
+    self.state = dbg!(State::DefProperties);
+    self.w.end_tag("JustifiedProperty")
   }
 
   pub fn skip_constructor(&mut self) {
-    assert!(matches!(self.1, State::Definition2));
-    self.1 = State::Definition3;
+    assert!(matches!(self.state, State::DefProperties));
+    self.state = State::DefEnd;
   }
 
   pub fn write_pattern(&mut self, i: u32, pat: &Pattern) {
-    assert!(matches!(self.1, State::Definition3));
-    self.0.write_pattern(pat, Some(i), |fmt| Some(fmt.0), |_, _| {});
+    match self.state {
+      State::DefEnd => {}
+      State::Block(BlockKind::Block)
+        if matches!(self.stack.last(), Some(Stack::Block(types::BlockKind::Notation))) => {}
+      _ => unreachable!(),
+    }
+    self.w.write_pattern(pat, Some(i), |fmt| Some(fmt.0), |_, _| {});
   }
 }
 
@@ -1619,9 +1780,9 @@ macro_rules! mk_write_constructor {
     impl WriteXml {
       $(
         pub fn $func(&mut self, art: Article, base: u32, i: $idty, c: &$ty) {
-          assert!(matches!(self.1, State::Definition2));
-          self.0.$func(art.as_str().to_ascii_uppercase().as_bytes(), i.0, base + i.0, c);
-          self.1 = State::Definition3;
+          assert!(matches!(self.state, State::DefProperties));
+          self.w.$func(art.as_str().to_ascii_uppercase().as_bytes(), i.0, base + i.0, c);
+          self.state = dbg!(State::DefEnd);
         }
       )*
     }

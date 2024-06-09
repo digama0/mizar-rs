@@ -418,7 +418,7 @@ impl Reader {
       pending_defs: Default::default(),
       def_map: Default::default(),
       pos: Default::default(),
-      no_suppress_checker: true,
+      no_suppress_checker: false,
       progress,
     }
   }
@@ -625,8 +625,8 @@ impl Reader {
         let fv = FixedVar { ty: self.intern(ty), def: Some((Box::new(self.intern(tm)), false)) };
         self.lc.fixed_var.push(fv);
       }
-      Item::PerCases(PerCases { label, block_thesis, cases, prop, just, .. }) => {
-        self.scope(*label, false, |this| {
+      Item::PerCases(PerCases { block_thesis, cases, prop, just, .. }) => {
+        self.scope(None, false, |this| {
           for CaseBlock { cs, items, .. } in cases {
             this.scope(None, false, |this| {
               let (CaseKind::Case(props) | CaseKind::Suppose(props)) = cs;
@@ -642,7 +642,7 @@ impl Reader {
           }
           this.read_just_prop(prop, just, false)
         });
-        self.push_prop(*label, self.intern(block_thesis))
+        self.push_prop(None, self.intern(block_thesis))
       }
       Item::Auxiliary(AuxiliaryItem::Statement(it)) | Item::Thus(it) => self.read_stmt(it),
       Item::Auxiliary(AuxiliaryItem::Consider { prop, just, fixed, intro }) => {
