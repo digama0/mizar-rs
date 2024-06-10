@@ -554,7 +554,7 @@ impl ArticleParser<'_> {
             }
           }
           if kind == b'G' {
-            assert!(!expand && !redef);
+            assert!(!expand && !redef && label.is_none());
             let mut constrs = vec![];
             let cl = loop {
               match self.parse_elem()? {
@@ -563,23 +563,15 @@ impl ArticleParser<'_> {
                 _ => panic!("expected cluster"),
               }
             };
-            let (mut conds, mut corr, mut patts, mut state) = (vec![], None, vec![], false);
+            let mut patts = vec![];
             loop {
               match self.parse_elem()? {
-                ArticleElem::CorrCond(it) if !state => conds.push(it),
-                ArticleElem::Correctness(it) if !state => {
-                  state = true;
-                  corr = Some(it)
-                }
-                ArticleElem::Pattern(it) => {
-                  state = true;
-                  patts.push(it)
-                }
+                ArticleElem::Pattern(it) => patts.push(it),
                 ArticleElem::End => break,
-                _ => panic!("expected correctness condition or pattern"),
+                _ => panic!("expected pattern"),
               }
             }
-            ArticleElem::DefStruct(DefStruct { pos, label, constrs, cl, conds, corr, patts })
+            ArticleElem::DefStruct(DefStruct { pos, constrs, cl, patts })
           } else {
             let kind = match (expand, kind) {
               (false, b'V') => DefinitionKind::Attr,

@@ -234,6 +234,9 @@ struct CliPasses {
   /// Produce XML files for internal data structures, in Mizar-compatible format
   #[arg(short = 'X', long)]
   xml_internals: bool,
+  /// Test output XML files for well-formedness
+  #[arg(long)]
+  xml_internals_self_test: bool,
   /// Disables the accomodator. (requires `-P`)
   #[arg(short = 'M', long)]
   no_accom: bool,
@@ -394,6 +397,7 @@ pub struct Config {
   pub verify_export: bool,
   pub xml_export: bool,
   pub xml_internals: bool,
+  pub xml_internals_self_test: bool,
   pub overwrite_prel: bool,
   pub cache_prel: bool,
 
@@ -471,6 +475,7 @@ fn main() {
     verify_export: cli.passes.verify_export,
     xml_export: cli.passes.xml_export,
     xml_internals: cli.passes.xml_internals,
+    xml_internals_self_test: cli.passes.xml_internals_self_test,
     overwrite_prel: cli.other.overwrite_prel,
     cache_prel: Default::default(),
 

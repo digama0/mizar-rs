@@ -560,6 +560,46 @@ impl Reader {
     }
   }
 
+  pub fn item_header(always_verbose: bool, it: &Item) {
+    eprint!("item[{:?}]: ", it.pos());
+    if always_verbose || verbose() {
+      eprintln!("{it:#?}");
+    } else {
+      match it {
+        Item::Let(_) => eprintln!("Let"),
+        Item::Given(it) => eprintln!("Given @ {:?}", it.prop.pos),
+        Item::Thus(it) => eprintln!("Thus @ {:?}", it.pos()),
+        Item::Assume(it) => eprintln!("Assume @ {:?}", it[0].pos),
+        Item::Take(_) => eprintln!("Take"),
+        Item::TakeAsVar(_, _) => eprintln!("TakeAsVar"),
+        Item::PerCases(it) => eprintln!("PerCases @ {:?}", it.pos.0),
+        Item::Auxiliary(it) => match it {
+          AuxiliaryItem::Statement(it) => match it {
+            Statement::Proposition { .. } => eprintln!("Proposition @ {:?}", it.pos()),
+            Statement::IterEquality { .. } => eprintln!("IterEquality @ {:?}", it.pos()),
+            Statement::Now { .. } => eprintln!("Now @ {:?}", it.pos()),
+          },
+          AuxiliaryItem::Consider { prop, .. } => eprintln!("Consider @ {:?}", prop.pos),
+          AuxiliaryItem::Set { .. } => eprintln!("Set"),
+          AuxiliaryItem::Reconsider { prop, .. } => eprintln!("Reconsider @ {:?}", prop.pos),
+          AuxiliaryItem::DefFunc { .. } => eprintln!("DefFunc"),
+          AuxiliaryItem::DefPred { .. } => eprintln!("DefPred"),
+        },
+        Item::Registration(_) => eprintln!("Registration"),
+        Item::Scheme(it) => eprintln!("Scheme @ {:?}", it.pos.0),
+        Item::Theorem { prop, .. } => eprintln!("Theorem @ {:?}", prop.pos),
+        Item::DefTheorem { kind, prop } => eprintln!("DefTheorem {kind:?} @ {:?}", prop.pos),
+        Item::Reservation { .. } => eprintln!("Reservation"),
+        Item::Canceled(_) => eprintln!("Canceled"),
+        Item::Definition(it) => eprintln!("Definition @ {:?}", it.pos),
+        Item::DefStruct(it) => eprintln!("DefStruct @ {:?}", it.pos),
+        Item::Definiens(_) => eprintln!("Definiens"),
+        Item::Block { kind, pos, .. } => eprintln!("{kind:?} block @ {:?}", pos.0),
+        Item::Pattern(_) => eprintln!("Pattern"),
+      }
+    }
+  }
+
   pub fn read_item(&mut self, it: &Item) {
     if let Some(pos) = it.pos() {
       self.set_pos(pos);
@@ -572,43 +612,7 @@ impl Reader {
       set_verbose(self.pos.line >= n);
     }
     if self.g.cfg.item_header {
-      eprint!("item[{:?}]: ", self.pos);
-      if self.g.cfg.always_verbose_item || verbose() {
-        eprintln!("{it:#?}");
-      } else {
-        match it {
-          Item::Let(_) => eprintln!("Let"),
-          Item::Given(it) => eprintln!("Given @ {:?}", it.prop.pos),
-          Item::Thus(it) => eprintln!("Thus @ {:?}", it.pos()),
-          Item::Assume(it) => eprintln!("Assume @ {:?}", it[0].pos),
-          Item::Take(_) => eprintln!("Take"),
-          Item::TakeAsVar(_, _) => eprintln!("TakeAsVar"),
-          Item::PerCases(it) => eprintln!("PerCases @ {:?}", it.pos.0),
-          Item::Auxiliary(it) => match it {
-            AuxiliaryItem::Statement(it) => match it {
-              Statement::Proposition { .. } => eprintln!("Proposition @ {:?}", it.pos()),
-              Statement::IterEquality { .. } => eprintln!("IterEquality @ {:?}", it.pos()),
-              Statement::Now { .. } => eprintln!("Now @ {:?}", it.pos()),
-            },
-            AuxiliaryItem::Consider { prop, .. } => eprintln!("Consider @ {:?}", prop.pos),
-            AuxiliaryItem::Set { .. } => eprintln!("Set"),
-            AuxiliaryItem::Reconsider { prop, .. } => eprintln!("Reconsider @ {:?}", prop.pos),
-            AuxiliaryItem::DefFunc { .. } => eprintln!("DefFunc"),
-            AuxiliaryItem::DefPred { .. } => eprintln!("DefPred"),
-          },
-          Item::Registration(_) => eprintln!("Registration"),
-          Item::Scheme(it) => eprintln!("Scheme @ {:?}", it.pos.0),
-          Item::Theorem { prop, .. } => eprintln!("Theorem @ {:?}", prop.pos),
-          Item::DefTheorem { kind, prop } => eprintln!("DefTheorem {kind:?} @ {:?}", prop.pos),
-          Item::Reservation { .. } => eprintln!("Reservation"),
-          Item::Canceled(_) => eprintln!("Canceled"),
-          Item::Definition(it) => eprintln!("Definition @ {:?}", it.pos),
-          Item::DefStruct(it) => eprintln!("DefStruct @ {:?}", it.pos),
-          Item::Definiens(_) => eprintln!("Definiens"),
-          Item::Block { kind, pos, .. } => eprintln!("{kind:?} block @ {:?}", pos.0),
-          Item::Pattern(_) => eprintln!("Pattern"),
-        }
-      }
+      Self::item_header(self.g.cfg.always_verbose_item, it)
     }
     match it {
       // reservations not handled by checker
@@ -693,13 +697,12 @@ impl Reader {
         }
         self.lc.formatter.extend(&self.g.constrs, patts)
       }
-      Item::DefStruct(DefStruct { constrs, cl, conds, corr, patts, .. }) => {
+      Item::DefStruct(DefStruct { constrs, cl, patts, .. }) => {
         for c in constrs {
           let id = self.g.constrs.push(self.intern(c));
           self.push_constr(id);
         }
         self.read_cluster_decl(cl);
-        self.read_corr_conds(conds, corr);
         self.lc.formatter.extend(&self.g.constrs, patts)
       }
       Item::Definiens(df) => self.read_definiens(df),

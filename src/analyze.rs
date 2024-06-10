@@ -165,6 +165,15 @@ impl Reader {
     }
     if elab.g.cfg.xml_internals {
       elab.write_xml.finish();
+      if elab.g.cfg.analyzer_full && elab.g.cfg.xml_internals_self_test {
+        path
+          .read_xml(|it| {
+            if elab.g.cfg.item_header {
+              Reader::item_header(elab.g.cfg.always_verbose_item, &it)
+            }
+          })
+          .unwrap();
+      }
       path.write_idx(&elab.idents.0);
       if let Ok(parser) = parser {
         path.write_formats("frx", &elab.lc.formatter.formats, &parser.func_prio);
@@ -261,8 +270,15 @@ impl Analyzer<'_> {
     Pattern { article: self.article, abs_nr, kind, fmt, primary, visible, pos }
   }
 
+  fn push_pattern(&mut self, pat: Pattern) {
+    let c = pat.kind.class();
+    self.write_xml.on(|w| w.write_pattern(self.r.notations[c].ext_len() as u32, &pat));
+    self.r.lc.formatter.push(&self.r.g.constrs, &pat);
+    self.r.notations[c].push_ext(pat)
+  }
+
   #[allow(clippy::too_many_arguments)]
-  fn push_pattern(
+  fn push_mk_pattern(
     &mut self, check_access: bool, c: PatternKindClass, kind: PatternKind, fmt: FormatId,
     primary: Box<[Type]>, visible: Box<[LocusId]>, pos: bool,
   ) {
@@ -270,9 +286,7 @@ impl Analyzer<'_> {
     if check_access {
       pat.check_access();
     }
-    self.write_xml.on(|w| w.write_pattern(self.r.notations[c].ext_len() as u32, &pat));
-    self.r.lc.formatter.push(&self.r.g.constrs, &pat);
-    self.r.notations[c].push_ext(pat)
+    self.push_pattern(pat)
   }
 
   pub fn push_prop(&mut self, label: Option<(Option<LabelId>, Rc<str>)>, prop: Formula) {
@@ -3820,7 +3834,6 @@ impl BlockReader {
       };
       elab.write_xml.on(|w| {
         w.write_func_constructor(
-          elab.r.article,
           elab.export.constrs_base.functor,
           elab.r.g.constrs.functor.peek(),
           &c,
@@ -3868,7 +3881,7 @@ impl BlockReader {
       let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.clone());
       self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Func(n), df, label, thm })));
     }
-    elab.push_pattern(true, PKC::Func, PatternKind::Func(n), fmt, primary, visible, true);
+    elab.push_mk_pattern(true, PKC::Func, PatternKind::Func(n), fmt, primary, visible, true);
     elab.write_xml.on(|w| w.end_def())
   }
 
@@ -3934,7 +3947,6 @@ impl BlockReader {
       let mut c = Constructor { primary: p, redefines, superfluous, properties: properties.props };
       elab.write_xml.on(|w| {
         w.write_pred_constructor(
-          elab.r.article,
           elab.export.constrs_base.predicate,
           elab.r.g.constrs.predicate.peek(),
           &c,
@@ -3965,7 +3977,7 @@ impl BlockReader {
       let label = def.as_deref_mut().unwrap().label.as_ref().map(|l| l.id.clone());
       self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Pred(n), df, label, thm })));
     }
-    elab.push_pattern(true, PKC::Pred, PatternKind::Pred(n), fmt, primary, visible, pos);
+    elab.push_mk_pattern(true, PKC::Pred, PatternKind::Pred(n), fmt, primary, visible, pos);
     elab.write_xml.on(|w| w.end_def())
   }
 
@@ -3988,7 +4000,7 @@ impl BlockReader {
         elab.write_xml.on(|w| w.skip_constructor());
         self.to_locus(elab, |l| expansion.visit(l));
         let kind = PatternKind::ExpandableMode { expansion };
-        elab.push_pattern(true, PKC::Mode, kind, fmt, primary, visible, true)
+        elab.push_mk_pattern(true, PKC::Mode, kind, fmt, primary, visible, true)
       }
       ast::DefModeKind::Standard { spec, def } => {
         elab.write_xml.on(|w| {
@@ -4069,7 +4081,6 @@ impl BlockReader {
           };
           elab.write_xml.on(|w| {
             w.write_mode_constructor(
-              elab.r.article,
               elab.export.constrs_base.mode,
               elab.r.g.constrs.mode.peek(),
               &c,
@@ -4112,7 +4123,7 @@ impl BlockReader {
           let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.clone());
           self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Mode(n), df, label, thm })));
         }
-        elab.push_pattern(true, PKC::Mode, PatternKind::Mode(n), fmt, primary, visible, true)
+        elab.push_mk_pattern(true, PKC::Mode, PatternKind::Mode(n), fmt, primary, visible, true)
       }
     }
     elab.write_xml.on(|w| w.end_def())
@@ -4172,7 +4183,6 @@ impl BlockReader {
       };
       elab.write_xml.on(|w| {
         w.write_attr_constructor(
-          elab.r.article,
           elab.export.constrs_base.attribute,
           elab.r.g.constrs.attribute.peek(),
           &c,
@@ -4204,11 +4214,12 @@ impl BlockReader {
       let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.clone());
       self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Attr(n), df, label, thm })));
     }
-    elab.push_pattern(true, PKC::Attr, PatternKind::Attr(n), fmt, primary, visible, pos);
+    elab.push_mk_pattern(true, PKC::Attr, PatternKind::Attr(n), fmt, primary, visible, pos);
     elab.write_xml.on(|w| w.end_def())
   }
 
-  fn elab_struct_def(&mut self, elab: &mut Analyzer, it: &mut ast::DefStruct) {
+  fn elab_struct_def(&mut self, elab: &mut Analyzer, loc: Position, it: &mut ast::DefStruct) {
+    elab.write_xml.on(|w| w.start_struct_def(loc));
     let mut parents: Box<[_]> = it.parents.iter().map(|ty| elab.elab_type(ty)).collect();
     let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect_vec();
     let struct_primary: Box<[_]> = self.primary.0.iter().cloned().collect();
@@ -4273,8 +4284,7 @@ impl BlockReader {
     }
 
     let sel_primary_it = self.primary.0.iter().chain([&struct_ty]).cloned();
-    elab.push_pattern(
-      false,
+    let subaggr_pat = elab.mk_pattern(
       PKC::SubAggr,
       PatternKind::SubAggr(struct_id),
       elab.formats[&Format::SubAggr(it.pat.to_subaggr_format())],
@@ -4289,6 +4299,7 @@ impl BlockReader {
     let mut fields = vec![];
     let mut field_fmt = vec![];
     let mut new_fields = vec![];
+    let mut field_pats = vec![];
     for (v, mut ty) in it.fields.iter().flat_map(|group| &group.vars).zip(field_tys) {
       let fmt = elab.formats[&Format::Sel(v.sym.0)];
       assert!(!field_fmt.contains(&fmt), "duplicate field name");
@@ -4322,8 +4333,7 @@ impl BlockReader {
         let mut sel = TyConstructor { c: Constructor::new(sel_primary_it.clone().collect()), ty };
         sel.visit(&mut elab.intern_const());
         let sel_id = elab.g.constrs.selector.push(sel);
-        elab.push_pattern(
-          true,
+        let sel_pat = elab.mk_pattern(
           PKC::Sel,
           PatternKind::Sel(sel_id),
           fmt,
@@ -4331,6 +4341,8 @@ impl BlockReader {
           Box::new([LocusId(base)]),
           true,
         );
+        sel_pat.check_access();
+        field_pats.push(sel_pat);
         new_fields.push(sel_id);
         mk_sel.terms.push(Err(sel_id));
         fields.push(sel_id);
@@ -4347,11 +4359,17 @@ impl BlockReader {
       ty: struct_ty.clone(),
     };
     c.c.properties.set(PropertyKind::Abstractness);
+    elab.write_xml.on(|w| {
+      w.write_attr_constructor(
+        elab.export.constrs_base.attribute,
+        elab.r.g.constrs.attribute.peek(),
+        &c,
+      )
+    });
     c.visit(&mut elab.intern_const());
     let attr_id = elab.g.constrs.attribute.push(c);
     let attr_primary = sel_primary_it.collect();
-    elab.push_pattern(
-      false,
+    let attr_pat = elab.mk_pattern(
       PKC::Attr,
       PatternKind::Attr(attr_id),
       FormatId::STRICT,
@@ -4365,37 +4383,51 @@ impl BlockReader {
     elab.push_constr(ConstrKind::Aggr(aggr_id));
     new_fields.into_iter().for_each(|sel_id| elab.push_constr(ConstrKind::Sel(sel_id)));
 
-    let attrs = Attrs::Consistent(vec![Attr { nr: attr_id, pos: true, args: formals.into() }]);
-    std::mem::swap(&mut self.primary, &mut elab.lc.locus_ty);
-    elab.register_cluster(attrs.clone(), struct_primary.clone(), struct_ty.clone());
-    std::mem::swap(&mut self.primary, &mut elab.lc.locus_ty);
-
     let mut sorted_fields: Box<[_]> = fields.clone().into();
     sorted_fields.sort_unstable();
     let mut c = StructMode {
-      c: Constructor::new(struct_primary),
+      c: Constructor::new(struct_primary.clone()),
       parents,
       aggr: aggr_id,
       fields: sorted_fields,
     };
+    elab
+      .write_xml
+      .on(|w| w.write_struct_constructor(elab.export.constrs_base.struct_mode, struct_id, &c));
     c.visit(&mut elab.intern_const());
     let struct_id2 = elab.g.constrs.struct_mode.push(c);
     assert!(struct_id == struct_id2);
-    elab.r.lc.formatter.push(&elab.r.g.constrs, &struct_pat);
-    elab.r.notations[PKC::Struct].push_ext(struct_pat);
 
-    let mut aggr_ty = struct_ty;
-    aggr_ty.attrs = (attrs.clone(), attrs);
+    let mut aggr_ty = struct_ty.clone();
+    let attrs = Attrs::Consistent(vec![Attr { nr: attr_id, pos: true, args: formals.into() }]);
+    aggr_ty.attrs = (attrs.clone(), attrs.clone());
     let mut c = Aggregate {
       c: TyConstructor { c: Constructor::new(aggr_primary), ty: aggr_ty },
       base,
       fields: fields.into(),
     };
+    elab
+      .write_xml
+      .on(|w| w.write_aggr_constructor(elab.export.constrs_base.struct_mode, aggr_id, &c));
     c.visit(&mut elab.intern_const());
     let aggr_id2 = elab.g.constrs.aggregate.push(c);
     assert!(aggr_id == aggr_id2);
-    elab.r.lc.formatter.push(&elab.r.g.constrs, &aggr_pat);
-    elab.r.notations[PKC::Aggr].push_ext(aggr_pat);
+
+    std::mem::swap(&mut self.primary, &mut elab.lc.locus_ty);
+    elab.write_xml.on(|w| {
+      w.start_rcluster(&struct_primary, &struct_ty, &attrs);
+      w.skip_correctness();
+      w.end_registration()
+    });
+    elab.register_cluster(attrs, struct_primary, struct_ty);
+    std::mem::swap(&mut self.primary, &mut elab.lc.locus_ty);
+
+    elab.push_pattern(struct_pat);
+    elab.push_pattern(attr_pat);
+    field_pats.into_iter().for_each(|pat| elab.push_pattern(pat));
+    elab.push_pattern(aggr_pat);
+    elab.push_pattern(subaggr_pat);
+    elab.write_xml.on(|w| w.end_struct_def());
   }
 
   fn elab_exist_reg(
@@ -4754,7 +4786,7 @@ impl BlockReader {
     let pat = pat.expect("type error");
     let PatternKind::Pred(nr) = pat.kind else { unreachable!() };
     let c = &elab.g.constrs.predicate[nr];
-    elab.push_pattern(
+    elab.push_mk_pattern(
       true,
       PKC::Pred,
       PatternKind::Pred(c.redefines.unwrap_or(nr)),
@@ -4784,7 +4816,7 @@ impl BlockReader {
     let pat = pat.expect("type error");
     let PatternKind::Func(nr) = pat.kind else { unreachable!() };
     let c = &elab.g.constrs.functor[nr];
-    elab.push_pattern(
+    elab.push_mk_pattern(
       true,
       PKC::Func,
       PatternKind::Func(c.redefines.unwrap_or(nr)),
@@ -4814,7 +4846,7 @@ impl BlockReader {
     let pat = pat.expect("type error");
     let PatternKind::Mode(nr) = pat.kind else { panic!("redefining expandable mode") };
     let c = &elab.g.constrs.mode[nr];
-    elab.push_pattern(
+    elab.push_mk_pattern(
       true,
       PKC::Mode,
       PatternKind::Mode(c.redefines.unwrap_or(nr)),
@@ -4844,7 +4876,7 @@ impl BlockReader {
     });
     let pat = pat.expect("type error");
     let PatternKind::Attr(nr) = pat.kind else { unreachable!() };
-    elab.push_pattern(
+    elab.push_mk_pattern(
       true,
       PKC::Attr,
       PatternKind::Attr(elab.g.constrs.attribute[nr].redefines.unwrap_or(nr)),
@@ -4940,7 +4972,8 @@ impl ReadProof for BlockReader {
         ast::DefinitionKind::Attr { pat, def } =>
           self.elab_attr_def(elab, it.pos, pat, &mut df.body, def.as_deref_mut()),
       },
-      (BlockKind::Definition, ast::ItemKind::DefStruct(it)) => self.elab_struct_def(elab, it),
+      (BlockKind::Definition, ast::ItemKind::DefStruct(df)) =>
+        self.elab_struct_def(elab, it.pos, df),
       (BlockKind::Notation, ast::ItemKind::PatternRedef(it)) => match it {
         ast::PatternRedef::Pred { new, orig, pos } =>
           self.elab_pred_notation(elab, new, orig, *pos),

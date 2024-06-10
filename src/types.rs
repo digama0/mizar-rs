@@ -1986,11 +1986,8 @@ pub struct Definition {
 #[derive(Debug)]
 pub struct DefStruct {
   pub pos: Position,
-  pub label: Option<LabelId>,
   pub constrs: Vec<ConstructorDef>,
   pub cl: ClusterDecl,
-  pub conds: Vec<CorrCond>,
-  pub corr: Option<Correctness>,
   pub patts: Vec<Pattern>,
 }
 
