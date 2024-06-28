@@ -73,6 +73,7 @@ mk_keywords! {
   If: b"if",
   Iff: b"iff",
   Implies: b"implies",
+  Imports: b"imports",
   Is: b"is",
   It: b"it",
   Let: b"let",
@@ -464,9 +465,17 @@ impl<'a> Parser<'a> {
     loop {
       let tok = self.scan.next();
       match tok.kind {
-        TokenKind::Directive(dir) => loop {
-          let tok = self.scan.accept(TokenKind::Ident);
-          dirs.0[dir].push((tok.pos, Self::parse_article(tok)));
+        TokenKind::Directive(_) | TokenKind::Keyword(Keyword::Imports) => loop {
+          let id = self.scan.accept(TokenKind::Ident);
+          let art = (id.pos, Self::parse_article(id));
+          match tok.kind {
+            TokenKind::Directive(dir) => dirs.0[dir].push(art),
+            TokenKind::Keyword(Keyword::Imports) =>
+              for &dir in DirectiveKind::IMPORTED {
+                dirs.0[dir].push(art)
+              },
+            _ => unreachable!(),
+          }
           let tok = self.scan.next();
           match tok.kind {
             TokenKind::Keyword(Keyword::Comma) => {}

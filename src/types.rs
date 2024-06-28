@@ -2709,6 +2709,16 @@ pub enum DirectiveKind {
 }
 
 impl DirectiveKind {
+  pub const IMPORTED: &'static [DirectiveKind] = &[
+    Self::Constructors,
+    Self::Notations,
+    Self::Definitions,
+    Self::Theorems,
+    Self::Schemes,
+    Self::Registrations,
+    Self::Equalities,
+    Self::Expansions,
+  ];
   pub fn name(self) -> &'static str {
     match self {
       Self::Vocabularies => "vocabularies",
