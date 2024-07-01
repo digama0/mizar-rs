@@ -18,6 +18,7 @@ struct MizWriter {
   pending: Option<Elem>,
   two_clusters: bool,
   depth: u32,
+  lift: u32,
   shift: Vec<u32>,
 }
 
@@ -26,7 +27,7 @@ impl MizPath {
     let w = BufWriter::new(self.create(mml, new_prel, ext)?);
     let mut w = quick_xml::Writer::new_with_indent(w, b' ', INDENT);
     w.write_event(Event::Decl(BytesDecl::new("1.0", None, None))).unwrap();
-    Ok(MizWriter { w, pending: None, depth: 0, two_clusters: false, shift: vec![] })
+    Ok(MizWriter { w, pending: None, depth: 0, lift: 0, two_clusters: false, shift: vec![] })
   }
 
   pub fn write_dfr(&self, new_prel: bool, vocs: &Vocabularies, formats: &[Format]) {
@@ -844,8 +845,9 @@ impl MizWriter {
       Term::Numeral(n) => self.with_attr("Num", |w| w.attr_str(b"nr", *n)),
       Term::Locus(n) => self.with_attr("LocusVar", |w| w.attr_str(b"nr", n.0 + 1)),
       Term::Bound(n) => {
-        let sh = self.shift.partition_point(|&x| x <= n.0);
-        self.with_attr("Var", |w| w.attr_str(b"nr", n.0 + sh as u32 + 1))
+        let n = n.0 + self.lift;
+        let sh = self.shift.partition_point(|&x| x <= n);
+        self.with_attr("Var", |w| w.attr_str(b"nr", n + sh as u32 + 1))
       }
       Term::Const(n) => self.with_attr("Const", |w| w.attr_str(b"nr", n.0 + 1)),
       Term::SchFunc { nr, args } => self.write_func(lc, "Func", b'F', nr.0, args),
@@ -871,8 +873,12 @@ impl MizWriter {
         w.write_formula(lc, compr);
         w.depth -= args.len() as u32
       }),
-      Term::Infer(i) if lc.is_some() =>
-        self.write_term(lc, &lc.unwrap().infer_const.borrow()[*i].def),
+      Term::Infer(i) if lc.is_some() => {
+        let lift = self.lift;
+        self.lift = self.depth;
+        self.write_term(lc, &lc.unwrap().infer_const.borrow()[*i].def);
+        self.lift = lift;
+      }
       Term::EqClass(_)
       | Term::EqMark(_)
       | Term::Infer(_)
@@ -1383,6 +1389,25 @@ impl WriteXml {
     self.end_tag(ck.block_name())
   }
 
+  pub fn unfold(&mut self) { unimplemented!("XML for unfold needs confirmation") }
+
+  pub fn section(&mut self) {
+    assert!(matches!(self.state, State::Block(BlockKind::Top)));
+    self.w.with0("Section", |_| {});
+    self.w.newline()
+  }
+
+  pub fn reservation(&mut self, lc: &LocalContext, start: usize, len: usize, ty: &Type) {
+    assert!(matches!(self.state, State::Block(BlockKind::Top)));
+    self.w.with0("Reservation", |w| {
+      for i in start..len + start {
+        w.with_attr("Ident", |w| w.attr_str(b"vid", i + 1))
+      }
+      w.write_type(Some(lc), ty)
+    });
+    self.w.newline()
+  }
+
   pub fn start_scheme(&mut self, pos: Position, nr: SchId) {
     assert!(matches!(self.state, State::Block(BlockKind::Top)));
     self.state = State::SchemeBlock1;
@@ -1506,7 +1531,7 @@ impl WriteXml {
   ) {
     assert!(matches!(self.state, State::Block(BlockKind::Top)));
     self.state = State::Block(BlockKind::Proof);
-    self.start_tag("JustifiedTheorem");
+    self.w.start("JustifiedTheorem").pos(pos);
     self.write_proposition(lc, pos, label, f)
   }
   pub fn end_theorem(&mut self) {
@@ -1514,6 +1539,31 @@ impl WriteXml {
     self.state = State::Block(BlockKind::Top);
     self.end_tag("JustifiedTheorem");
     self.w.newline()
+  }
+
+  pub fn set(&mut self, lc: &LocalContext, term: &Term, ty: &Type) {
+    assert!(matches!(self.state, State::Block(_)));
+    self.with0("Set", |w| {
+      w.write_term(lc, term);
+      w.write_type(lc, ty)
+    })
+  }
+
+  pub fn def_func(&mut self, lc: &LocalContext, args: &[Type], value: &Term, ty: &Type) {
+    assert!(matches!(self.state, State::Block(_)));
+    self.with0("DefFunc", |w| {
+      w.w.write_arg_types(Some(lc), args);
+      w.write_term(lc, value);
+      w.write_type(lc, ty)
+    })
+  }
+
+  pub fn def_pred(&mut self, lc: &LocalContext, args: &[Type], value: &Formula) {
+    assert!(matches!(self.state, State::Block(_)));
+    self.with0("DefPred", |w| {
+      w.w.write_arg_types(Some(lc), args);
+      w.write_formula(lc, value)
+    })
   }
 
   pub fn start_consider(
@@ -1790,7 +1840,7 @@ macro_rules! mk_write_constructor {
       $(
         pub fn $func(&mut self, base: u32, i: $idty, c: &$ty) {
           match self.state {
-            State::DefProperties => self.state = (State::DefEnd),
+            State::DefProperties => self.state = State::DefEnd,
             State::StructDef1 => {}
             _ => unreachable!(),
           }
@@ -1807,4 +1857,5 @@ mk_write_constructor! {
   fn write_pred_constructor(PredId, Constructor<PredId>);
   fn write_struct_constructor(StructId, StructMode);
   fn write_aggr_constructor(AggrId, Aggregate);
+  fn write_sel_constructor(SelId, TyConstructor<SelId>);
 }

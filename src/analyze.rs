@@ -399,6 +399,7 @@ impl Analyzer<'_> {
           };
           self.lc.bound_var.0.clear();
           Exportable.visit_type(&ty);
+          self.write_xml.on(|w| w.reservation(&self.r.lc, self.reserved.len(), it.vars.len(), &ty));
           let group = self.res_groups.push(ResGroup { ty, fvars });
           for v in &it.vars {
             let i = self.reserved.push((v.spelling.clone(), group));
@@ -543,6 +544,7 @@ impl Analyzer<'_> {
         for ast::SetDecl { var, value } in decls {
           let term = self.elab_intern_term_no_reserve(value);
           let ty = term.get_type_uncached(&self.g, &self.lc);
+          self.write_xml.on(|w| w.set(&self.r.lc, &term, &ty));
           let c = self.lc.fixed_var.push(FixedVar { ty, def: Some((Box::new(term), true)) });
           if self.g.cfg.nameck_enabled {
             Rc::make_mut(&mut self.lookup).var.insert(var.spelling.clone(), VarKind::Const(c));
@@ -553,7 +555,8 @@ impl Analyzer<'_> {
         self.elab_intern_push_locus_tys(tys);
         let value = self.elab_intern_term_no_reserve(value);
         let ty = value.get_type(&self.g, &self.lc, false);
-        let primary = self.r.lc.locus_ty.0.drain(..).collect();
+        let primary: Box<[_]> = self.r.lc.locus_ty.0.drain(..).collect();
+        self.write_xml.on(|w| w.def_func(&self.r.lc, &primary, &value, &ty));
         self.lc.term_cache.get_mut().close_scope();
         let i =
           self.r.lc.priv_func.push(FuncDef { primary, ty: Box::new(ty), value: Box::new(value) });
@@ -566,7 +569,8 @@ impl Analyzer<'_> {
         self.lc.term_cache.get_mut().open_scope();
         self.elab_intern_push_locus_tys(tys);
         let value = self.elab_intern_formula_forall_reserved(value, true);
-        let primary = self.r.lc.locus_ty.0.drain(..).collect();
+        let primary: Box<[_]> = self.r.lc.locus_ty.0.drain(..).collect();
+        self.write_xml.on(|w| w.def_pred(&self.r.lc, &primary, &value));
         self.lc.term_cache.get_mut().close_scope();
         let i = self.priv_pred.push((primary, Box::new(value)));
         if self.g.cfg.nameck_enabled {
@@ -2444,6 +2448,10 @@ impl ReserveBlock {
         inst.depth += 1;
       }
       inst.visit_formula(&mut thesis);
+      elab.write_xml.on(|w| {
+        w.let_(&elab.r.lc, inst.base as usize);
+        w.write_thesis(&elab.r.lc, &thesis, &[])
+      });
       elab.thesis = Some(thesis);
     }
   }
@@ -2803,19 +2811,6 @@ trait ReadProof {
   fn end_supposes(&mut self, _: &mut Analyzer, _: Self::SupposeRecv, _: Position) {}
 
   fn end_block(&mut self, elab: &mut Analyzer, end: Position) -> Self::Output;
-
-  fn do_assume(&mut self, elab: &mut Analyzer<'_>, conds: &mut [ast::Proposition]) {
-    let mut conjs = vec![];
-    elab.write_xml.on(|w| w.start_assume());
-    for prop in conds {
-      let label = prop.label.as_ref().and_then(|l| l.id.0);
-      let f = elab.elab_proposition_forall_reserved(prop, true);
-      elab.write_xml.on(|w| w.write_proposition(&elab.r.lc, prop.f.pos(), label, &f));
-      f.append_conjuncts_to(&mut conjs);
-    }
-    elab.write_xml.on(|w| w.end_assume());
-    self.assume(elab, conjs, true)
-  }
 
   fn super_elab_item(
     &mut self, elab: &mut Analyzer, it: &mut ast::Item, block_end: Position,
@@ -3224,6 +3219,7 @@ impl ReadProof for WithThesis {
   }
 
   fn unfold(&mut self, elab: &mut Analyzer, refs: &[ast::Reference]) {
+    elab.write_xml.on(|w| w.unfold());
     let mut f = (true, elab.thesis.take().unwrap());
     for r in elab.elab_references(refs) {
       let def = match r.kind {
@@ -4294,6 +4290,7 @@ impl BlockReader {
     );
 
     self.to_locus.push(Some(self.to_const.push(ConstId::from_usize(fixed_vars))));
+    let mut cur_sel_id = elab.g.constrs.selector.peek();
     let mut mk_sel =
       MakeSelector { base, fixed_vars: fixed_vars as u32, to_const: &self.to_const, terms: vec![] };
     let mut fields = vec![];
@@ -4330,9 +4327,9 @@ impl BlockReader {
         fields.push(sel_id);
       } else {
         self.to_locus(elab, |l| ty.visit(l));
-        let mut sel = TyConstructor { c: Constructor::new(sel_primary_it.clone().collect()), ty };
-        sel.visit(&mut elab.intern_const());
-        let sel_id = elab.g.constrs.selector.push(sel);
+        new_fields
+          .push(TyConstructor { c: Constructor::new(sel_primary_it.clone().collect()), ty });
+        let sel_id = cur_sel_id.fresh();
         let sel_pat = elab.mk_pattern(
           PKC::Sel,
           PatternKind::Sel(sel_id),
@@ -4343,7 +4340,6 @@ impl BlockReader {
         );
         sel_pat.check_access();
         field_pats.push(sel_pat);
-        new_fields.push(sel_id);
         mk_sel.terms.push(Err(sel_id));
         fields.push(sel_id);
       }
@@ -4381,7 +4377,6 @@ impl BlockReader {
     elab.push_constr(ConstrKind::Attr(attr_id));
     elab.push_constr(ConstrKind::Struct(struct_id));
     elab.push_constr(ConstrKind::Aggr(aggr_id));
-    new_fields.into_iter().for_each(|sel_id| elab.push_constr(ConstrKind::Sel(sel_id)));
 
     let mut sorted_fields: Box<[_]> = fields.clone().into();
     sorted_fields.sort_unstable();
@@ -4408,10 +4403,18 @@ impl BlockReader {
     };
     elab
       .write_xml
-      .on(|w| w.write_aggr_constructor(elab.export.constrs_base.struct_mode, aggr_id, &c));
+      .on(|w| w.write_aggr_constructor(elab.export.constrs_base.aggregate, aggr_id, &c));
     c.visit(&mut elab.intern_const());
     let aggr_id2 = elab.g.constrs.aggregate.push(c);
     assert!(aggr_id == aggr_id2);
+
+    for mut c in new_fields {
+      let sel_id = elab.g.constrs.selector.peek();
+      elab.write_xml.on(|w| w.write_sel_constructor(elab.export.constrs_base.selector, sel_id, &c));
+      c.visit(&mut elab.intern_const());
+      elab.g.constrs.selector.push(c);
+      elab.push_constr(ConstrKind::Sel(sel_id))
+    }
 
     std::mem::swap(&mut self.primary, &mut elab.lc.locus_ty);
     elab.write_xml.on(|w| {

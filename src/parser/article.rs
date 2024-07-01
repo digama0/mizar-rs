@@ -453,12 +453,8 @@ impl ArticleParser<'_> {
           let (items, end) = self.parse_reasoning(true)?;
           let thesis = self.parse_block_thesis()?.unwrap();
           self.r.end_tag(&mut self.buf)?;
-          let s = Statement::Now {
-            pos: (start, end),
-            label,
-            thesis,
-            items: items.into_iter().map(|p| p.0).collect(),
-          };
+          let items = items.into_iter().map(|p| p.0).collect();
+          let s = Statement::Now { pos: (start, end), label, thesis, items };
           ArticleElem::AuxiliaryItem(AuxiliaryItem::Statement(s))
         }
         b"Consider" => {
