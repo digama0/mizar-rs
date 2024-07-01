@@ -347,7 +347,7 @@ impl Analyzer<'_> {
         Exportable.visit_formula(&f);
         if self.g.cfg.analyzer_full {
           self.write_xml.on(|w| {
-            let label = prop.label.as_ref().and_then(|l| l.id.0);
+            let label = prop.label.as_ref().map(|_| self.label_names.peek());
             w.start_theorem(&self.r.lc, it.pos, label, &f)
           });
           let f = f.visit_cloned(&mut self.r.intern_const());
@@ -498,7 +498,7 @@ impl Analyzer<'_> {
     self.write_xml.on(|w| w.start_scheme_prems());
     let prems = (prems.iter_mut())
       .map(|prop| {
-        let label = prop.label.as_ref().and_then(|l| l.id.0);
+        let label = prop.label.as_ref().map(|_| self.label_names.peek());
         let f = self.elab_proposition_forall_reserved(prop, true);
         self.write_xml.on(|w| w.write_proposition(&self.r.lc, prop.f.pos(), label, &f));
         f
@@ -626,7 +626,9 @@ impl Analyzer<'_> {
           self.write_xml.on(|w| w.start_consider(&self.r.lc, it.pos, None, &f));
           f.visit(&mut self.intern_const());
           self.elab_justification(None, &f, just);
-          self.write_xml.on(|w| w.end_consider(&self.r.lc, start, &to_push));
+          self.write_xml.on(|w| {
+            w.end_consider(&self.r.lc, start, self.label_names.peek(), &to_push);
+          });
           for (_, label, mut f) in to_push {
             f.visit(&mut self.intern_const());
             self.push_prop(label, f);
@@ -648,7 +650,7 @@ impl Analyzer<'_> {
       ast::Statement::Proposition { prop, just } => {
         let (mut f, block) = self.elab_formula_forall_reserved(&mut prop.f, true);
         self.write_xml.on(|w| {
-          let label = prop.label.as_ref().and_then(|l| l.id.0);
+          let label = prop.label.as_ref().map(|_| self.label_names.peek());
           w.write_proposition(&self.r.lc, pos, label, &f)
         });
         f.visit(&mut self.r.intern_const());
@@ -663,7 +665,7 @@ impl Analyzer<'_> {
           if let (nr, [lhs, rhs]) = Formula::adjust_pred(nr, args, Some(&self.g.constrs)) {
             if self.g.reqs.equals_to() == Some(nr) {
               self.write_xml.on(|w| {
-                let label = prop.label.as_ref().and_then(|l| l.id.0);
+                let label = prop.label.as_ref().map(|_| self.label_names.peek());
                 w.start_iter_equality(&self.r.lc, pos, label, lhs);
                 w.start_iter_step(&self.r.lc, rhs);
               });
@@ -692,7 +694,7 @@ impl Analyzer<'_> {
         f
       }
       ast::Statement::Now { end, label, items } => {
-        self.write_xml.on(|w| w.start_now(pos, label.as_ref().and_then(|l| l.id.0)));
+        self.write_xml.on(|w| w.start_now(pos, label.as_ref().map(|_| self.label_names.peek())));
         let label = label.as_ref().map(|l| l.id.clone());
         let f = self.scope(label.is_some(), false, true, |this| {
           ReconstructThesis { stack: vec![ProofStep::Break(true)] }.elab_proof(this, items, *end)
@@ -709,7 +711,9 @@ impl Analyzer<'_> {
     items: &mut [ast::Item], (pos, end): (Position, Position), reset: ReserveBlock,
   ) {
     self.scope(label.is_some(), false, false, |this| {
-      this.write_xml.on(|w| w.start_proof(&this.r.lc, pos, label.and_then(|l| l.0), thesis));
+      this.write_xml.on(|w| {
+        w.start_proof(&this.r.lc, pos, label.map(|_| this.label_names.peek()), thesis);
+      });
       this.thesis = Some(Box::new(thesis.clone()));
       reset.intro(this);
       WithThesis.elab_proof(this, items, end);
@@ -2117,7 +2121,7 @@ impl Analyzer<'_> {
     let mut conjs = vec![];
     self.write_xml.on(|w| w.start_assume());
     for prop in conds {
-      let label = prop.label.as_ref().and_then(|l| l.id.0);
+      let label = prop.label.as_ref().map(|_| self.label_names.peek());
       let f = self.elab_proposition_forall_reserved(prop, true);
       self.write_xml.on(|w| w.write_proposition(&self.r.lc, prop.f.pos(), label, &f));
       f.append_conjuncts_to(&mut conjs);
@@ -2853,11 +2857,9 @@ trait ReadProof {
         let mut conds2 = vec![];
         let mut f = Formula::mk_and_with(|conjs| {
           conds.iter_mut().for_each(|prop| {
+            let label = prop.label.as_ref().map(|_| elab.label_names.peek());
             let f = elab.elab_proposition_forall_reserved(prop, true);
-            elab.write_xml.on(|_| {
-              let label = prop.label.as_ref().and_then(|l| l.id.0);
-              conds2.push((prop.f.pos(), label, f.clone()))
-            });
+            elab.write_xml.on(|_| conds2.push((prop.f.pos(), label, f.clone())));
             f.append_conjuncts_to(conjs)
           })
         });
@@ -2901,11 +2903,9 @@ trait ReadProof {
             let (case, o) = elab.scope(false, true, false, |elab| {
               let case = Formula::mk_and_with(|conjs| {
                 for prop in bl.hyp.conds() {
+                  let label = prop.label.as_ref().map(|_| elab.label_names.peek());
                   let f = elab.elab_proposition_forall_reserved(prop, true);
-                  elab.write_xml.on(|w| {
-                    let label = prop.label.as_ref().and_then(|l| l.id.0);
-                    w.write_proposition(&elab.r.lc, prop.f.pos(), label, &f)
-                  });
+                  elab.write_xml.on(|w| w.write_proposition(&elab.r.lc, prop.f.pos(), label, &f));
                   f.append_conjuncts_to(conjs);
                 }
                 elab.write_xml.on(|w| w.mid_case(CK));
@@ -2937,11 +2937,9 @@ trait ReadProof {
             let (case, o) = elab.scope(false, true, false, |elab| {
               let case = Formula::mk_and_with(|conjs| {
                 for prop in bl.hyp.conds() {
+                  let label = prop.label.as_ref().map(|_| elab.label_names.peek());
                   let f = elab.elab_proposition_forall_reserved(prop, true);
-                  elab.write_xml.on(|w| {
-                    let label = prop.label.as_ref().and_then(|l| l.id.0);
-                    w.write_proposition(&elab.r.lc, prop.f.pos(), label, &f)
-                  });
+                  elab.write_xml.on(|w| w.write_proposition(&elab.r.lc, prop.f.pos(), label, &f));
                   f.append_conjuncts_to(conjs);
                 }
                 elab.write_xml.on(|w| w.mid_case(CK));
@@ -3662,7 +3660,8 @@ impl BlockReader {
         if elab.g.cfg.analyzer_full {
           elab.write_xml.on(|w| {
             w.write_definiens(&df);
-            w.write_defthm(&elab.r.lc, &kind, pos, label.as_ref().and_then(|l| l.0), &thm);
+            let label = label.as_ref().map(|_| elab.label_names.peek());
+            w.write_defthm(&elab.r.lc, &kind, pos, label, &thm);
           });
           let thm2 = (*thm).visit_cloned(&mut elab.intern_const());
           if let Some((Some(label), _)) = label {
@@ -3745,7 +3744,7 @@ impl BlockReader {
     it: &mut ast::DefinitionBody, spec: Option<&ast::Type>, def: &mut Option<Box<ast::Definiens>>,
   ) {
     elab.write_xml.on(|w| {
-      let label = def.as_ref().and_then(|d| d.label.as_deref()?.id.0);
+      let label = def.as_ref().and_then(|d| d.label.as_ref().map(|_| elab.label_names.peek()));
       w.start_def(DefinitionKind::Func, loc, label, it.redef)
     });
     let fmt = elab.formats[&Format::Func(pat.to_format())];
@@ -3886,7 +3885,7 @@ impl BlockReader {
     it: &mut ast::DefinitionBody, def: &mut Option<Box<ast::Definiens>>,
   ) {
     elab.write_xml.on(|w| {
-      let label = def.as_ref().and_then(|d| d.label.as_deref()?.id.0);
+      let label = def.as_ref().and_then(|d| d.label.as_ref().map(|_| elab.label_names.peek()));
       w.start_def(DefinitionKind::Pred, loc, label, it.redef)
     });
     let fmt = elab.formats[&Format::Pred(pat.to_format())];
@@ -4000,7 +3999,8 @@ impl BlockReader {
       }
       ast::DefModeKind::Standard { spec, def } => {
         elab.write_xml.on(|w| {
-          let label = def.as_deref().and_then(|d| d.label.as_deref()?.id.0);
+          let label =
+            def.as_deref().and_then(|d| d.label.as_ref().map(|_| elab.label_names.peek()));
           w.start_def(DefinitionKind::Mode, loc, label, it.redef)
         });
         let (redefines, superfluous, it_type);
@@ -4130,7 +4130,7 @@ impl BlockReader {
     it: &mut ast::DefinitionBody, mut def: Option<&mut ast::Definiens>,
   ) {
     elab.write_xml.on(|w| {
-      let label = def.as_deref().and_then(|d| d.label.as_deref()?.id.0);
+      let label = def.as_deref().and_then(|d| d.label.as_ref().map(|_| elab.label_names.peek()));
       w.start_def(DefinitionKind::Attr, loc, label, it.redef)
     });
     let fmt = elab.formats[&Format::Attr(pat.to_format())];

@@ -436,7 +436,7 @@ impl Elem {
     self.attr_str(b"col", pos.col);
   }
 
-  fn label(&mut self, label: Option<LabelId>) { self.opt_attr_str(b"nr", label.map(|x| x.0 - 1)) }
+  fn label(&mut self, label: Option<LabelId>) { self.opt_attr_str(b"nr", label.map(|x| x.0 + 1)) }
   fn pos_and_label(&mut self, pos: Position, label: Option<LabelId>) {
     self.pos(pos);
     self.label(label)
@@ -1575,9 +1575,9 @@ impl WriteXml {
     self.write_proposition(lc, pos, label, f);
   }
   #[allow(clippy::type_complexity)]
-  pub fn end_consider(
-    &mut self, lc: &LocalContext, start: usize,
-    assums: &[(Position, Option<(Option<LabelId>, Rc<str>)>, Formula)],
+  pub fn end_consider<T>(
+    &mut self, lc: &LocalContext, start: usize, mut label_start: LabelId,
+    assums: &[(Position, Option<T>, Formula)],
   ) {
     let State::Prop2(PropKind::Consider(kind)) = self.state else { unreachable!() };
     for fv in &lc.fixed_var.0[start..] {
@@ -1585,7 +1585,7 @@ impl WriteXml {
     }
     self.state = State::InnerAssume;
     for &(pos, ref label, ref f) in assums {
-      let label = label.as_ref().and_then(|l| l.0);
+      let label = label.as_ref().map(|_| label_start.fresh());
       self.write_proposition(lc, pos, label, f)
     }
     self.state = State::Block(kind);

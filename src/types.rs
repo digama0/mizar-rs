@@ -27,7 +27,7 @@ impl<A: ?Sized> std::ops::Deref for CowBox<'_, A> {
   }
 }
 
-impl<A: ?Sized + Clone> CowBox<'_, A> {
+impl<A: Clone> CowBox<'_, A> {
   #[allow(clippy::wrong_self_convention)]
   pub fn to_owned(self) -> Box<A> {
     match self {

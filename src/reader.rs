@@ -418,7 +418,7 @@ impl Reader {
       pending_defs: Default::default(),
       def_map: Default::default(),
       pos: Default::default(),
-      no_suppress_checker: false,
+      no_suppress_checker: true,
       progress,
     }
   }
