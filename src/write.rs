@@ -1,12 +1,13 @@
 use crate::accom::SigBuilder;
 use crate::ast::CaseKind;
+use crate::reader::DefiniensId;
 use crate::types::{self, *};
 use crate::{Global, LocalContext, MizPath};
 use enum_map::{Enum, EnumMap};
 use quick_xml::events::attributes::Attribute;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{self, BufWriter, ErrorKind, Write};
 use std::rc::Rc;
@@ -779,7 +780,7 @@ impl MizWriter {
 
   pub fn write_definitions(&mut self, rel: bool, def: &[Definiens]) {
     for (i, def) in def.iter().enumerate() {
-      self.write_definiens(rel.then(|| i + 1), def)
+      self.write_definiens(rel.then_some(i), def)
     }
   }
 
@@ -979,15 +980,6 @@ impl MizWriter {
 
   fn write_loci(&mut self, tag: &'static str, args: &[LocusId]) {
     self.with0(tag, |w| args.iter().for_each(|n| w.with_attr("Int", |w| w.attr_str(b"x", n.0 + 1))))
-  }
-
-  fn write_pairs(&mut self, xs: &[(u32, u32)]) {
-    for &(x, y) in xs {
-      self.with_attr("Pair", |w| {
-        w.attr_str(b"x", x);
-        w.attr_str(b"y", y)
-      })
-    }
   }
 
   fn write_proposition(
@@ -1207,7 +1199,9 @@ impl WriteXml {
     self.w.write_proposition(Some(lc), pos, label, f)
   }
 
-  pub fn write_thesis(&mut self, lc: &LocalContext, thesis: &Formula, expansions: &[(u32, u32)]) {
+  pub fn write_thesis(
+    &mut self, lc: &LocalContext, thesis: &Formula, expansions: &BTreeMap<DefiniensId, u32>,
+  ) {
     match self.state {
       State::BlockThesis | State::PerCases4(BlockKind::Proof) => {}
       State::AfterReasoning => self.state = State::Block(BlockKind::Proof),
@@ -1215,7 +1209,14 @@ impl WriteXml {
     }
     self.w.with0("Thesis", |w| {
       w.write_formula(Some(lc), thesis);
-      w.with0("ThesisExpansions", |w| w.write_pairs(expansions))
+      w.with0("ThesisExpansions", |w| {
+        for (&x, &y) in expansions {
+          w.with_attr("Pair", |w| {
+            w.attr_str(b"x", x.0 + 1);
+            w.attr_str(b"y", y)
+          })
+        }
+      })
     })
   }
 
@@ -1233,7 +1234,7 @@ impl WriteXml {
     self.state = State::BlockThesis;
     self.with0("BlockThesis", |w| {
       for f in theses {
-        w.write_thesis(lc, f, &[])
+        w.write_thesis(lc, f, &Default::default())
       }
       w.write_formula(lc, res)
     });
@@ -1577,18 +1578,22 @@ impl WriteXml {
     })
   }
 
-  pub fn def_func(&mut self, lc: &LocalContext, args: &[Type], value: &Term, ty: &Type) {
+  pub fn def_func(
+    &mut self, lc: &LocalContext, id: PrivFuncId, args: &[Type], value: &Term, ty: &Type,
+  ) {
     assert!(matches!(self.state, State::Block(_)));
-    self.with0("DefFunc", |w| {
+    let attrs = |w: &mut Elem| w.attr_str(b"nr", id.0 + 1);
+    self.with("DefFunc", attrs, |w| {
       w.w.write_arg_types(Some(lc), args);
       w.write_term(lc, value);
       w.write_type(lc, IdentId::NONE, ty)
     })
   }
 
-  pub fn def_pred(&mut self, lc: &LocalContext, args: &[Type], value: &Formula) {
+  pub fn def_pred(&mut self, lc: &LocalContext, id: PrivPredId, args: &[Type], value: &Formula) {
     assert!(matches!(self.state, State::Block(_)));
-    self.with0("DefPred", |w| {
+    let attrs = |w: &mut Elem| w.attr_str(b"nr", id.0 + 1);
+    self.with("DefPred", attrs, |w| {
       w.w.write_arg_types(Some(lc), args);
       w.write_formula(lc, value)
     })
@@ -1668,7 +1673,8 @@ impl WriteXml {
   }
 
   pub fn start_def(
-    &mut self, kind: DefinitionKind, pos: Position, label: Option<(LabelId, IdentId)>, redef: bool,
+    &mut self, kind: DefinitionKind, pos: Position, label: Option<Option<(LabelId, IdentId)>>,
+    redef: bool,
   ) {
     assert!(matches!(self.state, State::Block(BlockKind::Block)));
     self.state = State::Correctness1(CorrectnessState::Definition);
@@ -1686,7 +1692,10 @@ impl WriteXml {
     if redef {
       w.attr(b"redefinition", &b"true"[..])
     }
-    w.pos_and_label(pos, label);
+    w.pos_and_label(pos, label.flatten());
+    if let Some(None) = label {
+      w.attr_str(b"nr", 0u32);
+    }
   }
   pub fn end_def(&mut self) {
     let (State::DefEnd | State::StructDef2) = self.state else { unreachable!() };
@@ -1873,7 +1882,7 @@ macro_rules! mk_write_constructor {
             State::StructDef1 => {}
             _ => unreachable!(),
           }
-          self.w.$func(Some((self.art.as_bytes(), i.0)), base + i.0, c);
+          self.w.$func(Some((self.art.as_bytes(), i.0 - base)), i.0, c);
         }
       )*
     }
