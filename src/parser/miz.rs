@@ -1804,7 +1804,7 @@ impl<'a> Parser<'a> {
               let TokenKind::Symbol(SymbolKind::Sel(sym)) = tok.kind else {
                 panic!("{:?}: expected a selector symbol", tok.pos)
               };
-              Field { pos, sym: (sym, tok.spelling.to_owned()) }
+              Field { pos, sym: (sym, tok.spelling.into()) }
             });
             num_fields += vars.len();
             this.scan.accept(Keyword::Arrow);

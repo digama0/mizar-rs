@@ -9,11 +9,11 @@ pub(super) struct ArticleParser<'a> {
 enum ArticleElem {
   Item(Item),
   AuxiliaryItem(AuxiliaryItem),
-  Let(Vec<Type>),
+  Let(Vec<(IdentId, Type)>),
   Assume(Vec<Proposition>),
   Given(GivenItem),
   Take(Term),
-  TakeAsVar(Type, Term),
+  TakeAsVar(IdentId, Type, Term),
   Definition(Definition),
   DefStruct(DefStruct),
   Canceled(CancelKind),
@@ -45,7 +45,7 @@ impl From<ArticleElem> for Item {
       ArticleElem::Assume(it) => Item::Assume(it),
       ArticleElem::Given(it) => Item::Given(it),
       ArticleElem::Take(tm) => Item::Take(tm),
-      ArticleElem::TakeAsVar(ty, tm) => Item::TakeAsVar(ty, tm),
+      ArticleElem::TakeAsVar(id, ty, tm) => Item::TakeAsVar { id, ty, tm },
       ArticleElem::Definition(decl) => Item::Definition(decl),
       ArticleElem::DefStruct(decl) => Item::DefStruct(decl),
       ArticleElem::Canceled(it) => Item::Canceled(it),
@@ -343,7 +343,7 @@ impl ArticleParser<'_> {
           let ty = loop {
             match self.r.parse_elem(&mut self.buf)? {
               Elem::Ident(id) => ids.push(id),
-              Elem::Type(ty) => break Box::new(ty),
+              Elem::Type(ty, _) => break Box::new(ty),
               _ => panic!("unexpected reservation item"),
             }
           };
@@ -463,7 +463,7 @@ impl ArticleParser<'_> {
           let (mut fixed, mut parsing_fixed, mut intro) = (vec![], true, vec![]);
           loop {
             match self.r.parse_elem(&mut self.buf)? {
-              Elem::Type(ty) if parsing_fixed => fixed.push(ty),
+              Elem::Type(ty, id) if parsing_fixed => fixed.push((id, ty)),
               Elem::Proposition(prop) => {
                 parsing_fixed = false;
                 intro.push(prop)
@@ -476,15 +476,16 @@ impl ArticleParser<'_> {
         }
         b"Set" => {
           let term = self.r.parse_term(&mut self.buf)?.unwrap();
-          let ty = self.r.parse_type(&mut self.buf)?.unwrap();
+          let (ty, id) = self.r.parse_type_vid(&mut self.buf)?.unwrap();
           self.r.end_tag(&mut self.buf)?;
-          ArticleElem::AuxiliaryItem(AuxiliaryItem::Set { term, ty })
+          ArticleElem::AuxiliaryItem(AuxiliaryItem::Set { id, term, ty })
         }
         b"Reconsider" => {
           let mut terms = vec![];
           let prop = loop {
             match self.r.parse_elem(&mut self.buf)? {
-              Elem::Type(ty) => terms.push((ty, self.r.parse_term(&mut self.buf)?.unwrap())),
+              Elem::Type(ty, id) =>
+                terms.push((id, ty, self.r.parse_term(&mut self.buf)?.unwrap())),
               Elem::Proposition(prop) => break prop,
               _ => panic!("expected proposition"),
             }
@@ -509,8 +510,8 @@ impl ArticleParser<'_> {
         }
         b"Let" => {
           let mut fixed = vec![];
-          while let Some(ty) = self.r.parse_type(&mut self.buf)? {
-            fixed.push(ty)
+          while let Some((ty, id)) = self.r.parse_type_vid(&mut self.buf)? {
+            fixed.push((id, ty))
           }
           ArticleElem::Let(fixed)
         }
@@ -526,7 +527,7 @@ impl ArticleParser<'_> {
           let (mut fixed, mut parsing_fixed, mut intro) = (vec![], true, vec![]);
           loop {
             match self.r.parse_elem(&mut self.buf)? {
-              Elem::Type(ty) if parsing_fixed => fixed.push(ty),
+              Elem::Type(ty, id) if parsing_fixed => fixed.push((id, ty)),
               Elem::Proposition(prop) => {
                 parsing_fixed = false;
                 intro.push(prop)
@@ -632,10 +633,10 @@ impl ArticleParser<'_> {
           ArticleElem::Take(tm)
         }
         b"TakeAsVar" => {
-          let ty = self.r.parse_type(&mut self.buf)?.unwrap();
+          let (ty, id) = self.r.parse_type_vid(&mut self.buf)?.unwrap();
           let tm = self.r.parse_term(&mut self.buf)?.unwrap();
           self.r.end_tag(&mut self.buf)?;
-          ArticleElem::TakeAsVar(ty, tm)
+          ArticleElem::TakeAsVar(id, ty, tm)
         }
         b"PerCasesReasoning" => {
           let (start, label) = self.r.get_pos_and_label(&e)?;

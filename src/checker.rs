@@ -267,8 +267,8 @@ impl Expand<'_> {
             f.append_conjuncts_to(new_args);
           }
         }),
-      Formula::ForAll { dom, scope } if !pos => {
-        self.lc.bound_var.push((**dom).clone());
+      Formula::ForAll { id, dom, scope } if !pos => {
+        self.lc.bound_var.push((*id, (**dom).clone()));
         self.expand(scope, pos);
         self.lc.bound_var.0.pop().unwrap();
       }
@@ -369,7 +369,7 @@ struct ExpandLegacyFlex {
   depth: u32,
 }
 impl VisitMut for ExpandLegacyFlex {
-  fn push_bound(&mut self, _: &mut Type) { self.depth += 1 }
+  fn push_bound(&mut self, _: IdentId, _: &mut Type) { self.depth += 1 }
   fn pop_bound(&mut self, n: u32) { self.depth -= n }
   fn visit_formula(&mut self, f: &mut Formula) {
     if let Formula::FlexAnd { nat, le, terms, scope } = f {
@@ -396,7 +396,7 @@ impl Formula {
               f.append_conjuncts_to(conjs)
             }
           }),
-        Formula::ForAll { dom, scope } => {
+        Formula::ForAll { id, dom, scope } => {
           ExpandPrivFunc(ctx, lc).visit_type(dom);
           scope.distribute_quantifiers(ctx, lc, depth + 1);
           if let Formula::And { args } = &mut **scope {
@@ -404,7 +404,8 @@ impl Formula {
               let mut nontrivial = false;
               f.visit(&mut OnVarMut(|nr| nontrivial |= *nr == depth));
               if nontrivial {
-                *f = Formula::ForAll { dom: dom.clone(), scope: Box::new(std::mem::take(f)) }
+                *f =
+                  Formula::ForAll { id: *id, dom: dom.clone(), scope: Box::new(std::mem::take(f)) }
               } else {
                 f.visit(&mut OnVarMut(|nr| {
                   if *nr > depth {
@@ -436,7 +437,7 @@ impl Formula {
 pub trait Open {
   fn mk_var(n: u32) -> Term;
   fn base(&self) -> u32;
-  fn new_var(&mut self, ty: Type);
+  fn new_var(&mut self, id: IdentId, ty: Type);
 
   /// * pos = true: RemoveIntQuantifier
   /// * pos = false: RemoveExtQuantifier
@@ -456,14 +457,14 @@ pub trait Open {
               f.append_conjuncts_to(conjs)
             }
           }),
-        Formula::ForAll { dom, scope } =>
+        Formula::ForAll { id, dom, scope } =>
           if !pos {
             let mut set_var = SetVar::new(self, 1);
-            self.new_var(std::mem::take(&mut **dom));
+            self.new_var(*id, std::mem::take(&mut **dom));
             let mut f = std::mem::take(scope);
-            while let Formula::ForAll { mut dom, scope } = *f {
+            while let Formula::ForAll { id, mut dom, scope } = *f {
               set_var.visit_type(&mut dom);
-              self.new_var(*dom);
+              self.new_var(id, *dom);
               set_var.depth += 1;
               f = scope
             }
@@ -490,9 +491,9 @@ struct OpenAsConst<'a, 'b>(&'b mut Checker<'a>);
 impl Open for OpenAsConst<'_, '_> {
   fn mk_var(n: u32) -> Term { Term::Const(ConstId(n)) }
   fn base(&self) -> u32 { self.0.lc.fixed_var.len() as u32 }
-  fn new_var(&mut self, mut ty: Type) {
+  fn new_var(&mut self, id: IdentId, mut ty: Type) {
     ty.visit(&mut self.0.intern_const());
-    self.0.lc.fixed_var.push(FixedVar { ty, def: None });
+    self.0.lc.fixed_var.push(FixedVar { id, ty, def: None });
   }
 }
 
@@ -882,10 +883,10 @@ impl<'a> SchemeCtx<'a> {
         let (n2, args2) = Formula::adjust_pred(*n2, args2, Some(&self.g.constrs));
         n1 == n2 && self.eq_terms(args1, args2)
       }
-      (ForAll { dom: dom1, scope: sc1 }, ForAll { dom: dom2, scope: sc2 }) if pos =>
+      (ForAll { id: _, dom: dom1, scope: sc1 }, ForAll { id, dom: dom2, scope: sc2 }) if pos =>
         self.eq_type(dom1, dom2) && {
           self.lc.term_cache.get_mut().open_scope();
-          self.lc.bound_var.0.push((**dom2).clone());
+          self.lc.bound_var.0.push((*id, (**dom2).clone()));
           let r = self.eq_formula(sc1, sc2, true);
           self.lc.bound_var.0.pop();
           self.lc.term_cache.get_mut().close_scope();
@@ -896,7 +897,7 @@ impl<'a> SchemeCtx<'a> {
         if pos =>
         self.eq_terms(&**t1, &**t2) && {
           self.lc.term_cache.get_mut().open_scope();
-          self.lc.bound_var.0.push((**nat).clone());
+          self.lc.bound_var.0.push((IdentId::NONE, (**nat).clone()));
           let r = self.eq_formula(sc1, sc2, true);
           self.lc.bound_var.0.pop();
           self.lc.term_cache.get_mut().close_scope();
@@ -1001,7 +1002,7 @@ impl<'a> SchemeCtx<'a> {
           self.lc.term_cache.get_mut().open_scope();
           let n = self.lc.bound_var.len();
           let r = args1.iter().zip(&**args2).all(|(ty1, ty2)| {
-            let r = self.eq_type(ty1, ty2);
+            let r = self.eq_type(&ty1.1, &ty2.1);
             self.lc.bound_var.0.push(ty2.clone());
             r
           }) && self.eq_term(sc1, sc2)

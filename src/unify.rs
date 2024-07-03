@@ -332,7 +332,7 @@ struct OpenAsFreeVar<'a>(&'a mut IdxVec<FVarId, Type>);
 impl Open for OpenAsFreeVar<'_> {
   fn mk_var(n: u32) -> Term { Term::FreeVar(FVarId(n)) }
   fn base(&self) -> u32 { self.0.len() as u32 }
-  fn new_var(&mut self, ty: Type) { self.0.push(ty); }
+  fn new_var(&mut self, _: IdentId, ty: Type) { self.0.push(ty); }
 }
 
 impl Term {
@@ -340,13 +340,13 @@ impl Term {
   /// constructs the formula equivalent to `¬(self ∈ { F(xs) where xs : P(xs) })`,
   /// that is: `¬ ∃ xs, self = F(xs) /\ P(xs)`
   fn not_in_fraenkel(
-    self, args: Box<[Type]>, scope: Term, compr: Formula, reqs: &RequirementIndexes,
+    self, args: Box<[(IdentId, Type)]>, scope: Term, compr: Formula, reqs: &RequirementIndexes,
   ) -> Formula {
     let mut conjs = vec![reqs.mk_eq(self, scope)];
     compr.append_conjuncts_to(&mut conjs);
     let mut f = Formula::Neg { f: Box::new(Formula::And { args: conjs }) };
-    for ty in args.into_vec().into_iter().rev() {
-      f = Formula::forall(ty, f)
+    for (id, ty) in args.into_vec().into_iter().rev() {
+      f = Formula::forall(id, ty, f)
     }
     f
   }
@@ -385,12 +385,12 @@ impl Standardize<'_> {
           }
         }
         Formula::And { args } => args.iter_mut().for_each(|f| self.standardize_formula(f, pos)),
-        Formula::ForAll { dom, scope } =>
+        Formula::ForAll { id, dom, scope } =>
           if pos {
             self.visit_type(dom);
-            self.lc.bound_var.push(std::mem::take(dom));
+            self.lc.bound_var.push((*id, std::mem::take(dom)));
             self.standardize_formula(scope, pos);
-            **dom = self.lc.bound_var.0.pop().unwrap();
+            **dom = self.lc.bound_var.0.pop().unwrap().1;
           },
         Formula::SchPred { args, .. } | Formula::Pred { args, .. } => self.visit_terms(args),
         Formula::Attr { nr, args } => {
@@ -865,8 +865,8 @@ impl Unify<'_> {
 
   /// InstCollection.UNIFraenkelTrm
   fn unify_fraenkel(
-    &mut self, args1: &[Type], scope1: &Term, compr1: &Formula, args2: &[Type], scope2: &Term,
-    compr2: &Formula,
+    &mut self, args1: &[(IdentId, Type)], scope1: &Term, compr1: &Formula,
+    args2: &[(IdentId, Type)], scope2: &Term, compr2: &Formula,
   ) -> Result<Dnf<FVarId, EqClassId>, Overflow> {
     if args1.len() != args2.len() {
       return Ok(Dnf::FALSE)
@@ -874,7 +874,7 @@ impl Unify<'_> {
     let depth = self.depth;
     let mut inst = Dnf::True;
     for (ty1, ty2) in args1.iter().zip(args2) {
-      inst.mk_and_then(|| self.unify_type(ty1, ty2))?;
+      inst.mk_and_then(|| self.unify_type(&ty1.1, &ty2.1))?;
       self.depth += 1;
     }
     inst.mk_and_then(|| self.unify_term(scope1, scope2))?;
@@ -941,8 +941,9 @@ impl Unify<'_> {
         self.base = self.depth;
         if let Some(ec) = self.get_eq_class(t2) {
           for &m in &self.eq_class[ec].terms[CTK::Fraenkel] {
-            let Term::Fraenkel { args: a2, scope: s2, compr: c2 } = &self.lc.marks[m].0
-            else { unreachable!() };
+            let Term::Fraenkel { args: a2, scope: s2, compr: c2 } = &self.lc.marks[m].0 else {
+              unreachable!()
+            };
             inst.mk_or_else(|| self.unify_fraenkel(a1, s1, c1, a2, s2, c2))?
           }
         }
@@ -1044,7 +1045,10 @@ impl Unify<'_> {
           Dnf::FALSE
         }
       }
-      (Formula::ForAll { dom: dom1, scope: sc1 }, Formula::ForAll { dom: dom2, scope: sc2 }) => {
+      (
+        Formula::ForAll { id: _, dom: dom1, scope: sc1 },
+        Formula::ForAll { id: _, dom: dom2, scope: sc2 },
+      ) => {
         let mut inst = self.unify_type(dom1, dom2)?;
         self.depth += 1;
         inst.mk_and_then(|| self.unify_formula(sc1, sc2))?;
@@ -1263,8 +1267,7 @@ impl EquateClass<'_> {
         let ecs = args.iter().map(|t| self.get(g, lc, t)).collect::<Option<Vec<_>>>()?;
         for (ec, etm) in self.eq_class.enum_iter() {
           for &m in &etm.terms[CTK::Functor] {
-            let Term::Functor { nr: nr2, args: ref args2 } = lc.marks[m].0
-            else { unreachable!() };
+            let Term::Functor { nr: nr2, args: ref args2 } = lc.marks[m].0 else { unreachable!() };
             let (nr, adj) = Term::adjust(nr, args, Some(&g.constrs));
             let (nr2, adj2) = Term::adjust(nr2, args2, Some(&g.constrs));
             if nr != nr2 {

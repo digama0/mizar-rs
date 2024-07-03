@@ -655,7 +655,7 @@ pub enum Term {
     ty: Box<Type>,
   },
   Fraenkel {
-    args: Box<[Type]>,
+    args: Box<[(IdentId, Type)]>,
     scope: Box<Term>,
     compr: Box<Formula>,
   },
@@ -838,6 +838,7 @@ pub enum Formula {
   },
   /// ikFrmUniv
   ForAll {
+    id: IdentId,
     dom: Box<Type>,
     scope: Box<Formula>,
   },
@@ -900,9 +901,12 @@ impl Formula {
   }
 
   #[inline]
-  pub fn forall(dom: Type, scope: Self) -> Self {
-    Self::ForAll { dom: Box::new(dom), scope: Box::new(scope) }
+  pub fn forall(id: IdentId, dom: Type, scope: Self) -> Self {
+    Self::ForAll { id, dom: Box::new(dom), scope: Box::new(scope) }
   }
+
+  #[inline]
+  pub fn forall0(dom: Type, scope: Self) -> Self { Self::forall(IdentId::NONE, dom, scope) }
 
   pub fn conjuncts(&self) -> &[Formula] {
     match self {
@@ -2029,7 +2033,7 @@ impl Statement {
 #[derive(Debug)]
 pub struct GivenItem {
   pub prop: Proposition,
-  pub fixed: Vec<Type>,
+  pub fixed: Vec<(IdentId, Type)>,
   pub intro: Vec<Proposition>,
 }
 
@@ -2040,16 +2044,17 @@ pub enum AuxiliaryItem {
   Consider {
     prop: Proposition,
     just: Justification,
-    fixed: Vec<Type>,
+    fixed: Vec<(IdentId, Type)>,
     intro: Vec<Proposition>,
   },
   /// itConstantDefinition
   Set {
+    id: IdentId,
     term: Term,
     ty: Type,
   },
   Reconsider {
-    terms: Vec<(Type, Term)>,
+    terms: Vec<(IdentId, Type, Term)>,
     prop: Proposition,
     just: Justification,
   },
@@ -2227,7 +2232,7 @@ impl BlockKind {
 #[derive(Debug)]
 pub enum Item {
   /// itGeneralization
-  Let(Vec<Type>),
+  Let(Vec<(IdentId, Type)>),
   /// itExistentialAssumption
   Given(GivenItem),
   /// itConclusion
@@ -2238,7 +2243,11 @@ pub enum Item {
   /// itSimpleExemplification
   Take(Term),
   /// itExemplificationWithEquality
-  TakeAsVar(Type, Term),
+  TakeAsVar {
+    id: IdentId,
+    ty: Type,
+    tm: Term,
+  },
   PerCases(PerCases),
   Auxiliary(AuxiliaryItem),
   Registration(Registration),
@@ -2282,7 +2291,7 @@ impl Item {
       Item::Block { pos, .. } => Some(pos.0),
       Item::Let(_)
       | Item::Take(_)
-      | Item::TakeAsVar(..)
+      | Item::TakeAsVar { .. }
       | Item::Registration(_)
       | Item::Reservation { .. }
       | Item::Canceled(_)
@@ -2363,6 +2372,9 @@ impl RightBrkSymId {
 impl AttrSymId {
   // The "strict" (a.k.a "not abstract") builtin attribute
   pub const STRICT: Self = Self(0);
+}
+impl IdentId {
+  pub const NONE: Self = Self(0);
 }
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Debug)]

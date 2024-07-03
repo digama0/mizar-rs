@@ -449,12 +449,12 @@ impl Reader {
     self.push_prop(prop.label, self.intern(&prop.f))
   }
 
-  fn push_fixed_var(&mut self, ty: &Type) {
-    self.lc.fixed_var.push(FixedVar { ty: self.intern(ty), def: None });
+  fn push_fixed_var(&mut self, id: IdentId, ty: &Type) {
+    self.lc.fixed_var.push(FixedVar { id, ty: self.intern(ty), def: None });
   }
 
-  fn read_fixed_vars(&mut self, vars: &[Type]) {
-    vars.iter().for_each(|ty| self.push_fixed_var(ty))
+  fn read_fixed_vars(&mut self, vars: &[(IdentId, Type)]) {
+    vars.iter().for_each(|(id, ty)| self.push_fixed_var(*id, ty))
   }
 
   pub(crate) fn open_scope(&mut self, push_label: bool) -> Scope {
@@ -571,7 +571,7 @@ impl Reader {
         Item::Thus(it) => eprintln!("Thus @ {:?}", it.pos()),
         Item::Assume(it) => eprintln!("Assume @ {:?}", it[0].pos),
         Item::Take(_) => eprintln!("Take"),
-        Item::TakeAsVar(_, _) => eprintln!("TakeAsVar"),
+        Item::TakeAsVar { .. } => eprintln!("TakeAsVar"),
         Item::PerCases(it) => eprintln!("PerCases @ {:?}", it.pos.0),
         Item::Auxiliary(it) => match it {
           AuxiliaryItem::Statement(it) => match it {
@@ -625,8 +625,9 @@ impl Reader {
       }
       Item::Assume(intro) => intro.iter().for_each(|prop| self.read_proposition(prop)),
       Item::Take(_) => {}
-      Item::TakeAsVar(ty, tm) => {
-        let fv = FixedVar { ty: self.intern(ty), def: Some((Box::new(self.intern(tm)), false)) };
+      Item::TakeAsVar { id, ty, tm } => {
+        let fv =
+          FixedVar { id: *id, ty: self.intern(ty), def: Some((Box::new(self.intern(tm)), false)) };
         self.lc.fixed_var.push(fv);
       }
       Item::PerCases(PerCases { block_thesis, cases, prop, just, .. }) => {
@@ -654,11 +655,14 @@ impl Reader {
         self.read_fixed_vars(fixed);
         intro.iter().for_each(|prop| self.read_proposition(prop));
       }
-      Item::Auxiliary(AuxiliaryItem::Set { ty, .. }) => self.push_fixed_var(ty),
+      Item::Auxiliary(AuxiliaryItem::Set { id, ty, .. }) => self.push_fixed_var(*id, ty),
       Item::Auxiliary(AuxiliaryItem::Reconsider { terms, prop, just }) => {
-        for (ty, tm) in terms {
-          let fv = FixedVar { ty: self.intern(ty), def: Some((Box::new(self.intern(tm)), false)) };
-          self.lc.fixed_var.push(fv);
+        for (id, ty, tm) in terms {
+          self.lc.fixed_var.push(FixedVar {
+            id: *id,
+            ty: self.intern(ty),
+            def: Some((Box::new(self.intern(tm)), false)),
+          });
         }
         self.read_just_prop(prop, just, false);
       }

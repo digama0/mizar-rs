@@ -354,7 +354,7 @@ impl CaseKind {
 #[derive(Debug)]
 pub struct Field {
   pub pos: Position,
-  pub sym: (SelSymId, String),
+  pub sym: (SelSymId, Rc<str>),
 }
 
 #[derive(Debug)]

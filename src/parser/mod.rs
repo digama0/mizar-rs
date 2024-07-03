@@ -988,11 +988,14 @@ struct PropertyAttrs {
 }
 
 impl MizReader<'_> {
-  fn parse_type(&mut self, buf: &mut Vec<u8>) -> Result<Option<Type>> {
+  fn parse_type_vid(&mut self, buf: &mut Vec<u8>) -> Result<Option<(Type, IdentId)>> {
     Ok(match self.parse_elem(buf)? {
-      Elem::Type(ty) => Some(ty),
+      Elem::Type(ty, id) => Some((ty, id)),
       _ => None,
     })
+  }
+  fn parse_type(&mut self, buf: &mut Vec<u8>) -> Result<Option<Type>> {
+    Ok(self.parse_type_vid(buf)?.map(|t| t.0))
   }
 
   fn parse_attrs(&mut self, buf: &mut Vec<u8>) -> Result<Attrs> {
@@ -1028,6 +1031,13 @@ impl MizReader<'_> {
       }
     }
     Ok((kind, nr))
+  }
+
+  fn get_vid(&mut self, e: &BytesStart<'_>) -> Result<IdentId> {
+    Ok(match e.try_get_attribute(b"vid").unwrap() {
+      Some(attr) => IdentId(self.get_attr(&attr.value)?),
+      None => IdentId::NONE,
+    })
   }
 
   fn parse_signature(&mut self, buf: &mut Vec<u8>, sig: &mut Vec<Article>) -> Result<()> {
@@ -1293,7 +1303,7 @@ impl MizReader<'_> {
         let aggr = AggrId(aggr - 1);
         let fields = loop {
           match self.parse_elem(buf)? {
-            Elem::Type(ty) => {
+            Elem::Type(ty, _) => {
               assert!(matches!(ty.kind, TypeKind::Struct(_)), "not a struct");
               parents.push(ty)
             }
@@ -1388,7 +1398,7 @@ impl MizReader<'_> {
     let mut primary = vec![];
     let essential = loop {
       match self.parse_elem(buf)? {
-        Elem::Type(ty) => primary.push(ty),
+        Elem::Type(ty, _) => primary.push(ty),
         Elem::Essentials(args) => break args,
         _ => panic!("expected <Essentials>"),
       }
@@ -1426,7 +1436,7 @@ impl MizReader<'_> {
     let mut primary = vec![];
     let lhs = loop {
       match self.parse_elem(buf)? {
-        Elem::Type(ty) => primary.push(ty),
+        Elem::Type(ty, _) => primary.push(ty),
         Elem::Term(lhs) if kind == b'K' => break lhs,
         _ => panic!("unknown identify kind"),
       }
@@ -1459,7 +1469,7 @@ impl MizReader<'_> {
     let mut primary = vec![];
     let terms = loop {
       match self.parse_elem(buf)? {
-        Elem::Type(ty) => primary.push(ty),
+        Elem::Type(ty, _) => primary.push(ty),
         Elem::Term(t1) => break [t1, self.parse_term(buf)?.unwrap()],
         _ => panic!("unknown reduction kind"),
       }
@@ -1517,13 +1527,14 @@ impl MizReader<'_> {
             b'M' => TypeKind::Mode(ModeId(nr - 1)),
             _ => panic!("bad type kind"),
           };
+          let id = self.get_vid(&e)?;
           let lower = self.parse_attrs(buf)?;
           let upper = if self.two_clusters { self.parse_attrs(buf)? } else { lower.clone() };
           let mut args = vec![];
           while let Some(tm) = self.parse_term(buf)? {
             args.push(tm)
           }
-          Elem::Type(Type { kind, attrs: (lower, upper), args })
+          Elem::Type(Type { kind, attrs: (lower, upper), args }, id)
         }
         b"Properties" => {
           let mut props = Properties::EMPTY;
@@ -1586,9 +1597,9 @@ impl MizReader<'_> {
           let mut args = vec![];
           let scope = loop {
             match self.parse_elem(buf)? {
-              Elem::Type(mut ty) => {
+              Elem::Type(mut ty, id) => {
                 ty.visit(&mut self.lower());
-                args.push(ty);
+                args.push((id, ty));
                 self.depth += 1;
               }
               Elem::Term(scope) => break Box::new(scope),
@@ -1642,20 +1653,17 @@ impl MizReader<'_> {
           Elem::Formula(Formula::PrivPred { nr: PrivPredId(nr), args: args.into(), value })
         }
         b"For" => {
-          // let mut var_id = 0;
-          // for attr in e.attributes() {
-          //   let attr = attr?;
-          //   if let b"vid" = attr.key.0 {
-          //     var_id = self.get_attr(&attr.value)
-          //   }
-          // }
+          let id = match e.try_get_attribute(b"vid").unwrap() {
+            Some(attr) => IdentId(self.get_attr(&attr.value)?),
+            None => IdentId::NONE,
+          };
           let mut dom = Box::new(self.parse_type(buf)?.unwrap());
           dom.visit(&mut self.lower());
           self.depth += 1;
           let scope = Box::new(self.parse_formula(buf)?.unwrap());
           self.depth -= 1;
           self.end_tag(buf)?;
-          Elem::Formula(Formula::ForAll { dom, scope })
+          Elem::Formula(Formula::ForAll { id, dom, scope })
         }
         b"Is" => {
           let term = Box::new(self.parse_term(buf)?.unwrap());
@@ -1667,7 +1675,9 @@ impl MizReader<'_> {
           let _orig1 = self.parse_formula(buf)?.unwrap();
           let _orig2 = self.parse_formula(buf)?.unwrap();
           let terms = Box::new([self.parse_term(buf)?.unwrap(), self.parse_term(buf)?.unwrap()]);
-          let Formula::ForAll { dom, scope } = self.parse_formula(buf)?.unwrap() else { panic!() };
+          let Formula::ForAll { id: _, dom, scope } = self.parse_formula(buf)?.unwrap() else {
+            panic!()
+          };
           let sc2 = scope.mk_neg();
           let &[Formula::Pred { nr: le, .. }, _, ref rest @ ..] = sc2.conjuncts() else { panic!() };
           let scope = Formula::mk_and(rest.to_owned());
@@ -1844,7 +1854,7 @@ impl MizReader<'_> {
 
 #[derive(Debug)]
 enum Elem {
-  Type(Type),
+  Type(Type, IdentId),
   Term(Term),
   Formula(Formula),
   Properties(Properties),
@@ -1867,7 +1877,7 @@ impl TryFrom<Elem> for Type {
   type Error = ();
   fn try_from(e: Elem) -> StdResult<Type, Self::Error> {
     match e {
-      Elem::Type(v) => Ok(v),
+      Elem::Type(v, _) => Ok(v),
       _ => Err(()),
     }
   }

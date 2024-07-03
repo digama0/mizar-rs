@@ -127,7 +127,7 @@ impl Global {
       conjs.push(Formula::Pred { nr: le, args: Box::new([Term::Bound(BoundId(depth)), t2]) });
       scope.mk_neg().append_conjuncts_to(conjs);
     });
-    Formula::ForAll { dom: nat, scope: Box::new(f.mk_neg()) }
+    Formula::ForAll { id: IdentId::NONE, dom: nat, scope: Box::new(f.mk_neg()) }
   }
 
   pub fn into_legacy_flex_and(
@@ -165,7 +165,7 @@ impl RoundUpTypes<'_> {
 }
 
 impl VisitMut for RoundUpTypes<'_> {
-  fn push_bound(&mut self, ty: &mut Type) { self.lc.bound_var.push(ty.clone()); }
+  fn push_bound(&mut self, id: IdentId, ty: &mut Type) { self.lc.bound_var.push((id, ty.clone())); }
   fn pop_bound(&mut self, n: u32) {
     self.lc.bound_var.0.truncate(self.lc.bound_var.0.len() - n as usize);
     self.lc.clear_term_cache()
@@ -188,7 +188,7 @@ impl VisitMut for RoundUpTypes<'_> {
     self.visit_type(nat);
     self.visit_term(tm_l);
     self.visit_term(tm_r);
-    self.push_bound(nat);
+    self.push_bound(IdentId::NONE, nat);
     self.visit_formula(scope);
     self.pop_bound(1)
   }
@@ -367,7 +367,7 @@ impl Term {
           Fraenkel { args: args2, scope: sc2, compr: c2 },
         ) => sc1.cmp(ctx, lc, sc2, style).then_with(|| {
           c1.cmp(ctx, lc, c2, style)
-            .then_with(|| cmp_list(args1, args2, |ty1, ty2| ty1.cmp(ctx, lc, ty2, style)))
+            .then_with(|| cmp_list(args1, args2, |ty1, ty2| ty1.1.cmp(ctx, lc, &ty2.1, style)))
         }),
         (It, It) => Ordering::Equal,
         (Qua { value: val1, ty: ty1 }, Qua { value: val2, ty: ty2 }) =>
@@ -688,7 +688,7 @@ impl Formula {
           }
           _ => n1.cmp(n2).then_with(|| Term::cmp_list(ctx, lc, args1, args2, style)),
         },
-        (ForAll { dom: dom1, scope: sc1 }, ForAll { dom: dom2, scope: sc2 }) =>
+        (ForAll { id: _, dom: dom1, scope: sc1 }, ForAll { id: _, dom: dom2, scope: sc2 }) =>
           dom1.cmp(ctx, lc, dom2, style).then_with(|| sc1.cmp(ctx, lc, sc2, style)),
         #[allow(clippy::explicit_auto_deref)]
         (FlexAnd { terms: t1, scope: sc1, .. }, FlexAnd { terms: t2, scope: sc2, .. }) =>
@@ -805,7 +805,7 @@ pub trait Equate {
         args1.len() == args2.len() && {
           let (depth1, depth2) = (ctx.depth1, ctx.depth2);
           let res = args1.iter().zip(&**args2).all(|(ty1, ty2)| {
-            let r = self.eq_type(ctx, ty1, ty2);
+            let r = self.eq_type(ctx, &ty1.1, &ty2.1);
             ctx.depth1 += 1;
             ctx.depth2 += 1;
             r
@@ -918,7 +918,7 @@ pub trait Equate {
       }
       (Pred { nr: n1, args: args1 }, Pred { nr: n2, args: args2 }) =>
         self.eq_pred(ctx, *n1, *n2, args1, args2),
-      (ForAll { dom: dom1, scope: sc1 }, ForAll { dom: dom2, scope: sc2 }) =>
+      (ForAll { id: _, dom: dom1, scope: sc1 }, ForAll { id: _, dom: dom2, scope: sc2 }) =>
         self.eq_forall(ctx, dom1, dom2, sc1, sc2),
       (FlexAnd { terms: t1, scope: sc1, .. }, FlexAnd { terms: t2, scope: sc2, .. }) =>
         self.eq_terms(ctx, &**t1, &**t2) && self.eq_formula(ctx, sc1, sc2),
@@ -1042,7 +1042,7 @@ macro_rules! mk_visit {
     pub trait $visit {
       const MODIFY_IDS: bool = false;
       #[inline] fn abort(&self) -> bool { false }
-      fn push_bound(&mut self, _ty: &$($mutbl)? Type) {}
+      fn push_bound(&mut self, _id: IdentId, _ty: &$($mutbl)? Type) {}
       fn pop_bound(&mut self, _n: u32) {}
 
       fn visit_mode_id(&mut self, _n: $(&$mutbl)? ModeId) {}
@@ -1084,9 +1084,9 @@ macro_rules! mk_visit {
           Term::Numeral { .. } => {}
           Term::The { ty } => self.visit_type(ty),
           Term::Fraenkel { args, scope, compr } => {
-            for ty in &$($mutbl)? **args {
+            for (id, ty) in &$($mutbl)? **args {
               self.visit_type(ty);
-              self.push_bound(ty);
+              self.push_bound(*id, ty);
             }
             self.visit_term(scope);
             self.visit_formula(compr);
@@ -1150,7 +1150,7 @@ macro_rules! mk_visit {
         self.visit_pred_id(le);
         self.visit_term(tm_l);
         self.visit_term(tm_r);
-        self.push_bound(nat);
+        self.push_bound(IdentId::NONE, nat);
         self.visit_formula(scope);
         self.pop_bound(1)
       }
@@ -1180,9 +1180,9 @@ macro_rules! mk_visit {
             for f in args {
               self.visit_formula(f)
             },
-          Formula::ForAll { dom, scope } => {
+          Formula::ForAll { id, dom, scope } => {
             self.visit_type(dom);
-            self.push_bound(dom);
+            self.push_bound(*id, dom);
             self.visit_formula(scope);
             self.pop_bound(1)
           }
@@ -1318,7 +1318,7 @@ impl<'a> Inst<'a> {
 }
 
 impl VisitMut for Inst<'_> {
-  fn push_bound(&mut self, _: &mut Type) { self.depth += 1 }
+  fn push_bound(&mut self, _: IdentId, _: &mut Type) { self.depth += 1 }
   fn pop_bound(&mut self, n: u32) { self.depth -= n }
   fn visit_term(&mut self, tm: &mut Term) {
     match *tm {
@@ -1446,7 +1446,7 @@ impl Term {
   /// CopyTrmType(self = fTrm)
   pub fn get_type_uncached(&self, g: &Global, lc: &LocalContext) -> Type {
     let ty = match *self {
-      Term::Bound(nr) => lc.bound_var[nr].clone(),
+      Term::Bound(nr) => lc.bound_var[nr].1.clone(),
       Term::Const(nr) => {
         let base = lc.bound_var.len() as u32;
         lc.fixed_var[nr].ty.visit_cloned(&mut OnVarMut(|nr| *nr += base))
@@ -2446,7 +2446,7 @@ impl<'a> InternConst<'a> {
 }
 
 impl VisitMut for InternConst<'_> {
-  fn push_bound(&mut self, _: &mut Type) { self.depth += 1 }
+  fn push_bound(&mut self, _: IdentId, _: &mut Type) { self.depth += 1 }
   fn pop_bound(&mut self, n: u32) { self.depth -= n }
 
   /// CollectConstInTrm
@@ -2510,9 +2510,9 @@ impl VisitMut for InternConst<'_> {
         self.collect_infer_const(tm)
       }
       Term::Fraenkel { args, scope, compr } => {
-        for ty in &mut **args {
+        for (id, ty) in &mut **args {
           self.visit_type(ty);
-          self.push_bound(ty);
+          self.push_bound(*id, ty);
         }
         self.visit_term(scope);
         self.visit_formula(compr);
@@ -2554,7 +2554,7 @@ impl LocalContext {
 }
 
 impl VisitMut for ExpandConsts<'_> {
-  fn push_bound(&mut self, _: &mut Type) { self.depth += 1 }
+  fn push_bound(&mut self, _: IdentId, _: &mut Type) { self.depth += 1 }
   fn pop_bound(&mut self, n: u32) { self.depth -= n }
 
   /// ExpandInferConsts
@@ -2602,9 +2602,9 @@ impl VisitMut for Descope {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FixedVar {
-  // ident: u32,
+  pub id: IdentId,
   pub ty: Type,
   /// if true, it will unfold eagerly
   pub def: Option<(Box<Term>, bool)>,
@@ -2662,7 +2662,7 @@ pub struct LocalContext {
   // FIXME: this is non-owning in mizar
   pub locus_ty: IdxVec<LocusId, Type>,
   /// BoundVarNbr, BoundVar
-  pub bound_var: IdxVec<BoundId, Type>,
+  pub bound_var: IdxVec<BoundId, (IdentId, Type)>,
   /// FixedVar
   pub fixed_var: IdxVec<ConstId, FixedVar>,
   /// InferConstDef
@@ -2803,17 +2803,17 @@ impl LocalContext {
       depth: 0,
     };
     abst.visit_formula(f);
-    let mut process = |mut ty| {
+    let mut process = |vid, mut ty| {
       abst.lift -= 1;
       if abst.lift != 0 {
         abst.visit_type(&mut ty);
       }
-      *f = Formula::forall(ty, std::mem::take(f));
+      *f = Formula::forall(vid, ty, std::mem::take(f));
     };
     if pop {
-      self.fixed_var.0.drain(range).rev().for_each(|var| process(var.ty))
+      self.fixed_var.0.drain(range).rev().for_each(|var| process(var.id, var.ty))
     } else {
-      self.fixed_var.0[range].iter().rev().for_each(|var| process(var.ty.clone()))
+      self.fixed_var.0[range].iter().rev().for_each(|var| process(var.id, var.ty.clone()))
     }
     // vprintln!("mk_forall -> {f:?}");
   }
@@ -2829,7 +2829,7 @@ struct Abstract<'a> {
 }
 
 impl VisitMut for Abstract<'_> {
-  fn push_bound(&mut self, _: &mut Type) { self.depth += 1 }
+  fn push_bound(&mut self, _: IdentId, _: &mut Type) { self.depth += 1 }
   fn pop_bound(&mut self, n: u32) { self.depth -= n }
   fn visit_term(&mut self, tm: &mut Term) {
     match tm {

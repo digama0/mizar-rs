@@ -434,6 +434,7 @@ impl FormatterConfig {
     show_marks: true,
     show_invisible: false,
     show_orig: true,
+    show_var_names: true,
     upper_clusters: false,
     both_clusters: false,
     negation_sugar: true,

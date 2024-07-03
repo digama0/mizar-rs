@@ -101,7 +101,7 @@ impl MizPath {
       let art = art.as_bytes();
       for (i, cl) in cl.registered.iter().enumerate() {
         w.write_cluster("RCluster", Some((art, i as u32)), cl, |w| {
-          w.write_type(None, &cl.ty);
+          w.write_type(None, IdentId::NONE, &cl.ty);
           w.write_attrs(None, &cl.consequent.0)
         })
       }
@@ -110,14 +110,14 @@ impl MizPath {
           w.write_term(None, &cl.term);
           w.write_attrs(None, &cl.consequent.0);
           if let Some(ty) = &cl.ty {
-            w.write_type(None, ty)
+            w.write_type(None, IdentId::NONE, ty)
           }
         })
       }
       for (i, cl) in cl.conditional.iter().enumerate() {
         w.write_cluster("CCluster", Some((art, i as u32)), cl, |w| {
           w.write_attrs(None, &cl.antecedent);
-          w.write_type(None, &cl.ty);
+          w.write_type(None, IdentId::NONE, &cl.ty);
           w.write_attrs(None, &cl.consequent.0)
         })
       }
@@ -173,7 +173,7 @@ impl MizPath {
         };
         w.with("Property", attrs, |w| {
           w.write_arg_types(None, &prop.primary);
-          w.write_type(None, &prop.ty)
+          w.write_type(None, IdentId::NONE, &prop.ty)
         })
       }
     });
@@ -436,10 +436,21 @@ impl Elem {
     self.attr_str(b"col", pos.col);
   }
 
-  fn label(&mut self, label: Option<LabelId>) { self.opt_attr_str(b"nr", label.map(|x| x.0 + 1)) }
-  fn pos_and_label(&mut self, pos: Position, label: Option<LabelId>) {
+  fn label(&mut self, label: Option<(LabelId, IdentId)>) {
+    if let Some((label, id)) = label {
+      self.attr_str(b"nr", label.0 + 1);
+      self.vid(id)
+    }
+  }
+  fn pos_and_label(&mut self, pos: Position, label: Option<(LabelId, IdentId)>) {
     self.pos(pos);
     self.label(label)
+  }
+
+  fn vid(&mut self, id: IdentId) {
+    if id != IdentId::NONE {
+      self.attr_str(b"vid", id.0)
+    }
   }
 
   fn constr_kind(&mut self, c: &ConstrKind) {
@@ -591,7 +602,7 @@ impl MizWriter {
       w.write_arg_types(None, &pat.primary);
       w.write_loci("Visible", &pat.visible);
       if let PatternKind::ExpandableMode { expansion } = &pat.kind {
-        w.with0("Expansion", |w| w.write_type(None, expansion))
+        w.with0("Expansion", |w| w.write_type(None, IdentId::NONE, expansion))
       }
     })
   }
@@ -643,7 +654,10 @@ impl MizWriter {
   fn write_ty_constructor<I: Idx>(
     &mut self, kind: u8, aid_nr: Option<(&[u8], u32)>, rel: u32, c: &TyConstructor<I>,
   ) {
-    self.write_constructor(kind, aid_nr, rel, c, |_| {}, |w| w.write_type(None, &c.ty))
+    let attrs = |_: &mut Elem| {};
+    self.write_constructor(kind, aid_nr, rel, c, attrs, |w| {
+      w.write_type(None, IdentId::NONE, &c.ty);
+    })
   }
 
   fn write_fields(&mut self, fields: &[SelId]) {
@@ -675,14 +689,14 @@ impl MizWriter {
   fn write_struct_constructor(&mut self, aid_nr: Option<(&[u8], u32)>, rel: u32, c: &StructMode) {
     let attrs = |w: &mut Elem| w.attr_str(b"structmodeaggrnr", c.aggr.0 + 1);
     self.write_constructor(b'L', aid_nr, rel, c, attrs, |w| {
-      w.write_types(None, &c.parents);
+      w.write_types0(None, &c.parents);
       w.write_fields(&c.fields);
     })
   }
   fn write_aggr_constructor(&mut self, aid_nr: Option<(&[u8], u32)>, rel: u32, c: &Aggregate) {
     let attrs = |w: &mut Elem| w.attr_str(b"aggregbase", c.base);
     self.write_constructor(b'G', aid_nr, rel, c, attrs, |w| {
-      w.write_type(None, &c.ty);
+      w.write_type(None, IdentId::NONE, &c.ty);
       w.write_fields(&c.fields)
     })
   }
@@ -751,7 +765,7 @@ impl MizWriter {
       }
     };
     self.with("Definiens", attrs, |w| {
-      w.write_types(None, &def.primary);
+      w.write_types0(None, &def.primary);
       w.write_loci("Essentials", &def.essential);
       if !matches!(def.assumptions, Formula::True) {
         w.write_formula(None, &def.assumptions)
@@ -775,7 +789,7 @@ impl MizWriter {
       w.attr(b"constrkind", &b"K"[..]);
     };
     self.with("Identify", attrs, |w| {
-      w.write_types(None, &id.primary);
+      w.write_types0(None, &id.primary);
       w.write_term(None, &id.lhs);
       w.write_term(None, &id.rhs);
       w.with0("EqArgs", |w| {
@@ -792,7 +806,7 @@ impl MizWriter {
   fn write_reduction(&mut self, aid_nr: Option<(&[u8], u32)>, red: &Reduction) {
     let attrs = |w: &mut Elem| w.aid_ref(aid_nr);
     self.with("Reduction", attrs, |w| {
-      w.write_types(None, &red.primary);
+      w.write_types0(None, &red.primary);
       w.write_term(None, &red.terms[0]);
       w.write_term(None, &red.terms[1])
     })
@@ -814,14 +828,15 @@ impl MizWriter {
     })
   }
 
-  fn write_type(&mut self, lc: Option<&LocalContext>, ty: &Type) {
+  fn write_type(&mut self, lc: Option<&LocalContext>, id: IdentId, ty: &Type) {
     let attrs = |w: &mut Elem| {
       let (kind, n) = match ty.kind {
         TypeKind::Struct(n) => (b'G', n.0),
         TypeKind::Mode(n) => (b'M', n.0),
       };
       w.attr(b"kind", &[kind][..]);
-      w.attr_str(b"nr", n + 1)
+      w.attr_str(b"nr", n + 1);
+      w.vid(id)
     };
     self.with("Typ", attrs, |w| {
       w.write_attrs(lc, &ty.attrs.0);
@@ -832,12 +847,16 @@ impl MizWriter {
     })
   }
 
-  fn write_types(&mut self, lc: Option<&LocalContext>, tys: &[Type]) {
-    tys.iter().for_each(|ty| self.write_type(lc, ty))
+  fn write_types(&mut self, lc: Option<&LocalContext>, tys: &[(IdentId, Type)]) {
+    tys.iter().for_each(|(id, ty)| self.write_type(lc, *id, ty))
+  }
+
+  fn write_types0(&mut self, lc: Option<&LocalContext>, tys: &[Type]) {
+    tys.iter().for_each(|ty| self.write_type(lc, IdentId::NONE, ty))
   }
 
   fn write_arg_types(&mut self, lc: Option<&LocalContext>, tys: &[Type]) {
-    self.with0("ArgTypes", |w| w.write_types(lc, tys))
+    self.with0("ArgTypes", |w| w.write_types0(lc, tys))
   }
 
   fn write_term(&mut self, lc: Option<&LocalContext>, tm: &Term) {
@@ -849,7 +868,12 @@ impl MizWriter {
         let sh = self.shift.partition_point(|&x| x <= n);
         self.with_attr("Var", |w| w.attr_str(b"nr", n + sh as u32 + 1))
       }
-      Term::Const(n) => self.with_attr("Const", |w| w.attr_str(b"nr", n.0 + 1)),
+      Term::Const(n) => self.with_attr("Const", |w| {
+        w.attr_str(b"nr", n.0 + 1);
+        if let Some(lc) = lc {
+          w.vid(lc.fixed_var[*n].id)
+        }
+      }),
       Term::SchFunc { nr, args } => self.write_func(lc, "Func", b'F', nr.0, args),
       Term::Aggregate { nr, args } => self.write_func(lc, "Func", b'G', nr.0, args),
       Term::PrivFunc { nr, args, value } => {
@@ -861,11 +885,11 @@ impl MizWriter {
       }
       Term::Functor { nr, args } => self.write_func(lc, "Func", b'K', nr.0, args),
       Term::Selector { nr, args } => self.write_func(lc, "Func", b'U', nr.0, args),
-      Term::The { ty } => self.with0("Choice", |w| w.write_type(lc, ty)),
+      Term::The { ty } => self.with0("Choice", |w| w.write_type(lc, IdentId::NONE, ty)),
       Term::Fraenkel { args, scope, compr } => self.with0("Fraenkel", |w| {
-        for ty in &**args {
+        for (id, ty) in &**args {
           w.shift.push(w.depth);
-          w.write_type(lc, ty);
+          w.write_type(lc, *id, ty);
           w.shift.pop();
           w.depth += 1;
         }
@@ -915,17 +939,15 @@ impl MizWriter {
       }
       Formula::Is { term, ty } => self.with0("Is", |w| {
         w.write_term(lc, term);
-        w.write_type(lc, ty)
+        w.write_type(lc, IdentId::NONE, ty)
       }),
       Formula::Neg { f } => self.with0("Not", |w| w.write_formula(lc, f)),
       Formula::And { args } => self.with0("And", |w| w.write_formulas(lc, args)),
-      Formula::ForAll { dom, scope } => {
-        let attrs = |_: &mut Elem| {
-          // w.attr_str(b"vid", var_id)
-        };
+      Formula::ForAll { id, dom, scope } => {
+        let attrs = |w: &mut Elem| w.vid(*id);
         self.with("For", attrs, |w| {
           w.shift.push(w.depth);
-          w.write_type(lc, dom);
+          w.write_type(lc, IdentId::NONE, dom);
           w.shift.pop();
           w.depth += 1;
           w.write_formula(lc, scope);
@@ -969,7 +991,8 @@ impl MizWriter {
   }
 
   fn write_proposition(
-    &mut self, lc: Option<&LocalContext>, pos: Position, label: Option<LabelId>, f: &Formula,
+    &mut self, lc: Option<&LocalContext>, pos: Position, label: Option<(LabelId, IdentId)>,
+    f: &Formula,
   ) {
     self.with("Proposition", |w| w.pos_and_label(pos, label), |w| w.write_formula(lc, f))
   }
@@ -1150,15 +1173,17 @@ impl WriteXml {
   pub fn write_terms(&mut self, lc: &LocalContext, tms: &[Term]) {
     self.w.write_terms(Some(lc), tms)
   }
-  pub fn write_type(&mut self, lc: &LocalContext, ty: &Type) { self.w.write_type(Some(lc), ty) }
-  pub fn write_types(&mut self, lc: &LocalContext, tys: &[Type]) {
+  pub fn write_type(&mut self, lc: &LocalContext, id: IdentId, ty: &Type) {
+    self.w.write_type(Some(lc), id, ty)
+  }
+  pub fn write_types(&mut self, lc: &LocalContext, tys: &[(IdentId, Type)]) {
     self.w.write_types(Some(lc), tys)
   }
   pub fn write_formula(&mut self, lc: &LocalContext, f: &Formula) {
     self.w.write_formula(Some(lc), f)
   }
   pub fn write_proposition(
-    &mut self, lc: &LocalContext, pos: Position, label: Option<LabelId>, f: &Formula,
+    &mut self, lc: &LocalContext, pos: Position, label: Option<(LabelId, IdentId)>, f: &Formula,
   ) {
     match self.state {
       State::SchemePremises | State::Assume(_) | State::InnerAssume | State::Case1(_, _) => {}
@@ -1228,7 +1253,7 @@ impl WriteXml {
     self.state = State::after_reasoning(kind);
     self.with0("Let", |w| {
       for fv in &lc.fixed_var.0[start..] {
-        w.write_type(lc, &fv.ty)
+        w.write_type(lc, fv.id, &fv.ty)
       }
     })
   }
@@ -1244,16 +1269,17 @@ impl WriteXml {
     self.end_tag("Assume")
   }
 
+  #[allow(clippy::type_complexity)]
   pub fn given(
     &mut self, lc: &LocalContext, pos: Position, start: usize,
-    conds: &[(Position, Option<LabelId>, Formula)], ex: &Formula,
+    conds: &[(Position, Option<(LabelId, IdentId)>, Formula)], ex: &Formula,
   ) {
     let State::Block(kind) = self.state else { unreachable!() };
     self.state = State::InnerAssume;
     self.with0("Given", |w| {
       w.write_proposition(lc, pos, None, ex);
       for fv in &lc.fixed_var.0[start..] {
-        w.write_type(lc, &fv.ty)
+        w.write_type(lc, fv.id, &fv.ty)
       }
       for &(pos, label, ref f) in conds {
         w.write_proposition(lc, pos, label, f)
@@ -1268,11 +1294,11 @@ impl WriteXml {
     self.with0("Take", |w| w.write_term(lc, tm))
   }
 
-  pub fn take_as_var(&mut self, lc: &LocalContext, ty: &Type, tm: &Term) {
+  pub fn take_as_var(&mut self, lc: &LocalContext, id: IdentId, ty: &Type, tm: &Term) {
     let State::Block(kind) = self.state else { unreachable!() };
     self.state = State::after_reasoning(kind);
     self.with0("TakeAsVar", |w| {
-      w.write_type(lc, ty);
+      w.write_type(lc, id, ty);
       w.write_term(lc, tm)
     })
   }
@@ -1292,7 +1318,7 @@ impl WriteXml {
     self.end_tag("Conclusion")
   }
 
-  pub fn start_now(&mut self, pos: Position, label: Option<LabelId>) {
+  pub fn start_now(&mut self, pos: Position, label: Option<(LabelId, IdentId)>) {
     let State::Block(kind) = self.state else { unreachable!("{:?}", self.state) };
     self.state = State::Block(BlockKind::Diffuse);
     self.stack.push(Stack::Now(kind));
@@ -1306,7 +1332,7 @@ impl WriteXml {
   }
 
   pub fn start_iter_equality(
-    &mut self, lc: &LocalContext, pos: Position, label: Option<LabelId>, lhs: &Term,
+    &mut self, lc: &LocalContext, pos: Position, label: Option<(LabelId, IdentId)>, lhs: &Term,
   ) {
     let State::Block(kind) = self.state else { unreachable!() };
     self.state = State::IterEquality(kind);
@@ -1403,17 +1429,18 @@ impl WriteXml {
       for i in start..len + start {
         w.with_attr("Ident", |w| w.attr_str(b"vid", i + 1))
       }
-      w.write_type(Some(lc), ty)
+      w.write_type(Some(lc), IdentId::NONE, ty)
     });
     self.w.newline()
   }
 
-  pub fn start_scheme(&mut self, pos: Position, nr: SchId) {
+  pub fn start_scheme(&mut self, pos: Position, nr: SchId, id: IdentId) {
     assert!(matches!(self.state, State::Block(BlockKind::Top)));
     self.state = State::SchemeBlock1;
     let w = self.w.start("SchemeBlock");
     w.pos(pos);
-    w.attr_str(b"schemenr", nr.0 + 1)
+    w.attr_str(b"schemenr", nr.0 + 1);
+    w.vid(id)
   }
   pub fn end_scheme(&mut self, end: Position) {
     self.end_pos(end);
@@ -1428,7 +1455,7 @@ impl WriteXml {
     let attrs = |w: &mut Elem| w.attr_str(b"nr", id.0 + 1);
     self.with("SchemeFuncDecl", attrs, |w| {
       w.w.write_arg_types(Some(lc), &lc.locus_ty.0);
-      w.w.write_type(Some(lc), ret)
+      w.w.write_type(Some(lc), IdentId::NONE, ret)
     })
   }
 
@@ -1463,7 +1490,8 @@ impl WriteXml {
   }
 
   pub fn start_proof(
-    &mut self, lc: &LocalContext, pos: Position, label: Option<LabelId>, thesis: &Formula,
+    &mut self, lc: &LocalContext, pos: Position, label: Option<(LabelId, IdentId)>,
+    thesis: &Formula,
   ) {
     assert!(matches!(self.state, State::Justification));
     self.state = State::Reasoning1;
@@ -1527,7 +1555,7 @@ impl WriteXml {
   }
 
   pub fn start_theorem(
-    &mut self, lc: &LocalContext, pos: Position, label: Option<LabelId>, f: &Formula,
+    &mut self, lc: &LocalContext, pos: Position, label: Option<(LabelId, IdentId)>, f: &Formula,
   ) {
     assert!(matches!(self.state, State::Block(BlockKind::Top)));
     self.state = State::Block(BlockKind::Proof);
@@ -1541,11 +1569,11 @@ impl WriteXml {
     self.w.newline()
   }
 
-  pub fn set(&mut self, lc: &LocalContext, term: &Term, ty: &Type) {
+  pub fn set(&mut self, lc: &LocalContext, id: IdentId, term: &Term, ty: &Type) {
     assert!(matches!(self.state, State::Block(_)));
     self.with0("Set", |w| {
       w.write_term(lc, term);
-      w.write_type(lc, ty)
+      w.write_type(lc, id, ty)
     })
   }
 
@@ -1554,7 +1582,7 @@ impl WriteXml {
     self.with0("DefFunc", |w| {
       w.w.write_arg_types(Some(lc), args);
       w.write_term(lc, value);
-      w.write_type(lc, ty)
+      w.write_type(lc, IdentId::NONE, ty)
     })
   }
 
@@ -1567,7 +1595,7 @@ impl WriteXml {
   }
 
   pub fn start_consider(
-    &mut self, lc: &LocalContext, pos: Position, label: Option<LabelId>, f: &Formula,
+    &mut self, lc: &LocalContext, pos: Position, label: Option<(LabelId, IdentId)>, f: &Formula,
   ) {
     let State::Block(kind) = self.state else { unreachable!() };
     self.state = State::Prop1(PropKind::Consider(kind));
@@ -1575,17 +1603,18 @@ impl WriteXml {
     self.write_proposition(lc, pos, label, f);
   }
   #[allow(clippy::type_complexity)]
-  pub fn end_consider<T>(
-    &mut self, lc: &LocalContext, start: usize, mut label_start: LabelId,
-    assums: &[(Position, Option<T>, Formula)],
+  pub fn end_consider<'a>(
+    &mut self, lc: &mut LocalContext, start: usize,
+    mut assums: impl FnMut(
+      &mut LocalContext,
+    ) -> Option<(Position, Option<(LabelId, IdentId)>, &'a Formula)>,
   ) {
     let State::Prop2(PropKind::Consider(kind)) = self.state else { unreachable!() };
     for fv in &lc.fixed_var.0[start..] {
-      self.write_type(lc, &fv.ty)
+      self.write_type(lc, fv.id, &fv.ty)
     }
     self.state = State::InnerAssume;
-    for &(pos, ref label, ref f) in assums {
-      let label = label.as_ref().map(|_| label_start.fresh());
+    while let Some((pos, label, f)) = assums(lc) {
       self.write_proposition(lc, pos, label, f)
     }
     self.state = State::Block(kind);
@@ -1603,9 +1632,9 @@ impl WriteXml {
     self.end_tag("Reconsider")
   }
 
-  pub fn reconsider_var(&mut self, lc: &LocalContext, ty: &Type, tm: &Term) {
+  pub fn reconsider_var(&mut self, lc: &LocalContext, id: IdentId, ty: &Type, tm: &Term) {
     assert!(matches!(self.state, State::Prop1(PropKind::Reconsider(_))));
-    self.write_type(lc, ty);
+    self.write_type(lc, id, ty);
     self.write_term(lc, tm);
   }
 
@@ -1630,8 +1659,8 @@ impl WriteXml {
   }
 
   pub fn write_defthm(
-    &mut self, lc: &LocalContext, kind: &ConstrKind, pos: Position, label: Option<LabelId>,
-    f: &Formula,
+    &mut self, lc: &LocalContext, kind: &ConstrKind, pos: Position,
+    label: Option<(LabelId, IdentId)>, f: &Formula,
   ) {
     assert!(matches!(self.state, State::Block(BlockKind::Top)));
     let attrs = |w: &mut Elem| w.constr_kind(kind);
@@ -1639,7 +1668,7 @@ impl WriteXml {
   }
 
   pub fn start_def(
-    &mut self, kind: DefinitionKind, pos: Position, label: Option<LabelId>, redef: bool,
+    &mut self, kind: DefinitionKind, pos: Position, label: Option<(LabelId, IdentId)>, redef: bool,
   ) {
     assert!(matches!(self.state, State::Block(BlockKind::Block)));
     self.state = State::Correctness1(CorrectnessState::Definition);
@@ -1720,7 +1749,7 @@ impl WriteXml {
     self.start_registration();
     self.w.with0("RCluster", |w| {
       w.write_arg_types(None, primary);
-      w.write_type(None, ty);
+      w.write_type(None, IdentId::NONE, ty);
       w.write_attrs(None, attrs);
       w.write_attrs(None, attrs)
     })
@@ -1736,7 +1765,7 @@ impl WriteXml {
       w.write_attrs(None, attrs);
       w.write_attrs(None, attrs);
       if let Some(ty) = ty {
-        w.write_type(None, ty)
+        w.write_type(None, IdentId::NONE, ty)
       }
     })
   }
@@ -1748,7 +1777,7 @@ impl WriteXml {
     self.w.with0("CCluster", |w| {
       w.write_arg_types(None, primary);
       w.write_attrs(None, antecedent);
-      w.write_type(None, ty);
+      w.write_type(None, IdentId::NONE, ty);
       w.write_attrs(None, consequent);
       w.write_attrs(None, consequent)
     })
@@ -1761,7 +1790,7 @@ impl WriteXml {
     let attrs = |w: &mut Elem| w.attr_str(b"x", prop.kind as u8 + 1);
     self.w.with("Property", attrs, |w| {
       w.write_arg_types(None, &prop.primary);
-      w.write_type(None, &prop.ty)
+      w.write_type(None, IdentId::NONE, &prop.ty)
     })
   }
   pub fn end_sethood_registration(&mut self) {

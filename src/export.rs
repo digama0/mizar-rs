@@ -46,7 +46,7 @@ struct ExportPrep<'a> {
   depth: u32,
 }
 impl VisitMut for ExportPrep<'_> {
-  fn push_bound(&mut self, _: &mut Type) { self.depth += 1 }
+  fn push_bound(&mut self, _: IdentId, _: &mut Type) { self.depth += 1 }
   fn pop_bound(&mut self, n: u32) { self.depth -= n }
   fn visit_term(&mut self, tm: &mut Term) {
     if let Term::Infer(nr) = *tm {

@@ -1641,7 +1641,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = SelSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => spelling = attr.unescape_value().unwrap().into(),
                 _ => {}
               }
             }

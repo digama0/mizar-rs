@@ -341,7 +341,7 @@ impl<'a, 'b> Y<'a, 'b> {
 
 impl VisitMut for Y<'_, '_> {
   fn abort(&self) -> bool { self.unsat.is_err() }
-  fn push_bound(&mut self, _: &mut Type) { self.depth += 1 }
+  fn push_bound(&mut self, _: IdentId, _: &mut Type) { self.depth += 1 }
   fn pop_bound(&mut self, n: u32) { self.depth -= n }
 
   /// YTerm
@@ -442,9 +442,9 @@ impl VisitMut for Y<'_, '_> {
         et
       }
       Term::Fraenkel { ref mut args, ref mut scope, ref mut compr } => {
-        for ty in &mut **args {
+        for (id, ty) in &mut **args {
           self.visit_type(ty);
-          self.push_bound(ty);
+          self.push_bound(*id, ty);
         }
         self.visit_term(scope);
         self.visit_formula(compr);
@@ -578,9 +578,9 @@ impl Equalizer<'_> {
       }
       Term::Fraenkel { ref mut args, ref mut scope, ref mut compr } => {
         self.y(move |y| {
-          for ty in &mut **args {
+          for (id, ty) in &mut **args {
             y.visit_type(ty);
-            y.push_bound(ty);
+            y.push_bound(*id, ty);
           }
           y.visit_term(scope);
           y.visit_formula(compr);
@@ -1337,7 +1337,7 @@ impl<'a> Equalizer<'a> {
                     && args1
                       .iter()
                       .zip(&**args2)
-                      .all(|(ty1, ty2)| EqMarks.eq(self.g, self.lc, ty1, ty2))
+                      .all(|(ty1, ty2)| EqMarks.eq(self.g, self.lc, &ty1.1, &ty2.1))
                     && EqMarks.eq(self.g, self.lc, sc1, sc2)
                     && EqMarks.eq(self.g, self.lc, compr1, compr2)
                   {
