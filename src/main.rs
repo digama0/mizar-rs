@@ -248,6 +248,9 @@ struct CliPasses {
   /// Produce a JSON dump of pattern resolution
   #[arg(long)]
   mpt_json: bool,
+  /// Enables proof export (experimental)
+  #[arg(short = 'p', long)]
+  proof: bool,
   /// Disables the accomodator. (requires `-P`)
   #[arg(short = 'M', long)]
   no_accom: bool,
@@ -412,6 +415,7 @@ pub struct Config {
   pub json_parse_in: bool,
   pub json_parse_out: bool,
   pub mpt_json: bool,
+  pub proof_enabled: bool,
   pub overwrite_prel: bool,
   pub cache_prel: bool,
 
@@ -448,7 +452,7 @@ impl FormatterConfig {
     show_marks: true,
     show_invisible: false,
     show_orig: true,
-    show_var_names: true,
+    show_var_names: false,
     upper_clusters: false,
     both_clusters: false,
     negation_sugar: true,
@@ -494,6 +498,7 @@ fn main() {
     json_parse_in: cli.passes.json_parse_in,
     json_parse_out: cli.passes.json_parse_out,
     mpt_json: cli.passes.mpt_json,
+    proof_enabled: cli.passes.proof,
     overwrite_prel: cli.other.overwrite_prel,
     cache_prel: Default::default(),
 
@@ -532,6 +537,10 @@ fn main() {
   cfg.cache_prel = !cli.one_file && !cli.other.no_cache;
   cfg.exporter_enabled &= cfg.xml_export || cfg.verify_export || cfg.cache_prel;
   cfg.analyzer_enabled |= cfg.exporter_enabled; // exporter needs (quick) analyzer
+  cfg.accom_enabled |= cfg.proof_enabled; // proof needs accom
+  cfg.analyzer_enabled |= cfg.proof_enabled; // proof needs analyzer
+  cfg.analyzer_full |= cfg.proof_enabled; // proof needs analyzer_full (TODO: relax this)
+  cfg.checker_enabled |= cfg.proof_enabled; // proof needs checker (TODO: relax this)
   if cfg.cache_prel && cli.dep_order && cfg.verify_export {
     conflict("VERIFY_EXPORT and DEP_ORDER + CACHE are incompatible")
   }
