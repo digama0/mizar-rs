@@ -1477,7 +1477,7 @@ impl<'a> Parser<'a> {
     let mut out = vec![];
     loop {
       let vars = self.comma_separated(|this| this.parse_variable());
-      let ty = (self.scan).next_if(|tok| is(tok.kind)).map(|_| self.parse_type());
+      let ty = self.scan.next_if(|tok| is(tok.kind)).map(|_| self.parse_type());
       if ty.is_some() {
         out.push(BinderGroup { vars, ty });
       } else {

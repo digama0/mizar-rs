@@ -5,6 +5,7 @@ use crate::ast::{
 use crate::error::MizError;
 use crate::export::Exporter;
 use crate::parser::{MizParser, MsmParser, PathResult};
+use crate::proof::{CoProof, ProofId, ProofKind, Step};
 use crate::reader::{DefiniensId, Reader};
 use crate::types::{PatternKindClass as PKC, *};
 use crate::write::OWriteXml;
@@ -275,7 +276,9 @@ impl Analyzer<'_> {
     self.push_pattern(pat)
   }
 
-  pub fn push_prop(&mut self, label: Option<(Option<LabelId>, Rc<str>)>, prop: Formula) {
+  pub fn push_prop(
+    &mut self, label: Option<(Option<LabelId>, Rc<str>)>, prop: Formula, pf: ProofId,
+  ) {
     let label = label.map(|(id2, name)| {
       let id = self.label_names.push(Some(name));
       if let Some(id2) = id2 {
@@ -283,7 +286,7 @@ impl Analyzer<'_> {
       }
       id
     });
-    self.r.push_prop(label, prop);
+    self.r.push_prop(label, prop, pf);
   }
 
   fn item_header(&mut self, it: &ast::Item, s: &str) {
@@ -339,11 +342,21 @@ impl Analyzer<'_> {
               .map(|l| (self.label_names.peek(), self.r.lc.formatter.intern_id(&l.id.1)));
             w.start_theorem(&self.r.lc, it.pos, label, &f)
           });
+          if prop.label.is_some() {
+            self.proof.with_mut(|p| p.set_local_scope(true));
+          }
           let f = f.visit_cloned(&mut self.r.intern_const());
           let label = prop.label.as_ref().map(|l| l.id.clone());
-          self.elab_justification_intro_reserved(label.as_ref(), &f, just, block);
+          self.proof.with_mut(|p| p.set_local_scope(true));
+          let pf = self.elab_justification_intro_reserved(label.as_ref(), &f, just, block);
           self.write_xml.on(|w| w.end_theorem());
-          self.push_prop(label, f)
+          let pf = self.proof.with_mut(|p| {
+            let pf = p.maybe_externalize(false, true, pf);
+            p.step(proof::Step::Theorem);
+            p.set_local_scope(false);
+            pf
+          });
+          self.push_prop(label, f, pf)
         }
         assert!(self.reserved_extra_depth == 0);
         if self.g.cfg.exporter_enabled {
@@ -437,6 +450,10 @@ impl Analyzer<'_> {
     assert!(self.sch_func_args.is_empty());
     assert!(self.sch_pred_args.is_empty());
     assert!(self.lc.sch_func_ty.is_empty());
+    self.proof.with_mut(|p| {
+      assert!(p.inner().ctx() == ProofId::C0);
+      p.set_local_scope(true)
+    });
     let infer_consts = self.lc.infer_const.get_mut().0.len();
     let mut func_id = SchFuncId::default();
     let mut pred_id = SchPredId::default();
@@ -505,8 +522,13 @@ impl Analyzer<'_> {
     });
     thesis.visit(&mut self.r.intern_const());
     if self.g.cfg.analyzer_full {
-      self.elab_proof_intro_reserved(None, &thesis, items, (pos, *end), block);
-      self.write_xml.on(|w| w.end_scheme(*end))
+      let pf = self.elab_proof_intro_reserved(None, &thesis, items, (pos, *end), block);
+      self.write_xml.on(|w| w.end_scheme(*end));
+      self.proof.with_mut(|p| {
+        p.output(false, true, pf);
+        p.set_local_scope(false);
+        p.step(Step::Scheme)
+      })
     }
     let primary: Box<[_]> = self.lc.sch_func_ty.0.drain(..).collect();
     let mut sch = Scheme { sch_funcs: primary, prems, thesis };
@@ -598,7 +620,8 @@ impl Analyzer<'_> {
         if let Some(conjs) = conjs {
           let f = Formula::mk_and(conjs);
           self.write_xml.on(|w| w.write_proposition(&self.r.lc, it.pos, None, &f));
-          self.elab_justification(None, &f, just);
+          let pf = self.elab_justification(None, &f, just);
+          self.r.proof.inner_mut(|p| p.read_reconsider(&self.r.lc.fixed_var, pf));
           self.write_xml.on(|w| w.end_reconsider());
         }
       }
@@ -623,7 +646,7 @@ impl Analyzer<'_> {
           f = f.mk_neg();
           self.write_xml.on(|w| w.start_consider(&self.r.lc, it.pos, None, &f));
           f.visit(&mut self.intern_const());
-          self.elab_justification(None, &f, just);
+          let pf = self.elab_justification(None, &f, just);
           self.write_xml.on(|w| {
             let mut label_start = self.label_names.peek();
             let mut iter = to_push.iter();
@@ -634,9 +657,14 @@ impl Analyzer<'_> {
               Some((*pos, label, f))
             });
           });
+          let pf = self.r.proof.with_mut(|p| p.def_const(&self.r.lc.fixed_var, pf));
+          let mut cur = 0;
           for (_, label, mut f) in to_push {
+            let size = f.conjuncts().len() as u32;
             f.visit(&mut self.intern_const());
-            self.push_prop(label, f);
+            let pf = self.proof.inner_mut(|p| p.and_elim(pf, cur, size));
+            cur += size;
+            self.push_prop(label, f, pf);
           }
         }
       }
@@ -663,8 +691,8 @@ impl Analyzer<'_> {
         });
         f.visit(&mut self.r.intern_const());
         let label = prop.label.as_ref().map(|l| l.id.clone());
-        self.elab_justification_intro_reserved(label.as_ref(), &f, just, block);
-        self.push_prop(label, f.clone());
+        let pf = self.elab_justification_intro_reserved(label.as_ref(), &f, just, block);
+        self.push_prop(label, f.clone(), pf);
         f
       }
       ast::Statement::IterEquality { prop, just, steps } => {
@@ -672,6 +700,7 @@ impl Analyzer<'_> {
         if let Formula::Pred { nr, ref args } = f {
           if let (nr, [lhs, rhs]) = Formula::adjust_pred(nr, args, Some(&self.g.constrs)) {
             if self.g.reqs.equals_to() == Some(nr) {
+              let old = self.proof.with_mut(|p| p.set_local_scope(true));
               self.write_xml.on(|w| {
                 let label = prop
                   .label
@@ -680,7 +709,8 @@ impl Analyzer<'_> {
                 w.start_iter_equality(&self.r.lc, pos, label, lhs);
                 w.start_iter_step(&self.r.lc, rhs);
               });
-              self.elab_justification(None, &self.g.reqs.mk_eq(lhs.clone(), rhs.clone()), just);
+              let mut pf =
+                self.elab_justification(None, &self.g.reqs.mk_eq(lhs.clone(), rhs.clone()), just);
               let mut mid = rhs.clone();
               for ast::IterStep { rhs, just, .. } in steps {
                 let rhs = self.elab_intern_term_no_reserve(rhs);
@@ -688,15 +718,21 @@ impl Analyzer<'_> {
                   w.end_iter_step();
                   w.start_iter_step(&self.r.lc, &rhs);
                 });
-                self.elab_justification(None, &self.g.reqs.mk_eq(mid, rhs.clone()), just);
+                let pf2 = self.elab_justification(None, &self.g.reqs.mk_eq(mid, rhs.clone()), just);
+                pf = self.proof.with_mut(|p| p.eq_trans(pf, pf2));
                 mid = rhs;
               }
               self.write_xml.on(|w| {
                 w.end_iter_step();
                 w.end_iter_equality()
               });
+              pf = self.proof.with_mut(|p| {
+                let pf = p.maybe_externalize(old, false, pf);
+                p.set_local_scope(old);
+                pf
+              });
               let f = self.g.reqs.mk_eq(lhs.clone(), mid);
-              self.push_prop(prop.label.as_ref().map(|l| l.id.clone()), f.clone());
+              self.push_prop(prop.label.as_ref().map(|l| l.id.clone()), f.clone(), pf);
               return f
             }
           }
@@ -714,11 +750,11 @@ impl Analyzer<'_> {
           )
         });
         let label = label.as_ref().map(|l| l.id.clone());
-        let f = self.scope(label.is_some(), false, true, |this| {
+        let (f, pf) = self.scope(label.is_some(), false, true, |this| {
           ReconstructThesis { stack: vec![ProofStep::Break(true)] }.elab_proof(this, items, *end)
         });
         self.write_xml.on(|w| w.end_now());
-        self.push_prop(label, f.clone());
+        self.push_prop(label, f.clone(), pf);
         f
       }
     }
@@ -727,16 +763,23 @@ impl Analyzer<'_> {
   fn elab_proof_intro_reserved(
     &mut self, label: Option<&(Option<LabelId>, Rc<str>)>, thesis: &Formula,
     items: &mut [ast::Item], (pos, end): (Position, Position), reset: ReserveBlock,
-  ) {
+  ) -> ProofId {
     self.scope(label.is_some(), false, false, |this| {
       this.write_xml.on(|w| {
         let label = label.map(|l| (this.label_names.peek(), this.r.lc.formatter.intern_id(&l.1)));
         w.start_proof(&this.r.lc, pos, label, thesis)
       });
+      this.r.proof.with_mut(|p| {
+        let stmt = p.tr_formula(&this.r.lc, thesis);
+        let inner = p.inner();
+        inner.coproof_stack.push(proof::CoProof::Justify { stmt });
+        inner.thesis = stmt;
+      });
       this.thesis = Some(Box::new(thesis.clone()));
       reset.intro(this);
-      WithThesis.elab_proof(this, items, end);
-      this.write_xml.on(|w| w.end_proof())
+      let pf = WithThesis.elab_proof(this, items, end);
+      this.write_xml.on(|w| w.end_proof());
+      pf
     })
   }
 
@@ -786,7 +829,11 @@ impl Analyzer<'_> {
   ) -> Formula {
     let f = self.elab_intern_formula_forall_reserved(&mut prop.f, true);
     if quotable && self.g.cfg.analyzer_full {
-      self.push_prop(prop.label.as_ref().map(|l| l.id.clone()), f.clone());
+      let pf = self.r.proof.with_mut(|p| {
+        let stmt = p.tr_formula(&self.r.lc, &f);
+        p.inner().assume(stmt)
+      });
+      self.push_prop(prop.label.as_ref().map(|l| l.id.clone()), f.clone(), pf);
     }
     f
   }
@@ -822,7 +869,7 @@ impl Analyzer<'_> {
   fn elab_justification(
     &mut self, label: Option<&(Option<LabelId>, Rc<str>)>, thesis: &Formula,
     just: &mut ast::Justification,
-  ) {
+  ) -> ProofId {
     assert!(self.reserved_extra_depth == 0);
     self.elab_justification_intro_reserved(label, thesis, just, <_>::default())
   }
@@ -830,7 +877,7 @@ impl Analyzer<'_> {
   fn elab_justification_intro_reserved(
     &mut self, label: Option<&(Option<LabelId>, Rc<str>)>, thesis: &Formula,
     just: &mut ast::Justification, block: ReserveBlock,
-  ) {
+  ) -> ProofId {
     debug_assert!(self.g.cfg.analyzer_full);
     match just {
       &mut ast::Justification::Inference { pos, ref kind, ref refs } => {
@@ -2471,6 +2518,7 @@ impl ReserveBlock {
       let mut thesis = elab.thesis.take().expect("must be called in a proof block");
       let mut inst = InstConst { depth: 0, base: elab.lc.fixed_var.len() as u32 };
       let lookup = Rc::make_mut(&mut elab.lookup);
+      let mut stmt = elab.r.proof.inner_mut(|inner| inner.thesis);
       for &nr in &self.0 {
         let Formula::ForAll { id, mut dom, scope } = *thesis else { unreachable!() };
         if inst.depth != 0 {
@@ -2481,6 +2529,12 @@ impl ReserveBlock {
         lookup
           .var
           .insert(elab.r.lc.formatter.idents[elab.reserved[nr].0].clone(), VarKind::Const(c));
+        stmt = elab.r.proof.inner_mut(|inner| {
+          let ProofKind::FForAll { ctx2, scope } = inner[stmt] else { unreachable!() };
+          inner.intro(ctx2);
+          inner.coproof_stack.push(CoProof::Assume);
+          scope
+        });
         thesis = scope;
         inst.depth += 1;
       }
@@ -3210,7 +3264,7 @@ struct WithThesis;
 impl ReadProof for WithThesis {
   type CaseIter = (UnfoldConjIter, BTreeMap<DefiniensId, u32>);
   type SupposeRecv = BTreeMap<DefiniensId, u32>;
-  type Output = ();
+  type Output = ProofId;
 
   fn intro(&mut self, elab: &mut Analyzer, start: usize, _: u32) {
     let mut thesis = (true, elab.thesis.take().unwrap());
@@ -3361,7 +3415,7 @@ impl ReadProof for WithThesis {
     })
   }
 
-  fn end_block(&mut self, elab: &mut Analyzer, end: Position) {
+  fn end_block(&mut self, elab: &mut Analyzer, end: Position) -> ProofId {
     let f = elab.thesis.as_deref().unwrap();
     if !matches!(f, Formula::True) {
       eprintln!(
@@ -3370,6 +3424,7 @@ impl ReadProof for WithThesis {
       );
       panic!("{end:?}: block incomplete")
     }
+    elab.proof.with_mut(|p| p.finish_with_thesis_block())
   }
 }
 
@@ -3389,10 +3444,11 @@ struct ReconstructThesis {
 impl ReconstructThesis {
   fn reconstruct(
     &mut self, elab: &mut Analyzer, pos: bool, mut theses_rev: Option<&mut Vec<Formula>>,
-  ) -> Formula {
+  ) -> (Formula, ProofId) {
     struct Reconstruction {
       pos: bool,
       conjs: Vec<Formula>,
+      pf: ProofId,
     }
     impl Reconstruction {
       fn as_pos(&mut self, pos: bool) -> &mut Vec<Formula> {
@@ -3404,7 +3460,7 @@ impl ReconstructThesis {
       }
     }
     let conjs = elab.thesis.take().map_or_else(Vec::new, |f| f.into_conjuncts());
-    let mut rec = Reconstruction { pos, conjs };
+    let mut rec = Reconstruction { pos, conjs, pf: ProofId::INVALID };
     loop {
       match self.stack.pop().unwrap() {
         ProofStep::Let { range, istart } => {
@@ -3441,7 +3497,7 @@ impl ReconstructThesis {
         }
         ProofStep::Break(pos2) => {
           assert_eq!(pos, pos2);
-          return Formula::mk_and(std::mem::take(rec.as_pos(pos)))
+          return (Formula::mk_and(std::mem::take(rec.as_pos(pos))), rec.pf)
         }
       }
     }
@@ -3451,7 +3507,7 @@ impl ReconstructThesis {
 impl ReadProof for ReconstructThesis {
   type CaseIter = ();
   type SupposeRecv = Option<Box<Formula>>;
-  type Output = Formula;
+  type Output = (Formula, ProofId);
 
   fn intro(&mut self, elab: &mut Analyzer, start: usize, istart: u32) {
     match self.stack.last_mut() {
@@ -3502,12 +3558,13 @@ impl ReadProof for ReconstructThesis {
     self.stack.push(ProofStep::Thus { conjs: conjs.to_vec() })
   }
 
-  fn end_case(&mut self, elab: &mut Analyzer, _: &mut (), f: Formula) {
+  fn end_case(&mut self, elab: &mut Analyzer, _: &mut (), (f, pf): (Formula, ProofId)) {
     self.assume(elab, f.mk_neg().into_conjuncts(), false);
   }
 
   fn end_cases(&mut self, elab: &mut Analyzer, _: (), end: Position) {
-    let f = self.reconstruct(elab, false, None).mk_neg();
+    let (f, pf) = self.reconstruct(elab, false, None);
+    let f = f.mk_neg();
     elab.write_xml.on(|w| {
       w.end_pos(end);
       w.write_block_thesis(&elab.r.lc, std::iter::empty(), &f)
@@ -3521,7 +3578,9 @@ impl ReadProof for ReconstructThesis {
     self.stack.push(ProofStep::Break(true))
   }
 
-  fn end_suppose(&mut self, elab: &mut Analyzer, recv: &mut Self::SupposeRecv, f: Formula) {
+  fn end_suppose(
+    &mut self, elab: &mut Analyzer, recv: &mut Self::SupposeRecv, (f, pf): (Formula, ProofId),
+  ) {
     if let Some(thesis) = recv {
       assert!(elab.eq(&**thesis, &f))
     } else {
@@ -3538,7 +3597,7 @@ impl ReadProof for ReconstructThesis {
     self.thus(elab, f.into_conjuncts())
   }
 
-  fn end_block(&mut self, elab: &mut Analyzer, _: Position) -> Formula {
+  fn end_block(&mut self, elab: &mut Analyzer, _: Position) -> (Formula, ProofId) {
     let mut theses_rev = vec![];
     let (len, vars) = elab.write_xml.on(|_| {
       let mut len = elab.r.lc.fixed_var.len();
@@ -3555,7 +3614,7 @@ impl ReadProof for ReconstructThesis {
     elab.write_xml.on(|w| {
       assert_eq!(elab.r.lc.fixed_var.len(), len);
       elab.r.lc.fixed_var.0.extend(vars);
-      w.write_block_thesis(&elab.r.lc, theses_rev.iter().rev(), &f);
+      w.write_block_thesis(&elab.r.lc, theses_rev.iter().rev(), &f.0);
       elab.r.lc.fixed_var.0.truncate(len);
     });
     f
@@ -3621,6 +3680,7 @@ struct PendingDef {
   df: Box<Definiens>,
   label: Option<(Option<LabelId>, Rc<str>)>,
   thm: Box<Formula>,
+  pf: ProofId,
 }
 
 enum ReconstructAssum {
@@ -3708,7 +3768,7 @@ impl BlockReader {
   fn after_scope(self, elab: &mut Analyzer) {
     elab.notations.iter_mut().for_each(|nota| nota.1.up());
     for (pos, def) in self.defs {
-      if let Some(PendingDef { kind, df, label, thm }) = def {
+      if let Some(PendingDef { kind, df, label, thm, pf }) = def {
         let id = elab.r.definitions.peek();
         elab.r.read_definiens(&df);
         if elab.g.cfg.analyzer_full {
@@ -3723,7 +3783,7 @@ impl BlockReader {
           if let Some((Some(label), _)) = label {
             elab.local_def_map.insert(label, id);
           }
-          elab.push_prop(label, thm2);
+          elab.push_prop(label, thm2, pf);
         }
         if elab.g.cfg.exporter_enabled {
           elab.export.theorems.push(Theorem { pos, kind: TheoremKind::Def(kind), stmt: *thm })
@@ -3933,7 +3993,8 @@ impl BlockReader {
         value,
       });
       let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.clone());
-      self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Func(n), df, label, thm })));
+      let pf = ProofId::INVALID;
+      self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Func(n), df, label, thm, pf })));
     }
     elab.push_mk_pattern(true, PKC::Func, PatternKind::Func(n), fmt, primary, visible, true);
     elab.write_xml.on(|w| w.end_def())
@@ -4031,7 +4092,8 @@ impl BlockReader {
         value: DefValue::Formula(value),
       });
       let label = def.as_deref_mut().unwrap().label.as_ref().map(|l| l.id.clone());
-      self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Pred(n), df, label, thm })));
+      let pf = ProofId::INVALID;
+      self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Pred(n), df, label, thm, pf })));
     }
     elab.push_mk_pattern(true, PKC::Pred, PatternKind::Pred(n), fmt, primary, visible, pos);
     elab.write_xml.on(|w| w.end_def())
@@ -4184,7 +4246,8 @@ impl BlockReader {
             value: DefValue::Formula(value),
           });
           let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.clone());
-          self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Mode(n), df, label, thm })));
+          let pf = ProofId::INVALID;
+          self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Mode(n), df, label, thm, pf })));
         }
         elab.push_mk_pattern(true, PKC::Mode, PatternKind::Mode(n), fmt, primary, visible, true)
       }
@@ -4277,7 +4340,8 @@ impl BlockReader {
         value: DefValue::Formula(value),
       });
       let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.clone());
-      self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Attr(n), df, label, thm })));
+      let pf = ProofId::INVALID;
+      self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Attr(n), df, label, thm, pf })));
     }
     elab.push_mk_pattern(true, PKC::Attr, PatternKind::Attr(n), fmt, primary, visible, pos);
     elab.write_xml.on(|w| w.end_def())

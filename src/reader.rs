@@ -2,6 +2,7 @@ use crate::accom::Accomodator;
 use crate::checker::Checker;
 use crate::error::MizError;
 use crate::parser::MizParser;
+use crate::proof::{OptProofBuilder, ProofId, XmlProofWriter};
 use crate::types::*;
 use crate::*;
 use std::io;
@@ -21,12 +22,13 @@ pub struct Reader {
   pub libs: Libraries,
   pub article: Article,
   treat_thm_as_axiom: bool,
+  pub has_errors: bool,
   pub no_suppress_checker: bool,
+  pub proof: OptProofBuilder<()>,
   pub accom: Option<Box<Accomodator>>,
   /// gFormatsColl
   #[allow(clippy::box_collection)]
   pub formats: Box<HashMap<Format, FormatId>>,
-  pub has_errors: bool,
   pub formats_base: usize,
   /// Notat
   pub notations: EnumMap<PatternKindClass, ExtVec<Pattern>>,
@@ -44,7 +46,7 @@ pub struct Reader {
   pub reductions: Vec<Reduction>,
   pub equals: BTreeMap<ConstrKind, Vec<EqualsDef>>,
   pub func_ids: BTreeMap<ConstrKind, Vec<usize>>,
-  props: Vec<Formula>,
+  props: Vec<(Formula, ProofId)>,
   labels: IdxVec<LabelId, Option<usize>>,
   pending_defs: Vec<PendingDef>,
   pub def_map: HashMap<DefRef, DefiniensId>,
@@ -93,12 +95,17 @@ impl MizPath {
     v.lc.attr_sort_bug = cfg.attr_sort_bug;
     v.lc.formatter.dump = cfg.dump.formatter;
     let old = v.lc.start_stash();
+    if cfg.proof_enabled {
+      // v.proof.init(XmlProofWriter::new(self).unwrap())
+      v.proof.init(())
+    }
     if let Some(accom) = &mut v.accom {
       accom.accom_constructors(&mut v.g.constrs).unwrap();
       accom.accom_requirements(&v.g.constrs, &mut v.g.reqs).unwrap();
       if cfg.xml_internals {
         self.write_atr(&accom.sig, &v.g.constrs)
       }
+      v.proof.with_mut(|p| p.accom_constructors(&accom.sig, &v.g.constrs, &v.g.reqs));
     } else {
       self.read_atr(&mut v.g.constrs).unwrap();
       self.read_ere(&mut v.g.reqs).unwrap();
@@ -370,6 +377,7 @@ impl MizPath {
 
     f(&mut v, parser.as_deref_mut());
 
+    v.proof.finish();
     LocalContext::end_stash(old);
     Ok(v.has_errors)
   }
@@ -401,6 +409,8 @@ impl Reader {
       article,
       treat_thm_as_axiom: matches!(article.as_str(), "tarski_0" | "tarski_a"),
       has_errors: accom.as_deref().map_or(false, |acc| acc.has_errors),
+      no_suppress_checker: true,
+      proof: Default::default(),
       accom,
       formats: Default::default(),
       formats_base: 0,
@@ -418,7 +428,6 @@ impl Reader {
       pending_defs: Default::default(),
       def_map: Default::default(),
       pos: Default::default(),
-      no_suppress_checker: true,
       progress,
     }
   }
@@ -437,16 +446,17 @@ impl Reader {
     InternConst::new(&self.g, &self.lc, &self.equals, &self.identify, &self.func_ids)
   }
 
-  pub fn push_prop(&mut self, label: Option<LabelId>, prop: Formula) {
+  pub fn push_prop(&mut self, label: Option<LabelId>, prop: Formula, pf: ProofId) {
     // eprintln!("push_prop {label:?}: {prop:?}");
     if let Some(label) = label {
       assert_eq!(label, self.labels.push(Some(self.props.len())));
     }
-    self.props.push(prop);
+    self.props.push((prop, pf));
   }
 
   fn read_proposition(&mut self, prop: &Proposition) {
-    self.push_prop(prop.label, self.intern(&prop.f))
+    let f = self.intern(&prop.f);
+    self.push_prop(prop.label, f, ProofId::INVALID)
   }
 
   fn push_fixed_var(&mut self, id: IdentId, ty: &Type) {
@@ -647,7 +657,7 @@ impl Reader {
           }
           this.read_just_prop(prop, just, false)
         });
-        self.push_prop(None, self.intern(block_thesis))
+        self.push_prop(None, self.intern(block_thesis), ProofId::INVALID)
       }
       Item::Auxiliary(AuxiliaryItem::Statement(it)) | Item::Thus(it) => self.read_stmt(it),
       Item::Auxiliary(AuxiliaryItem::Consider { prop, just, fixed, intro }) => {
@@ -735,7 +745,7 @@ impl Reader {
         .iter()
         .map(|prem| {
           let f = this.intern(&prem.f);
-          this.push_prop(prem.label, f.clone());
+          this.push_prop(prem.label, f.clone(), ProofId::INVALID);
           f
         })
         .collect();
@@ -787,7 +797,9 @@ impl Reader {
 
   fn read_justification(&mut self, thesis: &Formula, just: &Justification) {
     match just {
-      Justification::Simple(it) => self.read_inference(thesis, it),
+      Justification::Simple(it) => {
+        self.read_inference(thesis, it);
+      }
       Justification::Proof { label, thesis: block_thesis, items, .. } => {
         let block_thesis = self.intern(block_thesis);
         assert!(self.g.eq(&self.lc, thesis, &block_thesis), "\n{thesis:?}\n !=\n{block_thesis:?}");
@@ -809,7 +821,7 @@ impl Reader {
     let f = self.intern(&prop.f);
     self.read_justification(&f, just);
     if quotable {
-      self.push_prop(prop.label, f);
+      self.push_prop(prop.label, f, ProofId::INVALID);
     }
   }
 
@@ -824,7 +836,7 @@ impl Reader {
           self.read_inference(&self.g.reqs.mk_eq(lhs, rhs.clone()), step);
           lhs = rhs;
         }
-        self.push_prop(*label, self.g.reqs.mk_eq(llhs, lhs))
+        self.push_prop(*label, self.g.reqs.mk_eq(llhs, lhs), ProofId::INVALID)
       }
       Statement::Now { label, thesis, items, .. } => {
         self.scope(*label, true, |this| {
@@ -832,7 +844,7 @@ impl Reader {
             this.read_item(it);
           }
         });
-        self.push_prop(*label, self.intern(thesis));
+        self.push_prop(*label, self.intern(thesis), ProofId::INVALID);
       }
     }
   }
@@ -974,17 +986,17 @@ impl Reader {
     self.pending_defs.push(PendingDef::Cluster(ClusterKind::F, i))
   }
 
-  pub fn read_inference(&mut self, thesis: &Formula, it: &Inference) {
+  pub fn read_inference(&mut self, thesis: &Formula, it: &Inference) -> ProofId {
     if !self.g.cfg.checker_enabled {
-      return
+      return ProofId::INVALID
     }
     if !self.no_suppress_checker {
       stat("skipped by $V-", false);
-      return
+      return ProofId::INVALID
     }
     self.set_pos(it.pos);
     let refs = it.refs.iter().map(|r| match r.kind {
-      ReferenceKind::Priv(lab) => &self.props[self.labels[lab].unwrap()],
+      ReferenceKind::Priv(lab) => &self.props[self.labels[lab].unwrap()].0,
       ReferenceKind::Thm(thm) => &self.libs.thm[&thm],
       ReferenceKind::Def(def) => &self.libs.def[&def],
     });
@@ -1006,10 +1018,12 @@ impl Reader {
           let neg_thesis = thesis.clone().mk_neg();
           let mut premises = vec![&neg_thesis];
           if linked {
-            premises.push(self.props.last().unwrap());
+            premises.push(&self.props.last().unwrap().0);
           }
           premises.extend(refs);
-          ck.justify(premises);
+          ck.justify(premises)
+        } else {
+          ProofId::INVALID
         }
       }
       InferenceKind::From { sch } =>

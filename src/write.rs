@@ -25,7 +25,7 @@ pub struct MizWriter<W: Write = BufWriter<File>> {
 }
 
 impl MizPath {
-  fn create_xml(&self, mml: bool, new_prel: bool, ext: &str) -> io::Result<MizWriter> {
+  pub fn create_xml(&self, mml: bool, new_prel: bool, ext: &str) -> io::Result<MizWriter> {
     let w = BufWriter::new(self.create(mml, new_prel, ext)?);
     let mut w = quick_xml::Writer::new_with_indent(w, b' ', INDENT);
     w.write_event(Event::Decl(BytesDecl::new("1.0", None, None))).unwrap();
@@ -411,16 +411,16 @@ impl WriteEsh {
   pub fn finish(self) { Self::finish_part(self.0) }
 }
 
-struct Elem(BytesStart<'static>);
+pub struct Elem(BytesStart<'static>);
 
 impl Elem {
-  fn attr<'a>(&mut self, key: &[u8], value: impl Into<Cow<'a, [u8]>>) {
+  pub fn attr<'a>(&mut self, key: &[u8], value: impl Into<Cow<'a, [u8]>>) {
     self.0.push_attribute(Attribute { key: quick_xml::name::QName(key), value: value.into() })
   }
-  fn attr_str(&mut self, key: &[u8], value: impl ToString) {
+  pub fn attr_str(&mut self, key: &[u8], value: impl ToString) {
     self.attr(key, value.to_string().into_bytes())
   }
-  fn opt_attr_str(&mut self, key: &[u8], value: Option<impl ToString>) {
+  pub fn opt_attr_str(&mut self, key: &[u8], value: Option<impl ToString>) {
     if let Some(value) = value {
       self.attr_str(key, value)
     }
@@ -469,7 +469,7 @@ impl Elem {
   }
 }
 
-impl MizWriter {
+impl<W: Write> MizWriter<W> {
   fn clear_pending(&mut self) {
     if let Some(elem) = self.pending.take() {
       self.w.write_event(Event::Start(elem.0)).unwrap();
@@ -477,12 +477,12 @@ impl MizWriter {
     }
   }
 
-  fn start(&mut self, tag: &'static str) -> &mut Elem {
+  pub fn start(&mut self, tag: &'static str) -> &mut Elem {
     self.clear_pending();
     self.pending.insert(Elem(BytesStart::new(tag)))
   }
 
-  fn finish(mut self) {
+  pub fn finish(&mut self) {
     assert!(self.pending.is_none());
     self.w.get_mut().write_all(b"\n").unwrap();
     self.w.get_mut().flush().unwrap()
@@ -499,7 +499,7 @@ impl MizWriter {
   }
 
   #[inline]
-  fn with(
+  pub fn with(
     &mut self, tag: &'static str, attrs: impl FnOnce(&mut Elem), body: impl FnOnce(&mut Self),
   ) {
     attrs(self.start(tag));
@@ -508,16 +508,16 @@ impl MizWriter {
   }
 
   #[inline]
-  fn with0(&mut self, tag: &'static str, body: impl FnOnce(&mut Self)) {
+  pub fn with0(&mut self, tag: &'static str, body: impl FnOnce(&mut Self)) {
     self.with(tag, |_| {}, body);
   }
 
   #[inline]
-  fn with_attr(&mut self, tag: &'static str, attrs: impl FnOnce(&mut Elem)) {
+  pub fn with_attr(&mut self, tag: &'static str, attrs: impl FnOnce(&mut Elem)) {
     self.with(tag, attrs, |_| {})
   }
 
-  fn end_tag(&mut self, tag: &'static str) {
+  pub fn end_tag(&mut self, tag: &'static str) {
     match self.pending.take() {
       Some(elem) => self.w.write_event(Event::Empty(elem.0)).unwrap(),
       None => self.w.write_event(Event::End(BytesEnd::new(tag))).unwrap(),
@@ -1897,27 +1897,4 @@ mk_write_constructor! {
   fn write_struct_constructor(StructId, StructMode);
   fn write_aggr_constructor(AggrId, Aggregate);
   fn write_sel_constructor(SelId, TyConstructor<SelId>);
-}
-
-pub struct XMLProofWriter<W: Write>(MizWriter<W>, u32);
-
-impl XMLProofWriter<BufWriter<File>> {
-  pub fn new(path: &MizPath) -> io::Result<Self> {
-    let mut w = path.create_xml(true, false, "ppf")?;
-    w.start("Proof");
-    Ok(XMLProofWriter(w, 0))
-  }
-
-  fn finish(mut self) {
-    self.0.end_tag("Proof");
-    self.0.finish()
-  }
-}
-
-impl<W: Write> WriteProof for XMLProofWriter<W> {
-  fn write_step(&mut self, step: Step) -> std::io::Result<()> {
-    // match step {};
-    self.1 += 1;
-    todo!()
-  }
 }

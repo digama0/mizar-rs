@@ -1,4 +1,5 @@
 use crate::equate::Equalizer;
+use crate::proof::ProofId;
 use crate::types::*;
 use crate::unify::Unifier;
 use crate::util::RetainMutFrom;
@@ -30,12 +31,12 @@ impl<'a> Checker<'a> {
     InternConst::new(self.g, self.lc, self.equals, self.identify, self.func_ids)
   }
 
-  pub fn justify(&mut self, premises: Vec<&'a Formula>) {
+  pub fn justify(&mut self, premises: Vec<&'a Formula>) -> ProofId {
     if let Some(n) = self.g.cfg.first_verbose_line {
       set_verbose(self.pos.line >= n);
     }
     if self.g.cfg.skip_to_verbose && !crate::verbose() {
-      return
+      return ProofId::INVALID
     }
     self.lc.term_cache.get_mut().open_scope();
     let infer_const = self.lc.infer_const.get_mut().len();
@@ -128,6 +129,7 @@ impl<'a> Checker<'a> {
     self.lc.fixed_var.0.truncate(fixed_var);
     self.lc.infer_const.get_mut().truncate(infer_const);
     self.lc.term_cache.get_mut().close_scope();
+    ProofId::INVALID // TODO
   }
 
   fn process_is(
@@ -200,12 +202,14 @@ impl<'a> Checker<'a> {
     Ok(())
   }
 
-  pub fn justify_scheme(&mut self, sch: &Scheme, premises: Vec<&'a Formula>, thesis: &'a Formula) {
+  pub fn justify_scheme(
+    &mut self, sch: &Scheme, premises: Vec<&'a Formula>, thesis: &'a Formula,
+  ) -> ProofId {
     if let Some(n) = self.g.cfg.first_verbose_line {
       set_verbose(self.pos.line >= n);
     }
     if self.g.cfg.skip_to_verbose && !crate::verbose() {
-      return
+      return ProofId::INVALID
     }
     self.lc.term_cache.get_mut().open_scope();
 
@@ -238,6 +242,7 @@ impl<'a> Checker<'a> {
       }
     }
     self.lc.term_cache.get_mut().close_scope();
+    ProofId::INVALID // TODO
   }
 }
 

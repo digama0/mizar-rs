@@ -239,6 +239,9 @@ struct CliPasses {
   /// Test output XML files for well-formedness
   #[arg(long)]
   xml_internals_self_test: bool,
+  /// Enables proof export (experimental)
+  #[arg(short = 'p', long)]
+  proof: bool,
   /// Disables the accomodator. (requires `-P`)
   #[arg(short = 'M', long)]
   no_accom: bool,
@@ -400,6 +403,7 @@ pub struct Config {
   pub xml_export: bool,
   pub xml_internals: bool,
   pub xml_internals_self_test: bool,
+  pub proof_enabled: bool,
   pub overwrite_prel: bool,
   pub cache_prel: bool,
 
@@ -436,7 +440,7 @@ impl FormatterConfig {
     show_marks: true,
     show_invisible: false,
     show_orig: true,
-    show_var_names: true,
+    show_var_names: false,
     upper_clusters: false,
     both_clusters: false,
     negation_sugar: true,
@@ -479,6 +483,7 @@ fn main() {
     xml_export: cli.passes.xml_export,
     xml_internals: cli.passes.xml_internals,
     xml_internals_self_test: cli.passes.xml_internals_self_test,
+    proof_enabled: cli.passes.proof,
     overwrite_prel: cli.other.overwrite_prel,
     cache_prel: Default::default(),
 
@@ -517,6 +522,10 @@ fn main() {
   cfg.cache_prel = !cfg.one_item && !cli.other.no_cache;
   cfg.exporter_enabled &= cfg.xml_export || cfg.verify_export || cfg.cache_prel;
   cfg.analyzer_enabled |= cfg.exporter_enabled; // exporter needs (quick) analyzer
+  cfg.accom_enabled |= cfg.proof_enabled; // proof needs accom
+  cfg.analyzer_enabled |= cfg.proof_enabled; // proof needs analyzer
+  cfg.analyzer_full |= cfg.proof_enabled; // proof needs analyzer_full (TODO: relax this)
+  cfg.checker_enabled |= cfg.proof_enabled; // proof needs checker (TODO: relax this)
   if cfg.cache_prel && cli.dep_order && cfg.verify_export {
     conflict("VERIFY_EXPORT and DEP_ORDER + CACHE are incompatible")
   }
