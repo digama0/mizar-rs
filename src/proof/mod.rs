@@ -1,5 +1,6 @@
 #![allow(unused)]
 
+use crate::reader::DefiniensId;
 use crate::types::{FuncId as MFuncId, PredId as MPredId, *};
 use crate::{mk_id, Assignment, FixedVar, LocalContext};
 use hashbrown::raw::RawTable;
@@ -110,7 +111,6 @@ pub enum TypedExprKind {
   IsObject,
   IsSet,
   Numeral,
-  Var,
   Func { id: TFuncId, args: ProofSlice },
   SchFunc { args: ProofSlice },
   The,
@@ -128,7 +128,6 @@ pub enum ProofKind {
 
   // Expr constructors
   ENumeral(u32),
-  EVar { ctx: ProofId, idx: VarId },
   ESchFunc { ctx: ProofId, idx: SchFuncId, args: ProofSlice },
   EFunc { ctx: ProofId, id: FuncId, args: ProofSlice },
   EThe { ty: ProofId },
@@ -157,6 +156,9 @@ pub enum ProofKind {
   VTrue { stmt: ProofId },
   VHyp { stmt: ProofId, ctx: ProofId, idx: HypId },
   VEqTrans { stmt: ProofId, pf1: ProofId, pf2: ProofId },
+
+  // Conversion proofs
+  KUnfold { lhs: ProofId, rhs: ProofId, id: PredId, args: ProofSlice },
 
   Redirect(ProofId),
 }
@@ -219,7 +221,6 @@ macro_rules! mk_on_local_ids {
           TypedExprKind::IsObject => {}
           TypedExprKind::IsSet => {}
           TypedExprKind::Numeral => {}
-          TypedExprKind::Var => {}
           TypedExprKind::Func { id: _, args } => visit!(args),
           TypedExprKind::SchFunc { args } => visit!(args),
           TypedExprKind::The => {}
@@ -241,7 +242,6 @@ macro_rules! mk_on_local_ids {
           ProofKind::CSchPred { ctx, ctx2 } => visit!(ctx, ctx2),
           ProofKind::CHyp { ctx, stmt } => visit!(ctx, stmt),
           ProofKind::ENumeral(_) => {}
-          ProofKind::EVar { ctx, idx: _ } => visit!(ctx),
           ProofKind::ESchFunc { ctx, idx: _, args } => visit!(ctx, args),
           ProofKind::EFunc { ctx, id: _, args } => visit!(ctx, args),
           ProofKind::EThe { ty } => visit!(ty),
@@ -256,12 +256,13 @@ macro_rules! mk_on_local_ids {
           ProofKind::Type { ctx, id: _, args, nargs: _ } => visit!(ctx, args),
           ProofKind::Attr { pos: _, id: _, args } => visit!(args),
           ProofKind::TypedExpr { kind: _, term, ty } => visit!(term, ty),
-          ProofKind::VConv { stmt, .. }
-          | ProofKind::VExternal { stmt, .. }
-          | ProofKind::VAndElim { stmt, .. }
-          | ProofKind::VTrue { stmt, .. }
-          | ProofKind::VHyp { stmt, .. }
-          | ProofKind::VEqTrans { stmt, .. } => visit!(stmt),
+          ProofKind::VConv { stmt, pf }
+          | ProofKind::VAndElim { stmt, pf, .. } => visit!(stmt, pf),
+          ProofKind::VExternal { stmt, .. }
+          | ProofKind::VTrue { stmt, .. } => visit!(stmt),
+          ProofKind::VHyp { stmt, ctx, .. } => visit!(stmt, ctx),
+          ProofKind::VEqTrans { stmt, pf1, pf2, .. } => visit!(stmt, pf1, pf2),
+          ProofKind::KUnfold { lhs, rhs, args, .. } => visit!(lhs, rhs, args),
         }
       }
     }
@@ -281,7 +282,7 @@ enum ProofHash<'a> {
 
   // Expr constructors
   ENumeral(u32),
-  EVar { ctx: ProofId, idx: VarId },
+  EVar { ctx: ProofId },
   ESchFunc { ctx: ProofId, idx: SchFuncId, args: &'a [ProofId] },
   EFunc { ctx: ProofId, id: FuncId, args: &'a [ProofId] },
   EThe { ty: ProofId },
@@ -303,6 +304,7 @@ enum ProofHash<'a> {
   // Proofs
   TypedExpr { expr: ProofId, ty: ProofId },
   Proof { stmt: ProofId },
+  Conv { lhs: ProofId, rhs: ProofId },
 }
 
 impl<'a> ProofHash<'a> {
@@ -388,7 +390,12 @@ impl<I: ProofIdx> ProofArray<I> {
 pub enum CoProof {
   Justify { stmt: ProofId },
   ExistElim { pf: ProofId, nvars: u32 },
-  Assume,
+  Let,
+}
+
+struct PredEntry {
+  id: PredId,
+  superfluous: u8,
 }
 
 #[derive(Default)]
@@ -396,17 +403,16 @@ pub struct ProofBuilderInner {
   local: ProofArray<LProofId>,
   /// The proofs in this array must not use any `LProofId`s
   global: ProofArray<GProofId>,
-  ctx: ProofId,
-  depth: u32,
-  pred: IdxVec<MPredId, PredId>,
-  attr: IdxVec<AttrId, PredId>,
+  pub ctx: ProofId,
+  pred: IdxVec<MPredId, PredEntry>,
+  attr: IdxVec<AttrId, PredEntry>,
   mode: IdxVec<ModeId, PredId>,
   struct_mode: IdxVec<StructId, PredId>,
   aggr: IdxVec<AggrId, FuncId>,
   func: IdxVec<MFuncId, (FuncId, u8)>,
   sel: IdxVec<SelId, FuncId>,
-  locus_base: u32,
-  bound_base: u32,
+  locus_var: IdxVec<LocusId, ProofId>,
+  bound_var: IdxVec<BoundId, ProofId>,
   fixed_var: IdxVec<ConstId, (ProofId, ProofId)>,
   infer_const: IdxVec<InferId, Option<ProofId>>,
   pub coproof_stack: Vec<CoProof>,
@@ -468,7 +474,6 @@ impl ProofBuilderInner {
       ProofKind::CSchPred { ctx, ctx2 } => ProofHash::CSchPred { ctx, ctx2 },
       ProofKind::CHyp { ctx, stmt } => ProofHash::CHyp { ctx, stmt },
       ProofKind::ENumeral(n) => ProofHash::ENumeral(n),
-      ProofKind::EVar { ctx, idx } => ProofHash::EVar { ctx, idx },
       ProofKind::ESchFunc { ctx, idx, args } => ProofHash::ESchFunc { ctx, idx, args: &self[args] },
       ProofKind::EFunc { ctx, id, args } => ProofHash::EFunc { ctx, id, args: &self[args] },
       ProofKind::EThe { ty } => ProofHash::EThe { ty },
@@ -491,6 +496,7 @@ impl ProofBuilderInner {
       | ProofKind::VTrue { stmt, .. }
       | ProofKind::VHyp { stmt, .. }
       | ProofKind::VEqTrans { stmt, .. } => ProofHash::Proof { stmt },
+      ProofKind::KUnfold { lhs, rhs, .. } => ProofHash::Conv { lhs, rhs },
       ProofKind::Redirect(n) => self.to_hash(&self[n]),
     }
   }
@@ -653,7 +659,6 @@ impl ProofBuilderInner {
       | ProofKind::CSchPred { .. }
       | ProofKind::CHyp { .. }
       | ProofKind::ENumeral { .. }
-      | ProofKind::EVar { .. }
       | ProofKind::ESchFunc { .. }
       | ProofKind::EFunc { .. }
       | ProofKind::EThe { .. }
@@ -667,7 +672,8 @@ impl ProofBuilderInner {
       | ProofKind::FForAll { .. }
       | ProofKind::Type { .. }
       | ProofKind::Attr { .. }
-      | ProofKind::TypedExpr { .. } => unreachable!(),
+      | ProofKind::TypedExpr { .. }
+      | ProofKind::KUnfold { .. } => unreachable!(),
     }
   }
 
@@ -698,10 +704,18 @@ impl ProofBuilderInner {
     }
   }
 
-  fn neg(&mut self, f: ProofId) -> ProofId {
+  pub fn neg(&mut self, f: ProofId) -> ProofId {
     match self[f] {
       ProofKind::FNeg { f } => f,
       _ => self.insert(ProofKind::FNeg { f }),
+    }
+  }
+
+  pub fn maybe_neg(&mut self, pos: bool, f: ProofId) -> ProofId {
+    if pos {
+      f
+    } else {
+      self.neg(f)
     }
   }
 
@@ -716,6 +730,21 @@ impl ProofBuilderInner {
       let kind = mk(self.alloc_slice(local_scope, args));
       self.insert(kind)
     }
+  }
+
+  pub fn push_fixed_var(&mut self, ty: ProofId) {
+    self.ctx = self.insert(ProofKind::CVar { ctx: self.ctx, ty });
+    self.fixed_var.push((self.ctx, self.ctx));
+  }
+
+  pub fn push_bound_var(&mut self, ty: ProofId) {
+    self.ctx = self.insert(ProofKind::CVar { ctx: self.ctx, ty });
+    self.bound_var.push(self.ctx);
+  }
+
+  pub fn push_locus_var(&mut self, ty: ProofId) {
+    self.ctx = self.insert(ProofKind::CVar { ctx: self.ctx, ty });
+    self.locus_var.push(self.ctx);
   }
 
   pub fn assume(&mut self, stmt: ProofId) -> ProofId {
@@ -733,13 +762,10 @@ impl ProofBuilderInner {
     }
   }
 
-  pub fn intro(&mut self, ctx2: ProofId) {
-    self.ctx = ctx2;
-    let ProofKind::CVar { ctx, ty } = self[ctx2] else { unreachable!() };
-    let term = self.insert(ProofKind::EVar { ctx: ctx2, idx: VarId(self.depth) });
-    let pf = self.insert(ProofKind::TypedExpr { kind: TypedExprKind::Var, term, ty });
-    self.depth += 1;
-    self.fixed_var.push((term, pf));
+  pub fn intro(&mut self, var: ProofId) {
+    self.ctx = var;
+    let ProofKind::CVar { ctx, ty } = self[var] else { unreachable!() };
+    self.fixed_var.push((var, var));
   }
 }
 
@@ -791,13 +817,8 @@ impl Translate<'_> {
   fn tr_term(&mut self, tm: &Term) -> ProofId {
     match tm {
       Term::Numeral(n) => self.inner.insert(ProofKind::ENumeral(*n)),
-      Term::Locus(n) => self.inner.insert(ProofKind::EVar {
-        ctx: self.inner.ctx,
-        idx: VarId(n.0 as u32 + self.inner.locus_base),
-      }),
-      Term::Bound(n) => self
-        .inner
-        .insert(ProofKind::EVar { ctx: self.inner.ctx, idx: VarId(n.0 + self.inner.bound_base) }),
+      Term::Locus(n) => self.inner.locus_var[*n],
+      Term::Bound(n) => self.inner.bound_var[*n],
       Term::Const(n) => self.inner.fixed_var[*n].0,
       &Term::Infer(n) => match self.inner.infer_const.get_mut_extending(n) {
         Some(val) => *val,
@@ -822,21 +843,18 @@ impl Translate<'_> {
         self.inner.insert(ProofKind::EThe { ty })
       }
       Term::Fraenkel { args, scope, compr } => {
-        let base = (self.inner.ctx, self.inner.depth);
+        let ctx = self.inner.ctx;
+        let base = self.inner.bound_var.len();
         for (_, ty) in &**args {
           let ty = self.tr_type(ty);
-          self.inner.ctx = self.inner.insert(ProofKind::CVar { ctx: self.inner.ctx, ty });
-          self.inner.depth += 1;
+          self.inner.push_bound_var(ty);
         }
         let scope = self.tr_term(scope);
         let compr = self.tr_formula(compr);
-        let tm = self.inner.insert(ProofKind::EFraenkel {
-          ctx: base.0,
-          ctx2: self.inner.ctx,
-          scope,
-          compr,
-        });
-        (self.inner.ctx, self.inner.depth) = base;
+        let tm =
+          self.inner.insert(ProofKind::EFraenkel { ctx, ctx2: self.inner.ctx, scope, compr });
+        self.inner.ctx = ctx;
+        self.inner.bound_var.0.truncate(base);
         tm
       }
       Term::Qua { value, .. } => self.tr_term(value),
@@ -854,8 +872,8 @@ impl Translate<'_> {
   }
 
   fn tr_attr(&mut self, attr: &Attr) -> ProofId {
-    let start = self.tr_push_terms(&attr.args);
-    let id = self.inner.attr[attr.nr];
+    let PredEntry { id, superfluous, .. } = self.inner.attr[attr.nr];
+    let start = self.tr_push_terms(&attr.args[superfluous as usize..]);
     let out = self.inner.insert_attr(self.local_scope, attr.pos, id, &mut self.buf[start..]);
     self.buf.truncate(start);
     out
@@ -893,8 +911,14 @@ impl Translate<'_> {
         self.buf.truncate(start);
         out
       }
-      Formula::Pred { nr, args } => self.tr_pred(self.inner.pred[*nr], args),
-      Formula::Attr { nr, args } => self.tr_pred(self.inner.attr[*nr], args),
+      Formula::Pred { nr, args } => {
+        let c = &self.inner.pred[*nr];
+        self.tr_pred(c.id, &args[c.superfluous as usize..])
+      }
+      Formula::Attr { nr, args } => {
+        let c = &self.inner.attr[*nr];
+        self.tr_pred(c.id, &args[c.superfluous as usize..])
+      }
       Formula::PrivPred { nr, args, value } => self.tr_formula(value),
       Formula::Is { term, ty } => {
         let term = self.tr_term(term);
@@ -918,12 +942,11 @@ impl Translate<'_> {
       Formula::ForAll { id: _, dom, scope } => {
         let ty = self.tr_type(dom);
         let ctx = self.inner.ctx;
-        self.inner.ctx = self.inner.insert(ProofKind::CVar { ctx, ty });
-        self.inner.depth += 1;
+        self.inner.push_bound_var(ty);
         let scope = self.tr_formula(scope);
         let f = self.inner.insert(ProofKind::FForAll { ctx2: self.inner.ctx, scope });
         self.inner.ctx = ctx;
-        self.inner.depth -= 1;
+        self.inner.bound_var.0.pop();
         f
       }
       Formula::FlexAnd { nat, le, terms, scope } =>
@@ -932,7 +955,7 @@ impl Translate<'_> {
           *le,
           (**terms).clone(),
           scope.clone(),
-          self.inner.depth,
+          self.inner.bound_var.len() as u32,
         )),
       Formula::LegacyFlexAnd { expansion, .. } => self.tr_formula(expansion),
       Formula::True => self.inner.insert(ProofKind::FTrue),
@@ -956,7 +979,7 @@ impl<W: WriteProof> OptProofBuilder<W> {
   pub fn init(&mut self, w: W) { assert!(self.0.replace(Box::new(ProofBuilder::new(w))).is_none()) }
 
   #[inline]
-  fn with<R: Default>(&self, f: impl FnOnce(&ProofBuilder<W>) -> R) -> R {
+  pub fn with<R: Default>(&self, f: impl FnOnce(&ProofBuilder<W>) -> R) -> R {
     match &self.0 {
       Some(p) => f(p),
       None => Default::default(),
@@ -1058,6 +1081,21 @@ impl<W> ProofBuilder<W> {
     let ProofKind::FPred { args: args2, .. } = inner[inner.concl(pf2)] else { unreachable!() };
     let stmt = inner.insert_pred(self.local_scope, id, &mut [inner[args][0], inner[args2][1]]);
     inner.insert(ProofKind::VEqTrans { stmt, pf1, pf2 })
+  }
+
+  pub fn unfold(
+    &mut self, lc: &LocalContext, lhs: ProofId, rhs: ProofId, i: DefiniensId, args: &[Term],
+  ) -> ProofId {
+    let inner = self.inner.get_mut();
+    if let Some(i) = inner.get(ProofHash::Conv { lhs, rhs }) {
+      return i
+    }
+    let id = todo!();
+    self.tr(lc, |tr| {
+      tr.tr_push_terms(args);
+      let args = tr.inner.alloc_slice(tr.local_scope, &mut tr.buf);
+      tr.inner.insert(ProofKind::KUnfold { lhs, rhs, id, args })
+    });
   }
 
   pub fn start_block(&mut self) {}

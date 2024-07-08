@@ -770,7 +770,8 @@ impl Analyzer<'_> {
         w.start_proof(&this.r.lc, pos, label, thesis)
       });
       this.r.proof.with_mut(|p| {
-        let stmt = p.tr_formula(&this.r.lc, thesis);
+        dbg!(this.r.lc.fixed_var.len());
+        let stmt = p.tr_formula(&this.r.lc, dbg!(thesis));
         let inner = p.inner();
         inner.coproof_stack.push(proof::CoProof::Justify { stmt });
         inner.thesis = stmt;
@@ -791,7 +792,9 @@ impl Analyzer<'_> {
     let mut base = self.lc.fixed_var.peek();
     if let Some(ty) = ty {
       let ty = self.elab_intern_type_no_reserve(ty);
+      let pty = self.r.proof.with_mut(|p| p.tr_type(&self.r.lc, &ty));
       for var in &*vars {
+        self.r.proof.inner_mut(|inner| inner.push_fixed_var(pty));
         let id = self.intern_id(&var.spelling);
         self.lc.fixed_var.push(FixedVar { id, ty: ty.clone(), def: None });
       }
@@ -812,6 +815,10 @@ impl Analyzer<'_> {
       if !subst.is_empty() {
         InstReservation(self, |i| subst[i.0 as usize]).visit_type(&mut ty)
       }
+      self.r.proof.with_mut(|p| {
+        let ty = p.tr_type(&self.r.lc, &ty);
+        p.inner().push_fixed_var(ty)
+      });
       let id = self.intern_id(&vars[0].spelling);
       let c = self.lc.fixed_var.push(FixedVar { id, ty, def: None });
       self.reserved_lookup.insert(nr, VarKind::Const(c));
@@ -1926,12 +1933,13 @@ impl Analyzer<'_> {
   }
 
   fn try_unfold(
-    &self, up: bool, def: &Definiens, pos: bool, kind: ConstrKind, args: &[Term],
-  ) -> Option<(bool, Formula)> {
+    &self, up: bool, i: DefiniensId, def: &Definiens, pos: bool, kind: ConstrKind, args: &[Term],
+    pff: ProofId,
+  ) -> Option<(bool, Formula, ProofId)> {
     let subst = def.matches(&self.g, &self.lc, kind, args)?.finish();
     let mut inst = Inst::new(&self.g.constrs, &self.lc, &subst, 0);
     let DefValue::Formula(value) = &def.value else { unreachable!() };
-    let (pos2, f2) = if value.cases.is_empty() {
+    let (mut pos2, mut f2) = if value.cases.is_empty() {
       (pos, value.otherwise.as_ref().unwrap().visit_cloned(&mut inst))
     } else {
       let f = Formula::mk_and_with(|disjs| {
@@ -1954,15 +1962,19 @@ impl Analyzer<'_> {
       });
       (false, f)
     };
-    if matches!(def.assumptions, Formula::True) {
-      Some((pos2, f2))
-    } else {
+    if !matches!(def.assumptions, Formula::True) {
       let f = Formula::mk_and_with(|conjs| {
         def.assumptions.visit_cloned(&mut inst).append_conjuncts_to(conjs);
         f2.maybe_neg(pos2 != up).append_conjuncts_to(conjs);
       });
-      Some((!up, f))
+      (pos2, f2) = (!up, f);
     }
+    let pff2 = self.r.proof.with_mut(|p| {
+      let pff2 = p.tr_formula(&self.r.lc, &f2);
+      let pff2 = p.inner().maybe_neg(pos2, pff2);
+      p.unfold(&self.r.lc, pff, pff2, i, &subst)
+    });
+    Some((pos2, f2, pff2))
   }
 
   /// Replaces `f` with the normalized version,
@@ -1978,7 +1990,7 @@ impl Analyzer<'_> {
   /// `up` makes a difference for definitions with assumptions, to determine whether
   /// the assumptions should be written as `assum /\ unfolded` or `assum -> unfolded`.
   fn whnf(
-    &self, up: bool, mut atomic: usize, f: &mut (bool, Box<Formula>),
+    &mut self, up: bool, mut atomic: usize, f: &mut (bool, Box<Formula>, ProofId),
     mut expansions: Option<&mut BTreeMap<DefiniensId, u32>>,
   ) -> usize {
     'start: loop {
@@ -1986,7 +1998,7 @@ impl Analyzer<'_> {
       let mut args_buf;
       let (kind, args) = match &mut *f.1 {
         Formula::Neg { f: f2 } => {
-          *f = (!f.0, std::mem::take(f2));
+          *f = (!f.0, std::mem::take(f2), self.proof.inner_mut(|inner| inner.neg(f.2)));
           continue 'start
         }
         Formula::PrivPred { value, .. } => {
@@ -2021,9 +2033,10 @@ impl Analyzer<'_> {
         _ => break,
       };
       for (i, def) in self.definitions.enum_iter().rev() {
-        if let Some((pos2, f2)) = self.try_unfold(up, def, f.0, kind, args) {
+        if let Some((pos2, f2, pf2)) = self.try_unfold(up, i, def, f.0, kind, args, f.2) {
           f.0 = pos2;
           *f.1 = f2;
+          f.2 = pf2;
           // vprintln!("expanded {def:?}\n  -> {:?}", f);
           if let Some(expansions) = expansions.as_deref_mut() {
             *expansions.entry(i).or_default() += 1
@@ -2042,7 +2055,7 @@ impl Analyzer<'_> {
   /// * If `up = true` then `f -> (for x holds P[x])` (used for unfolding in hyps)
   /// * If `up = false` then `(for x holds P[x]) -> f` (unfolding thesis)
   fn inst_forall(
-    &self, term: &Term, widenable: bool, up: bool, f: &mut (bool, Box<Formula>),
+    &mut self, term: &Term, widenable: bool, up: bool, f: &mut (bool, Box<Formula>, ProofId),
     expansions: Option<&mut BTreeMap<DefiniensId, u32>>,
   ) {
     self.whnf(up, MAX_EXPANSIONS, f, expansions);
@@ -2086,7 +2099,7 @@ impl Analyzer<'_> {
   /// * If `up = true` then `f -> (for x1..xn holds P[x1..xn])` (used for unfolding in hyps)
   /// * If `up = false` then `(for x1..xn holds P[x1..xn]) -> f` (unfolding thesis)
   fn forall_telescope(
-    &self, start: usize, widenable: bool, up: bool, f: &mut (bool, Box<Formula>),
+    &mut self, start: usize, widenable: bool, up: bool, f: &mut (bool, Box<Formula>, ProofId),
     mut expansions: Option<&mut BTreeMap<DefiniensId, u32>>,
   ) {
     for v in (start..self.lc.fixed_var.len()).map(ConstId::from_usize) {
@@ -2110,7 +2123,7 @@ impl Analyzer<'_> {
         Some(f1) => (true, f1),
         None => break 'ok,
       };
-      let mut f2 = (true, Box::new(iter2.next().unwrap_or(Formula::True)));
+      let mut f2 = (true, Box::new(iter2.next().unwrap_or(Formula::True)), ProofId::INVALID);
       loop {
         if f1.0 == f2.0 && self.g.eq(&self.lc, &f1.1, &f2.1) {
           continue 'ok
@@ -2532,7 +2545,7 @@ impl ReserveBlock {
         stmt = elab.r.proof.inner_mut(|inner| {
           let ProofKind::FForAll { ctx2, scope } = inner[stmt] else { unreachable!() };
           inner.intro(ctx2);
-          inner.coproof_stack.push(CoProof::Assume);
+          inner.coproof_stack.push(CoProof::Let);
           scope
         });
         thesis = scope;
@@ -2543,6 +2556,7 @@ impl ReserveBlock {
         w.let_(&elab.r.lc, inst.base as usize);
         w.write_thesis(&elab.r.lc, &thesis, &Default::default())
       });
+      elab.r.proof.inner_mut(|inner| inner.thesis = stmt);
       elab.thesis = Some(thesis);
     }
   }
@@ -3267,7 +3281,8 @@ impl ReadProof for WithThesis {
   type Output = ProofId;
 
   fn intro(&mut self, elab: &mut Analyzer, start: usize, _: u32) {
-    let mut thesis = (true, elab.thesis.take().unwrap());
+    let t = elab.proof.inner_mut(|inner| inner.thesis);
+    let mut thesis = (true, elab.thesis.take().unwrap(), t);
     let mut expansions = Default::default();
     let eref = elab.write_xml.on(|_| Some(&mut expansions));
     elab.forall_telescope(start, false, false, &mut thesis, eref);
@@ -3289,7 +3304,7 @@ impl ReadProof for WithThesis {
   }
 
   fn take(&mut self, elab: &mut Analyzer, term: Term) {
-    let mut thesis = (false, elab.thesis.take().unwrap());
+    let mut thesis = (false, elab.thesis.take().unwrap(), ProofId::INVALID);
     let mut expansions = Default::default();
     let eref = elab.write_xml.on(|_| Some(&mut expansions));
     elab.inst_forall(&term, true, true, &mut thesis, eref);
@@ -3363,7 +3378,7 @@ impl ReadProof for WithThesis {
   ) {
     let mut err = None;
     let args = 'next: loop {
-      let mut thesis = (false, Box::new(iter.next().unwrap_or(Formula::True)));
+      let mut thesis = (false, Box::new(iter.next().unwrap_or(Formula::True)), ProofId::INVALID);
       loop {
         let conjs = thesis.1.clone().maybe_neg(thesis.0).into_conjuncts();
         match elab.and_telescope(f.to_vec(), false, conjs, Some(expansions)) {

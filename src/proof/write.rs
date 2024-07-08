@@ -83,10 +83,6 @@ impl<W: WriteProof> ProofWriter<W> {
         def_step = true
       }
       ProofKind::ENumeral(n) => self.w.write_step(Step::ENumeral(n)).unwrap(),
-      ProofKind::EVar { ctx, idx } => {
-        let ctx = self.output(inner, true, false, ctx).unwrap();
-        self.w.write_step(Step::EVar { ctx, idx }).unwrap();
-      }
       ProofKind::ESchFunc { ctx, idx, args } => {
         let ctx = self.output(inner, true, false, ctx).unwrap();
         self.w.write_step(Step::ESchFunc { ctx, idx }).unwrap();
@@ -148,7 +144,6 @@ impl<W: WriteProof> ProofWriter<W> {
           TypedExprKind::IsObject => Step::VEIsObject,
           TypedExprKind::IsSet => Step::VEIsSet,
           TypedExprKind::Numeral => Step::VENumeral,
-          TypedExprKind::Var => Step::VEVar,
           TypedExprKind::Func { id, args } => {
             self.push_slice(inner, args);
             Step::VEFunc { id }
@@ -317,7 +312,6 @@ pub enum Step {
 
   // Expr constructors
   ENumeral(u32),
-  EVar { ctx: OProofId, idx: VarId },
   ESchFunc { ctx: OProofId, idx: SchFuncId },
   EFunc { ctx: OProofId, id: FuncId },
   EThe,
@@ -340,7 +334,6 @@ pub enum Step {
   VEIsObject,
   VEIsSet,
   VENumeral,
-  VEVar,
   VEFunc { id: TFuncId },
   VESchFunc,
   VEThe,
@@ -424,10 +417,6 @@ impl<W: Write> WriteProof for XmlProofWriter<W> {
         w.attr_str(b"parent", ctx.0)
       }),
       Step::ENumeral(n) => self.w.with_attr("ENumeral", |w| w.attr_str(b"nr", n)),
-      Step::EVar { ctx, idx } => self.w.with_attr("EVar", |w| {
-        w.attr_str(b"ctx", ctx.0);
-        w.attr_str(b"nr", idx.0)
-      }),
       Step::ESchFunc { ctx, idx } => self.w.with_attr("ESchFunc", |w| {
         w.attr_str(b"ctx", ctx.0);
         w.attr_str(b"nr", idx.0)
@@ -462,7 +451,6 @@ impl<W: Write> WriteProof for XmlProofWriter<W> {
       Step::VEIsObject => self.w.with0("VEIsObject", |_| {}),
       Step::VEIsSet => self.w.with0("VEIsSet", |_| {}),
       Step::VENumeral => self.w.with0("VENumeral", |_| {}),
-      Step::VEVar => self.w.with0("VEVar", |_| {}),
       Step::VEFunc { id } => self.w.with_attr("VEFunc", |w| w.attr_str(b"id", id.0)),
       Step::VESchFunc => self.w.with0("VESchFunc", |_| {}),
       Step::VEThe => self.w.with0("VEThe", |_| {}),

@@ -1,6 +1,5 @@
 use crate::accom::SigBuilder;
 use crate::ast::CaseKind;
-use crate::proof::{Step, WriteProof};
 use crate::reader::DefiniensId;
 use crate::types::{self, *};
 use crate::{Global, HashMap, LocalContext, MizPath};
