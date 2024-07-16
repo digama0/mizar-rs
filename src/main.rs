@@ -512,7 +512,7 @@ fn main() {
   cfg.accom_enabled |= cfg.parser_enabled; // parser needs accom
   cfg.nameck_enabled |= cfg.parser_enabled; // parser needs nameck
   cfg.analyzer_full |= cfg.checker_enabled; // checker needs analyzer_full (if analyzer is used)
-  cfg.cache_prel = !cfg.one_item && !cli.other.no_cache;
+  cfg.cache_prel = !cli.one_file && !cli.other.no_cache;
   cfg.exporter_enabled &= cfg.xml_export || cfg.verify_export || cfg.cache_prel;
   cfg.analyzer_enabled |= cfg.exporter_enabled; // exporter needs (quick) analyzer
   if cfg.cache_prel && cli.dep_order && cfg.verify_export {
