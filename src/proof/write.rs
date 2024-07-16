@@ -185,6 +185,12 @@ impl<W: WriteProof> ProofWriter<W> {
         self.output(inner, false, true, pf2);
         self.w.write_step(Step::VEqTrans).unwrap();
       }
+      ProofKind::KUnfold { lhs, rhs, id, args } => {
+        self.output(inner, false, true, lhs);
+        self.output(inner, false, true, rhs);
+        self.push_slice(inner, args);
+        self.w.write_step(Step::KUnfold { id }).unwrap();
+      }
     }
     if def_step {
       let n = self.out_num.fresh();
@@ -344,6 +350,9 @@ pub enum Step {
   VHyp { ctx: OProofId, idx: HypId },
   VEqTrans,
 
+  // Conversion proofs
+  KUnfold { id: PredId },
+
   Theorem,
   Scheme,
 
@@ -460,11 +469,12 @@ impl<W: Write> WriteProof for XmlProofWriter<W> {
         w.attr_str(b"len", len)
       }),
       Step::VTrue => self.w.with0("VTrue", |_| {}),
-      Step::VHyp { ctx, idx } => self.w.with_attr("VAndElim", |w| {
+      Step::VHyp { ctx, idx } => self.w.with_attr("VHyp", |w| {
         w.attr_str(b"ctx", ctx.0);
         w.attr_str(b"idx", idx.0)
       }),
       Step::VEqTrans => self.w.with0("VEqTrans", |_| {}),
+      Step::KUnfold { id } => self.w.with_attr("KUnfold", |w| w.attr_str(b"id", id.0)),
       Step::Theorem => self.w.with0("Theorem", |_| {}),
       Step::Scheme => self.w.with0("Scheme", |_| {}),
       Step::LoadPred { name, req } => self.w.with_attr("LoadPred", |w| {
