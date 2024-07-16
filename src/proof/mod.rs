@@ -398,18 +398,28 @@ struct PredEntry {
   superfluous: u8,
 }
 
+struct FuncEntry {
+  id: FuncId,
+  superfluous: u8,
+}
+
+enum DefiniensEntry {
+  Pred(PredId),
+}
+
 #[derive(Default)]
 pub struct ProofBuilderInner {
   local: ProofArray<LProofId>,
   /// The proofs in this array must not use any `LProofId`s
   global: ProofArray<GProofId>,
   pub ctx: ProofId,
+  definiens: IdxVec<DefiniensId, DefiniensEntry>,
   pred: IdxVec<MPredId, PredEntry>,
   attr: IdxVec<AttrId, PredEntry>,
   mode: IdxVec<ModeId, PredId>,
   struct_mode: IdxVec<StructId, PredId>,
   aggr: IdxVec<AggrId, FuncId>,
-  func: IdxVec<MFuncId, (FuncId, u8)>,
+  func: IdxVec<MFuncId, FuncEntry>,
   sel: IdxVec<SelId, FuncId>,
   locus_var: IdxVec<LocusId, ProofId>,
   bound_var: IdxVec<BoundId, ProofId>,
@@ -806,7 +816,7 @@ struct Translate<'a> {
 }
 
 impl Translate<'_> {
-  fn tr_func(&mut self, (id, superfluous): (FuncId, u8), args: &[Term]) -> ProofId {
+  fn tr_func(&mut self, id: FuncId, superfluous: u8, args: &[Term]) -> ProofId {
     let args = &args[superfluous as usize..];
     let start = self.tr_push_terms(args);
     let out = self.inner.insert_func(self.local_scope, id, &mut self.buf[start..]);
@@ -834,10 +844,13 @@ impl Translate<'_> {
         self.buf.truncate(start);
         out
       }
-      Term::Aggregate { nr, args } => self.tr_func((self.inner.aggr[*nr], 0), args),
+      Term::Aggregate { nr, args } => self.tr_func(self.inner.aggr[*nr], 0, args),
       Term::PrivFunc { nr, args, value } => self.tr_term(value),
-      Term::Functor { nr, args } => self.tr_func(self.inner.func[*nr], args),
-      Term::Selector { nr, args } => self.tr_func((self.inner.sel[*nr], 0), args),
+      Term::Functor { nr, args } => {
+        let FuncEntry { id, superfluous } = self.inner.func[*nr];
+        self.tr_func(id, superfluous, args)
+      }
+      Term::Selector { nr, args } => self.tr_func(self.inner.sel[*nr], 0, args),
       Term::The { ty } => {
         let ty = self.tr_type(ty);
         self.inner.insert(ProofKind::EThe { ty })
@@ -965,64 +978,66 @@ impl Translate<'_> {
 
 pub struct ProofBuilder<W> {
   local_scope: bool,
-  inner: RefCell<ProofBuilderInner>,
+  inner: ProofBuilderInner,
   w: ProofWriter<W>,
 }
 
-pub struct OptProofBuilder<W>(pub Option<Box<ProofBuilder<W>>>);
+pub struct OptProofBuilder<W>(pub Option<Box<RefCell<ProofBuilder<W>>>>);
 
 impl<W> Default for OptProofBuilder<W> {
   fn default() -> Self { Self(None) }
 }
 
 impl<W: WriteProof> OptProofBuilder<W> {
-  pub fn init(&mut self, w: W) { assert!(self.0.replace(Box::new(ProofBuilder::new(w))).is_none()) }
+  pub fn init(&mut self, w: W) {
+    assert!(self.0.replace(Box::new(RefCell::new(ProofBuilder::new(w)))).is_none())
+  }
 
   #[inline]
-  pub fn with<R: Default>(&self, f: impl FnOnce(&ProofBuilder<W>) -> R) -> R {
+  pub fn with<R: Default>(&self, f: impl FnOnce(&mut ProofBuilder<W>) -> R) -> R {
     match &self.0 {
-      Some(p) => f(p),
+      Some(p) => f(&mut p.borrow_mut()),
       None => Default::default(),
     }
   }
   #[inline]
   pub fn with_mut<R: Default>(&mut self, f: impl FnOnce(&mut ProofBuilder<W>) -> R) -> R {
     match &mut self.0 {
-      Some(p) => f(p),
+      Some(p) => f(p.get_mut()),
       None => Default::default(),
     }
   }
 
   #[inline]
   pub fn inner_mut<R: Default>(&mut self, f: impl FnOnce(&mut ProofBuilderInner) -> R) -> R {
-    self.with_mut(|p| f(p.inner.get_mut()))
+    self.with_mut(|p| f(&mut p.inner))
   }
 
   pub fn finish(&mut self) {
     if let Some(p) = &mut self.0 {
-      p.w.w.finish().unwrap()
+      p.get_mut().w.w.finish().unwrap()
     }
   }
 }
 
 impl<W> ProofBuilder<W> {
-  pub fn inner(&mut self) -> &mut ProofBuilderInner { self.inner.get_mut() }
+  pub fn inner(&mut self) -> &mut ProofBuilderInner { &mut self.inner }
 
-  pub fn push(&self, kind: ProofKind) -> ProofId {
+  pub fn push(&mut self, kind: ProofKind) -> ProofId {
     if self.local_scope {
-      self.inner.borrow_mut().insert(kind)
+      self.inner.insert(kind)
     } else {
-      self.inner.borrow_mut().push_globalized(kind).into()
+      self.inner.push_globalized(kind).into()
     }
   }
 
-  pub fn alloc_slice(&self, vec: &mut [ProofId]) -> ProofSlice {
-    self.inner.borrow_mut().alloc_slice(self.local_scope, vec)
+  pub fn alloc_slice(&mut self, vec: &mut [ProofId]) -> ProofSlice {
+    self.inner.alloc_slice(self.local_scope, vec)
   }
 
   fn tr<R: Default>(&mut self, lc: &LocalContext, f: impl FnOnce(&mut Translate<'_>) -> R) -> R {
     f(&mut Translate {
-      inner: self.inner.get_mut(),
+      inner: &mut self.inner,
       local_scope: self.local_scope,
       buf: vec![],
       infer_const: &lc.infer_const.borrow(),
@@ -1052,13 +1067,13 @@ impl<W> ProofBuilder<W> {
     let old = self.local_scope;
     self.local_scope = local;
     if !local {
-      self.inner.get_mut().local.clear();
+      self.inner.local.clear();
     }
     old
   }
 
   pub fn def_const(&mut self, fixed_var: &IdxVec<ConstId, FixedVar>, pf: ProofId) -> ProofId {
-    let inner = self.inner.get_mut();
+    let inner = &mut self.inner;
     if self.local_scope {
       let nvars = (fixed_var.len() - inner.fixed_var.len()) as u32;
       let mut stmt = inner.neg(inner.concl(pf));
@@ -1076,7 +1091,7 @@ impl<W> ProofBuilder<W> {
   }
 
   pub fn eq_trans(&mut self, pf1: ProofId, pf2: ProofId) -> ProofId {
-    let inner = self.inner.get_mut();
+    let inner = &mut self.inner;
     let ProofKind::FPred { id, args, .. } = inner[inner.concl(pf1)] else { unreachable!() };
     let ProofKind::FPred { args: args2, .. } = inner[inner.concl(pf2)] else { unreachable!() };
     let stmt = inner.insert_pred(self.local_scope, id, &mut [inner[args][0], inner[args2][1]]);
@@ -1086,16 +1101,16 @@ impl<W> ProofBuilder<W> {
   pub fn unfold(
     &mut self, lc: &LocalContext, lhs: ProofId, rhs: ProofId, i: DefiniensId, args: &[Term],
   ) -> ProofId {
-    let inner = self.inner.get_mut();
+    let inner = &mut self.inner;
     if let Some(i) = inner.get(ProofHash::Conv { lhs, rhs }) {
       return i
     }
-    let id = todo!();
+    let DefiniensEntry::Pred(id) = inner.definiens[i];
     self.tr(lc, |tr| {
       tr.tr_push_terms(args);
       let args = tr.inner.alloc_slice(tr.local_scope, &mut tr.buf);
       tr.inner.insert(ProofKind::KUnfold { lhs, rhs, id, args })
-    });
+    })
   }
 
   pub fn start_block(&mut self) {}
@@ -1107,14 +1122,14 @@ impl<W: WriteProof> ProofBuilder<W> {
   pub fn new(w: W) -> Self {
     let mut inner = ProofBuilderInner { ctx: ProofId::C0, ..Default::default() };
     inner.insert1::<GProofId>(&ProofKind::C0);
-    Self { local_scope: false, inner: RefCell::new(inner), w: ProofWriter::new(w) }
+    Self { local_scope: false, inner, w: ProofWriter::new(w) }
   }
 
   pub fn maybe_externalize(&mut self, local: bool, push: bool, pf: ProofId) -> ProofId {
     if local {
       return pf
     }
-    let inner = self.inner.get_mut();
+    let inner = &mut self.inner;
     let out = self.w.output(inner, true, push, pf).unwrap();
     ProofId::Global(inner.insert1(&ProofKind::VExternal { stmt: inner.concl(pf), pf: out }))
   }
@@ -1123,7 +1138,7 @@ impl<W: WriteProof> ProofBuilder<W> {
   /// * If `def = true` then the result is always valid
   /// * If `push = true` then the result is also pushed to the top of the stack
   pub fn output(&mut self, def: bool, push: bool, id: ProofId) -> OProofId {
-    self.w.output(self.inner.get_mut(), def, push, id).unwrap_or_default()
+    self.w.output(&self.inner, def, push, id).unwrap_or_default()
   }
 
   pub fn step(&mut self, step: Step) { self.w.w.write_step(step).unwrap() }

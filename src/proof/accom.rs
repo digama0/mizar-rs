@@ -2,6 +2,7 @@ use super::write::{PredName, Step, WriteProof};
 use super::{OptProofBuilder, ProofBuilder};
 use crate::accom::{Accomodator, SigBuilder};
 use crate::proof::write::FuncName;
+use crate::proof::{FuncEntry, PredEntry};
 use crate::types::{
   AggrId, AttrId, Constructors, FuncId as MFuncId, Idx, ModeId, PredId as MPredId,
   RequirementIndexes, RequirementKind, SelId, StructId,
@@ -12,7 +13,7 @@ impl<W: WriteProof> ProofBuilder<W> {
   pub fn accom_constructors(
     &mut self, sig: &SigBuilder, constrs: &Constructors, reqs: &RequirementIndexes,
   ) {
-    let inner = self.inner.get_mut();
+    let inner = &mut self.inner;
     let mut rev = HashMap::new();
     for (req, _) in reqs.fwd {
       if let Some(kind) = reqs.get(req) {
@@ -36,19 +37,25 @@ impl<W: WriteProof> ProofBuilder<W> {
         let name = PredName::Attr(art, AttrId(id.0 - lo.attribute));
         let req = rev.get(&RequirementKind::Attr(id)).copied();
         self.w.w.write_step(Step::LoadPred { name, req }).unwrap();
-        assert_eq!(id, inner.attr.push(self.w.pred_num.fresh()));
+        let superfluous = constrs.attribute[id].superfluous;
+        let e = PredEntry { id: self.w.pred_num.fresh(), superfluous };
+        assert_eq!(id, inner.attr.push(e));
       }
       for id in (lo.predicate..hi.predicate).map(MPredId) {
         let name = PredName::Pred(art, MPredId(id.0 - lo.predicate));
         let req = rev.get(&RequirementKind::Pred(id)).copied();
         self.w.w.write_step(Step::LoadPred { name, req }).unwrap();
-        assert_eq!(id, inner.pred.push(self.w.pred_num.fresh()));
+        let superfluous = constrs.predicate[id].superfluous;
+        let e = PredEntry { id: self.w.pred_num.fresh(), superfluous };
+        assert_eq!(id, inner.pred.push(e));
       }
       for id in (lo.functor..hi.functor).map(MFuncId) {
         let name = FuncName::Func(art, MFuncId(id.0 - lo.functor));
         let req = rev.get(&RequirementKind::Func(id)).copied();
         self.w.w.write_step(Step::LoadFunc { name, req }).unwrap();
-        assert_eq!(id, inner.func.push((self.w.func_num.fresh(), constrs.functor[id].superfluous)));
+        let superfluous = constrs.functor[id].superfluous;
+        let e = FuncEntry { id: self.w.func_num.fresh(), superfluous };
+        assert_eq!(id, inner.func.push(e));
       }
       for id in (lo.selector..hi.selector).map(SelId) {
         let name = FuncName::Sel(art, SelId(id.0 - lo.selector));

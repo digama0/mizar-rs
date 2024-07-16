@@ -1969,7 +1969,7 @@ impl Analyzer<'_> {
       });
       (pos2, f2) = (!up, f);
     }
-    let pff2 = self.r.proof.with_mut(|p| {
+    let pff2 = self.r.proof.with(|p| {
       let pff2 = p.tr_formula(&self.r.lc, &f2);
       let pff2 = p.inner().maybe_neg(pos2, pff2);
       p.unfold(&self.r.lc, pff, pff2, i, &subst)
@@ -3325,19 +3325,20 @@ impl ReadProof for WithThesis {
 
   fn unfold(&mut self, elab: &mut Analyzer, refs: &[ast::Reference]) {
     elab.write_xml.on(|w| w.unfold());
-    let mut f = (true, elab.thesis.take().unwrap());
+    let mut f = (true, elab.thesis.take().unwrap(), ProofId::INVALID);
     for r in elab.elab_references(refs) {
       let def = match r.kind {
         ReferenceKind::Priv(label) => elab.local_def_map.get(&label),
         ReferenceKind::Thm(_) => None,
         ReferenceKind::Def(r) => elab.def_map.get(&r),
       };
-      let def = &elab.definitions[*def.expect("not a definition reference")];
+      let id = *def.expect("not a definition reference");
+      let def = &elab.definitions[id];
       let fail = || panic!("thesis is not the specified definition");
       let mut args_buf;
       let (kind, args) = loop {
         match &mut *f.1 {
-          Formula::Neg { f: f2 } => f = (!f.0, std::mem::take(f2)),
+          Formula::Neg { f: f2 } => f = (!f.0, std::mem::take(f2), f.2),
           Formula::PrivPred { value, .. } => f.1 = std::mem::take(value),
           Formula::Pred { nr, args } => {
             let (n, args) = Formula::adjust_pred(*nr, args, Some(&elab.g.constrs));
@@ -3360,9 +3361,12 @@ impl ReadProof for WithThesis {
           _ => fail(),
         }
       };
-      let Some((pos, f2)) = elab.try_unfold(false, def, true, kind, args) else { fail() };
+      let Some((pos, f2, pff2)) = elab.try_unfold(false, id, def, true, kind, args, f.2) else {
+        fail()
+      };
       f.0 = pos;
       *f.1 = f2;
+      f.2 = pff2;
     }
     elab.thesis = Some(Box::new(f.1.maybe_neg(f.0)));
   }
