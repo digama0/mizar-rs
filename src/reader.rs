@@ -65,7 +65,8 @@ impl MizPath {
     let data;
     let mut parser = if cfg.parser_enabled {
       data = self.read_miz().unwrap();
-      Some(Box::new(MizParser::new(self.art, progress, &data)))
+      let write_json = self.write_json(cfg.json_parse);
+      Some(Box::new(MizParser::new(self.art, progress, &data, write_json)))
     } else {
       None
     };
@@ -365,7 +366,9 @@ impl MizPath {
     }
 
     if let (Some(accom), Some(parser)) = (&mut v.accom, &mut parser) {
-      std::mem::swap(&mut parser.articles, &mut accom.articles)
+      std::mem::swap(&mut parser.articles, &mut accom.articles);
+      parser.write_json.on(|w| w.write_articles(&accom.articles_vec));
+      std::mem::take(&mut accom.articles_vec);
     }
 
     f(&mut v, parser.as_deref_mut());

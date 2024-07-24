@@ -98,7 +98,10 @@ impl Reader {
 
   pub fn run_analyzer(&mut self, path: &MizPath, parser: Option<&mut MizParser<'_>>) {
     let mut parser = match parser {
-      Some(v) => Ok(v),
+      Some(parser) => {
+        parser.write_json.on(|w| w.start_main());
+        Ok(parser)
+      }
       None => {
         let result = if self.g.cfg.nameck_enabled { path.open_wsx() } else { path.open_msx() };
         Err(try_p!(self, result))
@@ -158,6 +161,11 @@ impl Reader {
         elab.elab_top_item(it);
       }
       items.clear()
+    }
+    if elab.g.cfg.json_parse {
+      if let Ok(parser) = &mut parser {
+        parser.write_json.finish();
+      }
     }
     if elab.g.cfg.xml_internals {
       elab.write_xml.finish();

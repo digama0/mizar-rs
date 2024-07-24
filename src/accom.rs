@@ -125,6 +125,7 @@ pub struct Accomodator {
   article: Article,
   pub dirs: Directives,
   pub sig: SigBuilder,
+  pub articles_vec: IdxVec<ArticleId, Option<Article>>,
   pub articles: HashMap<Article, ArticleId>,
   dict: VocBuilder,
   pub has_errors: bool,
@@ -314,7 +315,9 @@ impl Accomodator {
   #[allow(clippy::indexing_slicing)]
   pub fn accom_articles(&mut self) {
     let mut id = ArticleId(1); // 0 is reserved for SELF
+    self.articles_vec.push(None);
     for &(_, art) in &self.dirs.0[DirectiveKind::Theorems] {
+      self.articles_vec.push(Some(art));
       assert!(self.articles.insert(art, id.fresh()).is_none())
     }
     for &(_, art) in &self.dirs.0[DirectiveKind::Schemes] {

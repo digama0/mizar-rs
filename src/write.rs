@@ -6,6 +6,10 @@ use crate::{Global, LocalContext, MizPath};
 use enum_map::{Enum, EnumMap};
 use quick_xml::events::attributes::Attribute;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
+use serde::ser::Serializer;
+use serde::Serialize;
+use serde_json::ser::{CompactFormatter as JsonFormatter, Formatter};
+use serde_json::Serializer as JsonSerializer;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -1896,4 +1900,93 @@ mk_write_constructor! {
   fn write_struct_constructor(StructId, StructMode);
   fn write_aggr_constructor(AggrId, Aggregate);
   fn write_sel_constructor(SelId, TyConstructor<SelId>);
+}
+
+pub struct OWriteJson(Option<Box<WriteJson>>);
+
+const MZP_VERSION: u32 = 0;
+
+pub enum JsonState {
+  Start,
+  Main(bool),
+}
+pub struct WriteJson {
+  w: BufWriter<File>,
+  state: JsonState,
+}
+
+impl MizPath {
+  pub fn write_json(&self, write: bool) -> OWriteJson {
+    OWriteJson(write.then(|| {
+      let mut w = BufWriter::new(self.create(true, false, "mzp.json").unwrap());
+      writeln!(w, "{{\"version\":{},", MZP_VERSION).unwrap();
+      Box::new(WriteJson { w, state: JsonState::Start })
+    }))
+  }
+}
+
+impl OWriteJson {
+  #[inline]
+  pub fn on<R: Default>(&mut self, f: impl FnOnce(&mut WriteJson) -> R) -> R {
+    if let Some(w) = &mut self.0 {
+      f(w)
+    } else {
+      R::default()
+    }
+  }
+
+  pub fn finish(&mut self) {
+    if let Some(mut w) = self.0.take() {
+      assert!(matches!(w.state, JsonState::Main(_)));
+      w.w.write_all(b"]}\n").unwrap();
+      w.w.get_mut().flush().unwrap()
+    }
+  }
+}
+
+impl WriteJson {
+  pub fn write_env(&mut self, dirs: &Directives) {
+    assert!(matches!(self.state, JsonState::Start));
+    JsonFormatter.begin_object_key(&mut self.w, true).unwrap();
+    for (kind, arts) in &dirs.0 {
+      if !arts.is_empty() {
+        JsonSerializer::new(&mut self.w).serialize_str(kind.name()).unwrap();
+        JsonFormatter.end_object_key(&mut self.w).unwrap();
+        JsonFormatter.begin_object_value(&mut self.w).unwrap();
+        JsonFormatter.begin_array(&mut self.w).unwrap();
+        let mut first = true;
+        for (pos, art) in arts {
+          JsonFormatter.begin_array_value(&mut self.w, std::mem::take(&mut first)).unwrap();
+          write!(self.w, "{{\"pos\":[{},{}],\"art\":\"{}\"}}", pos.line, pos.col, art).unwrap();
+          JsonFormatter.end_array_value(&mut self.w).unwrap();
+        }
+        JsonFormatter.end_object_value(&mut self.w).unwrap();
+        JsonFormatter.end_array(&mut self.w).unwrap();
+        JsonFormatter.begin_object_key(&mut self.w, false).unwrap();
+        self.w.write_all(b"\n").unwrap();
+      }
+    }
+  }
+
+  pub fn write_articles(&mut self, dirs: &IdxVec<ArticleId, Option<Article>>) {
+    assert!(matches!(self.state, JsonState::Start));
+    JsonFormatter.begin_object_key(&mut self.w, true).unwrap();
+    self.w.write_all(b"\"articles\":").unwrap();
+    dirs.0.serialize(&mut JsonSerializer::new(&mut self.w)).unwrap();
+    JsonFormatter.begin_object_key(&mut self.w, false).unwrap();
+    self.w.write_all(b"\n").unwrap();
+  }
+
+  pub fn start_main(&mut self) {
+    assert!(matches!(self.state, JsonState::Start));
+    self.w.write_all(b"\"body\":[\n\n").unwrap();
+    self.state = JsonState::Main(true);
+  }
+  pub fn write_item(&mut self, item: &crate::ast::Item) {
+    let JsonState::Main(first) = &mut self.state else { unreachable!() };
+    JsonFormatter.begin_array_value(&mut self.w, std::mem::take(first)).unwrap();
+    item.serialize(&mut JsonSerializer::new(&mut self.w)).unwrap();
+    JsonFormatter.end_array_value(&mut self.w).unwrap();
+    self.w.write_all(b"\n\n").unwrap();
+  }
 }

@@ -1,12 +1,14 @@
 use crate::mk_id;
 use crate::types::*;
+use serde_derive::Serialize;
 use std::rc::Rc;
 use std::str::FromStr;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Variable {
   pub pos: Position,
   /// 'varnr' attribute, MSLocusObj.nVarNr, MSVariableObj.nVarNr
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub var: Option<ConstId>,
   pub spelling: Rc<str>,
 }
@@ -24,20 +26,20 @@ impl Variable {
   }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize)]
 pub enum VarKind {
   Bound(BoundId),
   Const(ConstId),
   Reserved(ReservedId),
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize)]
 pub enum PrivFuncKind {
   PrivFunc(PrivFuncId),
   SchFunc(SchFuncId),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum Term {
   Placeholder {
     pos: Position,
@@ -49,30 +51,36 @@ pub enum Term {
   },
   Var {
     pos: Position,
+    #[serde(skip_serializing_if = "Option::is_none")]
     kind: Option<VarKind>,
     spelling: String,
   },
   PrivFunc {
     pos: Position,
+    #[serde(skip_serializing_if = "Option::is_none")]
     kind: Option<PrivFuncKind>,
     spelling: Rc<str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     args: Vec<Term>,
   },
   Infix {
     pos: Position,
     sym: (FuncSymId, String),
     left: u8,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     args: Vec<Term>,
   },
   Bracket {
     pos: Position,
     lsym: (LeftBrkSymId, String),
     rsym: (RightBrkSymId, String),
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     args: Vec<Term>,
   },
   Aggregate {
     pos: Position,
     sym: (StructSymId, String),
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     args: Vec<Term>,
   },
   SubAggr {
@@ -88,6 +96,7 @@ pub enum Term {
   InternalSelector {
     pos: Position,
     sym: (SelSymId, String),
+    #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<ConstId>,
   },
   Qua {
@@ -103,7 +112,9 @@ pub enum Term {
     pos: Position,
     vars: Vec<BinderGroup>,
     scope: Box<Term>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     compr: Option<Box<Formula>>,
+    #[serde(skip)]
     nameck: Option<Box<crate::analyze::FraenkelNameckResult>>,
   },
   It {
@@ -136,12 +147,32 @@ mk_id! {
   ResGroupId(u32),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum Type {
-  Mode { pos: Position, sym: (ModeSymId, String), args: Vec<Term> },
-  Struct { pos: Position, sym: (StructSymId, String), args: Vec<Term> },
-  Cluster { pos: Position, attrs: Vec<Attr>, ty: Box<Type> },
-  Reservation { pos: Position, group: ResGroupId, subst: Vec<VarKind> },
+  Mode {
+    pos: Position,
+    sym: (ModeSymId, String),
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    args: Vec<Term>,
+  },
+  Struct {
+    pos: Position,
+    sym: (StructSymId, String),
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    args: Vec<Term>,
+  },
+  Cluster {
+    pos: Position,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    attrs: Vec<Attr>,
+    ty: Box<Type>,
+  },
+  Reservation {
+    pos: Position,
+    group: ResGroupId,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    subst: Vec<VarKind>,
+  },
 }
 impl Type {
   pub fn pos(&self) -> Position {
@@ -154,13 +185,13 @@ impl Type {
   }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize)]
 pub enum PrivPredKind {
   PrivPred(PrivPredId),
   SchPred(SchPredId),
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize)]
 pub enum FormulaBinop {
   And,
   Or,
@@ -170,30 +201,32 @@ pub enum FormulaBinop {
   FlexOr,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize)]
 pub enum FormulaBinder {
   ForAll,
   Exists,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Pred {
   pub pos: Position,
   pub positive: bool,
   pub sym: (PredSymId, String),
   pub left: u8,
+  #[serde(skip_serializing_if = "Vec::is_empty")]
   pub args: Vec<Term>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct PredRhs {
   pub pos: Position,
   pub positive: bool,
   pub sym: (PredSymId, String),
+  #[serde(skip_serializing_if = "Vec::is_empty")]
   pub right: Vec<Term>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum Formula {
   Not {
     pos: Position,
@@ -213,14 +246,17 @@ pub enum Formula {
   },
   PrivPred {
     pos: Position,
+    #[serde(skip_serializing_if = "Option::is_none")]
     kind: Option<PrivPredKind>,
     spelling: Rc<str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     args: Vec<Term>,
   },
   Attr {
     pos: Position,
     positive: bool,
     term: Box<Term>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     attrs: Vec<Attr>,
   },
   Is {
@@ -233,6 +269,7 @@ pub enum Formula {
     kind: FormulaBinder,
     pos: Position,
     vars: Vec<BinderGroup>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     st: Option<Box<Formula>>,
     scope: Box<Formula>,
   },
@@ -260,62 +297,92 @@ impl Formula {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Proposition {
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub label: Option<Box<Label>>,
   pub f: Formula,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum SchRef {
+  #[serde(untagged)]
   Resolved(ArticleId, SchId),
+  #[serde(untagged)]
   UnresolvedPriv(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum InferenceKind {
-  By { link: Option<Position> },
-  From { sch: SchRef },
+  By {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    link: Option<Position>,
+  },
+  From {
+    sch: SchRef,
+  },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum RefFragment {
   Thm { pos: Position, id: ThmId },
   Def { pos: Position, id: DefId },
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum ReferenceKind {
-  Priv(Option<LabelId>),
-  UnresolvedPriv(String),
+  Priv(#[serde(skip_serializing_if = "Option::is_none")] Option<LabelId>),
   Global(ArticleId, Vec<RefFragment>),
+  #[serde(untagged)]
+  UnresolvedPriv(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Reference {
   pub pos: Position,
   pub kind: ReferenceKind,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum Justification {
-  Inference { pos: Position, kind: InferenceKind, refs: Vec<Reference> },
-  Block { pos: (Position, Position), items: Vec<Item> },
+  Inference {
+    pos: Position,
+    kind: InferenceKind,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    refs: Vec<Reference>,
+  },
+  Block {
+    pos: (Position, Position),
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    items: Vec<Item>,
+  },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum SchemeBinderGroup {
-  Pred { pos: Position, vars: Vec<Variable>, tys: Vec<Type> },
-  Func { pos: Position, vars: Vec<Variable>, tys: Vec<Type>, ret: Type },
+  Pred {
+    pos: Position,
+    vars: Vec<Variable>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tys: Vec<Type>,
+  },
+  Func {
+    pos: Position,
+    vars: Vec<Variable>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tys: Vec<Type>,
+    ret: Type,
+  },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct BinderGroup {
   pub vars: Vec<Variable>,
   // The vars list must be length 1 when this is None
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub ty: Option<Box<Type>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum ReconsiderVar {
   /// Only occurs in wsm
   Var(Variable),
@@ -325,13 +392,13 @@ pub enum ReconsiderVar {
   },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Item {
   pub pos: Position,
   pub kind: ItemKind,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum CaseKind {
   Case,
   Suppose,
@@ -351,22 +418,23 @@ impl CaseKind {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Field {
   pub pos: Position,
   pub sym: (SelSymId, Rc<str>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct FieldGroup {
   pub pos: Position,
   pub vars: Vec<Field>,
   pub ty: Type,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct PatternStruct {
   pub sym: (StructSymId, String),
+  #[serde(skip_serializing_if = "Vec::is_empty")]
   pub args: Vec<Variable>,
 }
 
@@ -380,18 +448,20 @@ impl PatternStruct {
   pub fn to_subaggr_format(&self) -> StructSymId { self.sym.0 }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum PatternFunc {
   Func {
     pos: Position,
     sym: (FuncSymId, String),
     left: u8,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     args: Vec<Variable>,
   },
   Bracket {
     pos: Position,
     lsym: (LeftBrkSymId, String),
     rsym: (RightBrkSymId, String),
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     args: Vec<Variable>,
   },
 }
@@ -419,11 +489,12 @@ impl PatternFunc {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct PatternPred {
   pub pos: Position,
   pub sym: (PredSymId, String),
   pub left: u8,
+  #[serde(skip_serializing_if = "Vec::is_empty")]
   pub args: Vec<Variable>,
 }
 impl PatternPred {
@@ -432,10 +503,11 @@ impl PatternPred {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct PatternMode {
   pub pos: Position,
   pub sym: (ModeSymId, String),
+  #[serde(skip_serializing_if = "Vec::is_empty")]
   pub args: Vec<Variable>,
 }
 impl PatternMode {
@@ -444,10 +516,11 @@ impl PatternMode {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct PatternAttr {
   pub pos: Position,
   pub sym: (AttrSymId, String),
+  #[serde(skip_serializing_if = "Vec::is_empty")]
   pub args: Vec<Variable>,
 }
 impl PatternAttr {
@@ -456,7 +529,7 @@ impl PatternAttr {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum Pattern {
   Pred(Box<PatternPred>),
   Func(Box<PatternFunc>),
@@ -475,39 +548,49 @@ impl Pattern {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct DefCase<T> {
   pub case: Box<T>,
   pub guard: Box<Formula>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct DefBody<T> {
   /// nPartialDefinientia
+  #[serde(skip_serializing_if = "Vec::is_empty")]
   pub cases: Vec<DefCase<T>>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub otherwise: Option<Box<T>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum DefValue {
   Term(DefBody<Term>),
   Formula(DefBody<Formula>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Definiens {
   pub pos: Position,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub label: Option<Box<Label>>,
   pub kind: DefValue,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum DefModeKind {
-  Expandable { expansion: Box<Type> },
-  Standard { spec: Option<Box<Type>>, def: Option<Box<Definiens>> },
+  Expandable {
+    expansion: Box<Type>,
+  },
+  Standard {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    spec: Option<Box<Type>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    def: Option<Box<Definiens>>,
+  },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum PatternRedef {
   Pred { new: Box<PatternPred>, orig: Box<PatternPred>, pos: bool },
   Func { new: Box<PatternFunc>, orig: Box<PatternFunc> },
@@ -515,10 +598,18 @@ pub enum PatternRedef {
   Attr { new: Box<PatternAttr>, orig: Box<PatternAttr>, pos: bool },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum Attr {
-  Attr { pos: Position, sym: (AttrSymId, String), args: Vec<Term> },
-  Non { pos: Position, attr: Box<Attr> },
+  Attr {
+    pos: Position,
+    sym: (AttrSymId, String),
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    args: Vec<Term>,
+  },
+  Non {
+    pos: Position,
+    attr: Box<Attr>,
+  },
 }
 
 impl Attr {
@@ -529,20 +620,33 @@ impl Attr {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum ClusterDeclKind {
-  Exist { concl: Vec<Attr>, ty: Box<Type> },
-  Func { term: Box<Term>, concl: Vec<Attr>, ty: Option<Box<Type>> },
-  Cond { antecedent: Vec<Attr>, concl: Vec<Attr>, ty: Box<Type> },
+  Exist {
+    concl: Vec<Attr>,
+    ty: Box<Type>,
+  },
+  Func {
+    term: Box<Term>,
+    concl: Vec<Attr>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ty: Option<Box<Type>>,
+  },
+  Cond {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    antecedent: Vec<Attr>,
+    concl: Vec<Attr>,
+    ty: Box<Type>,
+  },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Label {
   pub pos: Position,
   pub id: (Option<LabelId>, Rc<str>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum Assumption {
   Single { pos: Position, prop: Box<Proposition> },
   Collective { pos: Position, conds: Vec<Proposition> },
@@ -556,26 +660,27 @@ impl Assumption {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct SetDecl {
   pub var: Box<Variable>,
   pub value: Box<Term>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct TakeDecl {
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub var: Option<Box<Variable>>,
   pub term: Box<Term>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct IterStep {
   pub pos: Position,
   pub rhs: Term,
   pub just: Justification,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum Statement {
   Proposition {
     prop: Box<Proposition>,
@@ -589,18 +694,37 @@ pub enum Statement {
     steps: Vec<IterStep>,
   },
   Now {
-    end: Position,
+    #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<Box<Label>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     items: Vec<Item>,
+    end: Position,
   },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum DefinitionKind {
-  Func { pat: Box<PatternFunc>, spec: Option<Box<Type>>, def: Option<Box<Definiens>> },
-  Pred { pat: Box<PatternPred>, def: Option<Box<Definiens>> },
-  Mode { pat: Box<PatternMode>, kind: DefModeKind },
-  Attr { pat: Box<PatternAttr>, def: Option<Box<Definiens>> },
+  Func {
+    pat: Box<PatternFunc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    spec: Option<Box<Type>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    def: Option<Box<Definiens>>,
+  },
+  Pred {
+    pat: Box<PatternPred>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    def: Option<Box<Definiens>>,
+  },
+  Mode {
+    pat: Box<PatternMode>,
+    kind: DefModeKind,
+  },
+  Attr {
+    pat: Box<PatternAttr>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    def: Option<Box<Definiens>>,
+  },
 }
 
 impl DefinitionKind {
@@ -616,102 +740,123 @@ impl DefinitionKind {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct CorrCond {
   pub pos: Position,
   pub kind: CorrCondKind,
   pub just: Justification,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Correctness {
   pub pos: Position,
   pub just: Justification,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Property {
   pub pos: Position,
   pub kind: PropertyKind,
   pub just: Box<Justification>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct SchemeHead {
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub sym: Option<Rc<str>>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub nr: Option<SchId>,
   pub groups: Vec<SchemeBinderGroup>,
   pub concl: Formula,
   pub prems: Vec<Proposition>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct SchemeBlock {
-  pub end: Position,
+  #[serde(flatten)]
   pub head: SchemeHead,
+  #[serde(skip_serializing_if = "Vec::is_empty")]
   pub items: Vec<Item>,
+  pub end: Position,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Reservation {
   pub vars: Vec<Variable>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub tys: Option<Vec<Type>>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub fvars: Option<IdxVec<BoundId, ReservedId>>,
   pub ty: Box<Type>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Definition {
   pub kind: DefinitionKind,
+  #[serde(flatten)]
   pub body: DefinitionBody,
 }
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct DefinitionBody {
+  #[serde(skip_serializing_if = "std::ops::Not::not")]
   pub redef: bool,
+  #[serde(skip_serializing_if = "Vec::is_empty")]
   pub conds: Vec<CorrCond>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub corr: Option<Correctness>,
+  #[serde(skip_serializing_if = "Vec::is_empty")]
   pub props: Vec<Property>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct DefStruct {
+  #[serde(skip_serializing_if = "Vec::is_empty")]
   pub parents: Vec<Type>,
+  #[serde(skip_serializing_if = "Vec::is_empty")]
   pub fields: Vec<FieldGroup>,
   pub pat: PatternStruct,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Cluster {
   pub kind: ClusterDeclKind,
+  #[serde(skip_serializing_if = "Vec::is_empty")]
   pub conds: Vec<CorrCond>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub corr: Option<Correctness>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct IdentifyFunc {
   pub lhs: Box<PatternFunc>,
   pub rhs: Box<PatternFunc>,
+  #[serde(skip_serializing_if = "Vec::is_empty")]
   pub eqs: Vec<(Variable, Variable)>,
+  #[serde(skip_serializing_if = "Vec::is_empty")]
   pub conds: Vec<CorrCond>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub corr: Option<Correctness>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Reduction {
   pub from: Box<Term>,
   pub to: Box<Term>,
+  #[serde(skip_serializing_if = "Vec::is_empty")]
   pub conds: Vec<CorrCond>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub corr: Option<Correctness>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct CaseBlock {
-  pub end: Position,
   pub hyp: Box<Assumption>,
+  #[serde(skip_serializing_if = "Vec::is_empty")]
   pub items: Vec<Item>,
+  pub end: Position,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum Pragma {
   /// $CD, $CT, $CS
   Canceled(CancelKind, u32),
@@ -754,13 +899,14 @@ impl FromStr for Pragma {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum ItemKind {
   Section,
   Block {
-    end: Position,
     kind: BlockKind,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     items: Vec<Item>,
+    end: Position,
   },
   SchemeBlock(Box<SchemeBlock>),
   Theorem {
@@ -770,7 +916,6 @@ pub enum ItemKind {
   Reservation(Vec<Reservation>),
   /// itConclusion
   Thus(Statement),
-  Statement(Statement),
   /// itChoice
   Consider {
     vars: Vec<BinderGroup>,
@@ -785,12 +930,14 @@ pub enum ItemKind {
   /// itPrivFuncDefinition
   DefFunc {
     var: Box<Variable>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     tys: Vec<Type>,
     value: Box<Term>,
   },
   /// itPrivPredDefinition
   DefPred {
     var: Box<Variable>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     tys: Vec<Type>,
     value: Box<Formula>,
   },
@@ -799,6 +946,7 @@ pub enum ItemKind {
   /// itGeneralization, itLociDeclaration
   Let {
     vars: Vec<BinderGroup>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     conds: Vec<Proposition>,
   },
   /// itExistentialAssumption
@@ -811,6 +959,7 @@ pub enum ItemKind {
   PerCases {
     just: Box<Justification>,
     kind: CaseKind,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     blocks: Vec<CaseBlock>,
   },
   Assume(Assumption),
@@ -832,6 +981,8 @@ pub enum ItemKind {
   CaseHead(CaseKind, Assumption),
   /// parser internal use only
   PerCasesHead(Box<Justification>),
+  #[serde(untagged)]
+  Statement(Statement),
 }
 
 impl Default for ItemKind {

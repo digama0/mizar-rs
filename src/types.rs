@@ -2,6 +2,8 @@ use crate::accom::SigBuilder;
 use crate::VisitMut;
 use enum_map::{Enum, EnumMap};
 use paste::paste;
+use serde::Serialize;
+use serde_derive::Serialize;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::marker::PhantomData;
@@ -76,6 +78,13 @@ impl<I, T: PartialEq> PartialEq for IdxVec<I, T> {
   fn eq(&self, other: &Self) -> bool { self.0 == other.0 }
 }
 impl<I, T: Eq> Eq for IdxVec<I, T> {}
+
+impl<I, T: Serialize> Serialize for IdxVec<I, T> {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where S: serde::Serializer {
+    self.0.serialize(serializer)
+  }
+}
 
 impl<I, T> IdxVec<I, T> {
   /// Construct a new empty [`IdxVec`].
@@ -203,7 +212,7 @@ impl<I: Idx, T> Index<Range<I>> for IdxVec<I, T> {
 macro_rules! mk_id {
   ($($id:ident($ty:ty) $(+ Visit($visit:ident))?,)*) => {
     $(
-      #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+      #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, serde_derive::Serialize)]
       pub struct $id(pub $ty);
       impl $crate::Idx for $id {
         fn from_usize(n: usize) -> Self { Self(n as $ty) }
@@ -1030,6 +1039,13 @@ impl std::fmt::Display for Article {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.as_str().fmt(f) }
 }
 
+impl serde::Serialize for Article {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where S: serde::Serializer {
+    self.as_str().serialize(serializer)
+  }
+}
+
 #[derive(Debug)]
 pub enum ToArticleError {
   TooLong,
@@ -1078,7 +1094,7 @@ impl Article {
 
 macro_rules! mk_property_kind {
   (enum $ty:ident { $($(#[$attr:meta])* $id:ident = $upper:literal | $lower:literal,)* }) => {
-    #[derive(Copy, Clone, Debug, Enum, PartialEq, Eq)]
+    #[derive(Copy, Clone, Debug, Enum, PartialEq, Eq, Serialize)]
     pub enum $ty {
       $($(#[$attr])* $id,)*
     }
@@ -1869,6 +1885,12 @@ impl std::fmt::Debug for Position {
     write!(f, "{}:{}", self.line, self.col)
   }
 }
+impl serde::Serialize for Position {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where S: serde::Serializer {
+    (self.line, self.col).serialize(serializer)
+  }
+}
 
 #[derive(Clone, Debug)]
 pub enum SchemeDecl {
@@ -2091,7 +2113,7 @@ pub enum Registration {
   Property { kind: Property, prop: Proposition, just: Justification },
 }
 
-#[derive(Clone, Copy, Debug, Enum, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Enum, PartialEq, Eq, Serialize)]
 pub enum CorrCondKind {
   Coherence,
   Compatibility,
@@ -2170,7 +2192,7 @@ pub struct SchemeBlock {
   pub just: Justification,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize)]
 pub enum CancelKind {
   Def,
   Thm,
@@ -2212,7 +2234,7 @@ pub struct PerCases {
   pub thesis: Option<Thesis>,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize)]
 pub enum BlockKind {
   Definition,
   Registration,

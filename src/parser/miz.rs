@@ -5,6 +5,7 @@ use crate::types::{
   PriorityKind, PropertyKind, RightBrkSymId, SchId, StructSymId, SymbolKind, Symbols, ThmId,
   MAX_ARTICLE_LEN,
 };
+use crate::write::OWriteJson;
 use crate::READ_MAX_LINE_COUNT;
 use enum_map::Enum;
 use indicatif::ProgressBar;
@@ -393,10 +394,13 @@ pub struct Parser<'a> {
   pub func_prio: HashMap<FuncSymId, u32>,
   #[allow(clippy::box_collection)]
   pub format_lookup: Box<HashMap<Format, FormatId>>,
+  pub write_json: OWriteJson,
 }
 
 impl<'a> Parser<'a> {
-  pub fn new(art: Article, progress: Option<&ProgressBar>, data: &'a [u8]) -> Self {
+  pub fn new(
+    art: Article, progress: Option<&ProgressBar>, data: &'a [u8], write_json: OWriteJson,
+  ) -> Self {
     Self {
       scan: Scanner::new(data, progress),
       art,
@@ -408,6 +412,7 @@ impl<'a> Parser<'a> {
       max_pred_rhs: Default::default(),
       func_prio: Default::default(),
       format_lookup: Default::default(),
+      write_json,
     }
   }
 
@@ -487,7 +492,8 @@ impl<'a> Parser<'a> {
         _ => panic!("{:?}: expected 'begin'", tok.pos),
       }
     }
-    self.scan.allow_underscore = false
+    self.scan.allow_underscore = false;
+    self.write_json.on(|w| w.write_env(dirs))
   }
 
   fn parse_variable(&mut self) -> Variable {
@@ -1960,7 +1966,9 @@ impl<'a> Parser<'a> {
         kind
       }
     };
-    buf.push(Item { pos: tok.pos, kind });
+    let item = Item { pos: tok.pos, kind };
+    self.write_json.on(|w| w.write_item(&item));
+    buf.push(item);
     true
   }
 }
