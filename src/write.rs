@@ -1919,7 +1919,7 @@ impl MizPath {
   pub fn write_json(&self, write: bool) -> OWriteJson {
     OWriteJson(write.then(|| {
       let mut w = BufWriter::new(self.create(true, false, "mzp.json").unwrap());
-      writeln!(w, "{{\"version\":{},", MZP_VERSION).unwrap();
+      writeln!(w, "{{\"version\":{MZP_VERSION},").unwrap();
       Box::new(WriteJson { w, state: JsonState::Start })
     }))
   }

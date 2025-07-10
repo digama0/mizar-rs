@@ -65,37 +65,44 @@ pub enum Term {
   },
   Infix {
     pos: Position,
-    sym: (FuncSymId, String),
+    sym: FuncSymId,
+    spelling: String,
     left: u8,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     args: Vec<Term>,
   },
   Bracket {
     pos: Position,
-    lsym: (LeftBrkSymId, String),
-    rsym: (RightBrkSymId, String),
+    lsym: LeftBrkSymId,
+    lspelling: String,
+    rsym: RightBrkSymId,
+    rspelling: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     args: Vec<Term>,
   },
   Aggregate {
     pos: Position,
-    sym: (StructSymId, String),
+    sym: StructSymId,
+    spelling: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     args: Vec<Term>,
   },
   SubAggr {
     pos: Position,
-    sym: (StructSymId, String),
+    sym: StructSymId,
+    spelling: String,
     arg: Box<Term>,
   },
   Selector {
     pos: Position,
-    sym: (SelSymId, String),
+    sym: SelSymId,
+    spelling: String,
     arg: Box<Term>,
   },
   InternalSelector {
     pos: Position,
-    sym: (SelSymId, String),
+    sym: SelSymId,
+    spelling: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<ConstId>,
   },
@@ -151,13 +158,15 @@ mk_id! {
 pub enum Type {
   Mode {
     pos: Position,
-    sym: (ModeSymId, String),
+    sym: ModeSymId,
+    spelling: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     args: Vec<Term>,
   },
   Struct {
     pos: Position,
-    sym: (StructSymId, String),
+    sym: StructSymId,
+    spelling: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     args: Vec<Term>,
   },
@@ -211,7 +220,8 @@ pub enum FormulaBinder {
 pub struct Pred {
   pub pos: Position,
   pub positive: bool,
-  pub sym: (PredSymId, String),
+  pub sym: PredSymId,
+  pub spelling: String,
   pub left: u8,
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub args: Vec<Term>,
@@ -221,7 +231,8 @@ pub struct Pred {
 pub struct PredRhs {
   pub pos: Position,
   pub positive: bool,
-  pub sym: (PredSymId, String),
+  pub sym: PredSymId,
+  pub spelling: String,
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub right: Vec<Term>,
 }
@@ -319,6 +330,7 @@ pub enum InferenceKind {
     link: Option<Position>,
   },
   From {
+    #[serde(flatten)]
     sch: SchRef,
   },
 }
@@ -421,7 +433,8 @@ impl CaseKind {
 #[derive(Debug, Serialize)]
 pub struct Field {
   pub pos: Position,
-  pub sym: (SelSymId, Rc<str>),
+  pub sym: SelSymId,
+  pub spelling: Rc<str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -433,34 +446,38 @@ pub struct FieldGroup {
 
 #[derive(Debug, Serialize)]
 pub struct PatternStruct {
-  pub sym: (StructSymId, String),
+  pub sym: StructSymId,
+  pub spelling: String,
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub args: Vec<Variable>,
 }
 
 impl PatternStruct {
   pub fn to_mode_format(&self) -> FormatStruct {
-    FormatStruct { sym: self.sym.0, args: self.args.len() as u8 }
+    FormatStruct { sym: self.sym, args: self.args.len() as u8 }
   }
   pub fn to_aggr_format(&self, n: usize) -> FormatAggr {
-    FormatAggr { sym: self.sym.0, args: n as u8 }
+    FormatAggr { sym: self.sym, args: n as u8 }
   }
-  pub fn to_subaggr_format(&self) -> StructSymId { self.sym.0 }
+  pub fn to_subaggr_format(&self) -> StructSymId { self.sym }
 }
 
 #[derive(Debug, Serialize)]
 pub enum PatternFunc {
   Func {
     pos: Position,
-    sym: (FuncSymId, String),
+    sym: FuncSymId,
+    spelling: String,
     left: u8,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     args: Vec<Variable>,
   },
   Bracket {
     pos: Position,
-    lsym: (LeftBrkSymId, String),
-    rsym: (RightBrkSymId, String),
+    lsym: LeftBrkSymId,
+    lspelling: String,
+    rsym: RightBrkSymId,
+    rspelling: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     args: Vec<Variable>,
   },
@@ -481,10 +498,10 @@ impl PatternFunc {
   }
   pub fn to_format(&self) -> FormatFunc {
     match *self {
-      PatternFunc::Func { ref sym, left, ref args, .. } =>
-        FormatFunc::Func { sym: sym.0, left, right: args.len() as u8 - left },
-      PatternFunc::Bracket { ref lsym, ref rsym, ref args, .. } =>
-        FormatFunc::Bracket { lsym: lsym.0, rsym: rsym.0, args: args.len() as u8 },
+      PatternFunc::Func { sym, left, ref args, .. } =>
+        FormatFunc::Func { sym, left, right: args.len() as u8 - left },
+      PatternFunc::Bracket { lsym, rsym, ref args, .. } =>
+        FormatFunc::Bracket { lsym, rsym, args: args.len() as u8 },
     }
   }
 }
@@ -492,40 +509,43 @@ impl PatternFunc {
 #[derive(Debug, Serialize)]
 pub struct PatternPred {
   pub pos: Position,
-  pub sym: (PredSymId, String),
+  pub sym: PredSymId,
+  pub spelling: String,
   pub left: u8,
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub args: Vec<Variable>,
 }
 impl PatternPred {
   pub fn to_format(&self) -> FormatPred {
-    FormatPred { sym: self.sym.0, left: self.left, right: self.args.len() as u8 - self.left }
+    FormatPred { sym: self.sym, left: self.left, right: self.args.len() as u8 - self.left }
   }
 }
 
 #[derive(Debug, Serialize)]
 pub struct PatternMode {
   pub pos: Position,
-  pub sym: (ModeSymId, String),
+  pub sym: ModeSymId,
+  pub spelling: String,
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub args: Vec<Variable>,
 }
 impl PatternMode {
   pub fn to_format(&self) -> FormatMode {
-    FormatMode { sym: self.sym.0, args: self.args.len() as u8 }
+    FormatMode { sym: self.sym, args: self.args.len() as u8 }
   }
 }
 
 #[derive(Debug, Serialize)]
 pub struct PatternAttr {
   pub pos: Position,
-  pub sym: (AttrSymId, String),
+  pub sym: AttrSymId,
+  pub spelling: String,
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub args: Vec<Variable>,
 }
 impl PatternAttr {
   pub fn to_format(&self) -> FormatAttr {
-    FormatAttr { sym: self.sym.0, args: self.args.len() as u8 }
+    FormatAttr { sym: self.sym, args: self.args.len() as u8 }
   }
 }
 
@@ -602,7 +622,8 @@ pub enum PatternRedef {
 pub enum Attr {
   Attr {
     pos: Position,
-    sym: (AttrSymId, String),
+    sym: AttrSymId,
+    spelling: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     args: Vec<Term>,
   },
@@ -643,7 +664,8 @@ pub enum ClusterDeclKind {
 #[derive(Debug, Serialize)]
 pub struct Label {
   pub pos: Position,
-  pub id: (Option<LabelId>, Rc<str>),
+  pub id: Option<LabelId>,
+  pub spelling: Rc<str>,
 }
 
 #[derive(Debug, Serialize)]

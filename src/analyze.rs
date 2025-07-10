@@ -344,11 +344,11 @@ impl Analyzer<'_> {
             let label = prop
               .label
               .as_ref()
-              .map(|l| (self.label_names.peek(), self.r.lc.formatter.intern_id(&l.id.1)));
+              .map(|l| (self.label_names.peek(), self.r.lc.formatter.intern_id(&l.spelling)));
             w.start_theorem(&self.r.lc, it.pos, label, &f)
           });
           let f = f.visit_cloned(&mut self.r.intern_const());
-          let label = prop.label.as_ref().map(|l| l.id.clone());
+          let label = prop.label.as_ref().map(|l| (l.id, l.spelling.clone()));
           self.elab_justification_intro_reserved(label.as_ref(), &f, just, block);
           self.write_xml.on(|w| w.end_theorem());
           self.push_prop(label, f)
@@ -500,7 +500,8 @@ impl Analyzer<'_> {
     self.write_xml.on(|w| w.start_scheme_prems());
     let prems = (prems.iter_mut())
       .map(|prop| {
-        let label = prop.label.as_ref().map(|l| (self.label_names.peek(), self.intern_id(&l.id.1)));
+        let label =
+          prop.label.as_ref().map(|l| (self.label_names.peek(), self.intern_id(&l.spelling)));
         let f = self.elab_proposition_forall_reserved(prop, true);
         self.write_xml.on(|w| w.write_proposition(&self.r.lc, prop.f.pos(), label, &f));
         f
@@ -622,7 +623,8 @@ impl Analyzer<'_> {
             for prop in conds {
               let f = self.elab_formula_forall_reserved(&mut prop.f, true).0;
               f.clone().append_conjuncts_to(conjs);
-              to_push.push((prop.f.pos(), prop.label.as_ref().map(|l| l.id.clone()), f))
+              let label = prop.label.as_ref().map(|l| (l.id, l.spelling.clone()));
+              to_push.push((prop.f.pos(), label, f))
             }
           })
           .mk_neg();
@@ -666,11 +668,11 @@ impl Analyzer<'_> {
           let label = prop
             .label
             .as_ref()
-            .map(|l| (self.label_names.peek(), self.r.lc.formatter.intern_id(&l.id.1)));
+            .map(|l| (self.label_names.peek(), self.r.lc.formatter.intern_id(&l.spelling)));
           w.write_proposition(&self.r.lc, pos, label, &f)
         });
         f.visit(&mut self.r.intern_const());
-        let label = prop.label.as_ref().map(|l| l.id.clone());
+        let label = prop.label.as_ref().map(|l| (l.id, l.spelling.clone()));
         self.elab_justification_intro_reserved(label.as_ref(), &f, just, block);
         self.push_prop(label, f.clone());
         f
@@ -684,7 +686,7 @@ impl Analyzer<'_> {
                 let label = prop
                   .label
                   .as_ref()
-                  .map(|l| (self.label_names.peek(), self.r.lc.formatter.intern_id(&l.id.1)));
+                  .map(|l| (self.label_names.peek(), self.r.lc.formatter.intern_id(&l.spelling)));
                 w.start_iter_equality(&self.r.lc, pos, label, lhs);
                 w.start_iter_step(&self.r.lc, rhs);
               });
@@ -704,7 +706,7 @@ impl Analyzer<'_> {
                 w.end_iter_equality()
               });
               let f = self.g.reqs.mk_eq(lhs.clone(), mid);
-              self.push_prop(prop.label.as_ref().map(|l| l.id.clone()), f.clone());
+              self.push_prop(prop.label.as_ref().map(|l| (l.id, l.spelling.clone())), f.clone());
               return f
             }
           }
@@ -718,10 +720,10 @@ impl Analyzer<'_> {
             pos,
             label
               .as_ref()
-              .map(|l| (self.label_names.peek(), self.r.lc.formatter.intern_id(&l.id.1))),
+              .map(|l| (self.label_names.peek(), self.r.lc.formatter.intern_id(&l.spelling))),
           )
         });
-        let label = label.as_ref().map(|l| l.id.clone());
+        let label = label.as_ref().map(|l| (l.id, l.spelling.clone()));
         let f = self.scope(label.is_some(), false, true, |this| {
           ReconstructThesis { stack: vec![ProofStep::Break(true)] }.elab_proof(this, items, *end)
         });
@@ -794,7 +796,7 @@ impl Analyzer<'_> {
   ) -> Formula {
     let f = self.elab_intern_formula_forall_reserved(&mut prop.f, true);
     if quotable && self.g.cfg.analyzer_full {
-      self.push_prop(prop.label.as_ref().map(|l| l.id.clone()), f.clone());
+      self.push_prop(prop.label.as_ref().map(|l| (l.id, l.spelling.clone())), f.clone());
     }
     f
   }
@@ -849,7 +851,7 @@ impl Analyzer<'_> {
               InferenceKind::From { sch: (art, id) },
             ast::InferenceKind::From { sch: ast::SchRef::UnresolvedPriv(name) } => {
               let sch = *(self.sch_names.0.get(&**name))
-                .unwrap_or_else(|| panic!("local scheme '{}' not found", name));
+                .unwrap_or_else(|| panic!("local scheme '{name}' not found"));
               InferenceKind::From { sch: (ArticleId::SELF, sch) }
             }
           },
@@ -1093,14 +1095,10 @@ impl Analyzer<'_> {
           None => panic!("{pos:?}: unresolved variable '{spelling}'"),
         },
       ast::Term::Numeral { value, .. } => Term::Numeral(value),
-      ast::Term::Infix { ref sym, left, ref args, .. } => self.elab_functor_term(
-        FormatFunc::Func { sym: sym.0, left, right: args.len() as u8 - left },
-        args,
-      ),
-      ast::Term::Bracket { ref lsym, ref rsym, ref args, .. } => self.elab_functor_term(
-        FormatFunc::Bracket { lsym: lsym.0, rsym: rsym.0, args: args.len() as u8 },
-        args,
-      ),
+      ast::Term::Infix { sym, left, ref args, .. } =>
+        self.elab_functor_term(FormatFunc::Func { sym, left, right: args.len() as u8 - left }, args),
+      ast::Term::Bracket { lsym, rsym, ref args, .. } =>
+        self.elab_functor_term(FormatFunc::Bracket { lsym, rsym, args: args.len() as u8 }, args),
       ast::Term::PrivFunc { pos, kind, ref spelling, ref args } => {
         let mut args = self.elab_terms_qua(args);
         match kind.or_else(|| self.lookup.func.get(&(spelling.clone(), args.len() as u32)).copied())
@@ -1122,9 +1120,9 @@ impl Analyzer<'_> {
           None => panic!("{pos:?}: unresolved private functor '{spelling}'"),
         }
       }
-      ast::Term::Aggregate { ref sym, ref args, .. } => {
+      ast::Term::Aggregate { sym, ref args, .. } => {
         let args = self.elab_terms_qua(args);
-        let fmt = self.formats[&Format::Aggr(FormatAggr { sym: sym.0, args: args.len() as u8 })];
+        let fmt = self.formats[&Format::Aggr(FormatAggr { sym, args: args.len() as u8 })];
         for pat in self.notations[PKC::Aggr].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
@@ -1139,9 +1137,9 @@ impl Analyzer<'_> {
         }
         panic!("type error")
       }
-      ast::Term::SubAggr { ref sym, ref arg, .. } => {
+      ast::Term::SubAggr { sym, ref arg, .. } => {
         let arg = self.elab_term_qua(arg);
-        let fmt = self.formats[&Format::SubAggr(sym.0)];
+        let fmt = self.formats[&Format::SubAggr(sym)];
         for pat in self.notations[PKC::SubAggr].iter().rev() {
           if pat.fmt == fmt
             && pat.check_types(&self.g, &self.lc, std::slice::from_ref(&arg)).is_some()
@@ -1153,9 +1151,9 @@ impl Analyzer<'_> {
         }
         panic!("type error")
       }
-      ast::Term::Selector { ref sym, ref arg, .. } => {
+      ast::Term::Selector { sym, ref arg, .. } => {
         let arg = self.elab_term_qua(arg);
-        let fmt = self.formats[&Format::Sel(sym.0)];
+        let fmt = self.formats[&Format::Sel(sym)];
         for pat in self.notations[PKC::Sel].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, std::slice::from_ref(&arg)) {
@@ -1170,10 +1168,10 @@ impl Analyzer<'_> {
         }
         panic!("type error")
       }
-      ast::Term::InternalSelector { pos, ref sym, id } => {
+      ast::Term::InternalSelector { pos, sym, id, .. } => {
         // only occurs inside elab_struct_def, ensured by parser
         Term::Const(
-          id.or_else(|| self.internal_selectors.get(&sym.0).copied())
+          id.or_else(|| self.internal_selectors.get(&sym).copied())
             .unwrap_or_else(|| panic!("{pos:?}: this struct does not have this field")),
         )
       }
@@ -1201,11 +1199,11 @@ impl Analyzer<'_> {
   fn elab_is_attr(&mut self, attr: &ast::Attr, pos: bool, tm: &TermQua) -> Formula {
     match attr {
       ast::Attr::Non { attr, .. } => self.elab_is_attr(attr, !pos, tm),
-      ast::Attr::Attr { sym, args, .. } => {
+      &ast::Attr::Attr { sym, ref args, .. } => {
         let args = (args.iter().map(|t| self.elab_term_qua(t)))
           .chain(std::iter::once(tm.clone()))
           .collect_vec();
-        let fmt = self.formats[&Format::Attr(FormatAttr { sym: sym.0, args: args.len() as u8 })];
+        let fmt = self.formats[&Format::Attr(FormatAttr { sym, args: args.len() as u8 })];
         for pat in self.notations[PKC::Attr].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
@@ -1226,13 +1224,13 @@ impl Analyzer<'_> {
   fn elab_attr(&mut self, attr: &ast::Attr, mut pos: bool, ty: &mut Type) -> Attr {
     match attr {
       ast::Attr::Non { attr, .. } => self.elab_attr(attr, !pos, ty),
-      ast::Attr::Attr { sym, args, .. } => {
+      &ast::Attr::Attr { sym, ref args, .. } => {
         // vprintln!("elab_attr {attr:?} <- {ty:?}");
         let v = self.lc.bound_var.push((IdentId::NONE, std::mem::take(ty)));
         let args = (args.iter().map(|t| self.elab_term_qua(t)))
           .chain(std::iter::once(Term::Bound(v)))
           .collect_vec();
-        let fmt = self.formats[&Format::Attr(FormatAttr { sym: sym.0, args: args.len() as u8 })];
+        let fmt = self.formats[&Format::Attr(FormatAttr { sym, args: args.len() as u8 })];
         for pat in self.r.notations[PKC::Attr].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
@@ -1261,9 +1259,9 @@ impl Analyzer<'_> {
   fn elab_type(&mut self, ty: &ast::Type) -> Type {
     vprintln!("elab_type {ty:?}");
     let res = (|| match ty {
-      ast::Type::Mode { sym, args, .. } => {
+      &ast::Type::Mode { sym, ref args, .. } => {
         let args = self.elab_terms_qua(args);
-        let fmt = self.formats[&Format::Mode(FormatMode { sym: sym.0, args: args.len() as u8 })];
+        let fmt = self.formats[&Format::Mode(FormatMode { sym, args: args.len() as u8 })];
         for pat in self.notations[PKC::Mode].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
@@ -1302,10 +1300,9 @@ impl Analyzer<'_> {
         }
         panic!("type error")
       }
-      ast::Type::Struct { sym, args, .. } => {
+      &ast::Type::Struct { sym, ref args, .. } => {
         let args = self.elab_terms_qua(args);
-        let fmt =
-          self.formats[&Format::Struct(FormatStruct { sym: sym.0, args: args.len() as u8 })];
+        let fmt = self.formats[&Format::Struct(FormatStruct { sym, args: args.len() as u8 })];
         for pat in self.notations[PKC::Struct].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
@@ -1775,13 +1772,12 @@ impl Analyzer<'_> {
       ast::Formula::Pred(pred) => {
         let args = self.elab_terms_qua(&pred.args);
         let right = args.len() as u8 - pred.left;
-        let fmt = FormatPred { sym: pred.sym.0, left: pred.left, right };
+        let fmt = FormatPred { sym: pred.sym, left: pred.left, right };
         self.elab_pred(fmt, args.into(), pred.positive == positive)
       }
       ast::Formula::ChainPred { first, rest, .. } => {
-        let mut args = self.elab_terms_qua(&first.args).into_vec();
-        let mut sym = first.sym.0;
-        let mut left = first.left;
+        let ast::Pred { mut sym, mut left, ref args, .. } = **first;
+        let mut args = self.elab_terms_qua(args).into_vec();
         Formula::mk_and_with(|conjs| {
           for rhs in rest {
             let mut mid: Vec<_> = args[left as usize..].into();
@@ -1789,7 +1785,7 @@ impl Analyzer<'_> {
             let fmt = FormatPred { sym, left, right };
             self.elab_pred(fmt, args, rhs.positive).append_conjuncts_to(conjs);
             mid.extend(rhs.right.iter().map(|t| self.elab_term_qua(t)));
-            (args, sym, left) = (mid, rhs.sym.0, right);
+            (args, sym, left) = (mid, rhs.sym, right);
           }
           let right = args.len() as u8 - left;
           let fmt = FormatPred { sym, left, right };
@@ -2159,7 +2155,8 @@ impl Analyzer<'_> {
     let mut conjs = vec![];
     self.write_xml.on(|w| w.start_assume());
     for prop in conds {
-      let label = prop.label.as_ref().map(|l| (self.label_names.peek(), self.intern_id(&l.id.1)));
+      let label =
+        prop.label.as_ref().map(|l| (self.label_names.peek(), self.intern_id(&l.spelling)));
       let f = self.elab_proposition_forall_reserved(prop, true);
       self.write_xml.on(|w| w.write_proposition(&self.r.lc, prop.f.pos(), label, &f));
       f.append_conjuncts_to(&mut conjs);
@@ -2900,7 +2897,7 @@ trait ReadProof {
         let mut f = Formula::mk_and_with(|conjs| {
           conds.iter_mut().for_each(|prop| {
             let label =
-              prop.label.as_ref().map(|l| (elab.label_names.peek(), elab.intern_id(&l.id.1)));
+              prop.label.as_ref().map(|l| (elab.label_names.peek(), elab.intern_id(&l.spelling)));
             let f = elab.elab_proposition_forall_reserved(prop, true);
             elab.write_xml.on(|_| conds2.push((prop.f.pos(), label, f.clone())));
             f.append_conjuncts_to(conjs)
@@ -2947,8 +2944,8 @@ trait ReadProof {
             let (case, o) = elab.scope(false, true, false, |elab| {
               let case = Formula::mk_and_with(|conjs| {
                 for prop in bl.hyp.conds() {
-                  let label =
-                    prop.label.as_ref().map(|l| (elab.label_names.peek(), elab.intern_id(&l.id.1)));
+                  let label = (prop.label.as_ref())
+                    .map(|l| (elab.label_names.peek(), elab.intern_id(&l.spelling)));
                   let f = elab.elab_proposition_forall_reserved(prop, true);
                   elab.write_xml.on(|w| w.write_proposition(&elab.r.lc, prop.f.pos(), label, &f));
                   f.append_conjuncts_to(conjs);
@@ -2982,8 +2979,8 @@ trait ReadProof {
             let (case, o) = elab.scope(false, true, false, |elab| {
               let case = Formula::mk_and_with(|conjs| {
                 for prop in bl.hyp.conds() {
-                  let label =
-                    prop.label.as_ref().map(|l| (elab.label_names.peek(), elab.intern_id(&l.id.1)));
+                  let label = (prop.label.as_ref())
+                    .map(|l| (elab.label_names.peek(), elab.intern_id(&l.spelling)));
                   let f = elab.elab_proposition_forall_reserved(prop, true);
                   elab.write_xml.on(|w| w.write_proposition(&elab.r.lc, prop.f.pos(), label, &f));
                   f.append_conjuncts_to(conjs);
@@ -3810,7 +3807,8 @@ impl BlockReader {
   ) {
     elab.write_xml.on(|w| {
       let label = def.as_ref().map(|d| {
-        d.label.as_ref().map(|l| (elab.label_names.peek(), elab.r.lc.formatter.intern_id(&l.id.1)))
+        (d.label.as_ref())
+          .map(|l| (elab.label_names.peek(), elab.r.lc.formatter.intern_id(&l.spelling)))
       });
       w.start_def(DefinitionKind::Func, loc, label, it.redef)
     });
@@ -3940,7 +3938,7 @@ impl BlockReader {
         assumptions: self.assums(),
         value,
       });
-      let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.clone());
+      let label = def.as_ref().unwrap().label.as_ref().map(|l| (l.id, l.spelling.clone()));
       self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Func(n), df, label, thm })));
     }
     elab.push_mk_pattern(true, PKC::Func, PatternKind::Func(n), fmt, primary, visible, true);
@@ -3953,7 +3951,8 @@ impl BlockReader {
   ) {
     elab.write_xml.on(|w| {
       let label = def.as_ref().map(|d| {
-        d.label.as_ref().map(|l| (elab.label_names.peek(), elab.r.lc.formatter.intern_id(&l.id.1)))
+        (d.label.as_ref())
+          .map(|l| (elab.label_names.peek(), elab.r.lc.formatter.intern_id(&l.spelling)))
       });
       w.start_def(DefinitionKind::Pred, loc, label, it.redef)
     });
@@ -4038,7 +4037,7 @@ impl BlockReader {
         assumptions: self.assums(),
         value: DefValue::Formula(value),
       });
-      let label = def.as_deref_mut().unwrap().label.as_ref().map(|l| l.id.clone());
+      let label = def.as_deref_mut().unwrap().label.as_ref().map(|l| (l.id, l.spelling.clone()));
       self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Pred(n), df, label, thm })));
     }
     elab.push_mk_pattern(true, PKC::Pred, PatternKind::Pred(n), fmt, primary, visible, pos);
@@ -4071,7 +4070,7 @@ impl BlockReader {
           let label = def.as_deref().map(|d| {
             d.label
               .as_ref()
-              .map(|l| (elab.label_names.peek(), elab.r.lc.formatter.intern_id(&l.id.1)))
+              .map(|l| (elab.label_names.peek(), elab.r.lc.formatter.intern_id(&l.spelling)))
           });
           w.start_def(DefinitionKind::Mode, loc, label, it.redef)
         });
@@ -4191,7 +4190,7 @@ impl BlockReader {
             assumptions: self.assums(),
             value: DefValue::Formula(value),
           });
-          let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.clone());
+          let label = def.as_ref().unwrap().label.as_ref().map(|l| (l.id, l.spelling.clone()));
           self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Mode(n), df, label, thm })));
         }
         elab.push_mk_pattern(true, PKC::Mode, PatternKind::Mode(n), fmt, primary, visible, true)
@@ -4206,7 +4205,8 @@ impl BlockReader {
   ) {
     elab.write_xml.on(|w| {
       let label = def.as_deref().map(|d| {
-        d.label.as_ref().map(|l| (elab.label_names.peek(), elab.r.lc.formatter.intern_id(&l.id.1)))
+        (d.label.as_ref())
+          .map(|l| (elab.label_names.peek(), elab.r.lc.formatter.intern_id(&l.spelling)))
       });
       w.start_def(DefinitionKind::Attr, loc, label, it.redef)
     });
@@ -4284,7 +4284,7 @@ impl BlockReader {
         assumptions: self.assums(),
         value: DefValue::Formula(value),
       });
-      let label = def.as_ref().unwrap().label.as_ref().map(|l| l.id.clone());
+      let label = def.as_ref().unwrap().label.as_ref().map(|l| (l.id, l.spelling.clone()));
       self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Attr(n), df, label, thm })));
     }
     elab.push_mk_pattern(true, PKC::Attr, PatternKind::Attr(n), fmt, primary, visible, pos);
@@ -4318,12 +4318,12 @@ impl BlockReader {
     let mut cur_locus = LocusId(base);
     for group in &it.fields {
       let ty = elab.elab_type(&group.ty);
-      for field in &group.vars {
-        let id = elab.intern_id(&field.sym.1);
+      for &ast::Field { sym, ref spelling, .. } in &group.vars {
+        let id = elab.intern_id(spelling);
         let c = elab.lc.fixed_var.push(FixedVar { id, ty: ty.clone(), def: None });
         self.to_locus.0.push(Some(cur_locus.fresh()));
         if elab.g.cfg.nameck_enabled {
-          elab.internal_selectors.insert(field.sym.0, c);
+          elab.internal_selectors.insert(sym, c);
         }
       }
     }
@@ -4376,7 +4376,7 @@ impl BlockReader {
     let mut new_fields = vec![];
     let mut field_pats = vec![];
     for (v, mut ty) in it.fields.iter().flat_map(|group| &group.vars).zip(field_tys) {
-      let fmt = elab.formats[&Format::Sel(v.sym.0)];
+      let fmt = elab.formats[&Format::Sel(v.sym)];
       assert!(!field_fmt.contains(&fmt), "duplicate field name");
       field_fmt.push(fmt);
       ty.visit(&mut mk_sel);

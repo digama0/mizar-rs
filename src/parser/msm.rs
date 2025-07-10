@@ -358,7 +358,7 @@ impl MsmParser {
           }
         }
         let args = self.parse_terms()?;
-        Attr::Attr { pos, sym: (sym, spelling), args }
+        Attr::Attr { pos, sym, spelling, args }
       }
       b"NegatedAdjective" => {
         let attr =
@@ -788,7 +788,7 @@ impl MsmParser {
           self.r.end_tag(&mut self.buf)?;
           fields.push(FieldGroup { pos, vars, ty: *ty })
         }
-        let pat = PatternStruct { sym: (sym, spelling), args };
+        let pat = PatternStruct { sym, spelling, args };
         ItemKind::DefStruct(Box::new(DefStruct { parents, fields, pat }))
       }
       b"Pred-Synonym" => {
@@ -1089,9 +1089,10 @@ impl MsmParser {
                 _ => {}
               }
             }
-            Elem::Label(
-              (!spelling.is_empty()).then(|| Box::new(Label { pos, id: (id, spelling.into()) })),
-            )
+            Elem::Label((!spelling.is_empty()).then(|| {
+              let spelling = spelling.into();
+              Box::new(Label { pos, id, spelling })
+            }))
           }
           b"Link" => Elem::Link(self.r.get_pos(&e)?),
           b"Local-Reference" => {
@@ -1238,22 +1239,23 @@ impl MsmParser {
             while let Some(t) = self.parse_term()? {
               args.push(*t);
             }
-            Elem::Term(Box::new(Term::Infix { pos, sym: (sym, spelling), left, args }))
+            Elem::Term(Box::new(Term::Infix { pos, sym, spelling, left, args }))
           }
           b"Circumfix-Term" => {
-            let (mut pos, (mut lsym, mut lsp)) = <(Position, _)>::default();
+            let (mut pos, (mut lsym, mut lspelling)) = <(Position, _)>::default();
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => lsym = LeftBrkSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => lsp = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => lspelling = attr.unescape_value().unwrap().to_string(),
                 _ => {}
               }
             }
-            let (rsym, args) = (self.parse_right_pattern()?, self.parse_terms()?);
-            return Ok(Elem::Term(Box::new(Term::Bracket { pos, lsym: (lsym, lsp), rsym, args })))
+            let ((rsym, rspelling), args) = (self.parse_right_pattern()?, self.parse_terms()?);
+            let term = Term::Bracket { pos, lsym, lspelling, rsym, rspelling, args };
+            return Ok(Elem::Term(Box::new(term)))
           }
           b"Aggregate-Term" => {
             let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
@@ -1268,7 +1270,7 @@ impl MsmParser {
               }
             }
             let args = self.parse_terms()?;
-            return Ok(Elem::Term(Box::new(Term::Aggregate { pos, sym: (sym, spelling), args })))
+            return Ok(Elem::Term(Box::new(Term::Aggregate { pos, sym, spelling, args })))
           }
           b"Forgetful-Functor-Term" => {
             let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
@@ -1283,7 +1285,7 @@ impl MsmParser {
               }
             }
             let arg = self.parse_term()?.unwrap();
-            Elem::Term(Box::new(Term::SubAggr { pos, sym: (sym, spelling), arg }))
+            Elem::Term(Box::new(Term::SubAggr { pos, sym, spelling, arg }))
           }
           b"Selector-Term" => {
             let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
@@ -1298,7 +1300,7 @@ impl MsmParser {
               }
             }
             let arg = self.parse_term()?.unwrap();
-            Elem::Term(Box::new(Term::Selector { pos, sym: (sym, spelling), arg }))
+            Elem::Term(Box::new(Term::Selector { pos, sym, spelling, arg }))
           }
           b"Internal-Selector-Term" => {
             let (mut pos, (mut sym, mut spelling, mut id)) = <(Position, _)>::default();
@@ -1313,7 +1315,7 @@ impl MsmParser {
                 _ => {}
               }
             }
-            Elem::Term(Box::new(Term::InternalSelector { pos, sym: (sym, spelling), id }))
+            Elem::Term(Box::new(Term::InternalSelector { pos, sym, spelling, id }))
           }
           b"Qualification-Term" => {
             let pos = self.r.get_pos(&e)?;
@@ -1368,7 +1370,7 @@ impl MsmParser {
               }
             }
             let args = self.parse_terms()?;
-            return Ok(Elem::Type(Box::new(Type::Mode { pos, sym: (sym, spelling), args })))
+            return Ok(Elem::Type(Box::new(Type::Mode { pos, sym, spelling, args })))
           }
           b"Struct-Type" => {
             let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
@@ -1383,7 +1385,7 @@ impl MsmParser {
               }
             }
             let args = self.parse_terms()?;
-            return Ok(Elem::Type(Box::new(Type::Struct { pos, sym: (sym, spelling), args })))
+            return Ok(Elem::Type(Box::new(Type::Struct { pos, sym, spelling, args })))
           }
           b"Clustered-Type" => Elem::Type(Box::new(Type::Cluster {
             pos: self.r.get_pos(&e)?,
@@ -1451,7 +1453,7 @@ impl MsmParser {
             while let Some(t) = self.parse_term()? {
               args.push(*t)
             }
-            let pred = Box::new(Pred { pos, positive: true, sym: (sym, spelling), left, args });
+            let pred = Box::new(Pred { pos, positive: true, sym, spelling, left, args });
             Elem::Formula(Box::new(Formula::Pred(pred)))
           }
           b"RightSideOf-Predicative-Formula" => {
@@ -1468,7 +1470,7 @@ impl MsmParser {
             }
             self.r.read_start(&mut self.buf, Some("Arguments"))?;
             let right = self.parse_terms()?;
-            Elem::PredRhs(Box::new(PredRhs { pos, positive: true, sym: (sym, spelling), right }))
+            Elem::PredRhs(Box::new(PredRhs { pos, positive: true, sym, spelling, right }))
           }
           b"Multi-Predicative-Formula" => {
             let pos = self.r.get_pos(&e)?;
@@ -1558,7 +1560,7 @@ impl MsmParser {
             self.parse_loci(&mut args)?;
             let left = args.len() as u8;
             self.parse_loci(&mut args)?;
-            let pat = PatternPred { pos, sym: (sym, spelling), left, args };
+            let pat = PatternPred { pos, sym, spelling, left, args };
             Elem::Pattern(Pattern::Pred(Box::new(pat)))
           }
           b"Operation-Functor-Pattern" => {
@@ -1577,24 +1579,24 @@ impl MsmParser {
             self.parse_loci(&mut args)?;
             let left = args.len() as u8;
             self.parse_loci(&mut args)?;
-            let pat = PatternFunc::Func { pos, sym: (sym, spelling), left, args };
+            let pat = PatternFunc::Func { pos, sym, spelling, left, args };
             Elem::Pattern(Pattern::Func(Box::new(pat)))
           }
           b"Bracket-Functor-Pattern" => {
-            let (mut pos, (mut lsym, mut lsp)) = <(Position, _)>::default();
+            let (mut pos, (mut lsym, mut lspelling)) = <(Position, _)>::default();
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => lsym = LeftBrkSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => lsp = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => lspelling = attr.unescape_value().unwrap().to_string(),
                 _ => {}
               }
             }
-            let (rsym, mut args) = (self.parse_right_pattern()?, vec![]);
+            let ((rsym, rspelling), mut args) = (self.parse_right_pattern()?, vec![]);
             self.parse_loci(&mut args)?;
-            let pat = PatternFunc::Bracket { pos, lsym: (lsym, lsp), rsym, args };
+            let pat = PatternFunc::Bracket { pos, lsym, lspelling, rsym, rspelling, args };
             Elem::Pattern(Pattern::Func(Box::new(pat)))
           }
           b"Mode-Pattern" => {
@@ -1611,7 +1613,7 @@ impl MsmParser {
             }
             let mut args = vec![];
             self.parse_loci(&mut args)?;
-            let pat = PatternMode { pos, sym: (sym, spelling), args };
+            let pat = PatternMode { pos, sym, spelling, args };
             Elem::Pattern(Pattern::Mode(Box::new(pat)))
           }
           b"Attribute-Pattern" => {
@@ -1630,7 +1632,7 @@ impl MsmParser {
             let mut args = vec![];
             self.parse_loci(&mut args)?;
             args.push(*arg);
-            let pat = PatternAttr { pos, sym: (sym, spelling), args };
+            let pat = PatternAttr { pos, sym, spelling, args };
             Elem::Pattern(Pattern::Attr(Box::new(pat)))
           }
           b"Selector" => {
@@ -1645,7 +1647,7 @@ impl MsmParser {
                 _ => {}
               }
             }
-            Elem::Selector(Field { pos, sym: (sym, spelling.into()) })
+            Elem::Selector(Field { pos, sym, spelling: spelling.into() })
           }
           _ => Elem::Other,
         };

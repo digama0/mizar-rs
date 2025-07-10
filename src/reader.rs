@@ -403,7 +403,7 @@ impl Reader {
       libs: Libraries::default(),
       article,
       treat_thm_as_axiom: matches!(article.as_str(), "tarski_0" | "tarski_a"),
-      has_errors: accom.as_deref().map_or(false, |acc| acc.has_errors),
+      has_errors: accom.as_deref().is_some_and(|acc| acc.has_errors),
       accom,
       formats: Default::default(),
       formats_base: 0,

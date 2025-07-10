@@ -304,7 +304,11 @@ impl<'a> Pretty<'a> {
         .append(self.terms(vis.map(|v| &v[left as usize..]), args, vars, depth, lift).parens()),
     };
     let doc = doc.group();
-    return if prec && left + right != 0 { doc.parens() } else { doc }
+    if prec && left + right != 0 {
+      doc.parens()
+    } else {
+      doc
+    }
   }
 
   fn term(&self, prec: bool, tm: &Term, vars: &mut Vec<IdentId>, depth: u32, lift: u32) -> Doc<'a> {

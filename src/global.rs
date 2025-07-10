@@ -1956,7 +1956,7 @@ impl Attrs {
   }
 
   pub fn find0(&self, ctx: &Constructors, nr: AttrId, pos: bool) -> bool {
-    self.find0_abs(ctx, nr).map_or(false, |attr| attr.pos == pos)
+    self.find0_abs(ctx, nr).is_some_and(|attr| attr.pos == pos)
   }
 
   pub fn reinsert_all(
@@ -2058,7 +2058,7 @@ impl Attrs {
           }
           for (pos, map) in &*self.new_attr_nums {
             for (&adj_nr, &val) in map {
-              if self.old_attr_nums[pos].get(&adj_nr).map_or(true, |&v| v < val) {
+              if self.old_attr_nums[pos].get(&adj_nr).is_none_or(|&v| v < val) {
                 if let Some(set) = g.clusters.conditional.attr_clusters[pos].get(&adj_nr) {
                   for &nr in set {
                     let x = &mut self.cl_fire[nr as usize];

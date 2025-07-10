@@ -708,7 +708,7 @@ impl Term {
       _ => self,
     }
   }
-  pub fn unqua<'a>(self: &'a TermQua) -> &'a Term {
+  pub fn unqua(&self) -> &Term {
     match self {
       Term::Qua { value, .. } => value,
       _ => self,
@@ -739,7 +739,7 @@ impl Term {
       Term::The { .. } => 216,
       Term::Fraenkel { .. } => 232,
       Term::Qua { .. } => 213,
-      Term::It { .. } => 234,
+      Term::It => 234,
     }
   }
 }

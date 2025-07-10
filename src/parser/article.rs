@@ -164,7 +164,7 @@ impl ArticleParser<'_> {
     Ok(match e.local_name().as_ref() {
       b"By" => {
         let linked =
-          e.try_get_attribute(b"linked").unwrap().map_or(false, |attr| &*attr.value == b"true");
+          e.try_get_attribute(b"linked").unwrap().is_some_and(|attr| &*attr.value == b"true");
         Justification::Simple(Inference {
           kind: InferenceKind::By { linked },
           pos: self.r.get_pos(&e)?,

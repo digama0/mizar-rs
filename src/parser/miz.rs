@@ -508,7 +508,7 @@ impl<'a> Parser<'a> {
     let tok = self.scan.next();
     if matches!(self.scan.peek().kind, TokenKind::Keyword(Keyword::Colon)) {
       self.scan.next();
-      Some(Box::new(Label { pos: tok.pos, id: (None, tok.spelling.into()) }))
+      Some(Box::new(Label { pos: tok.pos, id: None, spelling: tok.spelling.into() }))
     } else {
       self.scan.undo(tok);
       None
@@ -572,7 +572,7 @@ impl<'a> Parser<'a> {
       TokenKind::Symbol(SymbolKind::Struct(sym)) if self.scan.try_accept(Keyword::AggrLeftBrk) => {
         let args = self.parse_terms();
         self.scan.accept(Keyword::AggrRightBrk);
-        Box::new(Term::Aggregate { pos: tok.pos, sym: (sym, tok.spelling.to_owned()), args })
+        Box::new(Term::Aggregate { pos: tok.pos, sym, spelling: tok.spelling.to_owned(), args })
       }
       TokenKind::Symbol(SymbolKind::LeftBrk(lsym)) => {
         let args = self.parse_terms();
@@ -593,29 +593,29 @@ impl<'a> Parser<'a> {
           self.scan.accept(TokenKind::RBRACE);
           Box::new(Term::Fraenkel { pos: tok.pos, vars, scope, compr, nameck: None })
         } else {
-          let lsym = (lsym, tok.spelling.to_owned());
+          let lspelling = tok.spelling.to_owned();
           let TokenKind::Symbol(SymbolKind::RightBrk(rsym)) = tok2.kind else {
             panic!("{:?}: expected right bracket symbol", tok2.pos)
           };
-          let rsym = (rsym, tok2.spelling.to_owned());
-          Box::new(Term::Bracket { pos: tok.pos, lsym, rsym, args })
+          let rspelling = tok2.spelling.to_owned();
+          Box::new(Term::Bracket { pos: tok.pos, lsym, lspelling, rsym, rspelling, args })
         }
       }
       TokenKind::Keyword(Keyword::The) => {
         let tok2 = self.scan.next();
         match tok2.kind {
           TokenKind::Symbol(SymbolKind::Sel(sym)) => {
-            let sym = (sym, tok2.spelling.to_owned());
+            let spelling = tok2.spelling.to_owned();
             if self.scan.try_accept(Keyword::Of) {
-              Box::new(Term::Selector { pos: tok.pos, sym, arg: self.parse_term() })
+              Box::new(Term::Selector { pos: tok.pos, sym, spelling, arg: self.parse_term() })
             } else {
               assert!(self.allow_internal_selector, "{:?}: expected 'of'", self.scan.next().pos);
-              Box::new(Term::InternalSelector { pos: tok.pos, sym, id: None })
+              Box::new(Term::InternalSelector { pos: tok.pos, sym, spelling, id: None })
             }
           }
           TokenKind::Symbol(SymbolKind::Struct(sym)) if self.scan.try_accept(Keyword::Of) => {
-            let sym = (sym, tok2.spelling.to_owned());
-            Box::new(Term::SubAggr { pos: tok.pos, sym, arg: self.parse_term() })
+            let spelling = tok2.spelling.to_owned();
+            Box::new(Term::SubAggr { pos: tok.pos, sym, spelling, arg: self.parse_term() })
           }
           TokenKind::SET if self.scan.try_accept(Keyword::Of) => {
             self.scan.accept(Keyword::All);
@@ -642,7 +642,8 @@ impl<'a> Parser<'a> {
 struct TermElem<'a> {
   lhs: Vec<Term>,
   pos: Position,
-  sym: (FuncSymId, &'a str),
+  sym: FuncSymId,
+  spelling: &'a str,
   prio: u32,
   parent: usize,
   to_right: bool,
@@ -671,7 +672,7 @@ impl<'a> LongTermBuilder<'a> {
           break
         }
         let left = if parent - 1 == elem.parent { elem.lhs.len() as u8 } else { 1 };
-        let fmt = FormatFunc::Func { sym: elem.sym.0, left, right };
+        let fmt = FormatFunc::Func { sym: elem.sym, left, right };
         if !p.format_lookup.contains_key(&Format::Func(fmt)) {
           self.fast_path = Err(elem.pos);
           break
@@ -680,26 +681,26 @@ impl<'a> LongTermBuilder<'a> {
         right = 1;
       }
     }
-    let sym = (sym, tok.spelling);
-    self.stack.push(TermElem { lhs, pos: tok.pos, sym, prio, parent, to_right: true });
+    let Token { pos, spelling, .. } = tok;
+    self.stack.push(TermElem { lhs, pos, sym, spelling, prio, parent, to_right: true });
   }
 
   fn accum_left(stack: &mut [TermElem<'a>], lo: usize, mut hi: usize, rhs: &mut Vec<Term>) {
     while lo < hi {
       let i = hi - 1;
-      let TermElem { ref mut lhs, pos, sym, parent, .. } = stack[i];
+      let TermElem { ref mut lhs, pos, sym, spelling, parent, .. } = stack[i];
       let mut args = std::mem::take(lhs);
       let left = args.len() as u8;
       args.append(rhs);
-      rhs.push(Term::Infix { pos, sym: (sym.0, sym.1.to_owned()), left, args });
+      rhs.push(Term::Infix { pos, sym, spelling: spelling.to_owned(), left, args });
       hi = parent
     }
   }
 
   fn valid(&self, p: &Parser<'a>, i: usize) -> bool {
-    let sym = self.stack[i].sym.0;
+    let sym = self.stack[i].sym;
     let left = if self.stack[i].to_right { self.stack[i].lhs.len() as u8 } else { 1 };
-    let right = if self.stack.get(i + 1).map_or(false, |elem| elem.to_right) {
+    let right = if self.stack.get(i + 1).is_some_and(|elem| elem.to_right) {
       1
     } else {
       self.stack.get(i + 1).map_or(&self.rhs, |elem| &elem.lhs).len() as u8
@@ -784,7 +785,7 @@ impl<'a> LongTermBuilder<'a> {
       while parent != 0 {
         let elem = &self.stack[parent - 1];
         let left = if parent - 1 == elem.parent { elem.lhs.len() as u8 } else { 1 };
-        let fmt = FormatFunc::Func { sym: elem.sym.0, left, right };
+        let fmt = FormatFunc::Func { sym: elem.sym, left, right };
         if !p.format_lookup.contains_key(&Format::Func(fmt)) {
           self.fast_path = Err(elem.pos);
           break
@@ -846,7 +847,7 @@ impl<'a> Parser<'a> {
         }
         TokenKind::Keyword(Keyword::Comma)
           if !lhs.is_empty()
-            && (*paren > 0 || max_out.as_mut().map_or(true, |n| *n > 1 && (*n -= 1, true).1)) =>
+            && (*paren > 0 || max_out.as_mut().is_none_or(|n| *n > 1 && (*n -= 1, true).1)) =>
         {
           self.scan.next();
           lhs.push(*self.parse_term());
@@ -918,7 +919,7 @@ impl<'a> Parser<'a> {
         assert!(non.is_none() && args.is_empty(), "{:?}: expected attribute", tok.pos);
         return Ok((attrs, if allow_type { self.parse_radix_type() } else { None }))
       };
-      let mut attr = Attr::Attr { pos: tok.pos, sym: (sym, tok.spelling.to_owned()), args };
+      let mut attr = Attr::Attr { pos: tok.pos, sym, spelling: tok.spelling.to_owned(), args };
       if let Some(non) = non {
         attr = Attr::Non { pos: non.pos, attr: Box::new(attr) };
       }
@@ -980,15 +981,15 @@ impl<'a> Parser<'a> {
         };
         let mut right =
           self.parse_terms_lo_or_radix_type(Some(self.max_pred_rhs[&sym]), false).unwrap();
-        let sym = (sym, tok.spelling.to_owned());
+        let spelling = tok.spelling.to_owned();
         lhs = Ok(match lhs {
           Err(mut args) => {
             let left = args.len().try_into().expect("too many arguments");
             args.append(&mut right);
-            (Box::new(Pred { pos: tok.pos, positive, sym, left, args }), vec![])
+            (Box::new(Pred { pos: tok.pos, positive, sym, spelling, left, args }), vec![])
           }
           Ok((pred, mut rhss)) => {
-            Vec::push(&mut rhss, PredRhs { pos: tok.pos, positive, sym, right });
+            Vec::push(&mut rhss, PredRhs { pos: tok.pos, positive, sym, spelling, right });
             (pred, rhss)
           }
         })
@@ -1113,23 +1114,23 @@ impl<'a> Parser<'a> {
       match tok.kind {
         TokenKind::Symbol(SymbolKind::Mode(sym)) => {
           let max = this.max_mode_args[&sym];
-          let sym = (sym, tok.spelling.to_owned());
+          let spelling = tok.spelling.to_owned();
           let args = if max > 0 && this.scan.try_accept(Keyword::Of) {
             this.comma_separated_upto(max, |this| *this.parse_term())
           } else {
             vec![]
           };
-          Some(Box::new(Type::Mode { pos: tok.pos, sym, args }))
+          Some(Box::new(Type::Mode { pos: tok.pos, sym, spelling, args }))
         }
         TokenKind::Symbol(SymbolKind::Struct(sym)) => {
           let max = this.max_struct_args[&sym];
-          let sym = (sym, tok.spelling.to_owned());
+          let spelling = tok.spelling.to_owned();
           let args = if max > 0 && this.scan.try_accept(Keyword::Over) {
             this.comma_separated_upto(max, |this| *this.parse_term())
           } else {
             vec![]
           };
-          Some(Box::new(Type::Struct { pos: tok.pos, sym, args }))
+          Some(Box::new(Type::Struct { pos: tok.pos, sym, spelling, args }))
         }
         _ if *paren == 0 => {
           this.scan.undo(tok);
@@ -1320,32 +1321,29 @@ impl<'a> Parser<'a> {
     let tok = self.scan.next();
     match tok.kind {
       TokenKind::Symbol(SymbolKind::Func(sym)) if paren || args.len() <= 1 => {
-        let sym = (sym, tok.spelling.to_owned());
+        let spelling = tok.spelling.to_owned();
         let left = args.len().try_into().expect("too many arguments");
         args.append(&mut self.parse_params(true));
-        Pattern::Func(Box::new(PatternFunc::Func { pos, sym, left, args }))
+        Pattern::Func(Box::new(PatternFunc::Func { pos, sym, spelling, left, args }))
       }
       TokenKind::Symbol(SymbolKind::LeftBrk(lsym)) if args.is_empty() => {
-        let lsym = (lsym, tok.spelling.to_owned());
+        let lspelling = tok.spelling.to_owned();
         args = self.comma_separated(|this| this.parse_variable());
         let tok = self.scan.next();
         let TokenKind::Symbol(SymbolKind::RightBrk(rsym)) = tok.kind else {
           panic!("{:?}: expected right bracket symbol", tok.pos)
         };
-        let rsym = (rsym, tok.spelling.to_owned());
-        Pattern::Func(Box::new(PatternFunc::Bracket { pos, lsym, rsym, args }))
+        let rspelling = tok.spelling.to_owned();
+        let pat = PatternFunc::Bracket { pos, lsym, lspelling, rsym, rspelling, args };
+        Pattern::Func(Box::new(pat))
       }
       TokenKind::Symbol(SymbolKind::Pred(sym)) if !paren => {
         let left = args.len().try_into().expect("too many arguments");
         if self.scan.peek().kind == TokenKind::Ident {
           args.append(&mut self.comma_separated(|this| this.parse_variable()));
         }
-        Pattern::Pred(Box::new(PatternPred {
-          pos,
-          sym: (sym, tok.spelling.to_owned()),
-          left,
-          args,
-        }))
+        let spelling = tok.spelling.to_owned();
+        Pattern::Pred(Box::new(PatternPred { pos, sym, spelling, left, args }))
       }
       _ => panic!("{:?}: expected functor or predicate symbol", tok.pos),
     }
@@ -1360,11 +1358,8 @@ impl<'a> Parser<'a> {
         } else {
           vec![]
         };
-        Pattern::Mode(Box::new(PatternMode {
-          pos: tok.pos,
-          sym: (sym, tok.spelling.to_owned()),
-          args,
-        }))
+        let spelling = tok.spelling.to_owned();
+        Pattern::Mode(Box::new(PatternMode { pos: tok.pos, sym, spelling, args }))
       }
       TokenKind::LPAREN => {
         let args = self.comma_separated(|this| this.parse_variable());
@@ -1380,11 +1375,8 @@ impl<'a> Parser<'a> {
           let TokenKind::Symbol(SymbolKind::Attr(n)) = tok.kind else {
             panic!("{:?}: expected attr symbol", tok.pos)
           };
-          Pattern::Attr(Box::new(PatternAttr {
-            pos: tok.pos,
-            sym: (n, tok.spelling.to_owned()),
-            args,
-          }))
+          let spelling = tok.spelling.to_owned();
+          Pattern::Attr(Box::new(PatternAttr { pos: tok.pos, sym: n, spelling, args }))
         } else {
           let mut args = vec![id];
           while self.scan.try_accept(Keyword::Comma) {
@@ -1651,7 +1643,7 @@ impl<'a> Parser<'a> {
       self.scan.accept(Keyword::Semicolon);
       blocks.push(CaseBlock { end, hyp, items })
     };
-    let kind = casekind.unwrap_or_else(|| panic!("{:?}: no cases", pos));
+    let kind = casekind.unwrap_or_else(|| panic!("{pos:?}: no cases"));
     items.push(Item { pos, kind: ItemKind::PerCases { just, kind, blocks } });
     end
   }
@@ -1799,7 +1791,7 @@ impl<'a> Parser<'a> {
           } else {
             vec![]
           };
-          let pat = PatternStruct { sym: (sym, tok.spelling.to_owned()), args };
+          let pat = PatternStruct { sym, spelling: tok.spelling.to_owned(), args };
           self.scan.accept(Keyword::AggrLeftBrk);
           self.allow_internal_selector = true;
           let mut num_fields = 0;
@@ -1810,7 +1802,7 @@ impl<'a> Parser<'a> {
               let TokenKind::Symbol(SymbolKind::Sel(sym)) = tok.kind else {
                 panic!("{:?}: expected a selector symbol", tok.pos)
               };
-              Field { pos, sym: (sym, tok.spelling.into()) }
+              Field { pos, sym, spelling: tok.spelling.into() }
             });
             num_fields += vars.len();
             this.scan.accept(Keyword::Arrow);
@@ -1822,7 +1814,7 @@ impl<'a> Parser<'a> {
           self.push_format(tok.pos, Format::SubAggr(pat.to_subaggr_format()));
           self.push_format(tok.pos, Format::Struct(pat.to_mode_format()));
           for group in &fields {
-            group.vars.iter().for_each(|f| self.push_format(f.pos, Format::Sel(f.sym.0)))
+            group.vars.iter().for_each(|f| self.push_format(f.pos, Format::Sel(f.sym)))
           }
           self.push_format(tok.pos, Format::Aggr(pat.to_aggr_format(num_fields)));
           ItemKind::DefStruct(Box::new(DefStruct { parents, pat, fields }))
@@ -1851,7 +1843,7 @@ impl<'a> Parser<'a> {
               PatternRedef::Attr { new, orig, pos }
             }
             (Pattern::Func(_), Pattern::Func(_)) | (Pattern::Mode(_), Pattern::Mode(_)) =>
-              panic!("{:?}: 'antonym' not allowed here", start),
+              panic!("{start:?}: 'antonym' not allowed here"),
             (_, rhs) => panic!("{:?}: pattern type mismatch", rhs.pos()),
           })
         }
@@ -1910,7 +1902,7 @@ impl<'a> Parser<'a> {
             (Pattern::Pred(_), Pattern::Pred(_))
             | (Pattern::Attr(_), Pattern::Attr(_))
             | (Pattern::Mode(_), Pattern::Mode(_)) =>
-              panic!("{:?}: unsupported identification type", start),
+              panic!("{start:?}: unsupported identification type"),
             (_, rhs) => panic!("{:?}: pattern type mismatch", rhs.pos()),
           }
         }

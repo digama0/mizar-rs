@@ -116,7 +116,7 @@ impl Article {
     let pattern = &pattern[..=n];
     let mut pos = 0;
     while let Some(i) = memchr::memchr(b'#', &buf[pos..]) {
-      if i.checked_sub(1).map_or(true, |i| buf[pos + i] == b'\n')
+      if i.checked_sub(1).is_none_or(|i| buf[pos + i] == b'\n')
         && buf[pos + i + 1..].get(0..pattern.len()) == Some(pattern)
       {
         pos += i + 1 + pattern.len();
@@ -819,12 +819,12 @@ impl MizPath {
             }
           }
           match kind {
-            b'T' if refs.map_or(true, |refs| refs.thm.contains(&(lib_nr, ThmId(thm_nr)))) => {
+            b'T' if refs.is_none_or(|refs| refs.thm.contains(&(lib_nr, ThmId(thm_nr)))) => {
               let th = r.parse_formula(buf)?.unwrap();
               r.end_tag(buf)?;
               libs.thm.insert((lib_nr, ThmId(thm_nr)), th);
             }
-            b'D' if refs.map_or(true, |refs| refs.def.contains(&(lib_nr, DefId(thm_nr)))) => {
+            b'D' if refs.is_none_or(|refs| refs.def.contains(&(lib_nr, DefId(thm_nr)))) => {
               let th = r.parse_formula(buf)?.unwrap();
               r.end_tag(buf)?;
               libs.def.insert((lib_nr, DefId(thm_nr)), th);
@@ -883,7 +883,7 @@ impl MizPath {
               _ => {}
             }
           }
-          if refs.map_or(true, |refs| refs.sch.contains(&(lib_nr, sch_nr))) {
+          if refs.is_none_or(|refs| refs.sch.contains(&(lib_nr, sch_nr))) {
             let sch_funcs = r.parse_arg_types(buf)?;
             if let Some(thesis) = r.parse_formula(buf)? {
               let mut prems = vec![];

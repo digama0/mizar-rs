@@ -633,7 +633,7 @@ impl Visit for HasInfer<'_> {
   fn abort(&self) -> bool { self.found }
   fn visit_term(&mut self, tm: &Term) {
     match *tm {
-      Term::Infer(n) => self.found |= self.infers.get(n).map_or(true, |i| i.is_none()),
+      Term::Infer(n) => self.found |= self.infers.get(n).is_none_or(|i| i.is_none()),
       _ => self.super_visit_term(tm),
     }
   }
