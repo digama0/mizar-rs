@@ -974,7 +974,7 @@ impl MsmParser {
             } else {
               SchRef::Resolved(art, SchId(id - 1))
             };
-            return Ok(Elem::Inference(pos, InferenceKind::From { sch }, refs))
+            return Ok(Elem::Inference(pos, InferenceKind::From(sch), refs))
           }
           b"Implicitly-Qualified-Segment" => {
             let nr = match e.try_get_attribute(b"nr").unwrap() {

@@ -329,10 +329,7 @@ pub enum InferenceKind {
     #[serde(skip_serializing_if = "Option::is_none")]
     link: Option<Position>,
   },
-  From {
-    #[serde(flatten)]
-    sch: SchRef,
-  },
+  From(SchRef),
 }
 
 #[derive(Debug, Clone, Serialize)]

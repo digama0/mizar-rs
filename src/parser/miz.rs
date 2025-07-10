@@ -1238,7 +1238,7 @@ impl<'a> Parser<'a> {
           refs = this.parse_references();
           this.scan.accept(TokenKind::RPAREN);
         }
-        Justification::Inference { pos: tok.pos, kind: InferenceKind::From { sch }, refs }
+        Justification::Inference { pos: tok.pos, kind: InferenceKind::From(sch), refs }
       }),
       _ => {
         self.scan.undo(tok);

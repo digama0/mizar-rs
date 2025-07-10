@@ -847,9 +847,9 @@ impl Analyzer<'_> {
         let it = Inference {
           kind: match kind {
             ast::InferenceKind::By { link } => InferenceKind::By { linked: link.is_some() },
-            &ast::InferenceKind::From { sch: ast::SchRef::Resolved(art, id) } =>
+            &ast::InferenceKind::From(ast::SchRef::Resolved(art, id)) =>
               InferenceKind::From { sch: (art, id) },
-            ast::InferenceKind::From { sch: ast::SchRef::UnresolvedPriv(name) } => {
+            ast::InferenceKind::From(ast::SchRef::UnresolvedPriv(name)) => {
               let sch = *(self.sch_names.0.get(&**name))
                 .unwrap_or_else(|| panic!("local scheme '{name}' not found"));
               InferenceKind::From { sch: (ArticleId::SELF, sch) }
