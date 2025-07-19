@@ -12,10 +12,14 @@ use std::result::Result as StdResult;
 use std::str::FromStr;
 
 mod article;
+mod core;
+mod json;
 mod miz;
 mod msm;
 
-pub use miz::Parser as MizParser;
+pub use core::{Parser, ParserCore};
+pub use json::JsonParser;
+pub use miz::MizParser;
 pub use msm::MsmParser;
 
 impl MizPath {
@@ -499,9 +503,8 @@ impl MizPath {
           assert_eq!(e.try_get_attribute("name").unwrap().unwrap().value, i.name().as_bytes());
           while let Ok(e) = r.try_read_start(buf, Some("Ident"))? {
             let pos = r.get_pos(&e)?;
-            let art =
-              Article::from_upper(&e.try_get_attribute("name").unwrap().unwrap().value).unwrap();
-            dir.push((pos, art));
+            let art = &e.try_get_attribute("name").unwrap().unwrap().value;
+            dir.push(ArticleAt { pos, art: Article::from_upper(art).unwrap() });
             r.end_tag(buf)?;
           }
         }

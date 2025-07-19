@@ -1,7 +1,7 @@
 use crate::accom::Accomodator;
 use crate::checker::Checker;
 use crate::error::MizError;
-use crate::parser::MizParser;
+use crate::parser::{JsonParser, MizParser, Parser, ParserCore};
 use crate::types::*;
 use crate::*;
 use std::io;
@@ -59,14 +59,19 @@ impl WithGlobalLocal for Reader {
 impl MizPath {
   pub fn with_reader(
     &self, cfg: &Config, progress: Option<&ProgressBar>, mml_vct: &[u8],
-    f: &mut dyn FnMut(&mut Reader, Option<&mut MizParser<'_>>),
+    f: &mut dyn FnMut(&mut Reader, Option<&mut Parser<'_>>),
   ) -> io::Result<bool> {
     let mut accom = cfg.accom_enabled.then(Box::<Accomodator>::default);
     let data;
     let mut parser = if cfg.parser_enabled {
-      data = self.read_miz().unwrap();
-      let write_json = self.write_json(cfg.json_parse);
-      Some(Box::new(MizParser::new(self.art, progress, &data, write_json)))
+      let core = ParserCore::new(self.art, self.write_json(cfg.json_parse_out));
+      if cfg.json_parse_in {
+        let jv = self.read_miz_json().unwrap();
+        Some(Box::new(Parser::Json(JsonParser::new(core, jv))))
+      } else {
+        data = self.read_miz().unwrap();
+        Some(Box::new(Parser::Miz(MizParser::new(core, progress, &data))))
+      }
     } else {
       None
     };
@@ -141,7 +146,7 @@ impl MizPath {
         let mut fmts = Default::default();
         let mut fmt_map = Default::default();
         accom.accom_notations(&mut fmt_map, Some(&mut fmts), &mut notations).unwrap();
-        fmts.formats.0.iter().for_each(|fmt| parser.read_format(fmt));
+        parser.read_formats(&fmts.formats.0);
         v.formats.extend(fmts.formats.enum_iter().map(|(id, f)| (*f, id)));
         *v.lc.formatter.formats = fmts.formats;
       } else {
@@ -366,8 +371,8 @@ impl MizPath {
     }
 
     if let (Some(accom), Some(parser)) = (&mut v.accom, &mut parser) {
-      std::mem::swap(&mut parser.articles, &mut accom.articles);
-      parser.write_json.on(|w| w.write_articles(&accom.articles_vec));
+      std::mem::swap(&mut parser.core_mut().articles, &mut accom.articles);
+      // parser.core_mut().write_json.on(|w| w.write_articles(&accom.articles_vec));
       std::mem::take(&mut accom.articles_vec);
     }
 

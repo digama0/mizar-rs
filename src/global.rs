@@ -4,11 +4,14 @@ use crate::types::*;
 use crate::{mizfiles, stat, Config};
 use enum_map::EnumMap;
 use itertools::EitherOrBoth;
+use serde::Deserialize;
+use serde_json::de::IoRead;
+use serde_json::Deserializer;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::File;
-use std::io;
+use std::io::{self, BufReader};
 use std::ops::Range;
 use std::path::PathBuf;
 
@@ -2964,6 +2967,16 @@ impl MizPath {
     let path = self.to_path(true, false, "miz");
     // eprintln!("opening {}", path.to_str().unwrap());
     std::fs::read(path)
+  }
+
+  pub fn read_miz_json(&self) -> io::Result<serde_json::Value> {
+    let path = self.to_path(true, false, "miz.json");
+    // eprintln!("opening {}", path.to_str().unwrap());
+    let mut de = Deserializer::new(IoRead::new(BufReader::new(File::open(path)?)));
+    de.disable_recursion_limit();
+    let value = Deserialize::deserialize(&mut de)?;
+    de.end()?;
+    Ok(value)
   }
 
   #[allow(clippy::unwrap_used)]

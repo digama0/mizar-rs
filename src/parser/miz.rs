@@ -1,11 +1,10 @@
 use crate::ast::{SchRef, *};
+use crate::parser::core::ParserCore;
 use crate::types::{
-  Article, ArticleId, BlockKind, CorrCondKind, DefId, DirectiveKind, Directives, Format,
-  FormatFunc, FormatId, FuncSymId, IdxVec, LeftBrkSymId, LocusId, ModeSymId, Position, PredSymId,
-  PriorityKind, PropertyKind, RightBrkSymId, SchId, StructSymId, SymbolKind, Symbols, ThmId,
-  MAX_ARTICLE_LEN,
+  Article, ArticleAt, BlockKind, CorrCondKind, DefId, DirectiveKind, Directives, Format,
+  FormatFunc, FuncSymId, LeftBrkSymId, LocusId, ModeSymId, Position, PredSymId, PriorityKind,
+  PropertyKind, RightBrkSymId, SchId, StructSymId, SymbolKind, Symbols, ThmId,
 };
-use crate::write::OWriteJson;
 use crate::READ_MAX_LINE_COUNT;
 use enum_map::Enum;
 use indicatif::ProgressBar;
@@ -216,18 +215,6 @@ impl<'a> Scanner<'a> {
     }
   }
 
-  fn load_symbols(&mut self, syms: &Symbols, infinitives: &[(PredSymId, &'a str)]) {
-    for (kind, s) in syms {
-      assert!(self.tokens.insert(s.as_bytes().to_owned(), TokenKind::Symbol(*kind)).is_none())
-    }
-    for &(n, s) in infinitives {
-      assert!(self
-        .tokens
-        .insert(s.as_bytes().to_owned(), TokenKind::Symbol(SymbolKind::Pred(n)))
-        .is_none())
-    }
-  }
-
   fn pos(&self) -> Position {
     Position { line: self.line, col: (self.pos - self.line_start) as u32 + 1 }
   }
@@ -382,37 +369,24 @@ impl<'a> Scanner<'a> {
   }
 }
 
-pub struct Parser<'a> {
+pub struct MizParser<'a> {
   scan: Scanner<'a>,
-  pub art: Article,
-  pub articles: HashMap<Article, ArticleId>,
-  pub formats: Box<IdxVec<FormatId, Format>>,
+  pub core: ParserCore,
   allow_internal_selector: bool,
   max_mode_args: HashMap<ModeSymId, u8>,
   max_struct_args: HashMap<StructSymId, u8>,
   max_pred_rhs: HashMap<PredSymId, u8>,
-  pub func_prio: HashMap<FuncSymId, u32>,
-  #[allow(clippy::box_collection)]
-  pub format_lookup: Box<HashMap<Format, FormatId>>,
-  pub write_json: OWriteJson,
 }
 
-impl<'a> Parser<'a> {
-  pub fn new(
-    art: Article, progress: Option<&ProgressBar>, data: &'a [u8], write_json: OWriteJson,
-  ) -> Self {
+impl<'a> MizParser<'a> {
+  pub fn new(core: ParserCore, progress: Option<&ProgressBar>, data: &'a [u8]) -> Self {
     Self {
+      core,
       scan: Scanner::new(data, progress),
-      art,
-      articles: Default::default(),
-      formats: Default::default(),
       allow_internal_selector: false,
       max_mode_args: Default::default(),
       max_struct_args: Default::default(),
       max_pred_rhs: Default::default(),
-      func_prio: Default::default(),
-      format_lookup: Default::default(),
-      write_json,
     }
   }
 
@@ -435,44 +409,37 @@ impl<'a> Parser<'a> {
   }
 
   pub fn load_symbols(
-    &mut self, syms: &Symbols, infinitives: &[(PredSymId, &'a str)], prio: &[(PriorityKind, u32)],
+    &mut self, syms: &Symbols, infinitives: &[(PredSymId, &str)], prio: &[(PriorityKind, u32)],
   ) {
-    self.scan.load_symbols(syms, infinitives);
-    for &(kind, value) in prio {
-      if let PriorityKind::Functor(sym) = kind {
-        self.func_prio.insert(sym, value);
-      }
-    }
+    ParserCore::on_symbols(syms, infinitives, |kind, s| {
+      assert!(self.scan.tokens.insert(s.as_bytes().to_owned(), TokenKind::Symbol(kind)).is_none())
+    });
+    self.core.load_prio(prio);
   }
 
-  pub fn push_format(&mut self, _pos: Position, fmt: Format) {
-    if let std::collections::hash_map::Entry::Vacant(e) = self.format_lookup.entry(fmt) {
-      let id = self.formats.push(fmt);
-      e.insert(id);
+  pub fn push_format(&mut self, pos: Position, fmt: Format) {
+    if self.core.push_format(pos, fmt) {
       self.read_format(&fmt);
     }
   }
 
   fn parse_article(tok: Token<'a>) -> Article {
-    assert!(
-      tok.spelling.len() <= MAX_ARTICLE_LEN,
-      "article names are at most {MAX_ARTICLE_LEN} characters"
-    );
     Article::from_upper(tok.spelling.as_bytes()).unwrap()
   }
 
   pub fn parse_env(&mut self, dirs: &mut Directives) {
-    dirs.0[DirectiveKind::Vocabularies].push((Position::default(), Article::HIDDEN));
-    dirs.0[DirectiveKind::Notations].push((Position::default(), Article::HIDDEN));
-    dirs.0[DirectiveKind::Constructors].push((Position::default(), Article::HIDDEN));
-    dirs.0[DirectiveKind::Requirements].push((Position::default(), Article::HIDDEN));
+    let hidden = ArticleAt { pos: Position::default(), art: Article::HIDDEN };
+    dirs.0[DirectiveKind::Vocabularies].push(hidden);
+    dirs.0[DirectiveKind::Notations].push(hidden);
+    dirs.0[DirectiveKind::Constructors].push(hidden);
+    dirs.0[DirectiveKind::Requirements].push(hidden);
     self.scan.accept(Keyword::Environ);
     loop {
       let tok = self.scan.next();
       match tok.kind {
         TokenKind::Directive(_) | TokenKind::Keyword(Keyword::Imports) => loop {
           let id = self.scan.accept(TokenKind::Ident);
-          let art = (id.pos, Self::parse_article(id));
+          let art = ArticleAt { pos: id.pos, art: Self::parse_article(id) };
           match tok.kind {
             TokenKind::Directive(dir) => dirs.0[dir].push(art),
             TokenKind::Keyword(Keyword::Imports) =>
@@ -493,7 +460,7 @@ impl<'a> Parser<'a> {
       }
     }
     self.scan.allow_underscore = false;
-    self.write_json.on(|w| w.write_env(dirs))
+    self.core.write_json.on(|w| w.write_env(dirs))
   }
 
   fn parse_variable(&mut self) -> Variable {
@@ -659,9 +626,9 @@ struct LongTermBuilder<'a> {
 impl<'a> LongTermBuilder<'a> {
   fn new(rhs: Vec<Term>) -> Self { Self { stack: vec![], rhs, fast_path: Ok(()) } }
 
-  fn push(&mut self, p: &Parser<'a>, tok: Token<'a>, args: Vec<Term>) {
+  fn push(&mut self, p: &MizParser<'a>, tok: Token<'a>, args: Vec<Term>) {
     let TokenKind::Symbol(SymbolKind::Func(sym)) = tok.kind else { unreachable!() };
-    let prio = p.func_prio[&sym];
+    let prio = p.core.func_prio[&sym];
     let lhs = std::mem::replace(&mut self.rhs, args);
     let mut right = lhs.len() as u8;
     let mut parent = self.stack.len();
@@ -673,7 +640,7 @@ impl<'a> LongTermBuilder<'a> {
         }
         let left = if parent - 1 == elem.parent { elem.lhs.len() as u8 } else { 1 };
         let fmt = FormatFunc::Func { sym: elem.sym, left, right };
-        if !p.format_lookup.contains_key(&Format::Func(fmt)) {
+        if !p.core.format_lookup.contains_key(&Format::Func(fmt)) {
           self.fast_path = Err(elem.pos);
           break
         }
@@ -697,7 +664,7 @@ impl<'a> LongTermBuilder<'a> {
     }
   }
 
-  fn valid(&self, p: &Parser<'a>, i: usize) -> bool {
+  fn valid(&self, p: &MizParser<'a>, i: usize) -> bool {
     let sym = self.stack[i].sym;
     let left = if self.stack[i].to_right { self.stack[i].lhs.len() as u8 } else { 1 };
     let right = if self.stack.get(i + 1).is_some_and(|elem| elem.to_right) {
@@ -705,10 +672,10 @@ impl<'a> LongTermBuilder<'a> {
     } else {
       self.stack.get(i + 1).map_or(&self.rhs, |elem| &elem.lhs).len() as u8
     };
-    p.format_lookup.contains_key(&Format::Func(FormatFunc::Func { sym, left, right }))
+    p.core.format_lookup.contains_key(&Format::Func(FormatFunc::Func { sym, left, right }))
   }
 
-  fn rebalance(&mut self, p: &Parser) {
+  fn rebalance(&mut self, p: &MizParser) {
     for k in 1..self.stack.len() {
       self.stack[k].to_right = self.stack[k - 1].prio < self.stack[k].prio;
     }
@@ -757,7 +724,7 @@ impl<'a> LongTermBuilder<'a> {
   }
 
   #[cold]
-  fn slow_path(&mut self, p: &Parser<'a>) {
+  fn slow_path(&mut self, p: &MizParser<'a>) {
     self.rebalance(p);
     for i in 1..self.stack.len() {
       let mut parent = i;
@@ -778,7 +745,7 @@ impl<'a> LongTermBuilder<'a> {
     }
   }
 
-  fn finish(mut self, p: &Parser<'a>) -> Vec<Term> {
+  fn finish(mut self, p: &MizParser<'a>) -> Vec<Term> {
     if self.fast_path.is_ok() {
       let mut parent = self.stack.len();
       let mut right = self.rhs.len() as u8;
@@ -786,7 +753,7 @@ impl<'a> LongTermBuilder<'a> {
         let elem = &self.stack[parent - 1];
         let left = if parent - 1 == elem.parent { elem.lhs.len() as u8 } else { 1 };
         let fmt = FormatFunc::Func { sym: elem.sym, left, right };
-        if !p.format_lookup.contains_key(&Format::Func(fmt)) {
+        if !p.core.format_lookup.contains_key(&Format::Func(fmt)) {
           self.fast_path = Err(elem.pos);
           break
         }
@@ -811,7 +778,7 @@ impl<'a> LongTermBuilder<'a> {
   }
 }
 
-impl<'a> Parser<'a> {
+impl<'a> MizParser<'a> {
   /// if max_out is Some(n), then at most n results will be returned at paren level 0
   /// (unless n = 0 in which case 1 return is still possible)
   fn parse_func_rhs(
@@ -1181,7 +1148,8 @@ impl<'a> Parser<'a> {
     self.comma_separated(|this| {
       let id = this.scan.accept(TokenKind::Ident);
       let kind = if this.scan.try_accept(Keyword::Colon) {
-        let art = *this.articles.get(&Self::parse_article(id)).unwrap_or_else(|| {
+        let spelling = Self::parse_article(id);
+        let art = *this.core.articles.get(&spelling).unwrap_or_else(|| {
           panic!("article not found, perhaps you forgot 'theorems {}'", id.spelling)
         });
         let mut refs = vec![];
@@ -1202,7 +1170,7 @@ impl<'a> Parser<'a> {
             || this.scan.peek().kind == TokenKind::Ident
           {
             this.scan.undo(tok);
-            break ReferenceKind::Global(art, refs)
+            break ReferenceKind::Global { art, spelling, refs }
           }
         }
       } else {
@@ -1223,13 +1191,15 @@ impl<'a> Parser<'a> {
       TokenKind::Keyword(Keyword::From) => self.with_underscore(|this| {
         let id = this.scan.accept(TokenKind::Ident);
         let sch = if this.scan.try_accept(Keyword::Colon) {
-          let art = *this.articles.get(&Self::parse_article(id)).unwrap_or_else(|| {
+          let spelling = Self::parse_article(id);
+          let art = *this.core.articles.get(&spelling).unwrap_or_else(|| {
             panic!("article not found, perhaps you forgot 'schemes {}'", id.spelling)
           });
           this.scan.accept(Keyword::Sch);
           let tok = this.scan.next();
           let TokenKind::Number(n) = tok.kind else { panic!("expected numeral") };
-          SchRef::Resolved(art, SchId(n.checked_sub(1).expect("expected nonzero numeral")))
+          let sch = SchId(n.checked_sub(1).expect("expected nonzero numeral"));
+          SchRef::Resolved { art, spelling, sch }
         } else {
           SchRef::UnresolvedPriv(id.spelling.to_owned())
         };
@@ -1451,20 +1421,9 @@ impl<'a> Parser<'a> {
     self.scan.accept(Keyword::Semicolon);
     let (conds, corr) = self.parse_corr_conds();
     let props = self.parse_properties();
-    let fmt = match &kind {
-      DefinitionKind::Func { pat, .. } => Format::Func(pat.to_format()),
-      DefinitionKind::Pred { pat, .. } => Format::Pred(pat.to_format()),
-      DefinitionKind::Mode { pat, .. } => Format::Mode(pat.to_format()),
-      DefinitionKind::Attr { pat, .. } => Format::Attr(pat.to_format()),
-    };
-    if redef {
-      assert!(
-        self.format_lookup.contains_key(&fmt),
-        "{:?}: unknown format for redeclaration",
-        kind.pos()
-      )
-    } else {
-      self.push_format(kind.pos(), fmt)
+    let fmt = kind.to_format();
+    if self.core.after_definition(kind.pos(), redef, fmt) {
+      self.read_format(&fmt);
     }
     let body = DefinitionBody { redef, conds, corr, props };
     ItemKind::Definition(Box::new(Definition { kind, body }))
@@ -1794,7 +1753,6 @@ impl<'a> Parser<'a> {
           let pat = PatternStruct { sym, spelling: tok.spelling.to_owned(), args };
           self.scan.accept(Keyword::AggrLeftBrk);
           self.allow_internal_selector = true;
-          let mut num_fields = 0;
           let fields = self.comma_separated(|this| {
             let pos = this.scan.peek().pos;
             let vars = this.comma_separated(|this| {
@@ -1804,23 +1762,18 @@ impl<'a> Parser<'a> {
               };
               Field { pos, sym, spelling: tok.spelling.into() }
             });
-            num_fields += vars.len();
             this.scan.accept(Keyword::Arrow);
             FieldGroup { pos, vars, ty: *this.parse_type() }
           });
           self.scan.accept(Keyword::AggrRightBrk);
           self.scan.accept(Keyword::Semicolon);
           self.allow_internal_selector = false;
-          self.push_format(tok.pos, Format::SubAggr(pat.to_subaggr_format()));
-          self.push_format(tok.pos, Format::Struct(pat.to_mode_format()));
-          for group in &fields {
-            group.vars.iter().for_each(|f| self.push_format(f.pos, Format::Sel(f.sym)))
-          }
-          self.push_format(tok.pos, Format::Aggr(pat.to_aggr_format(num_fields)));
-          ItemKind::DefStruct(Box::new(DefStruct { parents, pat, fields }))
+          let def = DefStruct { parents, pat, fields };
+          ParserCore::after_def_struct(tok.pos, &def, |pos, fmt| self.push_format(pos, fmt));
+          ItemKind::DefStruct(Box::new(def))
         }
         (TokenKind::Keyword(Keyword::Synonym | Keyword::Antonym), BlockKind::Notation) => {
-          let pos = tok.kind == TokenKind::Keyword(Keyword::Synonym);
+          let positive = tok.kind == TokenKind::Keyword(Keyword::Synonym);
           let new = self.parse_pattern();
           self.scan.accept(Keyword::For);
           let orig = self.parse_pattern();
@@ -1828,19 +1781,19 @@ impl<'a> Parser<'a> {
           ItemKind::PatternRedef(match (new, orig) {
             (Pattern::Pred(new), Pattern::Pred(orig)) => {
               self.push_format(new.pos, Format::Pred(new.to_format()));
-              PatternRedef::Pred { new, orig, pos }
+              PatternRedef::Pred { new, orig, positive }
             }
-            (Pattern::Func(new), Pattern::Func(orig)) if pos => {
+            (Pattern::Func(new), Pattern::Func(orig)) if positive => {
               self.push_format(new.pos(), Format::Func(new.to_format()));
               PatternRedef::Func { new, orig }
             }
-            (Pattern::Mode(new), Pattern::Mode(orig)) if pos => {
+            (Pattern::Mode(new), Pattern::Mode(orig)) if positive => {
               self.push_format(new.pos, Format::Mode(new.to_format()));
               PatternRedef::Mode { new, orig }
             }
             (Pattern::Attr(new), Pattern::Attr(orig)) => {
               self.push_format(new.pos, Format::Attr(new.to_format()));
-              PatternRedef::Attr { new, orig, pos }
+              PatternRedef::Attr { new, orig, positive }
             }
             (Pattern::Func(_), Pattern::Func(_)) | (Pattern::Mode(_), Pattern::Mode(_)) =>
               panic!("{start:?}: 'antonym' not allowed here"),
@@ -1959,7 +1912,7 @@ impl<'a> Parser<'a> {
       }
     };
     let item = Item { pos: tok.pos, kind };
-    self.write_json.on(|w| w.write_item(&item));
+    self.core.write_json.on(|w| w.write_item(&item));
     buf.push(item);
     true
   }

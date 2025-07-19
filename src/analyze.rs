@@ -4,7 +4,7 @@ use crate::ast::{
 };
 use crate::error::MizError;
 use crate::export::Exporter;
-use crate::parser::{MizParser, MsmParser, PathResult};
+use crate::parser::{MsmParser, Parser, PathResult};
 use crate::reader::{DefiniensId, Reader};
 use crate::types::{PatternKindClass as PKC, *};
 use crate::write::OWriteXml;
@@ -79,27 +79,27 @@ macro_rules! try_p {
 }
 impl Reader {
   fn push_parse_item(
-    &mut self, parser: &mut Result<&mut MizParser<'_>, MsmParser>, buf: &mut Vec<ast::Item>,
+    &mut self, parser: &mut Result<&mut Parser<'_>, MsmParser>, buf: &mut Vec<ast::Item>,
   ) -> PathResult<bool> {
     match parser {
       Ok(parser) => {
         // parser.formats is empty, formatter.formats has .frm
-        std::mem::swap(&mut parser.formats, &mut self.lc.formatter.formats);
-        std::mem::swap(&mut parser.format_lookup, &mut self.formats);
+        std::mem::swap(&mut parser.core_mut().formats, &mut self.lc.formatter.formats);
+        std::mem::swap(&mut parser.core_mut().format_lookup, &mut self.formats);
         let res = parser.push_parse_item(buf);
         // move .frx formats back to formatter
-        std::mem::swap(&mut self.lc.formatter.formats, &mut parser.formats);
-        std::mem::swap(&mut self.formats, &mut parser.format_lookup);
+        std::mem::swap(&mut self.lc.formatter.formats, &mut parser.core_mut().formats);
+        std::mem::swap(&mut self.formats, &mut parser.core_mut().format_lookup);
         Ok(res)
       }
       Err(parser) => parser.push_parse_item(buf).map_err(|e| (parser.path.clone(), e)),
     }
   }
 
-  pub fn run_analyzer(&mut self, path: &MizPath, parser: Option<&mut MizParser<'_>>) {
+  pub fn run_analyzer(&mut self, path: &MizPath, parser: Option<&mut Parser<'_>>) {
     let mut parser = match parser {
       Some(parser) => {
-        parser.write_json.on(|w| w.start_main());
+        parser.core_mut().write_json.on(|w| w.start_main());
         Ok(parser)
       }
       None => {
@@ -162,9 +162,9 @@ impl Reader {
       }
       items.clear()
     }
-    if elab.g.cfg.json_parse {
+    if elab.g.cfg.json_parse_out {
       if let Ok(parser) = &mut parser {
-        parser.write_json.finish();
+        parser.core_mut().write_json.finish();
       }
     }
     if elab.g.cfg.xml_internals {
@@ -180,7 +180,7 @@ impl Reader {
       }
       path.write_idx(&elab.lc.formatter.idents.0[1..]);
       if let Ok(parser) = parser {
-        path.write_formats("frx", &elab.lc.formatter.formats, &parser.func_prio);
+        path.write_formats("frx", &elab.lc.formatter.formats, &parser.core_mut().func_prio);
       }
     }
     if elab.g.cfg.exporter_enabled {
@@ -812,8 +812,8 @@ impl Analyzer<'_> {
           let lab = self.label_names.enum_iter().rev().find(|p| p.1.as_deref() == Some(name));
           ReferenceKind::Priv(lab.expect("label not found").0)
         }
-        ast::ReferenceKind::Global(art, ref frags) => {
-          for frag in frags {
+        ast::ReferenceKind::Global { art, ref refs, .. } => {
+          for frag in refs {
             out.push(match *frag {
               ast::RefFragment::Thm { pos, id } =>
                 Reference { pos, kind: ReferenceKind::Thm((art, id)) },
@@ -847,8 +847,8 @@ impl Analyzer<'_> {
         let it = Inference {
           kind: match kind {
             ast::InferenceKind::By { link } => InferenceKind::By { linked: link.is_some() },
-            &ast::InferenceKind::From(ast::SchRef::Resolved(art, id)) =>
-              InferenceKind::From { sch: (art, id) },
+            &ast::InferenceKind::From(ast::SchRef::Resolved { art, sch, .. }) =>
+              InferenceKind::From { sch: (art, sch) },
             ast::InferenceKind::From(ast::SchRef::UnresolvedPriv(name)) => {
               let sch = *(self.sch_names.0.get(&**name))
                 .unwrap_or_else(|| panic!("local scheme '{name}' not found"));
@@ -5057,12 +5057,12 @@ impl ReadProof for BlockReader {
       (BlockKind::Definition, ast::ItemKind::DefStruct(df)) =>
         self.elab_struct_def(elab, it.pos, df),
       (BlockKind::Notation, ast::ItemKind::PatternRedef(it)) => match it {
-        ast::PatternRedef::Pred { new, orig, pos } =>
-          self.elab_pred_notation(elab, new, orig, *pos),
+        ast::PatternRedef::Pred { new, orig, positive } =>
+          self.elab_pred_notation(elab, new, orig, *positive),
         ast::PatternRedef::Func { new, orig } => self.elab_func_notation(elab, new, orig),
         ast::PatternRedef::Mode { new, orig } => self.elab_mode_notation(elab, new, orig),
-        ast::PatternRedef::Attr { new, orig, pos } =>
-          self.elab_attr_notation(elab, new, orig, *pos),
+        ast::PatternRedef::Attr { new, orig, positive } =>
+          self.elab_attr_notation(elab, new, orig, *positive),
       },
       (BlockKind::Registration, ast::ItemKind::Cluster(it)) => match &mut it.kind {
         ast::ClusterDeclKind::Exist { concl, ty } =>

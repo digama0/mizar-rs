@@ -258,7 +258,7 @@ impl Accomodator {
     mut infinitives: Option<&mut Vec<(PredSymId, &'a str)>>,
   ) {
     #[allow(clippy::indexing_slicing)]
-    for &(_, art) in &self.dirs.0[DirectiveKind::Vocabularies] {
+    for &ArticleAt { art, .. } in &self.dirs.0[DirectiveKind::Vocabularies] {
       let mut voc = Default::default();
       match art.read_vct(mml_vct, &mut voc) {
         Ok(true) => {}
@@ -316,11 +316,11 @@ impl Accomodator {
   pub fn accom_articles(&mut self) {
     let mut id = ArticleId(1); // 0 is reserved for SELF
     self.articles_vec.push(None);
-    for &(_, art) in &self.dirs.0[DirectiveKind::Theorems] {
+    for &ArticleAt { art, .. } in &self.dirs.0[DirectiveKind::Theorems] {
       self.articles_vec.push(Some(art));
       assert!(self.articles.insert(art, id.fresh()).is_none())
     }
-    for &(_, art) in &self.dirs.0[DirectiveKind::Schemes] {
+    for &ArticleAt { art, .. } in &self.dirs.0[DirectiveKind::Schemes] {
       self.articles.entry(art).or_insert_with(|| id.fresh());
     }
   }
@@ -328,7 +328,7 @@ impl Accomodator {
   /// ProcessConstructors
   #[allow(clippy::indexing_slicing)]
   pub fn accom_constructors(&mut self, constrs: &mut Constructors) -> io::Result<()> {
-    for &(pos, art) in &self.dirs.0[DirectiveKind::Constructors] {
+    for &ArticleAt { pos, art } in &self.dirs.0[DirectiveKind::Constructors] {
       let mut dco = Default::default();
       let result = MizPath { art }.read_dco(false, &mut dco, true);
       if try_p!(self, pos => Constructors, result).is_none() {
@@ -349,7 +349,7 @@ impl Accomodator {
   pub fn accom_requirements(
     &mut self, ctx: &Constructors, idx: &mut RequirementIndexes,
   ) -> io::Result<()> {
-    for &(pos, art) in &self.dirs.0[DirectiveKind::Requirements] {
+    for &ArticleAt { pos, art } in &self.dirs.0[DirectiveKind::Requirements] {
       let mut dre = Default::default();
       if try_p!(self, pos => Requirements, MizPath { art }.read_dre(&mut dre)).is_none() {
         continue
@@ -369,7 +369,7 @@ impl Accomodator {
   /// ProcessClusters
   #[allow(clippy::indexing_slicing)]
   pub fn accom_clusters(&mut self, ctx: &Constructors, clusters: &mut Clusters) -> io::Result<()> {
-    for &(_, art) in &self.dirs.0[DirectiveKind::Registrations] {
+    for &ArticleAt { art, .. } in &self.dirs.0[DirectiveKind::Registrations] {
       let mut dcl = Default::default();
       let result = MizPath { art }.read_dcl(false, &mut dcl);
       let Some(_) = try_p!(self, catch_missing(result)) else { continue };
@@ -408,7 +408,7 @@ impl Accomodator {
       assert_eq!(fmts.formats.push(Format::Attr(FormatAttr::STRICT)), FormatId::STRICT);
       fmt_map.insert(Format::Attr(FormatAttr::STRICT), FormatId::STRICT);
     }
-    for &(pos, art) in &self.dirs.0[DirectiveKind::Notations] {
+    for &ArticleAt { pos, art } in &self.dirs.0[DirectiveKind::Notations] {
       let dict_len = self.dict.voc.len();
       let mut dno = Default::default();
       let result = MizPath { art }.read_dno(false, &mut dno);
@@ -447,7 +447,7 @@ impl Accomodator {
   pub fn accom_identify_regs(
     &mut self, ctx: &Constructors, ids: &mut Vec<IdentifyFunc>,
   ) -> io::Result<()> {
-    for &(_, art) in &self.dirs.0[DirectiveKind::Registrations] {
+    for &ArticleAt { art, .. } in &self.dirs.0[DirectiveKind::Registrations] {
       let (mut sig, mut did) = Default::default();
       let result = MizPath { art }.read_did(false, &mut sig, &mut did);
       let Some(_) = try_p!(self, catch_missing(result)) else { continue };
@@ -469,7 +469,7 @@ impl Accomodator {
   pub fn accom_reduction_regs(
     &mut self, ctx: &Constructors, reds: &mut Vec<Reduction>,
   ) -> io::Result<()> {
-    for &(_, art) in &self.dirs.0[DirectiveKind::Registrations] {
+    for &ArticleAt { art, .. } in &self.dirs.0[DirectiveKind::Registrations] {
       let (mut sig, mut drd) = Default::default();
       let result = MizPath { art }.read_drd(false, &mut sig, &mut drd);
       let Some(_) = try_p!(self, catch_missing(result)) else { continue };
@@ -491,7 +491,7 @@ impl Accomodator {
   pub fn accom_properties(
     &mut self, ctx: &Constructors, props: &mut Vec<Property>,
   ) -> io::Result<()> {
-    for &(_, art) in &self.dirs.0[DirectiveKind::Registrations] {
+    for &ArticleAt { art, .. } in &self.dirs.0[DirectiveKind::Registrations] {
       let (mut sig, mut dpr) = Default::default();
       let result = MizPath { art }.read_dpr(false, &mut sig, &mut dpr);
       let Some(_) = try_p!(self, catch_missing(result)) else { continue };
@@ -513,7 +513,7 @@ impl Accomodator {
   pub fn accom_definitions(
     &mut self, ctx: &Constructors, kind: DirectiveKind, defs: &mut Vec<Definiens>,
   ) -> io::Result<()> {
-    for &(pos, art) in &self.dirs.0[kind] {
+    for &ArticleAt { pos, art } in &self.dirs.0[kind] {
       let (mut sig, mut def) = Default::default();
       let result = MizPath { art }.read_def(false, &mut sig, &mut def);
       let Some(_) = try_p!(self, pos => kind, result) else { continue };
@@ -538,7 +538,7 @@ impl Accomodator {
   ) -> io::Result<()> {
     let mut w = write_eth.then(|| MizPath { art: self.article }.write_eth());
     let mut defthms = DefiniensId::default();
-    for &(pos, art) in &self.dirs.0[DirectiveKind::Theorems] {
+    for &ArticleAt { pos, art } in &self.dirs.0[DirectiveKind::Theorems] {
       let mut thms = Default::default();
       let result = MizPath { art }.read_the(false, &mut thms);
       let Some(_) = try_p!(self, pos => Theorems, result) else { continue };
@@ -587,7 +587,7 @@ impl Accomodator {
     &mut self, write_esh: bool, ctx: &Constructors, libs: &mut Libraries,
   ) -> io::Result<()> {
     let mut w = write_esh.then(|| MizPath { art: self.article }.write_esh());
-    for &(pos, art) in &self.dirs.0[DirectiveKind::Schemes] {
+    for &ArticleAt { pos, art } in &self.dirs.0[DirectiveKind::Schemes] {
       let mut schs = Default::default();
       let result = MizPath { art }.read_sch(false, &mut schs);
       let Some(_) = try_p!(self, pos => Schemes, result) else { continue };

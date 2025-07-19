@@ -1955,7 +1955,7 @@ impl WriteJson {
         JsonFormatter.begin_object_value(&mut self.w).unwrap();
         JsonFormatter.begin_array(&mut self.w).unwrap();
         let mut first = true;
-        for (pos, art) in arts {
+        for ArticleAt { pos, art } in arts {
           JsonFormatter.begin_array_value(&mut self.w, std::mem::take(&mut first)).unwrap();
           write!(self.w, "{{\"pos\":[{},{}],\"art\":\"{}\"}}", pos.line, pos.col, art).unwrap();
           JsonFormatter.end_array_value(&mut self.w).unwrap();
@@ -1968,14 +1968,14 @@ impl WriteJson {
     }
   }
 
-  pub fn write_articles(&mut self, dirs: &IdxVec<ArticleId, Option<Article>>) {
-    assert!(matches!(self.state, JsonState::Start));
-    JsonFormatter.begin_object_key(&mut self.w, true).unwrap();
-    self.w.write_all(b"\"articles\":").unwrap();
-    dirs.0.serialize(&mut JsonSerializer::new(&mut self.w)).unwrap();
-    JsonFormatter.begin_object_key(&mut self.w, false).unwrap();
-    self.w.write_all(b"\n").unwrap();
-  }
+  // pub fn write_articles(&mut self, dirs: &IdxVec<ArticleId, Option<Article>>) {
+  //   assert!(matches!(self.state, JsonState::Start));
+  //   JsonFormatter.begin_object_key(&mut self.w, true).unwrap();
+  //   self.w.write_all(b"\"articles\":").unwrap();
+  //   dirs.0.serialize(&mut JsonSerializer::new(&mut self.w)).unwrap();
+  //   JsonFormatter.begin_object_key(&mut self.w, false).unwrap();
+  //   self.w.write_all(b"\n").unwrap();
+  // }
 
   pub fn start_main(&mut self) {
     assert!(matches!(self.state, JsonState::Start));

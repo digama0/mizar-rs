@@ -2,9 +2,9 @@
 use super::{ParseError, PathResult, Result, XmlReader};
 use crate::ast::{SchRef, *};
 use crate::types::{
-  ArticleId, AttrSymId, BoundId, ConstId, DefId, FuncSymId, IdxVec, LabelId, LeftBrkSymId, LocusId,
-  ModeSymId, Position, PredSymId, PrivFuncId, PrivPredId, PropertyKind, RightBrkSymId, SchFuncId,
-  SchId, SchPredId, SelSymId, StructSymId, ThmId,
+  Article, ArticleId, AttrSymId, BoundId, ConstId, DefId, FuncSymId, IdxVec, LabelId, LeftBrkSymId,
+  LocusId, ModeSymId, Position, PredSymId, PrivFuncId, PrivPredId, PropertyKind, RightBrkSymId,
+  SchFuncId, SchId, SchPredId, SelSymId, StructSymId, ThmId,
 };
 use crate::{types, MizPath};
 use enum_map::Enum;
@@ -794,12 +794,12 @@ impl MsmParser {
       b"Pred-Synonym" => {
         let Pattern::Pred(orig) = self.parse_pattern()? else { panic!("expected pred pattern") };
         let Pattern::Pred(new) = self.parse_pattern()? else { panic!("expected pred pattern") };
-        ItemKind::PatternRedef(PatternRedef::Pred { new, orig, pos: true })
+        ItemKind::PatternRedef(PatternRedef::Pred { new, orig, positive: true })
       }
       b"Pred-Antonym" => {
         let Pattern::Pred(orig) = self.parse_pattern()? else { panic!("expected pred pattern") };
         let Pattern::Pred(new) = self.parse_pattern()? else { panic!("expected pred pattern") };
-        ItemKind::PatternRedef(PatternRedef::Pred { new, orig, pos: false })
+        ItemKind::PatternRedef(PatternRedef::Pred { new, orig, positive: false })
       }
       b"Func-Synonym" => {
         let Pattern::Func(orig) = self.parse_pattern()? else { panic!("expected func pattern") };
@@ -814,12 +814,12 @@ impl MsmParser {
       b"Attr-Synonym" => {
         let Pattern::Attr(orig) = self.parse_pattern()? else { panic!("expected attr pattern") };
         let Pattern::Attr(new) = self.parse_pattern()? else { panic!("expected attr pattern") };
-        ItemKind::PatternRedef(PatternRedef::Attr { new, orig, pos: true })
+        ItemKind::PatternRedef(PatternRedef::Attr { new, orig, positive: true })
       }
       b"Attr-Antonym" => {
         let Pattern::Attr(orig) = self.parse_pattern()? else { panic!("expected attr pattern") };
         let Pattern::Attr(new) = self.parse_pattern()? else { panic!("expected attr pattern") };
-        ItemKind::PatternRedef(PatternRedef::Attr { new, orig, pos: false })
+        ItemKind::PatternRedef(PatternRedef::Attr { new, orig, positive: false })
       }
       b"Cluster" => {
         let e = self.r.read_start(&mut self.buf, None)?;
@@ -967,12 +967,15 @@ impl MsmParser {
             }
             let refs = self.parse_references()?;
             let sch = if art == ArticleId::SELF {
-              match sch.checked_sub(1) {
-                Some(sch) => SchRef::Resolved(art, SchId(sch)),
-                None => SchRef::UnresolvedPriv(spelling),
+              if let Some(sch) = sch.checked_sub(1) {
+                let spelling = Article::from_upper(spelling.as_bytes()).unwrap();
+                SchRef::Resolved { art, spelling, sch: SchId(sch) }
+              } else {
+                SchRef::UnresolvedPriv(spelling)
               }
             } else {
-              SchRef::Resolved(art, SchId(id - 1))
+              let spelling = Article::from_upper(spelling.as_bytes()).unwrap();
+              SchRef::Resolved { art, spelling, sch: SchId(id - 1) }
             };
             return Ok(Elem::Inference(pos, InferenceKind::From(sch), refs))
           }
@@ -1107,36 +1110,38 @@ impl MsmParser {
             Elem::Reference(Reference { pos, kind })
           }
           b"Theorem-Reference" => {
-            let (mut pos, (mut article_nr, mut thm_nr)) = <(Position, _)>::default();
+            let (mut pos, (mut art, mut id, mut spelling)) = <(Position, _)>::default();
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
-                b"nr" => article_nr = self.r.get_attr(&attr.value)?,
-                // b"spelling" => spelling = attr.unescape_value().unwrap(),
-                b"number" => thm_nr = ThmId(self.r.get_attr::<u32>(&attr.value)? - 1),
+                b"nr" => art = self.r.get_attr(&attr.value)?,
+                b"spelling" =>
+                  spelling = Article::from_upper(attr.unescape_value().unwrap().as_bytes()).unwrap(),
+                b"number" => id = ThmId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 _ => {}
               }
             }
-            let refs = vec![RefFragment::Thm { pos, id: thm_nr }];
-            Elem::Reference(Reference { pos, kind: ReferenceKind::Global(article_nr, refs) })
+            let refs = vec![RefFragment::Thm { pos, id }];
+            Elem::Reference(Reference { pos, kind: ReferenceKind::Global { art, spelling, refs } })
           }
           b"Definition-Reference" => {
-            let (mut pos, (mut article_nr, mut def_nr)) = <(Position, _)>::default();
+            let (mut pos, (mut art, mut id, mut spelling)) = <(Position, _)>::default();
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
-                b"nr" => article_nr = self.r.get_attr(&attr.value)?,
-                // b"spelling" => spelling = attr.unescape_value().unwrap(),
-                b"number" => def_nr = DefId(self.r.get_attr::<u32>(&attr.value)? - 1),
+                b"nr" => art = self.r.get_attr(&attr.value)?,
+                b"spelling" =>
+                  spelling = Article::from_upper(attr.unescape_value().unwrap().as_bytes()).unwrap(),
+                b"number" => id = DefId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 _ => {}
               }
             }
-            let refs = vec![RefFragment::Def { pos, id: def_nr }];
-            Elem::Reference(Reference { pos, kind: ReferenceKind::Global(article_nr, refs) })
+            let refs = vec![RefFragment::Def { pos, id }];
+            Elem::Reference(Reference { pos, kind: ReferenceKind::Global { art, spelling, refs } })
           }
           b"Partial-Definiens" => match self.parse_elem()? {
             Elem::Term(case) => Elem::DefCaseTerm(DefCase { case, guard: self.parse_formula()? }),

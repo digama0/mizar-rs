@@ -3,7 +3,8 @@ use crate::VisitMut;
 use enum_map::{Enum, EnumMap};
 use paste::paste;
 use serde::Serialize;
-use serde_derive::Serialize;
+use serde_derive::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::marker::PhantomData;
@@ -210,8 +211,9 @@ impl<I: Idx, T> Index<Range<I>> for IdxVec<I, T> {
 
 #[macro_export]
 macro_rules! mk_id {
-  ($($id:ident($ty:ty) $(+ Visit($visit:ident))?,)*) => {
+  ($($(#[$($t:meta),*])?$id:ident($ty:ty) $(+ Visit($visit:ident))?,)*) => {
     $(
+      $(#[$($t),*])?
       #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, serde_derive::Serialize)]
       pub struct $id(pub $ty);
       impl $crate::Idx for $id {
@@ -355,12 +357,12 @@ mk_id! {
   EqMarkId(u32),
   SchFuncId(u32),
   PrivFuncId(u32),
-  LocusId(u8),
+  #[derive(Deserialize)] LocusId(u8),
   LabelId(u32),
   ArticleId(u32),
-  DefId(u32),
-  ThmId(u32),
-  SchId(u32),
+  #[derive(Deserialize)] DefId(u32),
+  #[derive(Deserialize)] ThmId(u32),
+  #[derive(Deserialize)] SchId(u32),
   AtomId(u32),
 }
 impl ArticleId {
@@ -1046,6 +1048,13 @@ impl serde::Serialize for Article {
   }
 }
 
+impl<'de> serde::Deserialize<'de> for Article {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where D: serde::Deserializer<'de> {
+    Ok(Article::from_upper(<Cow<'_, str>>::deserialize(deserializer)?.as_bytes()).unwrap())
+  }
+}
+
 #[derive(Debug)]
 pub enum ToArticleError {
   TooLong,
@@ -1094,7 +1103,7 @@ impl Article {
 
 macro_rules! mk_property_kind {
   (enum $ty:ident { $($(#[$attr:meta])* $id:ident = $upper:literal | $lower:literal,)* }) => {
-    #[derive(Copy, Clone, Debug, Enum, PartialEq, Eq, Serialize)]
+    #[derive(Copy, Clone, Debug, Enum, PartialEq, Eq, Serialize, Deserialize)]
     pub enum $ty {
       $($(#[$attr])* $id,)*
     }
@@ -1891,6 +1900,13 @@ impl serde::Serialize for Position {
     (self.line, self.col).serialize(serializer)
   }
 }
+impl<'de> serde::Deserialize<'de> for Position {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where D: serde::Deserializer<'de> {
+    let (line, col) = <_>::deserialize(deserializer)?;
+    Ok(Position { line, col })
+  }
+}
 
 #[derive(Clone, Debug)]
 pub enum SchemeDecl {
@@ -2113,7 +2129,7 @@ pub enum Registration {
   Property { kind: Property, prop: Proposition, just: Justification },
 }
 
-#[derive(Clone, Copy, Debug, Enum, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Enum, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CorrCondKind {
   Coherence,
   Compatibility,
@@ -2192,7 +2208,7 @@ pub struct SchemeBlock {
   pub just: Justification,
 }
 
-#[derive(Copy, Clone, Debug, Serialize)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub enum CancelKind {
   Def,
   Thm,
@@ -2234,7 +2250,7 @@ pub struct PerCases {
   pub thesis: Option<Thesis>,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BlockKind {
   Definition,
   Registration,
@@ -2462,6 +2478,33 @@ impl From<SymbolKind> for (SymbolKindClass, u32) {
       SymbolKind::Attr(AttrSymId(n)) => (SymbolKindClass::Attr, n),
     }
   }
+}
+pub trait FromSymbolKind: Idx + Into<SymbolKind> {
+  const CLASS: SymbolKindClass;
+}
+impl FromSymbolKind for StructSymId {
+  const CLASS: SymbolKindClass = SymbolKindClass::Struct;
+}
+impl FromSymbolKind for LeftBrkSymId {
+  const CLASS: SymbolKindClass = SymbolKindClass::LeftBrk;
+}
+impl FromSymbolKind for RightBrkSymId {
+  const CLASS: SymbolKindClass = SymbolKindClass::RightBrk;
+}
+impl FromSymbolKind for ModeSymId {
+  const CLASS: SymbolKindClass = SymbolKindClass::Mode;
+}
+impl FromSymbolKind for FuncSymId {
+  const CLASS: SymbolKindClass = SymbolKindClass::Func;
+}
+impl FromSymbolKind for PredSymId {
+  const CLASS: SymbolKindClass = SymbolKindClass::Pred;
+}
+impl FromSymbolKind for SelSymId {
+  const CLASS: SymbolKindClass = SymbolKindClass::Sel;
+}
+impl FromSymbolKind for AttrSymId {
+  const CLASS: SymbolKindClass = SymbolKindClass::Attr;
 }
 
 pub type Symbols = Vec<(SymbolKind, String)>;
@@ -2702,17 +2745,17 @@ pub struct DepClusters {
   pub cl: ClustersRaw,
 }
 
-#[derive(Clone, Default, PartialEq, Eq)]
-pub struct DepIdentify {
-  pub sig: Vec<Article>,
-  pub defs: Vec<Definiens>,
-}
+// #[derive(Clone, Default, PartialEq, Eq)]
+// pub struct DepIdentify {
+//   pub sig: Vec<Article>,
+//   pub defs: Vec<Definiens>,
+// }
 
-#[derive(Clone, Default, PartialEq, Eq)]
-pub struct DepReductions {
-  pub sig: Vec<Article>,
-  pub defs: Vec<Definiens>,
-}
+// #[derive(Clone, Default, PartialEq, Eq)]
+// pub struct DepReductions {
+//   pub sig: Vec<Article>,
+//   pub defs: Vec<Definiens>,
+// }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TheoremKind {
@@ -2795,8 +2838,14 @@ impl DirectiveKind {
   }
 }
 
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+pub struct ArticleAt {
+  pub pos: Position,
+  pub art: Article,
+}
+
 #[derive(Debug, Default)]
-pub struct Directives(pub EnumMap<DirectiveKind, Vec<(Position, Article)>>);
+pub struct Directives(pub EnumMap<DirectiveKind, Vec<ArticleAt>>);
 
 #[derive(Clone, Debug)]
 pub struct DepRequirement {
