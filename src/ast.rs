@@ -927,6 +927,8 @@ pub enum Pragma {
   Insert(String),
   /// $V-, $V+
   SetVerify(bool),
+  /// $L
+  ExternalLink(String),
   Other(String),
 }
 
@@ -950,6 +952,8 @@ impl FromStr for Pragma {
       Pragma::ThmDesc(s.trim_start().to_owned())
     } else if let Some(s) = spelling.strip_prefix("$INSERT") {
       Pragma::Insert(s.trim_start().to_owned())
+    } else if let Some(s) = spelling.strip_prefix("$L") {
+      Pragma::ExternalLink(s.trim_start().to_owned())
     } else {
       match spelling {
         "$V-" => Pragma::SetVerify(false),
