@@ -1265,7 +1265,9 @@ impl<'a> MizParser<'a> {
     } else {
       vec![]
     };
-    self.scan.accept(Keyword::Proof);
+    // leading "proof" keyword is now optional
+    if self.scan.try_accept(Keyword::Proof) {}
+    else { self.scan.accept(Keyword::Semicolon); }
     let (items, end) = self.parse_proof(false);
     self.scan.accept(Keyword::Semicolon);
     Box::new(SchemeBlock { end, head: SchemeHead { sym, nr: None, groups, concl, prems }, items })
