@@ -413,7 +413,7 @@ impl Analyzer<'_> {
         match *pragma {
           Pragma::Canceled(k, n) => self.elab_canceled(it.pos, k, n),
           Pragma::SetVerify(b) => self.no_suppress_checker = b,
-          Pragma::ThmDesc(_) | Pragma::Insert(_) => {}
+          Pragma::ThmDesc(_) | Pragma::Insert(_) | Pragma::ExternalLink(_) => {}
           // This is intentionally stricter than necessary to ensure that MML has no weird
           // pragmas. The line below should be uncommented to allow pragmas for general use.
           // Pragma::Other(_) => {}
@@ -5081,7 +5081,7 @@ impl ReadProof for BlockReader {
         self.elab_canceled_def(elab, it.pos, n),
       (
         BlockKind::Registration | BlockKind::Definition,
-        ast::ItemKind::Pragma(Pragma::ThmDesc(_)),
+        ast::ItemKind::Pragma(Pragma::ThmDesc(_) | Pragma::ExternalLink(_)),
       ) => {}
       _ => return self.super_elab_item(elab, it, block_end),
     }
