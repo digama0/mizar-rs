@@ -2029,7 +2029,7 @@ impl OWriteMptJson {
 impl WriteMptJson {
   pub fn write<I: Idx>(&mut self, pos: Position, fmt: FormatId, pid: I) {
     JsonFormatter.begin_array_value(&mut self.w, std::mem::take(&mut self.state)).unwrap();
-    writeln!(
+    write!(
       self.w,
       "\n{{\"pos\":[{},{}],\"fmt\":{},\"pid\":{}}}",
       pos.line,
