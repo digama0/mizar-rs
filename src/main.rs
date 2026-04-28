@@ -243,6 +243,9 @@ struct CliPasses {
   /// Produce a JSON dump of the parser result
   #[arg(long)]
   json_parse_out: bool,
+  /// Produce a JSON dump of pattern resolution
+  #[arg(long)]
+  mpt_json: bool,
   /// Disables the accomodator. (requires `-P`)
   #[arg(short = 'M', long)]
   no_accom: bool,
@@ -406,6 +409,7 @@ pub struct Config {
   pub xml_internals_self_test: bool,
   pub json_parse_in: bool,
   pub json_parse_out: bool,
+  pub mpt_json: bool,
   pub overwrite_prel: bool,
   pub cache_prel: bool,
 
@@ -487,6 +491,7 @@ fn main() {
     xml_internals_self_test: cli.passes.xml_internals_self_test,
     json_parse_in: cli.passes.json_parse_in,
     json_parse_out: cli.passes.json_parse_out,
+    mpt_json: cli.passes.mpt_json,
     overwrite_prel: cli.other.overwrite_prel,
     cache_prel: Default::default(),
 

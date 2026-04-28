@@ -1990,3 +1990,54 @@ impl WriteJson {
     self.w.write_all(b"\n\n").unwrap();
   }
 }
+
+pub struct OWriteMptJson(Option<Box<WriteMptJson>>);
+
+pub struct WriteMptJson {
+  w: BufWriter<File>,
+  state: bool,
+}
+
+impl MizPath {
+  pub fn write_mpt_json(&self, write: bool) -> OWriteMptJson {
+    OWriteMptJson(write.then(|| {
+      let mut w = BufWriter::new(self.create(true, false, "mpt.json").unwrap());
+      write!(w, "[").unwrap();
+      Box::new(WriteMptJson { w, state: true })
+    }))
+  }
+}
+
+impl OWriteMptJson {
+  #[inline]
+  pub fn on<R: Default>(&mut self, f: impl FnOnce(&mut WriteMptJson) -> R) -> R {
+    if let Some(w) = &mut self.0 {
+      f(w)
+    } else {
+      R::default()
+    }
+  }
+
+  pub fn finish(&mut self) {
+    if let Some(mut w) = self.0.take() {
+      w.w.write_all(b"]\n").unwrap();
+      w.w.get_mut().flush().unwrap()
+    }
+  }
+}
+
+impl WriteMptJson {
+  pub fn write<I: Idx>(&mut self, pos: Position, fmt: FormatId, pid: I) {
+    JsonFormatter.begin_array_value(&mut self.w, std::mem::take(&mut self.state)).unwrap();
+    writeln!(
+      self.w,
+      "\n{{\"pos\":[{},{}],\"fmt\":{},\"pid\":{}}}",
+      pos.line,
+      pos.col,
+      fmt.into_usize(),
+      pid.into_usize()
+    )
+    .unwrap();
+    JsonFormatter.end_array_value(&mut self.w).unwrap();
+  }
+}

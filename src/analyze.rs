@@ -7,7 +7,7 @@ use crate::export::Exporter;
 use crate::parser::{MsmParser, Parser, PathResult};
 use crate::reader::{DefiniensId, Reader};
 use crate::types::{PatternKindClass as PKC, *};
-use crate::write::OWriteXml;
+use crate::write::{OWriteMptJson, OWriteXml};
 use crate::*;
 use std::ops::Range;
 use std::rc::Rc;
@@ -55,6 +55,7 @@ pub struct Analyzer<'a> {
   defthms: DefId,
   pub notations_base: EnumMap<PatternKindClass, u32>,
   write_xml: OWriteXml,
+  write_mpt: OWriteMptJson,
   pub export: Exporter,
 }
 impl<'a> std::ops::Deref for Analyzer<'a> {
@@ -114,6 +115,7 @@ impl Reader {
       }
     }
     let write_xml = path.write_xml(self.g.cfg.xml_internals && self.g.cfg.analyzer_full);
+    let write_mpt = path.write_mpt_json(self.g.cfg.mpt_json);
     let mut elab = Analyzer {
       r: self,
       path,
@@ -138,6 +140,7 @@ impl Reader {
       notations_base: Default::default(),
       export: Default::default(),
       write_xml,
+      write_mpt,
     };
     #[allow(clippy::indexing_slicing)]
     for (i, pats) in &elab.r.notations {
@@ -166,6 +169,9 @@ impl Reader {
       if let Ok(parser) = &mut parser {
         parser.core_mut().write_json.finish();
       }
+    }
+    if elab.g.cfg.mpt_json {
+      elab.write_mpt.finish();
     }
     if elab.g.cfg.xml_internals {
       elab.write_xml.finish();
@@ -965,13 +971,14 @@ impl Analyzer<'_> {
     self.write_xml.on(|w| w.canceled(kind, n))
   }
 
-  fn elab_functor_term(&mut self, fmt: FormatFunc, args: &[ast::Term]) -> Term {
+  fn elab_functor_term(&mut self, pos: Position, fmt: FormatFunc, args: &[ast::Term]) -> Term {
     let args = self.elab_terms_qua(args);
     let fmt = self.formats[&Format::Func(fmt)];
     for pat in self.notations[PKC::Func].iter().rev() {
       if pat.fmt == fmt {
         if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
           let PatternKind::Func(nr) = pat.kind else { unreachable!() };
+          self.write_mpt.on(|w| w.write(pos, fmt, nr));
           let mut args = subst.trim_to(self.g.constrs.functor[nr].primary.len());
           args.iter_mut().for_each(|t| t.strip_qua_mut());
           let tm = Term::Functor { nr, args };
@@ -983,15 +990,18 @@ impl Analyzer<'_> {
     panic!("type error")
   }
 
-  fn elab_pred(&mut self, fmt: FormatPred, args: Vec<TermQua>, pos: bool) -> Formula {
+  fn elab_pred(
+    &mut self, pos: Position, fmt: FormatPred, args: Vec<TermQua>, positive: bool,
+  ) -> Formula {
     let fmt = self.formats[&Format::Pred(fmt)];
-    for pat in self.notations[PKC::Pred].iter().rev() {
+    for pat in self.r.notations[PKC::Pred].iter().rev() {
       if pat.fmt == fmt {
         if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
           let PatternKind::Pred(nr) = pat.kind else { unreachable!() };
+          self.write_mpt.on(|w| w.write(pos, fmt, nr));
           let mut args = subst.trim_to(self.g.constrs.predicate[nr].primary.len());
           args.iter_mut().for_each(|t| t.strip_qua_mut());
-          return Formula::Pred { nr, args }.maybe_neg(pat.pos == pos)
+          return Formula::Pred { nr, args }.maybe_neg(pat.pos == positive)
         }
       }
     }
@@ -1095,10 +1105,14 @@ impl Analyzer<'_> {
           None => panic!("{pos:?}: unresolved variable '{spelling}'"),
         },
       ast::Term::Numeral { value, .. } => Term::Numeral(value),
-      ast::Term::Infix { sym, left, ref args, .. } =>
-        self.elab_functor_term(FormatFunc::Func { sym, left, right: args.len() as u8 - left }, args),
-      ast::Term::Bracket { lsym, rsym, ref args, .. } =>
-        self.elab_functor_term(FormatFunc::Bracket { lsym, rsym, args: args.len() as u8 }, args),
+      ast::Term::Infix { pos, sym, left, ref args, .. } => {
+        let fmt = FormatFunc::Func { sym, left, right: args.len() as u8 - left };
+        self.elab_functor_term(pos, fmt, args)
+      }
+      ast::Term::Bracket { pos, lsym, rsym, ref args, .. } => {
+        let fmt = FormatFunc::Bracket { lsym, rsym, args: args.len() as u8 };
+        self.elab_functor_term(pos, fmt, args)
+      }
       ast::Term::PrivFunc { pos, kind, ref spelling, ref args } => {
         let mut args = self.elab_terms_qua(args);
         match kind.or_else(|| self.lookup.func.get(&(spelling.clone(), args.len() as u32)).copied())
@@ -1120,13 +1134,14 @@ impl Analyzer<'_> {
           None => panic!("{pos:?}: unresolved private functor '{spelling}'"),
         }
       }
-      ast::Term::Aggregate { sym, ref args, .. } => {
+      ast::Term::Aggregate { pos, sym, ref args, .. } => {
         let args = self.elab_terms_qua(args);
         let fmt = self.formats[&Format::Aggr(FormatAggr { sym, args: args.len() as u8 })];
         for pat in self.notations[PKC::Aggr].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
               let PatternKind::Aggr(nr) = pat.kind else { unreachable!() };
+              self.write_mpt.on(|w| w.write(pos, fmt, nr));
               let mut args = subst.trim_to(self.g.constrs.aggregate[nr].primary.len());
               args.iter_mut().for_each(|t| t.strip_qua_mut());
               let tm = Term::Aggregate { nr, args };
@@ -1137,7 +1152,7 @@ impl Analyzer<'_> {
         }
         panic!("type error")
       }
-      ast::Term::SubAggr { sym, ref arg, .. } => {
+      ast::Term::SubAggr { pos, sym, ref arg, .. } => {
         let arg = self.elab_term_qua(arg);
         let fmt = self.formats[&Format::SubAggr(sym)];
         for pat in self.notations[PKC::SubAggr].iter().rev() {
@@ -1145,19 +1160,21 @@ impl Analyzer<'_> {
             && pat.check_types(&self.g, &self.lc, std::slice::from_ref(&arg)).is_some()
           {
             let PatternKind::SubAggr(nr) = pat.kind else { unreachable!() };
+            self.write_mpt.on(|w| w.write(pos, fmt, nr));
             let ty = arg.get_type_uncached(&self.g, &self.lc);
             return Term::mk_aggr(&self.g, &self.lc, nr, &arg.strip_qua(), &ty)
           }
         }
         panic!("type error")
       }
-      ast::Term::Selector { sym, ref arg, .. } => {
+      ast::Term::Selector { pos, sym, ref arg, .. } => {
         let arg = self.elab_term_qua(arg);
         let fmt = self.formats[&Format::Sel(sym)];
         for pat in self.notations[PKC::Sel].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, std::slice::from_ref(&arg)) {
               let PatternKind::Sel(nr) = pat.kind else { unreachable!() };
+              self.write_mpt.on(|w| w.write(pos, fmt, nr));
               let mut args = subst.trim_to(self.g.constrs.selector[nr].primary.len());
               args.iter_mut().for_each(|t| t.strip_qua_mut());
               let tm = Term::Selector { nr, args };
@@ -1196,22 +1213,24 @@ impl Analyzer<'_> {
   }
 
   /// AnalyzeAttrFrm
-  fn elab_is_attr(&mut self, attr: &ast::Attr, pos: bool, tm: &TermQua) -> Formula {
+  fn elab_is_attr(&mut self, attr: &ast::Attr, positive: bool, tm: &TermQua) -> Formula {
     match attr {
-      ast::Attr::Non { attr, .. } => self.elab_is_attr(attr, !pos, tm),
-      &ast::Attr::Attr { sym, ref args, .. } => {
+      ast::Attr::Non { attr, .. } => self.elab_is_attr(attr, !positive, tm),
+      &ast::Attr::Attr { pos, sym, ref args, .. } => {
         let args = (args.iter().map(|t| self.elab_term_qua(t)))
           .chain(std::iter::once(tm.clone()))
           .collect_vec();
         let fmt = self.formats[&Format::Attr(FormatAttr { sym, args: args.len() as u8 })];
-        for pat in self.notations[PKC::Attr].iter().rev() {
+        for pat in self.r.notations[PKC::Attr].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
               let PatternKind::Attr(nr) = pat.kind else { unreachable!() };
+              self.write_mpt.on(|w| w.write(pos, fmt, nr));
               let mut args = subst.trim_to(self.g.constrs.attribute[nr].primary.len());
               args.iter_mut().for_each(|t| t.strip_qua_mut());
               let (nr, args) = Formula::adjust_attr(nr, &args, Some(&self.g.constrs));
-              return Formula::Attr { nr, args: args.to_owned().into() }.maybe_neg(pat.pos == pos)
+              return Formula::Attr { nr, args: args.to_owned().into() }
+                .maybe_neg(pat.pos == positive)
             }
           }
         }
@@ -1221,10 +1240,10 @@ impl Analyzer<'_> {
   }
 
   /// AnalyzeAttribute
-  fn elab_attr(&mut self, attr: &ast::Attr, mut pos: bool, ty: &mut Type) -> Attr {
+  fn elab_attr(&mut self, attr: &ast::Attr, mut positive: bool, ty: &mut Type) -> Attr {
     match attr {
-      ast::Attr::Non { attr, .. } => self.elab_attr(attr, !pos, ty),
-      &ast::Attr::Attr { sym, ref args, .. } => {
+      ast::Attr::Non { attr, .. } => self.elab_attr(attr, !positive, ty),
+      &ast::Attr::Attr { pos, sym, ref args, .. } => {
         // vprintln!("elab_attr {attr:?} <- {ty:?}");
         let v = self.lc.bound_var.push((IdentId::NONE, std::mem::take(ty)));
         let args = (args.iter().map(|t| self.elab_term_qua(t)))
@@ -1235,6 +1254,7 @@ impl Analyzer<'_> {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
               let PatternKind::Attr(nr) = pat.kind else { unreachable!() };
+              self.write_mpt.on(|w| w.write(pos, fmt, nr));
               let c = &self.g.constrs.attribute[nr].c;
               let nr = c.redefines.unwrap_or(nr);
               let args = (subst.subst_term.into_vec().into_iter())
@@ -1243,9 +1263,9 @@ impl Analyzer<'_> {
                 .map(|t| t.unwrap().to_owned().strip_qua())
                 .collect::<Box<[_]>>();
               *ty = self.r.lc.bound_var.0.pop().unwrap().1;
-              pos = pat.pos == pos;
+              positive = pat.pos == positive;
               assert!(matches!(ty.attrs.0, Attrs::Consistent(_)));
-              let out = Attr { nr, pos, args };
+              let out = Attr { nr, pos: positive, args };
               // vprintln!("elab_attr {attr:?} <- {ty:?}\n  -> {out:?}");
               return out
             }
@@ -1259,7 +1279,7 @@ impl Analyzer<'_> {
   fn elab_type(&mut self, ty: &ast::Type) -> Type {
     vprintln!("elab_type {ty:?}");
     let res = (|| match ty {
-      &ast::Type::Mode { sym, ref args, .. } => {
+      &ast::Type::Mode { pos, sym, ref args, .. } => {
         let args = self.elab_terms_qua(args);
         let fmt = self.formats[&Format::Mode(FormatMode { sym, args: args.len() as u8 })];
         for pat in self.notations[PKC::Mode].iter().rev() {
@@ -1269,11 +1289,13 @@ impl Analyzer<'_> {
               let base = self.lc.bound_var.len() as u32;
               match pat.kind {
                 PatternKind::Mode(nr) => {
+                  self.write_mpt.on(|w| w.write(pos, fmt, nr));
                   let mut args = subst.trim_to(self.g.constrs.mode[nr].primary.len()).to_vec();
                   args.iter_mut().for_each(|t| t.strip_qua_mut());
                   ty = Type { kind: TypeKind::Mode(nr), attrs: Default::default(), args }
                 }
                 PatternKind::ExpandableMode { ref expansion } => {
+                  // FIXME: write_mpt?
                   ty = (**expansion).clone();
                   let mut args = subst.finish();
                   args.iter_mut().for_each(|t| t.strip_qua_mut());
@@ -1300,13 +1322,14 @@ impl Analyzer<'_> {
         }
         panic!("type error")
       }
-      &ast::Type::Struct { sym, ref args, .. } => {
+      &ast::Type::Struct { pos, sym, ref args, .. } => {
         let args = self.elab_terms_qua(args);
         let fmt = self.formats[&Format::Struct(FormatStruct { sym, args: args.len() as u8 })];
         for pat in self.notations[PKC::Struct].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
               let PatternKind::Struct(nr) = pat.kind else { unreachable!() };
+              self.write_mpt.on(|w| w.write(pos, fmt, nr));
               let mut args = subst.trim_to(self.g.constrs.struct_mode[nr].primary.len()).to_vec();
               args.iter_mut().for_each(|t| t.strip_qua_mut());
               return Type { kind: TypeKind::Struct(nr), attrs: Default::default(), args }
@@ -1773,23 +1796,23 @@ impl Analyzer<'_> {
         let args = self.elab_terms_qua(&pred.args);
         let right = args.len() as u8 - pred.left;
         let fmt = FormatPred { sym: pred.sym, left: pred.left, right };
-        self.elab_pred(fmt, args.into(), pred.positive == positive)
+        self.elab_pred(pred.pos, fmt, args.into(), pred.positive == positive)
       }
       ast::Formula::ChainPred { first, rest, .. } => {
-        let ast::Pred { mut sym, mut left, ref args, .. } = **first;
+        let ast::Pred { mut pos, mut sym, mut left, ref args, .. } = **first;
         let mut args = self.elab_terms_qua(args).into_vec();
         Formula::mk_and_with(|conjs| {
           for rhs in rest {
             let mut mid: Vec<_> = args[left as usize..].into();
             let right = mid.len() as u8;
             let fmt = FormatPred { sym, left, right };
-            self.elab_pred(fmt, args, rhs.positive).append_conjuncts_to(conjs);
+            self.elab_pred(pos, fmt, args, rhs.positive).append_conjuncts_to(conjs);
             mid.extend(rhs.right.iter().map(|t| self.elab_term_qua(t)));
-            (args, sym, left) = (mid, rhs.sym, right);
+            (pos, args, sym, left) = (rhs.pos, mid, rhs.sym, right);
           }
           let right = args.len() as u8 - left;
           let fmt = FormatPred { sym, left, right };
-          self.elab_pred(fmt, args, first.positive).append_conjuncts_to(conjs);
+          self.elab_pred(pos, fmt, args, first.positive).append_conjuncts_to(conjs);
         })
         .maybe_neg(positive)
       }
@@ -3815,6 +3838,7 @@ impl BlockReader {
     let fmt = elab.formats[&Format::Func(pat.to_format())];
     let mut cc = CorrConds::new();
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
+    let pos = pat.pos();
     let args = pat.args_mut();
     let visible: Box<[_]> = args.iter_mut().map(|v| self.locus(elab.resolve_const(v))).collect();
     let mut properties = PropertiesBuilder::new(&visible);
@@ -3830,6 +3854,7 @@ impl BlockReader {
       });
       let pat = pat.expect("type error");
       let PatternKind::Func(nr) = pat.kind else { unreachable!() };
+      elab.write_mpt.on(|w| w.write(pos, fmt, nr));
       let c = &elab.g.constrs.functor[nr];
       (redefines, superfluous) = (Some(nr), (self.primary.len() - c.primary.len()) as u8);
       properties.props = c.properties.offset(superfluous);
@@ -3962,10 +3987,11 @@ impl BlockReader {
     let visible: Box<[_]> =
       pat.args.iter_mut().map(|v| self.locus(elab.resolve_const(v))).collect();
     let mut properties = PropertiesBuilder::new(&visible);
-    let (redefines, superfluous, pos);
+    let (redefines, superfluous, positive);
     if it.redef {
+      let pos = pat.pos;
       let args: Box<[_]> = pat.args.iter().map(|v| Term::Const(v.var())).collect();
-      let pat = elab.notations[PKC::Pred].iter().rev().find(|pat| {
+      let pat = elab.r.notations[PKC::Pred].iter().rev().find(|pat| {
         pat.fmt == fmt
           && !matches!(pat.kind, PatternKind::Pred(nr)
             if elab.g.constrs.predicate[nr].redefines.is_some())
@@ -3974,14 +4000,15 @@ impl BlockReader {
       });
       let pat = pat.expect("type error");
       let PatternKind::Pred(nr) = pat.kind else { unreachable!() };
+      elab.write_mpt.on(|w| w.write(pos, fmt, nr));
       let c = &elab.g.constrs.predicate[nr];
-      (redefines, superfluous, pos) =
+      (redefines, superfluous, positive) =
         (Some(nr), (self.primary.len() - c.primary.len()) as u8, pat.pos);
       properties.props = c.properties.offset(superfluous)
     } else {
-      (redefines, superfluous, pos) = (None, 0, true)
+      (redefines, superfluous, positive) = (None, 0, true)
     }
-    let value = def.as_deref_mut().map(|def| elab.elab_def_value(&mut def.kind, pos));
+    let value = def.as_deref_mut().map(|def| elab.elab_def_value(&mut def.kind, positive));
     if let Some(value) = &value {
       cc.0[CorrCondKind::Consistency] = value.mk_consistency(&elab.g, None);
       if let Some(nr) = redefines {
@@ -3997,8 +4024,9 @@ impl BlockReader {
     }
     elab.elab_corr_conds(cc, &mut it.conds, &mut it.corr);
     if !self.has_assums() {
-      properties
-        .load_args(&elab.g, &elab.lc, &self.to_const, |args| PropertyDeclKind::Pred(args, pos));
+      properties.load_args(&elab.g, &elab.lc, &self.to_const, |args| {
+        PropertyDeclKind::Pred(args, positive)
+      });
     }
     properties.elab_properties(elab, &mut it.props);
     let n;
@@ -4040,7 +4068,7 @@ impl BlockReader {
       let label = def.as_deref_mut().unwrap().label.as_ref().map(|l| (l.id, l.spelling.clone()));
       self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Pred(n), df, label, thm })));
     }
-    elab.push_mk_pattern(true, PKC::Pred, PatternKind::Pred(n), fmt, primary, visible, pos);
+    elab.push_mk_pattern(true, PKC::Pred, PatternKind::Pred(n), fmt, primary, visible, positive);
     elab.write_xml.on(|w| w.end_def())
   }
 
@@ -4076,6 +4104,7 @@ impl BlockReader {
         });
         let (redefines, superfluous, it_type);
         if it.redef {
+          let pos = pat.pos;
           let args: Box<[_]> = pat.args.iter().map(|v| Term::Const(v.var())).collect();
           let pat = elab.notations[PKC::Mode].iter().rev().find(|pat| {
             pat.fmt == fmt
@@ -4086,6 +4115,7 @@ impl BlockReader {
           });
           let pat = pat.expect("type error");
           let PatternKind::Mode(nr) = pat.kind else { panic!("redefining expandable mode") };
+          elab.write_mpt.on(|w| w.write(pos, fmt, nr));
           let c = &elab.g.constrs.mode[nr];
           (redefines, superfluous) = (Some(nr), (self.primary.len() - c.primary.len()) as u8);
           if c.properties.get(PropertyKind::Sethood) {
@@ -4216,8 +4246,9 @@ impl BlockReader {
     let visible: Box<[_]> =
       pat.args.iter_mut().map(|v| self.locus(elab.resolve_const(v))).collect();
     let (redefines, superfluous, pos) = if it.redef {
+      let pos = pat.pos;
       let args: Box<[_]> = pat.args.iter().map(|v| Term::Const(v.var())).collect();
-      let pat = elab.notations[PKC::Attr].iter().rev().find(|pat| {
+      let pat = elab.r.notations[PKC::Attr].iter().rev().find(|pat| {
         pat.fmt == fmt
           && !matches!(pat.kind, PatternKind::Attr(nr)
               if elab.g.constrs.attribute[nr].redefines.is_some())
@@ -4226,6 +4257,7 @@ impl BlockReader {
       });
       let pat = pat.expect("type error");
       let PatternKind::Attr(nr) = pat.kind else { unreachable!() };
+      elab.write_mpt.on(|w| w.write(pos, fmt, nr));
       let c = &elab.g.constrs.attribute[nr];
       (Some(nr), (self.primary.len() - c.primary.len()) as u8, pat.pos)
     } else {
@@ -4387,6 +4419,7 @@ impl BlockReader {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&elab.g, &elab.lc, std::slice::from_ref(&arg)) {
               let PatternKind::Sel(nr) = pat.kind else { unreachable!() };
+              elab.write_mpt.on(|w| w.write(v.pos, fmt, nr));
               let args = subst.trim_to(elab.g.constrs.selector[nr].primary.len());
               let mut inst = Inst::new(&elab.g.constrs, &elab.lc, &args, 0);
               let ty2 = elab.g.constrs.selector[nr].ty.visit_cloned(&mut inst);
@@ -4687,16 +4720,18 @@ impl BlockReader {
   }
 
   fn elab_identify_pattern_func(
-    &self, elab: &Analyzer, pat: &mut ast::PatternFunc,
+    &self, elab: &mut Analyzer, pat: &mut ast::PatternFunc,
   ) -> PatternFuncResult {
+    let pos = pat.pos();
     let fmt = elab.formats[&Format::Func(pat.to_format())];
     let visible: Box<[_]> =
       pat.args_mut().iter_mut().map(|v| self.locus(elab.resolve_const(v))).collect();
     let args: Box<[_]> = pat.args().iter().map(|v| Term::Const(v.var())).collect();
-    for pat in elab.notations[PKC::Func].iter().rev() {
+    for pat in elab.r.notations[PKC::Func].iter().rev() {
       if pat.fmt == fmt {
         if let Some(subst) = pat.check_types(&elab.g, &elab.lc, &args) {
           let PatternKind::Func(nr) = pat.kind else { unreachable!() };
+          elab.write_mpt.on(|w| w.write(pos, fmt, nr));
           let args = subst.trim_to(elab.g.constrs.functor[nr].primary.len());
           let mut var_set = CheckAccess::new(self.primary.len());
           for &i in &*visible {
@@ -4858,7 +4893,7 @@ impl BlockReader {
       orig.args.iter_mut().for_each(|v| occ.set(self.locus(elab.resolve_const(v))))
     });
     let args: Box<[_]> = orig.args.iter().map(|v| Term::Const(v.var())).collect();
-    let pat = elab.notations[PKC::Pred].iter().rev().find(|pat| {
+    let pat = elab.r.notations[PKC::Pred].iter().rev().find(|pat| {
       pat.fmt == fmt_orig
         && !matches!(pat.kind, PatternKind::Pred(nr)
             if elab.g.constrs.predicate[nr].redefines.is_some())
@@ -4867,6 +4902,7 @@ impl BlockReader {
     });
     let pat = pat.expect("type error");
     let PatternKind::Pred(nr) = pat.kind else { unreachable!() };
+    elab.write_mpt.on(|w| w.write(orig.pos, fmt_orig, nr));
     let c = &elab.g.constrs.predicate[nr];
     elab.push_mk_pattern(
       true,
@@ -4888,7 +4924,7 @@ impl BlockReader {
       orig.args_mut().iter_mut().for_each(|v| occ.set(self.locus(elab.resolve_const(v))))
     });
     let args: Box<[_]> = orig.args().iter().map(|v| Term::Const(v.var())).collect();
-    let pat = elab.notations[PKC::Func].iter().rev().find(|pat| {
+    let pat = elab.r.notations[PKC::Func].iter().rev().find(|pat| {
       pat.fmt == fmt_orig
         && !matches!(pat.kind, PatternKind::Func(nr)
             if elab.g.constrs.functor[nr].redefines.is_some())
@@ -4897,6 +4933,7 @@ impl BlockReader {
     });
     let pat = pat.expect("type error");
     let PatternKind::Func(nr) = pat.kind else { unreachable!() };
+    elab.write_mpt.on(|w| w.write(orig.pos(), fmt_orig, nr));
     let c = &elab.g.constrs.functor[nr];
     elab.push_mk_pattern(
       true,
@@ -4918,7 +4955,7 @@ impl BlockReader {
       orig.args.iter_mut().for_each(|v| occ.set(self.locus(elab.resolve_const(v))))
     });
     let args: Box<[_]> = orig.args.iter().map(|v| Term::Const(v.var())).collect();
-    let pat = elab.notations[PKC::Mode].iter().rev().find(|pat| {
+    let pat = elab.r.notations[PKC::Mode].iter().rev().find(|pat| {
       pat.fmt == fmt_orig
         && !matches!(pat.kind, PatternKind::Mode(nr)
             if elab.g.constrs.mode[nr].redefines.is_some())
@@ -4927,6 +4964,7 @@ impl BlockReader {
     });
     let pat = pat.expect("type error");
     let PatternKind::Mode(nr) = pat.kind else { panic!("redefining expandable mode") };
+    elab.write_mpt.on(|w| w.write(orig.pos, fmt_orig, nr));
     let c = &elab.g.constrs.mode[nr];
     elab.push_mk_pattern(
       true,
@@ -4949,7 +4987,7 @@ impl BlockReader {
       orig.args.iter_mut().for_each(|v| occ.set(self.locus(elab.resolve_const(v))))
     });
     let args: Box<[_]> = orig.args.iter().map(|v| Term::Const(v.var())).collect();
-    let pat = elab.notations[PKC::Attr].iter().rev().find(|pat| {
+    let pat = elab.r.notations[PKC::Attr].iter().rev().find(|pat| {
       pat.fmt == fmt_orig
         && !matches!(pat.kind, PatternKind::Attr(nr)
             if elab.g.constrs.attribute[nr].redefines.is_some())
@@ -4958,6 +4996,7 @@ impl BlockReader {
     });
     let pat = pat.expect("type error");
     let PatternKind::Attr(nr) = pat.kind else { unreachable!() };
+    elab.write_mpt.on(|w| w.write(orig.pos, fmt_orig, nr));
     elab.push_mk_pattern(
       true,
       PKC::Attr,
