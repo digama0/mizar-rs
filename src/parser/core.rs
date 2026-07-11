@@ -5,7 +5,7 @@ use crate::types::{
   PriorityKind, SymbolKind, Symbols,
 };
 use crate::write::OWriteJson;
-use std::collections::HashMap;
+use crate::HashMap;
 
 pub enum Parser<'a> {
   Miz(MizParser<'a>),
@@ -50,7 +50,7 @@ impl ParserCore {
   }
 
   pub fn push_format(&mut self, _pos: Position, fmt: Format) -> bool {
-    if let std::collections::hash_map::Entry::Vacant(e) = self.format_lookup.entry(fmt) {
+    if let hashbrown::hash_map::Entry::Vacant(e) = self.format_lookup.entry(fmt) {
       e.insert(self.formats.push(fmt));
       return true
     }

@@ -748,7 +748,11 @@ impl Analyzer<'_> {
                 pf
               });
               let f = self.g.reqs.mk_eq(lhs.clone(), mid);
-              self.push_prop(prop.label.as_ref().map(|l| (l.id, l.spelling.clone())), f.clone(), pf);
+              self.push_prop(
+                prop.label.as_ref().map(|l| (l.id, l.spelling.clone())),
+                f.clone(),
+                pf,
+              );
               return f
             }
           }

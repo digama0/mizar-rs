@@ -197,7 +197,7 @@ impl JsonParser {
   fn fix_references(&mut self, rs: &mut [Reference]) {
     for r in rs {
       if let ReferenceKind::Global { art, spelling, .. } = &mut r.kind {
-        *art = *(self.core.articles.get(&spelling))
+        *art = *(self.core.articles.get(&*spelling))
           .unwrap_or_else(|| panic!("article not found, perhaps you forgot 'theorems {spelling}'"));
       }
     }
