@@ -873,7 +873,8 @@ impl Analyzer<'_> {
   }
 
   fn elab_corr_conds(
-    &mut self, mut cc: CorrConds, conds: &mut [ast::CorrCond], corr: &mut Option<ast::Correctness>,
+    &mut self, pos: Position, mut cc: CorrConds, conds: &mut [ast::CorrCond],
+    corr: &mut Option<ast::Correctness>,
   ) {
     if self.g.cfg.analyzer_full {
       for cond in conds {
@@ -903,7 +904,7 @@ impl Analyzer<'_> {
       } else {
         self.write_xml.on(|w| w.skip_correctness());
       }
-      assert!(cc.0.iter().all(|p| p.1.is_none()));
+      assert!(cc.0.iter().all(|p| p.1.is_none()), "{pos:?}: missing correctness condition");
     }
   }
 
@@ -3892,7 +3893,7 @@ impl BlockReader {
         }
       }
     }
-    elab.elab_corr_conds(cc, &mut it.conds, &mut it.corr);
+    elab.elab_corr_conds(loc, cc, &mut it.conds, &mut it.corr);
     if !self.has_assums() {
       properties.load_args(&elab.g, &elab.lc, &self.to_const, |args| {
         PropertyDeclKind::Func(
@@ -4022,7 +4023,7 @@ impl BlockReader {
       let args = self.to_const.0[superfluous as usize..].iter().map(|c| Term::Const(*c)).collect();
       properties.formula = Some(Box::new(Formula::Pred { nr, args }))
     }
-    elab.elab_corr_conds(cc, &mut it.conds, &mut it.corr);
+    elab.elab_corr_conds(loc, cc, &mut it.conds, &mut it.corr);
     if !self.has_assums() {
       properties.load_args(&elab.g, &elab.lc, &self.to_const, |args| {
         PropertyDeclKind::Pred(args, positive)
@@ -4086,7 +4087,7 @@ impl BlockReader {
       ast::DefModeKind::Expandable { expansion } => {
         elab.write_xml.on(|w| w.start_def(DefinitionKind::ExpandMode, loc, None, it.redef));
         let mut expansion = Box::new(elab.elab_type(expansion));
-        elab.elab_corr_conds(cc, &mut it.conds, &mut it.corr);
+        elab.elab_corr_conds(loc, cc, &mut it.conds, &mut it.corr);
         properties.elab_properties(elab, &mut it.props);
         elab.write_xml.on(|w| w.skip_constructor());
         self.to_locus(elab, |l| expansion.visit(l));
@@ -4161,7 +4162,7 @@ impl BlockReader {
             properties.props.set(PropertyKind::Sethood)
           }
         }
-        elab.elab_corr_conds(cc, &mut it.conds, &mut it.corr);
+        elab.elab_corr_conds(loc, cc, &mut it.conds, &mut it.corr);
         elab.lc.it_type = Some(it_type);
         properties.elab_properties(elab, &mut it.props);
         it_type = elab.lc.it_type.take().unwrap();
@@ -4273,7 +4274,7 @@ impl BlockReader {
           Some(value.mk_compatibility(&elab.g, None, &Formula::Attr { nr, args }));
       }
     }
-    elab.elab_corr_conds(cc, &mut it.conds, &mut it.corr);
+    elab.elab_corr_conds(loc, cc, &mut it.conds, &mut it.corr);
     let mut properties = PropertiesBuilder::new(&visible);
     properties.elab_properties(elab, &mut it.props);
     let n;
@@ -4546,7 +4547,7 @@ impl BlockReader {
   }
 
   fn elab_exist_reg(
-    &mut self, elab: &mut Analyzer, concl: &[ast::Attr], ty: &ast::Type,
+    &mut self, elab: &mut Analyzer, pos: Position, concl: &[ast::Attr], ty: &ast::Type,
     conds: &mut [ast::CorrCond], corr: &mut Option<ast::Correctness>,
   ) {
     let mut ty = elab.elab_type(ty);
@@ -4576,7 +4577,7 @@ impl BlockReader {
 
     let mut cc = CorrConds::new();
     cc.0[CorrCondKind::Existence] = Some(Box::new(Formula::forall0(ty, f.mk_neg()).mk_neg()));
-    elab.elab_corr_conds(cc, conds, corr);
+    elab.elab_corr_conds(pos, cc, conds, corr);
 
     CheckAccess::with(&primary, |occ| {
       occ.visit_attrs(&attrs);
@@ -4588,9 +4589,10 @@ impl BlockReader {
     elab.write_xml.on(|w| w.end_registration());
   }
 
+  #[allow(clippy::too_many_arguments)]
   fn elab_cond_reg(
-    &mut self, elab: &mut Analyzer, antecedent: &[ast::Attr], concl: &[ast::Attr], ty: &ast::Type,
-    conds: &mut [ast::CorrCond], corr: &mut Option<ast::Correctness>,
+    &mut self, elab: &mut Analyzer, pos: Position, antecedent: &[ast::Attr], concl: &[ast::Attr],
+    ty: &ast::Type, conds: &mut [ast::CorrCond], corr: &mut Option<ast::Correctness>,
   ) {
     let mut ty = elab.elab_type(ty);
     let (kind, args) = match ty.kind {
@@ -4630,7 +4632,7 @@ impl BlockReader {
 
     let mut cc = CorrConds::new();
     cc.0[CorrCondKind::Coherence] = Some(Box::new(Formula::forall0(ty, f.mk_neg())));
-    elab.elab_corr_conds(cc, conds, corr);
+    elab.elab_corr_conds(pos, cc, conds, corr);
 
     CheckAccess::with(&primary, |occ| {
       occ.visit_attrs(&attrs1);
@@ -4647,9 +4649,10 @@ impl BlockReader {
     elab.write_xml.on(|w| w.end_registration());
   }
 
+  #[allow(clippy::too_many_arguments)]
   fn elab_func_reg(
-    &mut self, elab: &mut Analyzer, term: &ast::Term, concl: &[ast::Attr], oty: Option<&ast::Type>,
-    conds: &mut [ast::CorrCond], corr: &mut Option<ast::Correctness>,
+    &mut self, elab: &mut Analyzer, pos: Position, term: &ast::Term, concl: &[ast::Attr],
+    oty: Option<&ast::Type>, conds: &mut [ast::CorrCond], corr: &mut Option<ast::Correctness>,
   ) {
     let term = elab.elab_term(term);
     let mut term2 = match term {
@@ -4704,7 +4707,7 @@ impl BlockReader {
       ty.visit(l);
     });
     elab.write_xml.on(|w| w.start_fcluster(&primary, &term2, &attrs1, oty.map(|_| &ty)));
-    elab.elab_corr_conds(cc, conds, corr);
+    elab.elab_corr_conds(pos, cc, conds, corr);
 
     CheckAccess::with(&primary, |occ| occ.visit_term(&term2));
     elab.read_functor_cluster(FunctorCluster {
@@ -4745,7 +4748,7 @@ impl BlockReader {
     panic!("type error")
   }
 
-  fn elab_identify_func(&mut self, elab: &mut Analyzer, it: &mut ast::IdentifyFunc) {
+  fn elab_identify_func(&mut self, elab: &mut Analyzer, pos: Position, it: &mut ast::IdentifyFunc) {
     let lhs_pat = self.elab_identify_pattern_func(elab, &mut it.lhs);
     let rhs_pat = self.elab_identify_pattern_func(elab, &mut it.rhs);
     assert!(
@@ -4803,12 +4806,12 @@ impl BlockReader {
     let primary = self.primary.0.iter().cloned().collect();
     let id = IdentifyFunc { primary, lhs, rhs, eq_args };
     elab.write_xml.on(|w| w.start_identify_func(&id));
-    elab.elab_corr_conds(cc, &mut it.conds, &mut it.corr);
+    elab.elab_corr_conds(pos, cc, &mut it.conds, &mut it.corr);
     elab.r.push_identify(&id);
     elab.write_xml.on(|w| w.end_identify_func());
   }
 
-  fn elab_reduction(&mut self, elab: &mut Analyzer, it: &mut ast::Reduction) {
+  fn elab_reduction(&mut self, elab: &mut Analyzer, pos: Position, it: &mut ast::Reduction) {
     fn is_ssubterm(ctx: &mut EqCtx<'_>, sup: &Term, sub: &Term) -> bool {
       use Term::*;
       match sup {
@@ -4846,7 +4849,7 @@ impl BlockReader {
     CheckAccess::with(&primary, |occ| occ.visit_term(&from));
     let red = Reduction { primary, terms: [from, to] };
     elab.write_xml.on(|w| w.start_reduction(&red));
-    elab.elab_corr_conds(cc, &mut it.conds, &mut it.corr);
+    elab.elab_corr_conds(pos, cc, &mut it.conds, &mut it.corr);
     elab.r.reductions.push(red);
     elab.write_xml.on(|w| w.end_reduction());
   }
@@ -5103,17 +5106,18 @@ impl ReadProof for BlockReader {
         ast::PatternRedef::Attr { new, orig, positive } =>
           self.elab_attr_notation(elab, new, orig, *positive),
       },
-      (BlockKind::Registration, ast::ItemKind::Cluster(it)) => match &mut it.kind {
+      (BlockKind::Registration, ast::ItemKind::Cluster(cl)) => match &mut cl.kind {
         ast::ClusterDeclKind::Exist { concl, ty } =>
-          self.elab_exist_reg(elab, concl, ty, &mut it.conds, &mut it.corr),
+          self.elab_exist_reg(elab, it.pos, concl, ty, &mut cl.conds, &mut cl.corr),
         ast::ClusterDeclKind::Func { term, concl, ty } =>
-          self.elab_func_reg(elab, term, concl, ty.as_deref(), &mut it.conds, &mut it.corr),
+          self.elab_func_reg(elab, it.pos, term, concl, ty.as_deref(), &mut cl.conds, &mut cl.corr),
         ast::ClusterDeclKind::Cond { antecedent, concl, ty } =>
-          self.elab_cond_reg(elab, antecedent, concl, ty, &mut it.conds, &mut it.corr),
+          self.elab_cond_reg(elab, it.pos, antecedent, concl, ty, &mut cl.conds, &mut cl.corr),
       },
-      (BlockKind::Registration, ast::ItemKind::IdentifyFunc(it)) =>
-        self.elab_identify_func(elab, it),
-      (BlockKind::Registration, ast::ItemKind::Reduction(it)) => self.elab_reduction(elab, it),
+      (BlockKind::Registration, ast::ItemKind::IdentifyFunc(id)) =>
+        self.elab_identify_func(elab, it.pos, id),
+      (BlockKind::Registration, ast::ItemKind::Reduction(red)) =>
+        self.elab_reduction(elab, it.pos, red),
       (BlockKind::Registration, ast::ItemKind::SethoodRegistration { ty, just }) =>
         self.elab_sethood_registration(elab, it.pos, ty, just),
       (BlockKind::Definition, &mut ast::ItemKind::Pragma(Pragma::Canceled(CancelKind::Def, n))) =>
