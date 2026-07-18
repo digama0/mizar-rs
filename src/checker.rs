@@ -972,10 +972,22 @@ impl<'a> SchemeCtx<'a> {
             }
             _ => return false,
           };
-          match self.subst.func.get_mut_extending(*n1) {
-            Some(asgn) if *asgn == kind => {}
+          // Binding a scheme functor requires its result type to conform, exactly as in
+          // the nullary case above: the substituted functor's type must widen to the
+          // declared `primary[n1]`. (Mizar: `SchWidennings` in `SchEqTrm`, schemes.pas.)
+          // A scheme functor's type is a constant of `n1`, not a function of its args, so
+          // only the result type is checked here; the args are matched structurally below.
+          match *self.subst.func.get_mut_extending(*n1) {
+            Some(asgn) if asgn == kind => {}
             Some(_) => return false,
-            x @ None => *x = Some(kind),
+            None => {
+              if !self
+                .wider(&self.primary[Idx::into_usize(*n1)], &t2.get_type(self.g, self.lc, false))
+              {
+                return false
+              }
+              self.subst.func[*n1] = Some(kind);
+            }
           }
           self.eq_terms(args1, args2)
         },
