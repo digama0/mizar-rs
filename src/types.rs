@@ -230,7 +230,7 @@ macro_rules! mk_id {
         fn from_str(s: &str) -> Result<Self, Self::Err> { <$ty>::from_str(s).map($id) }
       }
       impl $crate::parser::FromStrPos for $id {
-        fn to_err(_: Self::Err, pos: usize) -> $crate::parser::ParseError {
+        fn to_err(_: Self::Err, pos: u64) -> $crate::parser::ParseError {
           $crate::parser::ParseError::BadInteger(pos)
         }
       }

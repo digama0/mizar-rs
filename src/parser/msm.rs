@@ -66,7 +66,7 @@ impl std::str::FromStr for IdentKind {
   }
 }
 impl super::FromStrPos for IdentKind {
-  fn to_err(s: String, pos: usize) -> ParseError {
+  fn to_err(s: String, pos: u64) -> ParseError {
     ParseError::UnexpectedElement { pos, expected: "identifier kind", found: Some(s.into()) }
   }
 }
@@ -161,7 +161,7 @@ impl XmlReader {
         b"line" => pos.line = self.get_attr(&attr.value)?,
         b"col" => pos.col = self.get_attr(&attr.value)?,
         b"varnr" => var = self.get_attr::<u32>(&attr.value)?.checked_sub(1).map(ConstId),
-        b"spelling" => spelling = attr.unescape_value().unwrap(),
+        b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap(),
         // omitted: origin, kind, serialnr, idnr
         _ => {}
       }
@@ -353,7 +353,7 @@ impl MsmParser {
             b"line" => pos.line = self.r.get_attr(&attr.value)?,
             b"col" => pos.col = self.r.get_attr(&attr.value)?,
             b"nr" => sym = AttrSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-            b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+            b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
             _ => {}
           }
         }
@@ -409,7 +409,7 @@ impl MsmParser {
       let attr = attr?;
       match attr.key.0 {
         b"nr" => rsym = RightBrkSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-        b"spelling" => rsp = attr.unescape_value().unwrap().to_string(),
+        b"spelling" => rsp = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
         _ => {}
       }
     }
@@ -456,7 +456,7 @@ impl MsmParser {
         b"kind" => kind = attr.value,
         b"property" => property = Some((*attr.value).try_into().unwrap()),
         b"shape" => shape = attr.value,
-        b"spelling" => spelling = Some(attr.unescape_value().unwrap()),
+        b"spelling" => spelling = Some(attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap()),
         b"condition" => condition = attr.value,
         // Some((*attr.value).try_into().unwrap()),
         _ => {}
@@ -485,7 +485,7 @@ impl MsmParser {
           let attr = attr?;
           match attr.key.0 {
             b"nr" => nr = Some(SchId(self.r.get_attr::<u32>(&attr.value)? - 1)),
-            b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+            b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
             _ => {}
           }
         }
@@ -768,7 +768,7 @@ impl MsmParser {
           let attr = attr?;
           match attr.key.0 {
             b"nr" => sym = StructSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-            b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+            b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
             _ => {}
           }
         }
@@ -961,7 +961,7 @@ impl MsmParser {
                 b"nr" => art = self.r.get_attr(&attr.value)?,
                 b"idnr" => id = self.r.get_attr::<u32>(&attr.value)?,
                 b"schnr" => sch = self.r.get_attr::<u32>(&attr.value)?,
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
                 _ => {}
               }
             }
@@ -1088,7 +1088,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"labelnr" => id = self.r.get_attr::<u32>(&attr.value)?.checked_sub(1).map(LabelId),
-                b"spelling" => spelling = attr.unescape_value().unwrap(),
+                b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap(),
                 _ => {}
               }
             }
@@ -1105,7 +1105,7 @@ impl MsmParser {
               ReferenceKind::Priv(self.r.get_attr::<u32>(&attr.value)?.checked_sub(1).map(LabelId))
             } else {
               let attr = e.try_get_attribute(b"spelling").unwrap().unwrap();
-              ReferenceKind::UnresolvedPriv(attr.unescape_value().unwrap().to_string())
+              ReferenceKind::UnresolvedPriv(attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string())
             };
             Elem::Reference(Reference { pos, kind })
           }
@@ -1118,7 +1118,7 @@ impl MsmParser {
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => art = self.r.get_attr(&attr.value)?,
                 b"spelling" =>
-                  spelling = Article::from_upper(attr.unescape_value().unwrap().as_bytes()).unwrap(),
+                  spelling = Article::from_upper(attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().as_bytes()).unwrap(),
                 b"number" => id = ThmId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 _ => {}
               }
@@ -1135,7 +1135,7 @@ impl MsmParser {
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => art = self.r.get_attr(&attr.value)?,
                 b"spelling" =>
-                  spelling = Article::from_upper(attr.unescape_value().unwrap().as_bytes()).unwrap(),
+                  spelling = Article::from_upper(attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().as_bytes()).unwrap(),
                 b"number" => id = DefId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 _ => {}
               }
@@ -1183,7 +1183,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 // b"idnr" => sym = self.r.get_attr::<u32>(&attr.value)? - 1,
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
                 // b"origin" => origin = self.r.get_attr(&attr.value)?,
                 b"kind" => kind = self.r.get_attr(&attr.value)?,
                 // b"serialnr" => serial = self.r.get_attr(&attr.value)?,
@@ -1208,7 +1208,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 // b"idnr" => id = self.r.get_attr::<u32>(&attr.value)? - 1,
-                b"spelling" => spelling = attr.unescape_value().unwrap(),
+                b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap(),
                 b"shape" => shape = self.r.get_attr(&attr.value)?,
                 // b"serialnr" => serial = self.r.get_attr(&attr.value)?,
                 b"nr" => var = self.r.get_attr::<u32>(&attr.value)? - 1,
@@ -1233,7 +1233,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = FuncSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
                 _ => {}
               }
             }
@@ -1254,7 +1254,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => lsym = LeftBrkSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => lspelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => lspelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
                 _ => {}
               }
             }
@@ -1270,7 +1270,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = StructSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
                 _ => {}
               }
             }
@@ -1285,7 +1285,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = StructSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
                 _ => {}
               }
             }
@@ -1300,7 +1300,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = SelSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
                 _ => {}
               }
             }
@@ -1316,7 +1316,7 @@ impl MsmParser {
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = SelSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 b"varnr" => id = self.r.get_attr::<u32>(&attr.value)?.checked_sub(1).map(ConstId),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
                 _ => {}
               }
             }
@@ -1370,7 +1370,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = ModeSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
                 _ => {}
               }
             }
@@ -1385,7 +1385,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = StructSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
                 _ => {}
               }
             }
@@ -1447,7 +1447,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = PredSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
                 _ => {}
               }
             }
@@ -1469,7 +1469,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = PredSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
                 _ => {}
               }
             }
@@ -1508,7 +1508,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 // b"idnr" => id = self.r.get_attr::<u32>(&attr.value)? - 1,
-                b"spelling" => spelling = attr.unescape_value().unwrap(),
+                b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap(),
                 b"shape" => shape = self.r.get_attr(&attr.value)?,
                 b"nr" => var = self.r.get_attr::<u32>(&attr.value)? - 1,
                 _ => {}
@@ -1557,7 +1557,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = PredSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
                 _ => {}
               }
             }
@@ -1576,7 +1576,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = FuncSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
                 _ => {}
               }
             }
@@ -1595,7 +1595,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => lsym = LeftBrkSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => lspelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => lspelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
                 _ => {}
               }
             }
@@ -1612,7 +1612,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = ModeSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
                 _ => {}
               }
             }
@@ -1629,7 +1629,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = AttrSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
                 _ => {}
               }
             }
@@ -1648,7 +1648,7 @@ impl MsmParser {
                 b"line" => pos.line = self.r.get_attr(&attr.value)?,
                 b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = SelSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => spelling = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
                 _ => {}
               }
             }

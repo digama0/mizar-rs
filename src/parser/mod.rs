@@ -26,14 +26,14 @@ impl MizPath {
   pub fn read_ere(&self, idx: &mut RequirementIndexes) -> Result<()> {
     let mut r = BufReader::new(self.open(true, false, "ere")?);
     let mut buf = String::new();
-    let mut pos = r.read_line(&mut buf)?;
+    let mut pos = r.read_line(&mut buf)? as u64;
     assert!(buf.trim_end() == "0");
     buf.clear();
     for (_, val) in &mut idx.fwd {
       let line = r.read_line(&mut buf)?;
       *val = buf.trim_end().parse().map_err(|_| ParseError::BadInteger(pos))?;
       buf.clear();
-      pos += line;
+      pos += line as u64;
     }
     Ok(())
   }
@@ -41,7 +41,7 @@ impl MizPath {
   pub fn read_ref(&self, refs: &mut References) -> Result<()> {
     let mut r = BufReader::new(self.open(true, false, "ref")?);
     fn parse_one<T: Idx>(
-      r: &mut impl BufRead, pos: &mut usize, buf: &mut String, map: &mut HashSet<(ArticleId, T)>,
+      r: &mut impl BufRead, pos: &mut u64, buf: &mut String, map: &mut HashSet<(ArticleId, T)>,
     ) -> Result<()> {
       let mut c = [0];
       loop {
@@ -56,7 +56,7 @@ impl MizPath {
         let mut parse_num = || -> Result<u32> {
           let s = it.next().ok_or_else(|| ParseError::unexpected_elem(pos2, "number", None))?;
           let n = s.parse().map_err(|_| ParseError::BadInteger(pos2))?;
-          pos2 += s.len() + 1;
+          pos2 += s.len() as u64 + 1;
           Ok(n)
         };
         let (x1, x2, _y) = (parse_num()?, parse_num()?, parse_num()?);
@@ -64,11 +64,11 @@ impl MizPath {
           assert!(map.insert((ArticleId(x1), T::from_usize(x2 as usize))));
         }
         buf.clear();
-        *pos += line;
+        *pos += line as u64;
       }
     }
     let mut buf = String::new();
-    let mut pos = 0;
+    let mut pos = 0u64;
     parse_one(&mut r, &mut pos, &mut buf, &mut refs.sch)?;
     parse_one(&mut r, &mut pos, &mut buf, &mut refs.thm)?;
     parse_one(&mut r, &mut pos, &mut buf, &mut refs.def)?;
@@ -79,14 +79,14 @@ impl MizPath {
     with_open(self.to_path(true, false, "sgl"), false, |file| {
       let mut r = BufReader::new(file);
       let mut buf = String::new();
-      let mut pos = r.read_line(&mut buf)?;
+      let mut pos = r.read_line(&mut buf)? as u64;
       let n = buf.trim_end().parse().map_err(|_| ParseError::BadInteger(0))?;
       for _ in 0..n {
         buf.clear();
         let line = r.read_line(&mut buf)?;
         let art = Article::from_upper(buf.trim_end().as_bytes());
         arts.push(art.map_err(|e| ParseError::ToArticle(e, pos))?);
-        pos += line;
+        pos += line as u64;
       }
       // Note: this is not the end of the file (constructor data follows),
       // but the remainder is never parsed by Mizar
@@ -128,9 +128,9 @@ impl Article {
         for (kind, base) in voc.base.0.iter_mut() {
           assert_eq!(SymbolKindClass::parse(buf[pos]), kind);
           let i = (buf[pos + 1..].iter().position(|&c| c == b' '))
-            .ok_or_else(|| ParseError::unexpected_elem(pos + 1, "space", Some("eof".into())))?;
+            .ok_or_else(|| ParseError::unexpected_elem((pos + 1) as u64, "space", Some("eof".into())))?;
           *base = (std::str::from_utf8(&buf[pos + 1..][..i]).ok().and_then(|p| p.parse().ok()))
-            .ok_or_else(|| ParseError::BadInteger(pos + 1))?;
+            .ok_or_else(|| ParseError::BadInteger((pos + 1) as u64))?;
           total += *base;
           pos += i + 2;
         }
@@ -138,27 +138,27 @@ impl Article {
         for _ in 0..total {
           let kind = SymbolKindClass::parse(buf[pos]);
           let i = (buf[pos + 1..].iter().position(|&c| c == b'\n'))
-            .ok_or_else(|| ParseError::unexpected_elem(pos + 1, "newline", Some("eof".into())))?;
+            .ok_or_else(|| ParseError::unexpected_elem((pos + 1) as u64, "newline", Some("eof".into())))?;
           let line = std::str::from_utf8(&buf[pos + 1..][..i])
-            .map_err(|_| ParseError::unexpected_elem(pos + 1, "ASCII", None))?
+            .map_err(|_| ParseError::unexpected_elem((pos + 1) as u64, "ASCII", None))?
             .trim_end();
           let (token, kind) = match (kind, line.split_once(' ')) {
             (SymbolKindClass::Func, Some((left, right))) => {
               let prio = (right.parse())
-                .map_err(|_| ParseError::InvalidVocabLine(pos + 1, line.to_owned()))?;
+                .map_err(|_| ParseError::InvalidVocabLine((pos + 1) as u64, line.to_owned()))?;
               (left, SymbolDataKind::Func { prio })
             }
             (SymbolKindClass::Pred, Some((left, right))) => {
               if right.is_empty() || right.contains(' ') {
                 return Err(ParseError::unexpected_elem(
-                  pos + 2 + left.len(),
+                  (pos + 2 + left.len()) as u64,
                   "token",
                   Some(right.to_owned().into()),
                 ))
               }
               (left, SymbolDataKind::Pred { infinitive: Some(right) })
             }
-            (_, Some(_)) => return Err(ParseError::InvalidVocabLine(pos + 1, line.to_owned())),
+            (_, Some(_)) => return Err(ParseError::InvalidVocabLine((pos + 1) as u64, line.to_owned())),
             (SymbolKindClass::Struct, None) => (line, SymbolDataKind::Struct),
             (SymbolKindClass::LeftBrk, None) => (line, SymbolDataKind::LeftBrk),
             (SymbolKindClass::RightBrk, None) => (line, SymbolDataKind::RightBrk),
@@ -203,18 +203,18 @@ impl<'a, T> MaybeMut<'a, T> {
 
 #[derive(Debug)]
 pub enum ParseError {
-  Xml(Option<usize>, quick_xml::Error),
-  UnexpectedElement { pos: usize, expected: &'static str, found: Option<Cow<'static, str>> },
-  ExpectedEof(usize),
-  BadInteger(usize),
-  ToArticle(ToArticleError, usize),
-  InvalidVocabLine(usize, String),
+  Xml(Option<u64>, quick_xml::Error),
+  UnexpectedElement { pos: u64, expected: &'static str, found: Option<Cow<'static, str>> },
+  ExpectedEof(u64),
+  BadInteger(u64),
+  ToArticle(ToArticleError, u64),
+  InvalidVocabLine(u64, String),
   MissingFile,
 }
 
 impl ParseError {
   pub fn unexpected_elem(
-    pos: usize, expected: &'static str, found: Option<Cow<'static, str>>,
+    pos: u64, expected: &'static str, found: Option<Cow<'static, str>>,
   ) -> Self {
     Self::UnexpectedElement { pos, expected, found }
   }
@@ -251,7 +251,7 @@ impl std::fmt::Display for ParseError {
 }
 
 impl ParseError {
-  pub fn pos(&self) -> Option<usize> {
+  pub fn pos(&self) -> Option<u64> {
     match *self {
       ParseError::Xml(pos, _) => pos,
       ParseError::UnexpectedElement { pos, .. }
@@ -265,16 +265,16 @@ impl ParseError {
 }
 
 pub trait FromStrPos: FromStr {
-  fn to_err(e: Self::Err, pos: usize) -> ParseError;
+  fn to_err(e: Self::Err, pos: u64) -> ParseError;
 }
 impl FromStrPos for u8 {
-  fn to_err(_: Self::Err, pos: usize) -> ParseError { ParseError::BadInteger(pos) }
+  fn to_err(_: Self::Err, pos: u64) -> ParseError { ParseError::BadInteger(pos) }
 }
 impl FromStrPos for u32 {
-  fn to_err(_: Self::Err, pos: usize) -> ParseError { ParseError::BadInteger(pos) }
+  fn to_err(_: Self::Err, pos: u64) -> ParseError { ParseError::BadInteger(pos) }
 }
 impl FromStrPos for usize {
-  fn to_err(_: Self::Err, pos: usize) -> ParseError { ParseError::BadInteger(pos) }
+  fn to_err(_: Self::Err, pos: u64) -> ParseError { ParseError::BadInteger(pos) }
 }
 
 pub fn catch_missing<T>(result: PathResult<T>) -> PathResult<Option<T>> {
@@ -284,10 +284,10 @@ pub fn catch_missing<T>(result: PathResult<T>) -> PathResult<Option<T>> {
   }
 }
 
-pub fn try_to_line_col(path: &Path, pos: usize) -> io::Result<(usize, usize)> {
-  let mut file = File::open(path)?;
-  let mut buf = vec![0; pos];
-  file.read_exact(&mut buf)?;
+pub fn try_to_line_col(path: &Path, pos: u64) -> io::Result<(usize, usize)> {
+  let file = File::open(path)?;
+  let mut buf = vec![];
+  file.take(pos).read_to_end(&mut buf)?;
   let mut buf = &*buf;
   let mut lines = 0;
   while let Some(i) = memchr::memchr(b'\n', buf) {
@@ -302,16 +302,16 @@ struct XmlReader(quick_xml::Reader<BufReader<File>>);
 impl XmlReader {
   fn new(file: File, buf: &mut Vec<u8>) -> Result<Self> {
     let mut r = quick_xml::Reader::from_reader(BufReader::new(file));
-    r.trim_text(true);
-    r.expand_empty_elements(true);
-    r.check_end_names(true);
+    r.config_mut().trim_text(true);
+    r.config_mut().expand_empty_elements = true;
+    r.config_mut().check_end_names = true;
     assert!(matches!(r.read_event_into(buf)?, Event::Decl(_)));
     Ok(Self(r))
   }
 
   fn set_pos(&self, e: &mut ParseError) {
     match e {
-      ParseError::Xml(pos @ None, _) => *pos = Some(self.0.buffer_position()),
+      ParseError::Xml(pos @ None, _) => *pos = Some(self.position()),
       ParseError::Xml(..)
       | ParseError::UnexpectedElement { .. }
       | ParseError::ExpectedEof(_)
@@ -321,6 +321,8 @@ impl XmlReader {
       | ParseError::MissingFile => {}
     }
   }
+
+  fn position(&self) -> u64 { self.0.buffer_position() }
 
   fn read_event<'a>(&mut self, buf: &'a mut Vec<u8>) -> Result<Event<'a>> {
     buf.clear();
@@ -332,7 +334,7 @@ impl XmlReader {
   fn try_read_start<'a>(
     &mut self, buf: &'a mut Vec<u8>, expecting: Option<&'static str>,
   ) -> Result<StdResult<BytesStart<'a>, Event<'a>>> {
-    let pos = self.0.buffer_position();
+    let pos = self.position();
     Ok(match self.read_event(buf)? {
       Event::Start(e) => {
         if let Some(expecting) = expecting {
@@ -350,7 +352,7 @@ impl XmlReader {
   fn read_start<'a>(
     &mut self, buf: &'a mut Vec<u8>, expecting: Option<&'static str>,
   ) -> Result<BytesStart<'a>> {
-    let pos = self.0.buffer_position();
+    let pos = self.position();
     match self.try_read_start(buf, expecting)? {
       Ok(t) => Ok(t),
       Err(e) => Err(ParseError::unexpected_elem(
@@ -365,13 +367,15 @@ impl XmlReader {
     if let Event::Eof = self.read_event(buf)? {
       Ok(())
     } else {
-      Err(ParseError::ExpectedEof(self.0.buffer_position()))
+      Err(ParseError::ExpectedEof(self.position()))
     }
   }
 
   fn get_attr<F: FromStrPos>(&self, value: &[u8]) -> Result<F> {
-    let pos = self.0.buffer_position();
-    self.0.decoder().decode(value)?.parse().map_err(|e| F::to_err(e, pos))
+    let pos = self.position();
+    self.0.decoder().decode(value)
+      .map_err(|e| ParseError::Xml(None, e.into()))?
+      .parse().map_err(|e| F::to_err(e, pos))
   }
 
   fn read_to_end(&mut self, tag: &[u8], buf: &mut Vec<u8>) {
@@ -459,7 +463,7 @@ impl<'a> MizReader<'a> {
     Ok((MizReader { r, two_clusters, ctx: ctx.into(), depth: 0, suppress_bvar_errors: false }, buf))
   }
 
-  fn position(&self) -> usize { self.r.0.buffer_position() }
+  fn position(&self) -> u64 { self.r.position() }
 
   fn with<R>(
     file: File, ctx: impl Into<MaybeMut<'a, Constructors>>, two_clusters: bool,
@@ -523,9 +527,9 @@ impl MizPath {
           for attr in e.attributes() {
             let attr = attr?;
             match attr.key.0 {
-              b"kind" => kind = attr.unescape_value().unwrap().chars().next().unwrap() as u8,
+              b"kind" => kind = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().chars().next().unwrap() as u8,
               b"nr" => nr = r.get_attr::<u32>(&attr.value)?,
-              b"name" => name = attr.unescape_value().unwrap().to_string(),
+              b"name" => name = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().to_string(),
               _ => {}
             }
           }
@@ -1064,7 +1068,7 @@ impl MizReader<'_> {
         for attr in e.attributes() {
           let attr = attr?;
           match attr.key.0 {
-            b"kind" => kind = attr.unescape_value().unwrap().chars().next().unwrap() as u8,
+            b"kind" => kind = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().chars().next().unwrap() as u8,
             b"nr" => nr = self.get_attr::<u32>(&attr.value)?,
             _ => {}
           }
@@ -1242,7 +1246,7 @@ impl MizReader<'_> {
       for attr in e.attributes() {
         let attr = attr?;
         match attr.key.0 {
-          b"kind" => kind = attr.unescape_value().unwrap().chars().next().unwrap() as u8,
+          b"kind" => kind = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().chars().next().unwrap() as u8,
           b"nr" => nr = self.get_attr::<u32>(&attr.value)?,
           _ => {}
         }
@@ -1735,7 +1739,7 @@ impl MizReader<'_> {
           for attr in e.attributes() {
             let attr = attr?;
             match attr.key.0 {
-              b"kind" => kind = attr.unescape_value().unwrap().as_bytes()[0],
+              b"kind" => kind = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap().as_bytes()[0],
               b"symbolnr" => sym = self.get_attr::<u32>(&attr.value)? - 1,
               b"argnr" => args = Some(self.get_attr(&attr.value)?),
               b"leftargnr" => left = Some(self.get_attr(&attr.value)?),

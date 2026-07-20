@@ -6,7 +6,7 @@ use crate::error::MizError;
 use crate::export::Exporter;
 use crate::parser::{MsmParser, Parser, PathResult};
 use crate::reader::{DefiniensId, Reader};
-use crate::types::{PatternKindClass as PKC, *};
+use crate::types::PatternKindClass as PKC;
 use crate::write::{OWriteMptJson, OWriteXml};
 use crate::*;
 use std::ops::Range;
