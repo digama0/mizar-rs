@@ -6,7 +6,7 @@ use crate::error::MizError;
 use crate::export::Exporter;
 use crate::parser::{MsmParser, Parser, PathResult};
 use crate::reader::{DefiniensId, Reader};
-use crate::types::{PatternKindClass as PKC, *};
+use crate::types::PatternKindClass as PKC;
 use crate::write::{OWriteMptJson, OWriteXml};
 use crate::*;
 use std::ops::Range;
@@ -3781,6 +3781,7 @@ impl BlockReader {
     })
   }
 
+  #[allow(clippy::replace_box)] // allow because current variant is fastest
   fn forall_locus(&self, elab: &Analyzer, mut f: Box<Formula>) -> Box<Formula> {
     self.to_locus(elab, |l| {
       let mut al = AbstractLocus(self.primary.len() as u32);

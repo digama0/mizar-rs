@@ -230,7 +230,7 @@ macro_rules! mk_id {
         fn from_str(s: &str) -> Result<Self, Self::Err> { <$ty>::from_str(s).map($id) }
       }
       impl $crate::parser::FromStrPos for $id {
-        fn to_err(_: Self::Err, pos: usize) -> $crate::parser::ParseError {
+        fn to_err(_: Self::Err, pos: u64) -> $crate::parser::ParseError {
           $crate::parser::ParseError::BadInteger(pos)
         }
       }
@@ -813,7 +813,7 @@ impl TypeKind {
   }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub enum Formula {
   SchPred {
     nr: SchPredId,
@@ -866,11 +866,8 @@ pub enum Formula {
     expansion: Box<Formula>,
   },
   /// ikFrmVerum
+  #[default]
   True,
-}
-
-impl Default for Formula {
-  fn default() -> Self { Self::True }
 }
 
 impl<V: VisitMut> Visitable<V> for Formula {

@@ -16,24 +16,24 @@ categories = ["command-line-utilities", "development-tools", "mathematics"]
 debug = true
 
 [dependencies]
-quick-xml = "0.28.1"
-once_cell = "1.12"
-enum-map = "2.4"
+quick-xml = "0.41.0"
+once_cell = "1.21"
+enum-map = "2.7"
 backtrace = "0.3"
 itertools = "0.10"
 paste = "1.0"
-ctrlc = "3.2"
-pretty = "0.11"
-num-bigint = "0.4"
+ctrlc = "3.5"
+pretty = "0.12"
+num-bigint = "0.5"
 num-traits = "0.2"
 stacker = "0.1"
-memchr = "2.5"
-radix_trie = "0.2"
+memchr = "2.8"
+radix_trie = "0.3"
 im = "15.1"
-bytecount = "0.6.3"
-indicatif = "0.17.3"
-clap = { version = "4.1.10", features = ["derive"] }
-num_cpus = "1.15"
+bytecount = "0.6.9"
+indicatif = "0.18"
+clap = { version = "4.6.2", features = ["derive"] }
+num_cpus = "1.17"
 serde = { version = "1.0", features = ["rc"] }
 serde_derive = "1.0"
 serde_json = { version = "1.0", features = ["unbounded_depth"] }
