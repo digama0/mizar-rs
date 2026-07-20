@@ -32,8 +32,9 @@ impl MizPath {
   }
 }
 
-#[derive(Copy, Clone, Debug, Enum)]
+#[derive(Copy, Clone, Debug, Default, Enum)]
 pub enum IdentKind {
+  #[default]
   Free,
   Reserved,
   Bound,
@@ -44,10 +45,6 @@ pub enum IdentKind {
   SchPred,
   PrivPred,
 }
-impl Default for IdentKind {
-  fn default() -> Self { Self::Free }
-}
-
 impl std::str::FromStr for IdentKind {
   type Err = String;
   fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {

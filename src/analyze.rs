@@ -3781,6 +3781,7 @@ impl BlockReader {
     })
   }
 
+  #[allow(clippy::replace_box)] // allow because current variant is fastest
   fn forall_locus(&self, elab: &Analyzer, mut f: Box<Formula>) -> Box<Formula> {
     self.to_locus(elab, |l| {
       let mut al = AbstractLocus(self.primary.len() as u32);

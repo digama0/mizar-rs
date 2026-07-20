@@ -35,7 +35,7 @@ impl std::fmt::Debug for EqTerm {
     if let Some(n) = &self.number {
       write!(f, " = {n}")?
     }
-    write!(f, ": {:?}{:?}", &self.supercluster, &self.ty_class)
+    write!(f, ": {:?}{:?}", self.supercluster, self.ty_class)
   }
 }
 
@@ -1276,10 +1276,8 @@ impl<'a> Equalizer<'a> {
                   to_union.push((self.lc.marks[self.terms[et].mark].1, et1)),
                 (_, Some(x2)) if *x2 == Complex::ONE =>
                   to_union.push((self.lc.marks[self.terms[et].mark].1, et1)),
-                (Some(x1), Some(x2)) =>
-                  if *x2 != Complex::ZERO {
-                    to_number.push((self.lc.marks[self.terms[et].mark].1, x1.clone() / x2.clone()))
-                  },
+                (Some(x1), Some(x2)) if *x2 != Complex::ZERO =>
+                  to_number.push((self.lc.marks[self.terms[et].mark].1, x1.clone() / x2.clone())),
                 _ => {}
               }
             },

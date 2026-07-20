@@ -813,7 +813,7 @@ impl TypeKind {
   }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub enum Formula {
   SchPred {
     nr: SchPredId,
@@ -866,11 +866,8 @@ pub enum Formula {
     expansion: Box<Formula>,
   },
   /// ikFrmVerum
+  #[default]
   True,
-}
-
-impl Default for Formula {
-  fn default() -> Self { Self::True }
 }
 
 impl<V: VisitMut> Visitable<V> for Formula {

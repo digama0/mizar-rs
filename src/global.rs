@@ -581,9 +581,10 @@ impl Type {
       TypeKind::Mode(n) => {
         let n = Type::adjust(n, &self.args, &g.constrs).0;
         let mut w = CowBox::Borrowed(other);
-        loop {
-          let TypeKind::Mode(n2) = w.kind else { break };
-          let true = n2 >= n else { break };
+        while let TypeKind::Mode(n2) = w.kind {
+          if n2 < n {
+            break
+          }
           if g.eq_radices(lc, self, &w) {
             return true
           }
