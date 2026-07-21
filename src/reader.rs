@@ -2,7 +2,6 @@ use crate::accom::Accomodator;
 use crate::checker::Checker;
 use crate::error::MizError;
 use crate::parser::{JsonParser, MizParser, Parser, ParserCore};
-use crate::types::*;
 use crate::*;
 use std::io;
 

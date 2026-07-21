@@ -55,11 +55,11 @@ impl JsonParser {
     self.state = State::Main(body.into_iter())
   }
 
-  fn fix_terms(&mut self, tms: &mut [Term]) { tms.into_iter().for_each(|tm| self.fix_term(tm)); }
+  fn fix_terms(&mut self, tms: &mut [Term]) { tms.iter_mut().for_each(|tm| self.fix_term(tm)); }
 
   fn fix<T: FromSymbolKind>(&mut self, id: &mut T, spelling: &str) {
     if !self.symbols[T::CLASS].contains_key(spelling) {
-      eprintln!("{:?}", &self.symbols[T::CLASS]);
+      eprintln!("{:?}", self.symbols[T::CLASS]);
       eprintln!("{:?}", spelling);
     }
     *id = T::from_usize(self.symbols[T::CLASS][spelling] as usize);
@@ -189,7 +189,7 @@ impl JsonParser {
   }
 
   fn fix_attrs(&mut self, attrs: &mut [Attr]) {
-    attrs.into_iter().for_each(|attr| self.fix_attr(attr))
+    attrs.iter_mut().for_each(|attr| self.fix_attr(attr))
   }
 
   fn fix_types(&mut self, ts: &mut [Type]) { ts.iter_mut().for_each(|ty| self.fix_type(ty)) }
@@ -197,7 +197,7 @@ impl JsonParser {
   fn fix_references(&mut self, rs: &mut [Reference]) {
     for r in rs {
       if let ReferenceKind::Global { art, spelling, .. } = &mut r.kind {
-        *art = *(self.core.articles.get(&spelling))
+        *art = *(self.core.articles.get(spelling))
           .unwrap_or_else(|| panic!("article not found, perhaps you forgot 'theorems {spelling}'"));
       }
     }
@@ -249,14 +249,14 @@ impl JsonParser {
   }
 
   fn fix_corr_conds(&mut self, cc: &mut [CorrCond], corr: &mut Option<Correctness>) {
-    cc.into_iter().for_each(|c| self.fix_justification(&mut c.just));
+    cc.iter_mut().for_each(|c| self.fix_justification(&mut c.just));
     if let Some(corr) = corr {
       self.fix_justification(&mut corr.just)
     }
   }
 
   fn fix_properties(&mut self, props: &mut [Property]) {
-    props.into_iter().for_each(|p| self.fix_justification(&mut p.just));
+    props.iter_mut().for_each(|p| self.fix_justification(&mut p.just));
   }
 
   fn fix_definition(&mut self, def: &mut Definition) {
@@ -386,10 +386,10 @@ impl JsonParser {
       ItemKind::DefStruct(def) => {
         self.fix_types(&mut def.parents);
         for f in &mut def.fields {
-          f.vars.iter_mut().for_each(|v| self.fix(&mut v.sym, &mut v.spelling));
+          f.vars.iter_mut().for_each(|v| self.fix(&mut v.sym, &v.spelling));
           self.fix_type(&mut f.ty);
         }
-        self.fix(&mut def.pat.sym, &mut def.pat.spelling);
+        self.fix(&mut def.pat.sym, &def.pat.spelling);
         ParserCore::after_def_struct(i.pos, def, |pos, fmt| {
           self.core.push_format(pos, fmt);
         });

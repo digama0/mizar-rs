@@ -32,7 +32,7 @@ impl std::fmt::Debug for EqTerm {
     if let Some(n) = &self.number {
       write!(f, " = {n}")?
     }
-    write!(f, ": {:?}{:?}", &self.supercluster, &self.ty_class)
+    write!(f, ": {:?}{:?}", self.supercluster, self.ty_class)
   }
 }
 

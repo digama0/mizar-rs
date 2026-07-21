@@ -264,7 +264,7 @@ impl<'a> Pretty<'a> {
   ) -> Doc<'a> {
     let lc = self.lc.unwrap();
     let symdoc = if self.cfg.show_orig {
-      self.text(format!("{}[{}]", &lc.formatter.symbols[&sym], orig))
+      self.text(format!("{}[{}]", lc.formatter.symbols[&sym], orig))
     } else {
       self.text(&lc.formatter.symbols[&sym])
     };
@@ -391,7 +391,7 @@ impl<'a> Pretty<'a> {
               assert_eq!(len as usize, args.len());
               assert_eq!(vis.len(), n as usize);
               let left = if self.cfg.show_orig {
-                self.text(format!("{}[{}] ", &lc.formatter.symbols[&lsym.into()], nr.0))
+                self.text(format!("{}[{}] ", lc.formatter.symbols[&lsym.into()], nr.0))
               } else {
                 self.text(&*lc.formatter.symbols[&lsym.into()])
               };

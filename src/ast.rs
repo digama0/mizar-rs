@@ -964,8 +964,9 @@ impl FromStr for Pragma {
   }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub enum ItemKind {
+  #[default]
   Section,
   Block {
     kind: BlockKind,
@@ -1048,8 +1049,4 @@ pub enum ItemKind {
   PerCasesHead(Box<Justification>),
   #[serde(untagged)]
   Statement(Statement),
-}
-
-impl Default for ItemKind {
-  fn default() -> Self { Self::Section }
 }
