@@ -14,6 +14,7 @@ enum ArticleElem {
   Given(GivenItem),
   Take(Term),
   TakeAsVar(IdentId, Type, Term),
+  Unfold(Vec<Reference>),
   Definition(Definition),
   DefStruct(DefStruct),
   Canceled(CancelKind),
@@ -46,6 +47,7 @@ impl From<ArticleElem> for Item {
       ArticleElem::Given(it) => Item::Given(it),
       ArticleElem::Take(tm) => Item::Take(tm),
       ArticleElem::TakeAsVar(id, ty, tm) => Item::TakeAsVar { id, ty, tm },
+      ArticleElem::Unfold(refs) => Item::Unfold(refs),
       ArticleElem::Definition(decl) => Item::Definition(decl),
       ArticleElem::DefStruct(decl) => Item::DefStruct(decl),
       ArticleElem::Canceled(it) => Item::Canceled(it),
@@ -118,7 +120,8 @@ impl ArticleParser<'_> {
         | ArticleElem::Assume(_)
         | ArticleElem::Given(_)
         | ArticleElem::Take(_)
-        | ArticleElem::TakeAsVar(..) => {
+        | ArticleElem::TakeAsVar(..)
+        | ArticleElem::Unfold(_) => {
           let mut thesis = None;
           if !diffuse {
             thesis = Some(self.parse_thesis()?)
@@ -632,6 +635,7 @@ impl ArticleParser<'_> {
           self.r.end_tag(&mut self.buf)?;
           ArticleElem::Take(tm)
         }
+        b"Unfolding" => ArticleElem::Unfold(self.parse_references()?),
         b"TakeAsVar" => {
           let (ty, id) = self.r.parse_type_vid(&mut self.buf)?.unwrap();
           let tm = self.r.parse_term(&mut self.buf)?.unwrap();

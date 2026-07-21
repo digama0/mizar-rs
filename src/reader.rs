@@ -580,6 +580,7 @@ impl Reader {
         Item::Assume(it) => eprintln!("Assume @ {:?}", it[0].pos),
         Item::Take(_) => eprintln!("Take"),
         Item::TakeAsVar { .. } => eprintln!("TakeAsVar"),
+        Item::Unfold(_) => eprintln!("Unfold"),
         Item::PerCases(it) => eprintln!("PerCases @ {:?}", it.pos.0),
         Item::Auxiliary(it) => match it {
           AuxiliaryItem::Statement(it) => match it {
@@ -632,7 +633,7 @@ impl Reader {
         intro.iter().for_each(|prop| self.read_proposition(prop));
       }
       Item::Assume(intro) => intro.iter().for_each(|prop| self.read_proposition(prop)),
-      Item::Take(_) => {}
+      Item::Take(_) | Item::Unfold(_) => {}
       Item::TakeAsVar { id, ty, tm } => {
         let fv =
           FixedVar { id: *id, ty: self.intern(ty), def: Some((Box::new(self.intern(tm)), false)) };

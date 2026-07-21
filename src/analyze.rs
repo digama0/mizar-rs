@@ -3284,16 +3284,18 @@ impl ReadProof for WithThesis {
   }
 
   fn unfold(&mut self, elab: &mut Analyzer, refs: &[ast::Reference]) {
-    elab.write_xml.on(|w| w.unfold());
+    let refs = elab.elab_references(refs);
+    elab.write_xml.on(|w| w.unfold(&refs));
     let mut f = (true, elab.thesis.take().unwrap());
-    for r in elab.elab_references(refs) {
+    for r in refs {
       let def = match r.kind {
         ReferenceKind::Priv(label) => elab.local_def_map.get(&label),
-        ReferenceKind::Thm(_) => None,
+        ReferenceKind::Thm(_) => panic!("288: A reference to a definitional theorem required"),
         ReferenceKind::Def(r) => elab.def_map.get(&r),
       };
-      let def = &elab.definitions[*def.expect("not a definition reference")];
-      let fail = || panic!("thesis is not the specified definition");
+      let def =
+        &elab.definitions[*def.expect("199: Inaccessible definitional theorem (or not imported)")];
+      let fail = || panic!("61: Thesis is not expandable");
       let mut args_buf;
       let (kind, args) = loop {
         match &mut *f.1 {
@@ -3320,11 +3322,15 @@ impl ReadProof for WithThesis {
           _ => fail(),
         }
       };
-      let Some((pos, f2)) = elab.try_unfold(false, def, true, kind, args) else { fail() };
+      let Some((pos, f2)) = elab.try_unfold(false, def, true, kind, args) else {
+        panic!("67: Expanded definition does not match thesis")
+      };
       f.0 = pos;
       *f.1 = f2;
     }
-    elab.thesis = Some(Box::new(f.1.maybe_neg(f.0)));
+    let f = f.1.maybe_neg(f.0);
+    elab.write_xml.on(|w| w.write_thesis(&elab.r.lc, &f, &Default::default()));
+    elab.thesis = Some(Box::new(f));
   }
 
   fn new_cases(&mut self, elab: &mut Analyzer) -> Self::CaseIter {

@@ -992,6 +992,27 @@ impl MizWriter {
   ) {
     self.with("Proposition", |w| w.pos_and_label(pos, label), |w| w.write_formula(lc, f))
   }
+
+  fn write_references(&mut self, refs: &[Reference]) {
+    for r in refs {
+      self.with_attr("Ref", |w| {
+        match r.kind {
+          ReferenceKind::Priv(label) => w.attr_str(b"nr", label.0 + 1),
+          ReferenceKind::Thm((art, thm)) => {
+            w.attr_str(b"nr", thm.0 + 1);
+            w.attr_str(b"articlenr", art.0);
+            w.attr(b"kind", &b"T"[..]);
+          }
+          ReferenceKind::Def((art, thm)) => {
+            w.attr_str(b"nr", thm.0 + 1);
+            w.attr_str(b"articlenr", art.0);
+            w.attr(b"kind", &b"D"[..]);
+          }
+        };
+        w.pos(r.pos)
+      })
+    }
+  }
 }
 
 trait ForeachConstructor: Copy {
@@ -1323,6 +1344,12 @@ impl WriteXml {
     self.end_tag("Conclusion")
   }
 
+  pub fn unfold(&mut self, refs: &[Reference]) {
+    let State::Block(kind) = self.state else { unreachable!() };
+    self.state = State::after_reasoning(kind);
+    self.w.with0("Unfolding", |w| w.write_references(refs))
+  }
+
   pub fn start_now(&mut self, pos: Position, label: Option<(LabelId, IdentId)>) {
     let State::Block(kind) = self.state else { unreachable!("{:?}", self.state) };
     self.state = State::Block(BlockKind::Diffuse);
@@ -1420,8 +1447,6 @@ impl WriteXml {
     self.end_tag(ck.block_name())
   }
 
-  pub fn unfold(&mut self) { unimplemented!("XML for unfold needs confirmation") }
-
   pub fn section(&mut self) {
     assert!(matches!(self.state, State::Block(BlockKind::Top)));
     self.w.with0("Section", |_| {});
@@ -1518,26 +1543,6 @@ impl WriteXml {
   pub fn write_inference(&mut self, it: &Inference) {
     let State::Justification = self.state else { unreachable!() };
     self.pop_justification();
-    let body = |w: &mut MizWriter| {
-      for r in &it.refs {
-        w.with_attr("Ref", |w| {
-          match r.kind {
-            ReferenceKind::Priv(label) => w.attr_str(b"nr", label.0 + 1),
-            ReferenceKind::Thm((art, thm)) => {
-              w.attr_str(b"nr", thm.0 + 1);
-              w.attr_str(b"articlenr", art.0);
-              w.attr(b"kind", &b"T"[..]);
-            }
-            ReferenceKind::Def((art, thm)) => {
-              w.attr_str(b"nr", thm.0 + 1);
-              w.attr_str(b"articlenr", art.0);
-              w.attr(b"kind", &b"D"[..]);
-            }
-          };
-          w.pos(r.pos)
-        })
-      }
-    };
     match it.kind {
       InferenceKind::By { linked } => {
         let attrs = |w: &mut Elem| {
@@ -1546,7 +1551,7 @@ impl WriteXml {
           }
           w.pos(it.pos)
         };
-        self.w.with("By", attrs, body)
+        self.w.with("By", attrs, |w| w.write_references(&it.refs))
       }
       InferenceKind::From { sch } => {
         let attrs = |w: &mut Elem| {
@@ -1554,7 +1559,7 @@ impl WriteXml {
           w.attr_str(b"nr", sch.1 .0 + 1);
           w.pos(it.pos)
         };
-        self.w.with("From", attrs, body)
+        self.w.with("From", attrs, |w| w.write_references(&it.refs))
       }
     };
   }

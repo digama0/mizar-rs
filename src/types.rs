@@ -2286,6 +2286,7 @@ pub enum Item {
     ty: Type,
     tm: Term,
   },
+  Unfold(Vec<Reference>),
   PerCases(PerCases),
   Auxiliary(AuxiliaryItem),
   Registration(Registration),
@@ -2330,6 +2331,7 @@ impl Item {
       Item::Let(_)
       | Item::Take(_)
       | Item::TakeAsVar { .. }
+      | Item::Unfold(_)
       | Item::Registration(_)
       | Item::Reservation { .. }
       | Item::Canceled(_)
