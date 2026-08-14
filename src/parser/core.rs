@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::parser::miz::{ParseErr, PatKind};
 use crate::parser::{JsonParser, MizParser};
 use crate::types::{
   Article, ArticleId, Directives, Format, FormatId, FuncSymId, IdxVec, PredSymId, PriorityKind,
@@ -64,7 +65,19 @@ impl ParserCore {
 
   pub fn after_definition(&mut self, pos: Span, redef: bool, fmt: Format) -> bool {
     if redef {
-      assert!(self.format_lookup.contains_key(&fmt), "{:?}: unknown format for redeclaration", pos);
+      // Redefining something whose format was never declared. Report and treat it as
+      // a non-redefinition rather than asserting; the analyzer reports again when it
+      // fails to find a pattern to redefine.
+      if !self.format_lookup.contains_key(&fmt) {
+        let kind = match fmt {
+          Format::Mode(_) => PatKind::Mode,
+          Format::Pred(_) => PatKind::Pred,
+          Format::Attr(_) => PatKind::Attr,
+          Format::Struct(_) | Format::SubAggr(_) | Format::Aggr(_) => PatKind::Struct,
+          Format::Func(_) | Format::Sel(_) => PatKind::Func,
+        };
+        self.reporter.error(crate::Diagnostic::error(pos, ParseErr::UnknownFormat(kind)));
+      }
       false
     } else {
       self.push_format(pos, fmt)
@@ -108,7 +121,9 @@ impl<'a> Parser<'a> {
     }
   }
 
-  pub fn parse_env(&mut self, dirs: &mut Directives) {
+  /// Returns `true` if the environment was fatally malformed and the article
+  /// should be abandoned (the error has already been reported).
+  pub fn parse_env(&mut self, dirs: &mut Directives) -> bool {
     match self {
       Parser::Miz(p) => p.parse_env(dirs),
       Parser::Json(p) => p.parse_env(dirs),

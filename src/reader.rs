@@ -92,7 +92,7 @@ impl MizPath {
     };
     if let Some(accom) = &mut accom {
       if let Some(parser) = &mut parser {
-        parser.parse_env(&mut accom.dirs)
+        parser.parse_env(&mut accom.dirs);
       } else {
         self.read_evl(&mut accom.dirs).unwrap();
       }
