@@ -28,7 +28,9 @@ impl MizPath {
     let mut r = BufReader::new(self.open(true, false, "ere")?);
     let mut buf = String::new();
     let mut pos = r.read_line(&mut buf)?;
-    assert!(buf.trim_end() == "0");
+    if buf.trim_end() != "0" {
+      return Err(ParseError::unexpected_elem(0, "0", None))
+    }
     buf.clear();
     for (_, val) in &mut idx.fwd {
       let line = r.read_line(&mut buf)?;
@@ -62,7 +64,9 @@ impl MizPath {
         };
         let (x1, x2, _y) = (parse_num()?, parse_num()?, parse_num()?);
         if let Some(x2) = x2.checked_sub(1) {
-          assert!(map.insert((ArticleId(x1), T::from_usize(x2 as usize))));
+          if !map.insert((ArticleId(x1), T::from_usize(x2 as usize))) {
+            return Err(ParseError::unexpected_elem(pos2, "distinct reference", None))
+          }
         }
         buf.clear();
         *pos += line;
@@ -127,7 +131,9 @@ impl Article {
         pos += i + 1 + pattern.len();
         let mut total = 0;
         for (kind, base) in voc.base.0.iter_mut() {
-          assert_eq!(SymbolKindClass::parse(buf[pos]), kind);
+          if buf.get(pos) != Some(&kind.discr()) {
+            return Err(ParseError::unexpected_elem(pos, "symbol kind", None))
+          }
           let i = (buf[pos + 1..].iter().position(|&c| c == b' '))
             .ok_or_else(|| ParseError::unexpected_elem(pos + 1, "space", Some("eof".into())))?;
           *base = (std::str::from_utf8(&buf[pos + 1..][..i]).ok().and_then(|p| p.parse().ok()))
@@ -137,7 +143,8 @@ impl Article {
         }
         pos += 1;
         for _ in 0..total {
-          let kind = SymbolKindClass::parse(buf[pos]);
+          let kind = (buf.get(pos).copied().and_then(parse_symbol_kind))
+            .ok_or_else(|| ParseError::unexpected_elem(pos, "symbol kind", None))?;
           let i = (buf[pos + 1..].iter().position(|&c| c == b'\n'))
             .ok_or_else(|| ParseError::unexpected_elem(pos + 1, "newline", Some("eof".into())))?;
           let line = std::str::from_utf8(&buf[pos + 1..][..i])
@@ -169,7 +176,9 @@ impl Article {
             (SymbolKindClass::Sel, None) => (line, SymbolDataKind::Sel),
             (SymbolKindClass::Attr, None) => (line, SymbolDataKind::Attr),
           };
-          assert!(!token.is_empty());
+          if token.is_empty() {
+            return Err(ParseError::unexpected_elem(pos + 1, "symbol token", None))
+          }
           voc.symbols.push(SymbolData { kind, token });
           pos += i + 2;
         }
@@ -178,6 +187,22 @@ impl Article {
       pos += i + 1;
     }
     Ok(false)
+  }
+}
+
+/// A non-panicking version of [`SymbolKindClass::parse`], for bytes that come
+/// from a (possibly malformed) dependency file.
+fn parse_symbol_kind(c: u8) -> Option<SymbolKindClass> {
+  match c {
+    b'G' => Some(SymbolKindClass::Struct),
+    b'K' => Some(SymbolKindClass::LeftBrk),
+    b'L' => Some(SymbolKindClass::RightBrk),
+    b'M' => Some(SymbolKindClass::Mode),
+    b'O' => Some(SymbolKindClass::Func),
+    b'R' => Some(SymbolKindClass::Pred),
+    b'U' => Some(SymbolKindClass::Sel),
+    b'V' => Some(SymbolKindClass::Attr),
+    _ => None,
   }
 }
 
@@ -211,6 +236,7 @@ pub enum ParseError {
   ToArticle(ToArticleError, usize),
   InvalidVocabLine(usize, String),
   MissingFile,
+  BadUtf8(usize),
 }
 
 impl ParseError {
@@ -246,6 +272,7 @@ impl std::fmt::Display for ParseError {
       ParseError::BadInteger(_) => write!(f, "not an integer or out of range"),
       ParseError::InvalidVocabLine(_, line) => write!(f, "invalid vocabulary line '{line}'"),
       ParseError::MissingFile => write!(f, "file not found"),
+      ParseError::BadUtf8(_) => write!(f, "the file is not valid UTF-8"),
       ParseError::ToArticle(e, _) => e.fmt(f),
     }
   }
@@ -259,7 +286,8 @@ impl ParseError {
       | ParseError::ExpectedEof(pos)
       | ParseError::BadInteger(pos)
       | ParseError::ToArticle(_, pos)
-      | ParseError::InvalidVocabLine(pos, _) => Some(pos),
+      | ParseError::InvalidVocabLine(pos, _)
+      | ParseError::BadUtf8(pos) => Some(pos),
       ParseError::MissingFile => None,
     }
   }
@@ -298,7 +326,9 @@ impl XmlReader {
     r.trim_text(true);
     r.expand_empty_elements(true);
     r.check_end_names(true);
-    assert!(matches!(r.read_event_into(buf)?, Event::Decl(_)));
+    if !matches!(r.read_event_into(buf)?, Event::Decl(_)) {
+      return Err(ParseError::unexpected_elem(r.buffer_position(), "xml declaration", None))
+    }
     Ok(Self(r, None))
   }
 
@@ -311,7 +341,8 @@ impl XmlReader {
       | ParseError::BadInteger(_)
       | ParseError::ToArticle(..)
       | ParseError::InvalidVocabLine(..)
-      | ParseError::MissingFile => {}
+      | ParseError::MissingFile
+      | ParseError::BadUtf8(_) => {}
     }
   }
 
@@ -367,19 +398,77 @@ impl XmlReader {
     self.0.decoder().decode(value)?.parse().map_err(|e| F::to_err(e, pos))
   }
 
-  fn read_to_end(&mut self, tag: &[u8], buf: &mut Vec<u8>) {
+  /// A parse error at the current byte position. The dependency readers use this to
+  /// turn structural assumptions about the XML into recoverable errors: the message
+  /// is deliberately terse, but the position lets `ParseError::report` point at
+  /// `path:line:col`.
+  fn err<T>(&self, expected: &'static str) -> Result<T> {
+    Err(ParseError::unexpected_elem(self.0.buffer_position(), expected, None))
+  }
+
+  /// Read a 1-based index attribute and convert it to the 0-based representation.
+  ///
+  /// The legacy XML format numbers these from 1, so `0` is not a legal value and
+  /// used to underflow-panic in debug builds. Fields where `0` legitimately means
+  /// "absent" instead use `get_attr(..)?.checked_sub(1)` and stay `Option`.
+  fn idx_attr(&self, value: &[u8]) -> Result<u32> {
+    match self.get_attr::<u32>(value)?.checked_sub(1) {
+      Some(n) => Ok(n),
+      None => Err(ParseError::BadInteger(self.0.buffer_position())),
+    }
+  }
+
+  /// [`idx_attr`](Self::idx_attr) for the `u8`-width indices (loci).
+  fn idx_attr_u8(&self, value: &[u8]) -> Result<u8> {
+    match self.get_attr::<u8>(value)?.checked_sub(1) {
+      Some(n) => Ok(n),
+      None => Err(ParseError::BadInteger(self.0.buffer_position())),
+    }
+  }
+
+  /// [`idx_attr`](Self::idx_attr) for a 1-based index that was already read (rather
+  /// than read straight from an attribute), reporting instead of underflow-panicking
+  /// on a corrupt file where it is `0`.
+  fn dec1(&self, n: u32) -> Result<u32> {
+    n.checked_sub(1).ok_or_else(|| ParseError::BadInteger(self.0.buffer_position()))
+  }
+
+  /// Parse an article name coming from the file, reporting a positioned error
+  /// instead of panicking when it isn't a valid article identifier.
+  fn to_article(&self, value: &[u8]) -> Result<Article> {
+    Article::from_upper(value).map_err(|e| ParseError::ToArticle(e, self.0.buffer_position()))
+  }
+
+  /// The first byte of an attribute's raw value.
+  fn attr_byte(&self, attr: &quick_xml::events::attributes::Attribute<'_>) -> Result<u8> {
+    match attr.value.first() {
+      Some(&c) => Ok(c),
+      None => self.err("nonempty attribute"),
+    }
+  }
+
+  /// The first character of an attribute's unescaped value, as a byte.
+  fn attr_char(&self, attr: &quick_xml::events::attributes::Attribute<'_>) -> Result<u8> {
+    match attr.unescape_value()?.chars().next() {
+      Some(c) => Ok(c as u8),
+      None => self.err("nonempty attribute"),
+    }
+  }
+
+  fn read_to_end(&mut self, tag: &[u8], buf: &mut Vec<u8>) -> Result<()> {
     buf.clear();
-    self.0.read_to_end_into(quick_xml::name::QName(tag), buf).unwrap();
+    self.0.read_to_end_into(quick_xml::name::QName(tag), buf)?;
+    Ok(())
   }
 
   fn end_tag(&mut self, buf: &mut Vec<u8>) -> Result<()> {
     match self.read_event(buf)? {
-      Event::End(_) => {}
-      e => panic!("{:?}", (e, self.dump()).0),
+      Event::End(_) => Ok(()),
+      _ => self.err("element end"),
     }
-    Ok(())
   }
 
+  #[allow(unused)]
   fn dump(&mut self) {
     let r = self.0.get_mut();
     let _ = r.seek_relative(-1024);
@@ -428,8 +517,8 @@ impl XmlReader {
   fn parse_loci(&mut self, buf: &mut Vec<u8>) -> Result<Box<[LocusId]>> {
     let mut out = vec![];
     while let Ok(e) = self.try_read_start(buf, Some("Int"))? {
-      let n = self.get_attr::<u8>(&e.try_get_attribute(b"x").unwrap().unwrap().value)?;
-      out.push(LocusId(n - 1));
+      let Some(attr) = e.try_get_attribute(b"x")? else { return self.err("x attribute") };
+      out.push(LocusId(self.idx_attr_u8(&attr.value)?));
       self.end_tag(buf)?;
     }
     Ok(out.into())
@@ -477,7 +566,9 @@ impl<'a> MizReader<'a> {
   }
 
   fn read_pi(&mut self, buf: &mut Vec<u8>) -> Result<()> {
-    assert!(matches!(self.r.read_event(buf)?, Event::PI(_)));
+    if !matches!(self.r.read_event(buf)?, Event::PI(_)) {
+      return self.err("processing instruction")
+    }
     Ok(())
   }
 }
@@ -503,11 +594,14 @@ impl MizPath {
         r.read_start(buf, Some("Environ"))?;
         for (i, dir) in &mut dirs.0 {
           let e = r.read_start(buf, Some("Directive"))?;
-          assert_eq!(e.try_get_attribute("name").unwrap().unwrap().value, i.name().as_bytes());
+          let Some(attr) = e.try_get_attribute("name")? else { return r.err("name attribute") };
+          if *attr.value != *i.name().as_bytes() {
+            return r.err("directive name")
+          }
           while let Ok(e) = r.try_read_start(buf, Some("Ident"))? {
             let pos = r.get_pos(&e)?;
-            let art = &e.try_get_attribute("name").unwrap().unwrap().value;
-            dir.push(ArticleAt { pos, art: Article::from_upper(art).unwrap() });
+            let Some(attr) = e.try_get_attribute("name")? else { return r.err("name attribute") };
+            dir.push(ArticleAt { pos, art: r.to_article(&attr.value)? });
             r.end_tag(buf)?;
           }
         }
@@ -526,22 +620,24 @@ impl MizPath {
           for attr in e.attributes() {
             let attr = attr?;
             match attr.key.0 {
-              b"kind" => kind = attr.unescape_value().unwrap().chars().next().unwrap() as u8,
+              b"kind" => kind = r.attr_char(&attr)?,
               b"nr" => nr = r.get_attr::<u32>(&attr.value)?,
-              b"name" => name = attr.unescape_value().unwrap().to_string(),
+              b"name" => name = attr.unescape_value()?.to_string(),
               _ => {}
             }
           }
           r.end_tag(buf)?;
+          // legacy 1-based symbol index; 0 (or a missing `nr`) is not legal
+          let Some(nr) = nr.checked_sub(1) else { return r.err("symbol nr") };
           let kind = match kind {
-            b'O' => SymbolKind::Func(FuncSymId(nr - 1)),
-            b'K' | b'[' | b'{' | b'(' => SymbolKind::LeftBrk(LeftBrkSymId(nr - 1)),
-            b'L' | b']' | b'}' | b')' => SymbolKind::RightBrk(RightBrkSymId(nr - 1)),
-            b'R' | b'=' => SymbolKind::Pred(PredSymId(nr - 1)), // '=' is its own token
-            b'M' | 0xE0 => SymbolKind::Mode(ModeSymId(nr - 1)), // 0xE0 = "set", which is in its own token class
-            b'V' => SymbolKind::Attr(AttrSymId(nr - 1)),
-            b'G' => SymbolKind::Struct(StructSymId(nr - 1)),
-            b'U' => SymbolKind::Sel(SelSymId(nr - 1)),
+            b'O' => SymbolKind::Func(FuncSymId(nr)),
+            b'K' | b'[' | b'{' | b'(' => SymbolKind::LeftBrk(LeftBrkSymId(nr)),
+            b'L' | b']' | b'}' | b')' => SymbolKind::RightBrk(RightBrkSymId(nr)),
+            b'R' | b'=' => SymbolKind::Pred(PredSymId(nr)), // '=' is its own token
+            b'M' | 0xE0 => SymbolKind::Mode(ModeSymId(nr)), // 0xE0 = "set", which is in its own token class
+            b'V' => SymbolKind::Attr(AttrSymId(nr)),
+            b'G' => SymbolKind::Struct(StructSymId(nr)),
+            b'U' => SymbolKind::Sel(SelSymId(nr)),
             _ => continue, // the dcx file has a bunch of other crap too
           };
           syms.push((kind, name));
@@ -566,10 +662,12 @@ impl MizPath {
         r.read_start(buf, Some("Formats"))?;
         r.parse_formats_body(buf, &mut formats.formats, true)?;
         r.eof(buf)?;
-        assert!(matches!(
+        if !matches!(
           formats.formats.get(FormatId::STRICT),
           Some(Format::Attr(FormatAttr { args: 1, .. }))
-        ));
+        ) {
+          return r.err("strict format")
+        }
         Ok(())
       })
     })
@@ -610,7 +708,7 @@ impl MizPath {
         r.parse_vocabularies(buf, &mut dno.vocs)?;
         while let Ok(e) = r.try_read_start(buf, Some("Pattern"))? {
           let attrs = r.parse_pattern_attrs(&e)?;
-          let Elem::Format(fmt) = r.parse_elem(buf)? else { panic!("expected <Format>") };
+          let Elem::Format(fmt) = r.parse_elem(buf)? else { return r.err("Format") };
           dno.pats.push(r.parse_pattern_body(buf, attrs, |_| fmt)?)
         }
         r.eof(buf)
@@ -636,15 +734,17 @@ impl MizPath {
         r.read_start(buf, Some("Constructors"))?;
         r.read_start(buf, Some("SignatureWithCounts"))?;
         while let Ok(e) = r.try_read_start(buf, Some("ConstrCounts"))? {
-          let art =
-            Article::from_upper(&e.try_get_attribute(b"name").unwrap().unwrap().value).unwrap();
+          let Some(attr) = e.try_get_attribute(b"name")? else { return r.err("name attribute") };
+          let art = r.to_article(&attr.value)?;
           let mut counts = Default::default();
           r.parse_constr_counts_body(buf, &mut counts)?;
           aco.sig.sig.push((art, std::mem::replace(&mut aco.sig.base, counts)));
         }
         r.parse_constructors_body(buf, Some(&mut aco.constrs))?;
         r.eof(buf)?;
-        assert_eq!(aco.sig.sig.0[0].0, Article::HIDDEN);
+        if aco.sig.sig.0.first().map(|p| p.0) != Some(Article::HIDDEN) {
+          return r.err("HIDDEN signature")
+        }
         Ok(())
       })
     })
@@ -674,9 +774,14 @@ impl MizPath {
         r.read_start(buf, Some("Requirements"))?;
         r.parse_signature(buf, &mut dre.sig)?;
         while let Ok(e) = r.try_read_start(buf, Some("Requirement"))? {
-          let kind = r.parse_constr_kind(&e)?.unwrap();
-          let nr: u32 = r.get_attr(&e.try_get_attribute(b"nr").unwrap().unwrap().value)?;
-          dre.reqs.push(DepRequirement { req: Requirement::from_usize((nr - 1) as _), kind });
+          let Some(kind) = r.parse_constr_kind(&e)? else { return r.err("constructor kind") };
+          let Some(attr) = e.try_get_attribute(b"nr")? else { return r.err("nr attribute") };
+          let nr: u32 = r.get_attr(&attr.value)?;
+          let req = (nr.checked_sub(1))
+            .filter(|&i| (i as usize) < <Requirement as Enum>::LENGTH)
+            .map(|i| Requirement::from_usize(i as _));
+          let Some(req) = req else { return r.err("requirement number") };
+          dre.reqs.push(DepRequirement { req, kind });
           r.end_tag(buf)?
         }
         r.eof(buf)
@@ -819,24 +924,24 @@ impl MizPath {
             let attr = attr?;
             match attr.key.0 {
               b"articlenr" => lib_nr = r.get_attr(&attr.value)?,
-              b"nr" => thm_nr = r.get_attr::<u32>(&attr.value)? - 1,
-              b"kind" => kind = attr.value[0],
+              b"nr" => thm_nr = r.idx_attr(&attr.value)?,
+              b"kind" => kind = r.attr_byte(&attr)?,
               _ => {}
             }
           }
           match kind {
             b'T' if refs.is_none_or(|refs| refs.thm.contains(&(lib_nr, ThmId(thm_nr)))) => {
-              let th = r.parse_formula(buf)?.unwrap();
+              let Some(th) = r.parse_formula(buf)? else { return r.err("formula") };
               r.end_tag(buf)?;
               libs.thm.insert((lib_nr, ThmId(thm_nr)), th);
             }
             b'D' if refs.is_none_or(|refs| refs.def.contains(&(lib_nr, DefId(thm_nr)))) => {
-              let th = r.parse_formula(buf)?.unwrap();
+              let Some(th) = r.parse_formula(buf)? else { return r.err("formula") };
               r.end_tag(buf)?;
               libs.def.insert((lib_nr, DefId(thm_nr)), th);
             }
-            b'T' | b'D' => r.read_to_end(b"Theorem", buf),
-            _ => panic!("unknown theorem kind"),
+            b'T' | b'D' => r.read_to_end(b"Theorem", buf)?,
+            _ => return r.err("theorem kind"),
           }
         }
         r.eof(buf)
@@ -850,9 +955,10 @@ impl MizPath {
         r.read_start(buf, Some("Theorems"))?;
         r.parse_signature(buf, &mut thms.sig)?;
         while let Ok(e) = r.try_read_start(buf, Some("Theorem"))? {
-          let kind = e.try_get_attribute(b"kind").unwrap().unwrap().value[0];
+          let Some(attr) = e.try_get_attribute(b"kind")? else { return r.err("kind attribute") };
+          let kind = r.attr_byte(&attr)?;
           let constr_kind = r.parse_constr_kind(&e)?;
-          let stmt = r.parse_formula(buf)?.unwrap();
+          let Some(stmt) = r.parse_formula(buf)? else { return r.err("formula") };
           r.end_tag(buf)?;
           let kind = match kind {
             b'T' => match stmt {
@@ -861,9 +967,10 @@ impl MizPath {
             },
             b'D' => match (&stmt, constr_kind) {
               (Formula::True, None) => TheoremKind::CanceledDef,
-              _ => TheoremKind::Def(constr_kind.unwrap()),
+              (_, Some(constr_kind)) => TheoremKind::Def(constr_kind),
+              (_, None) => return r.err("constructor kind"),
             },
-            _ => panic!("unknown theorem kind"),
+            _ => return r.err("theorem kind"),
           };
           thms.thm.push(Theorem { pos: Span::default(), kind, stmt });
         }
@@ -885,7 +992,7 @@ impl MizPath {
             let attr = attr?;
             match attr.key.0 {
               b"articlenr" => lib_nr = r.get_attr(&attr.value)?,
-              b"nr" => sch_nr = SchId(r.get_attr::<u32>(&attr.value)? - 1),
+              b"nr" => sch_nr = SchId(r.idx_attr(&attr.value)?),
               _ => {}
             }
           }
@@ -896,11 +1003,13 @@ impl MizPath {
               while let Some(f) = r.parse_formula(buf)? {
                 prems.push(f)
               }
-              assert!(lib_nr != ArticleId::SELF);
+              if lib_nr == ArticleId::SELF {
+                return r.err("external article")
+              }
               libs.sch.insert((lib_nr, sch_nr), Scheme { sch_funcs, prems: prems.into(), thesis });
             } // else canceled scheme
           } else {
-            r.read_to_end(b"Scheme", buf)
+            r.read_to_end(b"Scheme", buf)?
           }
         }
         r.eof(buf)
@@ -921,14 +1030,14 @@ impl MizPath {
             }
             b"Scheme" => {
               let sch_funcs = r.parse_arg_types(buf)?;
-              let thesis = r.parse_formula(buf)?.unwrap();
+              let Some(thesis) = r.parse_formula(buf)? else { return r.err("formula") };
               let mut prems = vec![];
               while let Some(f) = r.parse_formula(buf)? {
                 prems.push(f)
               }
               schs.sch.push(Some(Scheme { sch_funcs, prems: prems.into(), thesis }));
             }
-            _ => panic!("expected <Scheme>"),
+            _ => return r.err("Scheme"),
           }
         }
         r.eof(buf)
@@ -946,7 +1055,7 @@ impl MizPath {
       while let Some(item) = p.parse_item()? {
         f(item)
       }
-      assert!(matches!(p.r.read_event(&mut p.buf)?, Event::Eof));
+      p.r.eof(&mut p.buf)?;
       Ok(())
     })
   }
@@ -1005,11 +1114,35 @@ impl MizReader<'_> {
     Ok(self.parse_type_vid(buf)?.map(|t| t.0))
   }
 
+  /// Like [`Self::parse_type`], but the type is required to be present.
+  fn parse_type_req(&mut self, buf: &mut Vec<u8>) -> Result<Type> {
+    match self.parse_type(buf)? {
+      Some(ty) => Ok(ty),
+      None => self.err("Typ"),
+    }
+  }
+
+  /// Like [`Self::parse_term`], but the term is required to be present.
+  fn parse_term_req(&mut self, buf: &mut Vec<u8>) -> Result<Term> {
+    match self.parse_term(buf)? {
+      Some(tm) => Ok(tm),
+      None => self.err("term"),
+    }
+  }
+
+  /// Like [`Self::parse_formula`], but the formula is required to be present.
+  fn parse_formula_req(&mut self, buf: &mut Vec<u8>) -> Result<Formula> {
+    match self.parse_formula(buf)? {
+      Some(f) => Ok(f),
+      None => self.err("formula"),
+    }
+  }
+
   fn parse_attrs(&mut self, buf: &mut Vec<u8>) -> Result<Attrs> {
     self.read_start(buf, Some("Cluster"))?;
     let mut attrs = vec![];
     while let Ok(e) = self.try_read_start(buf, Some("Adjective"))? {
-      let mut nr = 0;
+      let mut nr: u32 = 0;
       let mut pos = true;
       for attr in e.attributes() {
         let attr = attr?;
@@ -1019,11 +1152,23 @@ impl MizReader<'_> {
           _ => {}
         }
       }
-      attrs.push(Attr { nr: AttrId(nr - 1), pos, args: self.parse_term_list(buf)? })
+      let Some(nr) = nr.checked_sub(1) else { return self.err("attribute nr") };
+      attrs.push(Attr { nr: AttrId(nr), pos, args: self.parse_term_list(buf)? })
     }
     let ctx = self.ctx.get();
     attrs.sort_by(|a, b| a.cmp(ctx, None, b, CmpStyle::Attr));
     Ok(Attrs::Consistent(attrs))
+  }
+
+  /// [`get_basic_attrs`](Self::get_basic_attrs) with `nr` converted from the legacy
+  /// 1-based index (see [`idx_attr`](Self::idx_attr)). Used by the callers that turn
+  /// it into a constructor id; the one caller that ignores `nr` uses the raw form.
+  fn get_basic_idx(&mut self, e: &BytesStart<'_>) -> Result<(u8, u32)> {
+    let (kind, nr) = self.get_basic_attrs(e)?;
+    match nr.checked_sub(1) {
+      Some(nr) => Ok((kind, nr)),
+      None => Err(ParseError::BadInteger(self.0.buffer_position())),
+    }
   }
 
   fn get_basic_attrs(&mut self, e: &BytesStart<'_>) -> Result<(u8, u32)> {
@@ -1032,7 +1177,7 @@ impl MizReader<'_> {
     for attr in e.attributes() {
       let attr = attr?;
       match attr.key.0 {
-        b"kind" => kind = attr.value[0],
+        b"kind" => kind = self.attr_byte(&attr)?,
         b"nr" => nr = self.get_attr(&attr.value)?,
         _ => {}
       }
@@ -1041,7 +1186,7 @@ impl MizReader<'_> {
   }
 
   fn get_vid(&mut self, e: &BytesStart<'_>) -> Result<IdentId> {
-    Ok(match e.try_get_attribute(b"vid").unwrap() {
+    Ok(match e.try_get_attribute(b"vid")? {
       Some(attr) => IdentId(self.get_attr(&attr.value)?),
       None => IdentId::NONE,
     })
@@ -1050,7 +1195,8 @@ impl MizReader<'_> {
   fn parse_signature(&mut self, buf: &mut Vec<u8>, sig: &mut Vec<Article>) -> Result<()> {
     self.read_start(buf, Some("Signature"))?;
     while let Ok(e) = self.try_read_start(buf, Some("ArticleID"))? {
-      sig.push(Article::from_upper(&e.try_get_attribute(b"name").unwrap().unwrap().value).unwrap());
+      let Some(attr) = e.try_get_attribute(b"name")? else { return self.err("name attribute") };
+      sig.push(self.to_article(&attr.value)?);
       self.end_tag(buf)?;
     }
     Ok(())
@@ -1060,7 +1206,8 @@ impl MizReader<'_> {
     self.read_start(buf, Some("Vocabularies"))?;
     while self.try_read_start(buf, Some("Vocabulary"))?.is_ok() {
       let e = self.read_start(buf, Some("ArticleID"))?;
-      let aid = Article::from_upper(&e.try_get_attribute(b"name").unwrap().unwrap().value).unwrap();
+      let Some(attr) = e.try_get_attribute(b"name")? else { return self.err("name attribute") };
+      let aid = self.to_article(&attr.value)?;
       self.end_tag(buf)?;
       let mut symbols = SymbolsBase::default();
       while let Ok(e) = self.try_read_start(buf, Some("SymbolCount"))? {
@@ -1068,13 +1215,14 @@ impl MizReader<'_> {
         for attr in e.attributes() {
           let attr = attr?;
           match attr.key.0 {
-            b"kind" => kind = attr.unescape_value().unwrap().chars().next().unwrap() as u8,
+            b"kind" => kind = self.attr_char(&attr)?,
             b"nr" => nr = self.get_attr::<u32>(&attr.value)?,
             _ => {}
           }
         }
         self.end_tag(buf)?;
-        symbols.0[SymbolKindClass::parse(kind)] += nr;
+        let Some(kind) = parse_symbol_kind(kind) else { return self.err("symbol kind") };
+        symbols.0[kind] += nr;
       }
       vocs.0.push((aid, symbols));
     }
@@ -1088,14 +1236,14 @@ impl MizReader<'_> {
     loop {
       match self.parse_elem(buf)? {
         Elem::Format(fmt) => {
-          if allow_priority {
-            assert!(!found_prio, "expected <Priority>");
+          if allow_priority && found_prio {
+            return self.err("Priority")
           }
           formats.push(fmt);
         }
         Elem::Priority(_, _) if allow_priority => found_prio = true,
         Elem::End => break,
-        _ => panic!("expected <Format> or <Priority>"),
+        _ => return self.err("Format or Priority"),
       }
     }
     Ok(())
@@ -1107,7 +1255,7 @@ impl MizReader<'_> {
     for attr in e.attributes() {
       let attr = attr?;
       match attr.key.0 {
-        b"aid" => article = Article::from_upper(&attr.value).unwrap(),
+        b"aid" => article = self.to_article(&attr.value)?,
         b"nr" => abs_nr = self.get_attr(&attr.value)?,
         _ => {}
       }
@@ -1116,7 +1264,7 @@ impl MizReader<'_> {
       b"RCluster" => ClusterKind::R,
       b"FCluster" => ClusterKind::F,
       b"CCluster" => ClusterKind::C,
-      _ => panic!("unexpected cluster kind"),
+      _ => return self.err("cluster kind"),
     };
     Ok(((article, abs_nr), kind))
   }
@@ -1125,7 +1273,7 @@ impl MizReader<'_> {
     &mut self, buf: &mut Vec<u8>, (_article, _abs_nr): (Article, u32),
   ) -> Result<RegisteredCluster> {
     let primary = self.parse_arg_types(buf)?;
-    let ty = Box::new(self.parse_type(buf)?.unwrap());
+    let ty = Box::new(self.parse_type_req(buf)?);
     let attrs = self.parse_attrs(buf)?;
     let attrs2 = if self.two_clusters { self.parse_attrs(buf)? } else { attrs.clone() };
     let cl = Cluster { primary, consequent: (attrs, attrs2) };
@@ -1137,7 +1285,7 @@ impl MizReader<'_> {
     &mut self, buf: &mut Vec<u8>, (_article, _abs_nr): (Article, u32),
   ) -> Result<FunctorCluster> {
     let primary = self.parse_arg_types(buf)?;
-    let term = Box::new(self.parse_term(buf)?.unwrap());
+    let term = Box::new(self.parse_term_req(buf)?);
     let attrs = self.parse_attrs(buf)?;
     let attrs2 = if self.two_clusters { self.parse_attrs(buf)? } else { attrs.clone() };
     let cl = Cluster { primary, consequent: (attrs, attrs2) };
@@ -1153,7 +1301,7 @@ impl MizReader<'_> {
   ) -> Result<ConditionalCluster> {
     let primary = self.parse_arg_types(buf)?;
     let antecedent = self.parse_attrs(buf)?;
-    let ty = Box::new(self.parse_type(buf)?.unwrap());
+    let ty = Box::new(self.parse_type_req(buf)?);
     let attrs = self.parse_attrs(buf)?;
     let attrs2 = if self.two_clusters { self.parse_attrs(buf)? } else { attrs.clone() };
     let cl = Cluster { primary, consequent: (attrs, attrs2) };
@@ -1164,7 +1312,9 @@ impl MizReader<'_> {
   fn parse_pairs(
     &mut self, buf: &mut Vec<u8>, name: &[u8], mut f: impl FnMut(u32, u32),
   ) -> Result<()> {
-    assert!(matches!(self.read_event(buf)?, Event::Start(e) if e.local_name().as_ref() == name));
+    if !matches!(self.read_event(buf)?, Event::Start(e) if e.local_name().as_ref() == name) {
+      return self.err("pair list")
+    }
     while let Ok(e) = self.try_read_start(buf, Some("Pair"))? {
       let (mut x, mut y) = (0, 0);
       for attr in e.attributes() {
@@ -1182,9 +1332,19 @@ impl MizReader<'_> {
   }
 
   fn parse_nr_attr(&mut self, e: BytesStart<'_>) -> Result<u32> {
-    let attr = e.attributes().next().unwrap()?;
-    assert!(attr.key.0 == b"nr");
+    let Some(attr) = e.attributes().next().transpose()? else { return self.err("nr attribute") };
+    if attr.key.0 != b"nr" {
+      return self.err("nr attribute")
+    }
     self.get_attr(&attr.value)
+  }
+
+  /// [`parse_nr_attr`](Self::parse_nr_attr) as a 1-based index: see [`idx_attr`](Self::idx_attr).
+  fn parse_nr_idx(&mut self, e: BytesStart<'_>) -> Result<u32> {
+    match self.parse_nr_attr(e)?.checked_sub(1) {
+      Some(n) => Ok(n),
+      None => Err(ParseError::BadInteger(self.0.buffer_position())),
+    }
   }
 
   fn parse_pattern_attrs(&mut self, e: &BytesStart<'_>) -> Result<PatternAttrs> {
@@ -1193,11 +1353,11 @@ impl MizReader<'_> {
     for attr in e.attributes() {
       let attr = attr?;
       match attr.key.0 {
-        b"nr" => attrs.abs_nr = self.get_attr::<u32>(&attr.value)? - 1,
-        b"aid" => attrs.article = Article::from_upper(&attr.value).unwrap(),
-        b"kind" => attrs.kind = attr.value[0],
-        b"formatnr" => attrs.fmt = FormatId(self.get_attr::<u32>(&attr.value)? - 1),
-        b"constrkind" => constr_kind = attr.value[0],
+        b"nr" => attrs.abs_nr = self.idx_attr(&attr.value)?,
+        b"aid" => attrs.article = self.to_article(&attr.value)?,
+        b"kind" => attrs.kind = self.attr_byte(&attr)?,
+        b"formatnr" => attrs.fmt = FormatId(self.idx_attr(&attr.value)?),
+        b"constrkind" => constr_kind = self.attr_byte(&attr)?,
         b"constrnr" => attrs.constr = self.get_attr(&attr.value)?,
         b"antonymic" => attrs.pos = &*attr.value != b"true",
         b"relnr" => attrs.pid = self.get_attr::<u32>(&attr.value)?.checked_sub(1),
@@ -1205,7 +1365,9 @@ impl MizReader<'_> {
         _ => {}
       }
     }
-    assert_eq!(attrs.kind as char, constr_kind as char);
+    if attrs.kind != constr_kind {
+      return self.err("matching pattern kind")
+    }
     Ok(attrs)
   }
 
@@ -1221,7 +1383,7 @@ impl MizReader<'_> {
       (b'M', Some(nr)) => PatternKind::Mode(ModeId(nr)),
       (b'M', None) => {
         self.read_start(buf, Some("Expansion"))?;
-        let expansion = Box::new(self.parse_type(buf)?.unwrap());
+        let expansion = Box::new(self.parse_type_req(buf)?);
         self.end_tag(buf)?;
         PatternKind::ExpandableMode { expansion }
       }
@@ -1232,7 +1394,7 @@ impl MizReader<'_> {
       (b'U', Some(nr)) => PatternKind::Sel(SelId(nr)),
       (b'G', Some(nr)) => PatternKind::Aggr(AggrId(nr)),
       (b'J', Some(nr)) => PatternKind::SubAggr(StructId(nr)),
-      _ => panic!("unknown pattern kind"),
+      _ => return self.err("pattern kind"),
     };
     self.end_tag(buf)?;
     Ok(Pattern { article, abs_nr, kind, fmt: map(fmt), primary, visible, pos })
@@ -1246,7 +1408,7 @@ impl MizReader<'_> {
       for attr in e.attributes() {
         let attr = attr?;
         match attr.key.0 {
-          b"kind" => kind = attr.unescape_value().unwrap().chars().next().unwrap() as u8,
+          b"kind" => kind = self.attr_char(&attr)?,
           b"nr" => nr = self.get_attr::<u32>(&attr.value)?,
           _ => {}
         }
@@ -1259,7 +1421,7 @@ impl MizReader<'_> {
         b'K' => counts.functor += nr,
         b'U' => counts.selector += nr,
         b'G' => counts.aggregate += nr,
-        _ => panic!("bad kind"),
+        _ => return self.err("constructor kind"),
       }
       self.end_tag(buf)?
     }
@@ -1271,9 +1433,9 @@ impl MizReader<'_> {
     for attr in e.attributes() {
       let attr = attr?;
       match attr.key.0 {
-        b"kind" => attrs.kind = attr.value[0],
+        b"kind" => attrs.kind = self.attr_byte(&attr)?,
         b"nr" => attrs._abs_nr = self.get_attr(&attr.value)?,
-        b"aid" => attrs._article = Article::from_upper(&attr.value).unwrap(),
+        b"aid" => attrs._article = self.to_article(&attr.value)?,
         b"redefnr" => attrs.redefines = self.get_attr(&attr.value)?,
         b"superfluous" => attrs.superfluous = self.get_attr(&attr.value)?,
         b"structmodeaggrnr" => attrs.aggr = self.get_attr(&attr.value)?,
@@ -1291,7 +1453,7 @@ impl MizReader<'_> {
     let (properties, primary) = match self.parse_elem(buf)? {
       Elem::Properties(props) => (props, self.parse_arg_types(buf)?),
       Elem::ArgTypes(args) => (Default::default(), args),
-      _ => panic!("expected <ArgTypes>"),
+      _ => return self.err("ArgTypes"),
     };
     macro_rules! constructor {
       ($id:ident) => {{
@@ -1302,49 +1464,51 @@ impl MizReader<'_> {
     let kind = match kind {
       b'M' => {
         let c = constructor!(ModeId);
-        ConstructorDef::Mode(TyConstructor { c, ty: self.parse_type(buf)?.unwrap() })
+        ConstructorDef::Mode(TyConstructor { c, ty: self.parse_type_req(buf)? })
       }
       b'L' => {
         let c = constructor!(StructId);
         let mut parents = vec![];
-        let aggr = AggrId(aggr - 1);
+        let aggr = AggrId(self.dec1(aggr)?);
         let fields = loop {
           match self.parse_elem(buf)? {
             Elem::Type(ty, _) => {
-              assert!(matches!(ty.kind, TypeKind::Struct(_)), "not a struct");
+              if !matches!(ty.kind, TypeKind::Struct(_)) {
+                return self.err("struct type")
+              }
               parents.push(ty)
             }
             Elem::Fields(args) => break args,
-            _ => panic!("expected <Fields>"),
+            _ => return self.err("Fields"),
           }
         };
         ConstructorDef::Struct(StructMode { c, parents: parents.into(), aggr, fields })
       }
       b'V' => {
         let c = constructor!(AttrId);
-        ConstructorDef::Attr(TyConstructor { c, ty: self.parse_type(buf)?.unwrap() })
+        ConstructorDef::Attr(TyConstructor { c, ty: self.parse_type_req(buf)? })
       }
       b'R' => ConstructorDef::Pred(constructor!(PredId)),
       b'K' => {
         let c = constructor!(FuncId);
-        ConstructorDef::Func(TyConstructor { c, ty: self.parse_type(buf)?.unwrap() })
+        ConstructorDef::Func(TyConstructor { c, ty: self.parse_type_req(buf)? })
       }
       b'U' => {
         let c = constructor!(SelId);
-        ConstructorDef::Sel(TyConstructor { c, ty: self.parse_type(buf)?.unwrap() })
+        ConstructorDef::Sel(TyConstructor { c, ty: self.parse_type_req(buf)? })
       }
       b'G' | b'J' => {
         let c = constructor!(AggrId);
         ConstructorDef::Aggr(Aggregate {
-          c: TyConstructor { c, ty: self.parse_type(buf)?.unwrap() },
+          c: TyConstructor { c, ty: self.parse_type_req(buf)? },
           base,
           fields: match self.parse_elem(buf)? {
             Elem::Fields(args) => args,
-            _ => panic!("expected <Fields>"),
+            _ => return self.err("Fields"),
           },
         })
       }
-      _ => panic!("bad kind"),
+      _ => return self.err("constructor kind"),
     };
     self.end_tag(buf)?;
     Ok(kind)
@@ -1355,8 +1519,8 @@ impl MizReader<'_> {
     for attr in e.attributes() {
       let attr = attr?;
       match attr.key.0 {
-        b"constrkind" => constr_kind = attr.value[0],
-        b"constrnr" => constr_nr = self.get_attr::<u32>(&attr.value)? - 1,
+        b"constrkind" => constr_kind = self.attr_byte(&attr)?,
+        b"constrnr" => constr_nr = self.idx_attr(&attr.value)?,
         _ => {}
       }
     }
@@ -1366,7 +1530,7 @@ impl MizReader<'_> {
       b'V' => Some(ConstrKind::Attr(AttrId(constr_nr))),
       b'K' => Some(ConstrKind::Func(FuncId(constr_nr))),
       b'M' => Some(ConstrKind::Mode(ModeId(constr_nr))),
-      c => panic!("bad constr kind {c}"),
+      _ => return self.err("constructor kind"),
     })
   }
 
@@ -1391,12 +1555,13 @@ impl MizReader<'_> {
     for attr in e.attributes() {
       let attr = attr?;
       match attr.key.0 {
-        b"aid" => article = Article::from_upper(&attr.value).unwrap(),
-        b"defnr" => def_nr = DefId(self.get_attr::<u32>(&attr.value)? - 1),
+        b"aid" => article = self.to_article(&attr.value)?,
+        b"defnr" => def_nr = DefId(self.idx_attr(&attr.value)?),
         _ => {}
       }
     }
-    Ok((def_nr, article, self.parse_constr_kind(&e)?.unwrap()))
+    let Some(kind) = self.parse_constr_kind(&e)? else { return self.err("constructor kind") };
+    Ok((def_nr, article, kind))
   }
 
   fn parse_definiens_body(
@@ -1407,16 +1572,16 @@ impl MizReader<'_> {
       match self.parse_elem(buf)? {
         Elem::Type(ty, _) => primary.push(ty),
         Elem::Essentials(args) => break args,
-        _ => panic!("expected <Essentials>"),
+        _ => return self.err("Essentials"),
       }
     };
     let (assumptions, value) = match self.parse_elem(buf)? {
       Elem::Formula(f) => match self.parse_elem(buf)? {
         Elem::DefMeaning(df) => (f, df),
-        _ => panic!("expected <DefMeaning>"),
+        _ => return self.err("DefMeaning"),
       },
       Elem::DefMeaning(df) => (Formula::True, df),
-      _ => panic!("expected <DefMeaning>"),
+      _ => return self.err("DefMeaning"),
     };
     self.end_tag(buf)?;
     let c = ConstrDef { def_nr, article, constr, primary: primary.into() };
@@ -1428,9 +1593,9 @@ impl MizReader<'_> {
     for attr in e.attributes() {
       let attr = attr?;
       match attr.key.0 {
-        b"aid" => attrs._article = Article::from_upper(&attr.value).unwrap(),
+        b"aid" => attrs._article = self.to_article(&attr.value)?,
         b"nr" => attrs._abs_nr = self.get_attr(&attr.value)?,
-        b"constrkind" => attrs.kind = attr.value[0],
+        b"constrkind" => attrs.kind = self.attr_byte(&attr)?,
         _ => {}
       }
     }
@@ -1445,14 +1610,23 @@ impl MizReader<'_> {
       match self.parse_elem(buf)? {
         Elem::Type(ty, _) => primary.push(ty),
         Elem::Term(lhs) if kind == b'K' => break lhs,
-        _ => panic!("unknown identify kind"),
+        _ => return self.err("Term"),
       }
     };
-    let rhs = self.parse_term(buf)?.unwrap();
+    let rhs = self.parse_term_req(buf)?;
     let mut eq_args = vec![];
-    self.parse_pairs(buf, b"EqArgs", |x, y| {
-      eq_args.push((LocusId(x as u8 - 1), LocusId(y as u8 - 1)))
+    // `x`/`y` are 1-based loci; on a corrupt file a `0` (or a value past `u8`) would
+    // underflow/truncate. The closure cannot borrow `self` to report, so flag it and
+    // report after the pair list is consumed.
+    let mut bad = false;
+    self.parse_pairs(buf, b"EqArgs", |x, y| match (x.checked_sub(1), y.checked_sub(1)) {
+      (Some(x), Some(y)) if x <= u8::MAX as u32 && y <= u8::MAX as u32 =>
+        eq_args.push((LocusId(x as u8), LocusId(y as u8))),
+      _ => bad = true,
     })?;
+    if bad {
+      return self.err("EqArgs locus index")
+    }
     self.end_tag(buf)?;
     Ok(IdentifyFunc { primary: primary.into(), lhs, rhs, eq_args: eq_args.into() })
   }
@@ -1462,7 +1636,7 @@ impl MizReader<'_> {
     for attr in e.attributes() {
       let attr = attr?;
       match attr.key.0 {
-        b"aid" => attrs._article = Article::from_upper(&attr.value).unwrap(),
+        b"aid" => attrs._article = self.to_article(&attr.value)?,
         b"nr" => attrs._abs_nr = self.get_attr(&attr.value)?,
         _ => {}
       }
@@ -1477,8 +1651,8 @@ impl MizReader<'_> {
     let terms = loop {
       match self.parse_elem(buf)? {
         Elem::Type(ty, _) => primary.push(ty),
-        Elem::Term(t1) => break [t1, self.parse_term(buf)?.unwrap()],
-        _ => panic!("unknown reduction kind"),
+        Elem::Term(t1) => break [t1, self.parse_term_req(buf)?],
+        _ => return self.err("Term"),
       }
     };
     self.end_tag(buf)?;
@@ -1490,20 +1664,22 @@ impl MizReader<'_> {
     for attr in e.attributes() {
       let attr = attr?;
       match attr.key.0 {
-        b"aid" => _article = Article::from_upper(&attr.value).unwrap(),
+        b"aid" => _article = self.to_article(&attr.value)?,
         b"nr" => _abs_nr = self.get_attr(&attr.value)?,
         b"x" => kind = self.get_attr::<usize>(&attr.value)?,
         _ => {}
       }
     }
-    Ok(PropertyAttrs { _article, _abs_nr, kind: PropertyKind::from_usize(kind - 1) })
+    let kind = kind.checked_sub(1).filter(|&i| i < <PropertyKind as Enum>::LENGTH);
+    let Some(kind) = kind else { return self.err("property kind") };
+    Ok(PropertyAttrs { _article, _abs_nr, kind: PropertyKind::from_usize(kind) })
   }
 
   fn parse_property_body(
     &mut self, buf: &mut Vec<u8>, PropertyAttrs { kind, .. }: PropertyAttrs,
   ) -> Result<Property> {
     let primary = self.parse_arg_types(buf)?;
-    let ty = self.parse_type(buf)?.unwrap();
+    let ty = self.parse_type_req(buf)?;
     self.end_tag(buf)?;
     Ok(Property { primary, ty, kind })
   }
@@ -1523,16 +1699,18 @@ impl MizReader<'_> {
         () => {{
           let nr = self.parse_nr_attr(e)?;
           self.end_tag(buf)?;
-          nr
+          // These variable references are 1-based in the file; report rather than
+          // underflow-panic on a corrupt `0`.
+          self.dec1(nr)?
         }};
       }
       match e.local_name().as_ref() {
         b"Typ" => {
-          let (kind, nr) = self.get_basic_attrs(&e)?;
+          let (kind, nr) = self.get_basic_idx(&e)?;
           let kind = match kind {
-            b'G' => TypeKind::Struct(StructId(nr - 1)),
-            b'M' => TypeKind::Mode(ModeId(nr - 1)),
-            _ => panic!("bad type kind"),
+            b'G' => TypeKind::Struct(StructId(nr)),
+            b'M' => TypeKind::Mode(ModeId(nr)),
+            _ => return self.err("type kind"),
           };
           let id = self.get_vid(&e)?;
           let lower = self.parse_attrs(buf)?;
@@ -1554,7 +1732,8 @@ impl MizReader<'_> {
             }
           }
           while let Event::Start(e) = self.read_event(buf)? {
-            props.set(e.local_name().as_ref().try_into().expect("unexpected property"));
+            let Ok(prop) = e.local_name().as_ref().try_into() else { return self.err("property") };
+            props.set(prop);
             self.end_tag(buf)?;
           }
           props.trim();
@@ -1570,33 +1749,37 @@ impl MizReader<'_> {
         b"Fields" => {
           let mut fields = vec![];
           while let Ok(e) = self.try_read_start(buf, Some("Field"))? {
-            let attr = e.attributes().next().unwrap()?;
-            assert!(attr.key.0 == b"nr");
-            fields.push(SelId(self.get_attr::<u32>(&attr.value)? - 1));
+            let Some(attr) = e.attributes().next().transpose()? else {
+              return self.err("nr attribute")
+            };
+            if attr.key.0 != b"nr" {
+              return self.err("nr attribute")
+            }
+            fields.push(SelId(self.idx_attr(&attr.value)?));
             self.end_tag(buf)?;
           }
           Elem::Fields(fields.into())
         }
-        b"LocusVar" => Elem::Term(Term::Locus(LocusId(parse_var!() as u8 - 1))),
-        b"Var" => Elem::Term(Term::Bound(BoundId(parse_var!() - 1))),
-        b"Const" => Elem::Term(Term::Const(ConstId(parse_var!() - 1))),
-        // b"InfConst" => Elem::Term(Term::Infer { nr: InferId(parse_var!() - 1) }),
-        // b"FreeVar" => Elem::Term(Term::FreeVar { nr: parse_var!() - 1 }),
+        b"LocusVar" => Elem::Term(Term::Locus(LocusId(parse_var!() as u8))),
+        b"Var" => Elem::Term(Term::Bound(BoundId(parse_var!()))),
+        b"Const" => Elem::Term(Term::Const(ConstId(parse_var!()))),
+        // b"InfConst" => Elem::Term(Term::Infer { nr: InferId(parse_var!()) }),
+        // b"FreeVar" => Elem::Term(Term::FreeVar { nr: parse_var!() }),
         b"Num" => Elem::Term(Term::Numeral(parse_var!())),
         b"Func" => {
-          let (kind, nr) = self.get_basic_attrs(&e)?;
+          let (kind, nr) = self.get_basic_idx(&e)?;
           let args = self.parse_term_list(buf)?;
           match kind {
-            b'F' => Elem::Term(Term::SchFunc { nr: SchFuncId(nr - 1), args }),
-            b'G' => Elem::Term(Term::Aggregate { nr: AggrId(nr - 1), args }),
-            b'K' => Elem::Term(Term::Functor { nr: FuncId(nr - 1), args }),
-            b'U' => Elem::Term(Term::Selector { nr: SelId(nr - 1), args }),
-            _ => panic!("unknown function kind"),
+            b'F' => Elem::Term(Term::SchFunc { nr: SchFuncId(nr), args }),
+            b'G' => Elem::Term(Term::Aggregate { nr: AggrId(nr), args }),
+            b'K' => Elem::Term(Term::Functor { nr: FuncId(nr), args }),
+            b'U' => Elem::Term(Term::Selector { nr: SelId(nr), args }),
+            _ => return self.err("function kind"),
           }
         }
         b"PrivFunc" => {
-          let nr = self.parse_nr_attr(e)? - 1;
-          let value = Box::new(self.parse_term(buf)?.unwrap());
+          let nr = self.parse_nr_idx(e)?;
+          let value = Box::new(self.parse_term_req(buf)?);
           let args = self.parse_term_list(buf)?;
           Elem::Term(Term::PrivFunc { nr: PrivFuncId(nr), args, value })
         }
@@ -1610,21 +1793,21 @@ impl MizReader<'_> {
                 self.depth += 1;
               }
               Elem::Term(scope) => break Box::new(scope),
-              _ => panic!("expected scope term"),
+              _ => return self.err("scope term"),
             }
           };
-          let compr = Box::new(self.parse_formula(buf)?.unwrap());
+          let compr = Box::new(self.parse_formula_req(buf)?);
           self.depth -= args.len() as u32;
           self.end_tag(buf)?;
           Elem::Term(Term::Fraenkel { args: args.into_boxed_slice(), scope, compr })
         }
         b"Choice" => {
-          let ty = Box::new(self.parse_type(buf)?.unwrap());
+          let ty = Box::new(self.parse_type_req(buf)?);
           self.end_tag(buf)?;
           Elem::Term(Term::The { ty })
         }
         b"Not" => {
-          let f = Box::new(self.parse_formula(buf)?.unwrap());
+          let f = Box::new(self.parse_formula_req(buf)?);
           self.end_tag(buf)?;
           Elem::Formula(Formula::Neg { f })
         }
@@ -1636,57 +1819,58 @@ impl MizReader<'_> {
           Elem::Formula(Formula::And { args })
         }
         b"Pred" => {
-          let (kind, mut nr) = self.get_basic_attrs(&e)?;
-          nr -= 1;
+          let (kind, nr) = self.get_basic_idx(&e)?;
           let args = self.parse_term_list(buf)?;
           Elem::Formula(match kind {
             b'P' => Formula::SchPred { nr: SchPredId(nr), args },
             b'R' => Formula::Pred { nr: PredId(nr), args },
             b'V' => Formula::Attr { nr: AttrId(nr), args },
-            _ => panic!("unknown predicate kind"),
+            _ => return self.err("predicate kind"),
           })
         }
         b"PrivPred" => {
-          let nr = self.parse_nr_attr(e)? - 1;
+          let nr = self.parse_nr_idx(e)?;
           let mut args = vec![];
           let value = loop {
             match self.parse_elem(buf)? {
               Elem::Term(tm) => args.push(tm),
               Elem::Formula(f) => break Box::new(f),
-              _ => panic!("expected formula"),
+              _ => return self.err("formula"),
             }
           };
           self.end_tag(buf)?;
           Elem::Formula(Formula::PrivPred { nr: PrivPredId(nr), args: args.into(), value })
         }
         b"For" => {
-          let id = match e.try_get_attribute(b"vid").unwrap() {
+          let id = match e.try_get_attribute(b"vid")? {
             Some(attr) => IdentId(self.get_attr(&attr.value)?),
             None => IdentId::NONE,
           };
-          let mut dom = Box::new(self.parse_type(buf)?.unwrap());
+          let mut dom = Box::new(self.parse_type_req(buf)?);
           dom.visit(&mut self.lower());
           self.depth += 1;
-          let scope = Box::new(self.parse_formula(buf)?.unwrap());
+          let scope = Box::new(self.parse_formula_req(buf)?);
           self.depth -= 1;
           self.end_tag(buf)?;
           Elem::Formula(Formula::ForAll { id, dom, scope })
         }
         b"Is" => {
-          let term = Box::new(self.parse_term(buf)?.unwrap());
-          let ty = Box::new(self.parse_type(buf)?.unwrap());
+          let term = Box::new(self.parse_term_req(buf)?);
+          let ty = Box::new(self.parse_type_req(buf)?);
           self.end_tag(buf)?;
           Elem::Formula(Formula::Is { term, ty })
         }
         b"FlexFrm" => {
-          let _orig1 = self.parse_formula(buf)?.unwrap();
-          let _orig2 = self.parse_formula(buf)?.unwrap();
-          let terms = Box::new([self.parse_term(buf)?.unwrap(), self.parse_term(buf)?.unwrap()]);
-          let Formula::ForAll { id: _, dom, scope } = self.parse_formula(buf)?.unwrap() else {
-            panic!()
+          let _orig1 = self.parse_formula_req(buf)?;
+          let _orig2 = self.parse_formula_req(buf)?;
+          let terms = Box::new([self.parse_term_req(buf)?, self.parse_term_req(buf)?]);
+          let Formula::ForAll { id: _, dom, scope } = self.parse_formula_req(buf)? else {
+            return self.err("For")
           };
           let sc2 = scope.mk_neg();
-          let &[Formula::Pred { nr: le, .. }, _, ref rest @ ..] = sc2.conjuncts() else { panic!() };
+          let &[Formula::Pred { nr: le, .. }, _, ref rest @ ..] = sc2.conjuncts() else {
+            return self.err("flex conjunction")
+          };
           let scope = Formula::mk_and(rest.to_owned());
           self.end_tag(buf)?;
           Elem::Formula(Formula::FlexAnd { nat: dom, le, terms, scope: Box::new(scope.mk_neg()) })
@@ -1705,16 +1889,16 @@ impl MizReader<'_> {
             let f = |e| if let Elem::Term(f) = e { Some(f) } else { None };
             Elem::DefMeaning(DefValue::Term(self.parse_def_body(buf, f)?))
           }
-          _ => panic!("unknown def kind"),
+          _ => return self.err("definiens kind"),
         },
         b"PartialDef" => {
           let case = self.parse_elem(buf)?;
-          let guard = self.parse_formula(buf)?.unwrap();
+          let guard = self.parse_formula_req(buf)?;
           self.end_tag(buf)?;
           Elem::PartialDef(Box::new((case, guard)))
         }
         b"Ident" => {
-          let vid = match e.try_get_attribute(b"vid").unwrap() {
+          let vid = match e.try_get_attribute(b"vid")? {
             Some(attr) => self.get_attr(&attr.value)?,
             None => 0,
           };
@@ -1723,12 +1907,12 @@ impl MizReader<'_> {
         }
         b"Proposition" => {
           let (pos, label) = self.get_pos_and_label(&e)?;
-          let f = self.parse_formula(buf)?.unwrap();
+          let f = self.parse_formula_req(buf)?;
           self.end_tag(buf)?;
           Elem::Proposition(Proposition { pos, label, f })
         }
         b"Thesis" => {
-          let f = self.parse_formula(buf)?.unwrap();
+          let f = self.parse_formula_req(buf)?;
           let mut exps = vec![];
           self.parse_pairs(buf, b"ThesisExpansions", |x, y| exps.push((x, y)))?;
           self.end_tag(buf)?;
@@ -1739,15 +1923,15 @@ impl MizReader<'_> {
           for attr in e.attributes() {
             let attr = attr?;
             match attr.key.0 {
-              b"kind" => kind = attr.unescape_value().unwrap().as_bytes()[0],
-              b"symbolnr" => sym = self.get_attr::<u32>(&attr.value)? - 1,
+              b"kind" => kind = self.attr_char(&attr)?,
+              b"symbolnr" => sym = self.idx_attr(&attr.value)?,
               b"argnr" => args = Some(self.get_attr(&attr.value)?),
               b"leftargnr" => left = Some(self.get_attr(&attr.value)?),
-              b"rightsymbolnr" => rsym = Some(self.get_attr::<u32>(&attr.value)? - 1),
+              b"rightsymbolnr" => rsym = Some(self.idx_attr(&attr.value)?),
               _ => {}
             }
           }
-          let args = args.unwrap();
+          let Some(args) = args else { return self.err("argnr attribute") };
           let fmt = match kind {
             b'G' => Format::Aggr(FormatAggr { sym: StructSymId(sym), args }),
             b'J' => Format::SubAggr(StructSymId(sym)),
@@ -1756,19 +1940,28 @@ impl MizReader<'_> {
             b'U' => Format::Sel(SelSymId(sym)),
             b'V' => Format::Attr(FormatAttr { sym: AttrSymId(sym), args }),
             b'O' => {
-              let left = left.unwrap();
-              Format::Func(FormatFunc::Func { sym: FuncSymId(sym), left, right: args - left })
+              let Some(left) = left else { return self.err("leftargnr attribute") };
+              let Some(right) = args.checked_sub(left) else {
+                return self.err("functor format arity")
+              };
+              Format::Func(FormatFunc::Func { sym: FuncSymId(sym), left, right })
             }
             b'R' => {
-              let left = left.unwrap();
-              Format::Pred(FormatPred { sym: PredSymId(sym), left, right: args - left })
+              let Some(left) = left else { return self.err("leftargnr attribute") };
+              let Some(right) = args.checked_sub(left) else {
+                return self.err("predicate format arity")
+              };
+              Format::Pred(FormatPred { sym: PredSymId(sym), left, right })
             }
-            b'K' => Format::Func(FormatFunc::Bracket {
-              lsym: LeftBrkSymId(sym),
-              rsym: RightBrkSymId(rsym.unwrap()),
-              args,
-            }),
-            _ => panic!("unknown format kind"),
+            b'K' => {
+              let Some(rsym) = rsym else { return self.err("rightsymbolnr attribute") };
+              Format::Func(FormatFunc::Bracket {
+                lsym: LeftBrkSymId(sym),
+                rsym: RightBrkSymId(rsym),
+                args,
+              })
+            }
+            _ => return self.err("format kind"),
           };
           self.end_tag(buf)?;
           Elem::Format(fmt)
@@ -1778,8 +1971,8 @@ impl MizReader<'_> {
           for attr in e.attributes() {
             let attr = attr?;
             match attr.key.0 {
-              b"kind" => kind = attr.value[0],
-              b"symbolnr" => sym = self.get_attr::<u32>(&attr.value)? - 1,
+              b"kind" => kind = self.attr_byte(&attr)?,
+              b"symbolnr" => sym = self.idx_attr(&attr.value)?,
               b"value" => value = Some(self.get_attr(&attr.value)?),
               _ => {}
             }
@@ -1788,10 +1981,11 @@ impl MizReader<'_> {
             b'O' => PriorityKind::Functor(FuncSymId(sym)),
             b'K' => PriorityKind::LeftBrk(LeftBrkSymId(sym)),
             b'L' => PriorityKind::RightBrk(RightBrkSymId(sym)),
-            _ => panic!("unknown format kind"),
+            _ => return self.err("priority kind"),
           };
           self.end_tag(buf)?;
-          Elem::Priority(kind, value.unwrap())
+          let Some(value) = value else { return self.err("value attribute") };
+          Elem::Priority(kind, value)
         }
         _ => Elem::Other,
       }
@@ -1827,7 +2021,9 @@ impl MizReader<'_> {
   ) -> Result<Option<Proposition>> {
     Ok(match self.parse_elem(buf)? {
       Elem::Proposition(f) => {
-        assert!(quotable || f.label.is_none());
+        if !quotable && f.label.is_some() {
+          return self.err("unlabeled proposition")
+        }
         Some(f)
       }
       _ => None,
@@ -1837,7 +2033,7 @@ impl MizReader<'_> {
   fn parse_arg_types(&mut self, buf: &mut Vec<u8>) -> Result<Box<[Type]>> {
     Ok(match self.parse_elem(buf)? {
       Elem::ArgTypes(tys) => tys,
-      _ => panic!("expected <ArgTypes>"),
+      _ => return self.err("ArgTypes"),
     })
   }
 
@@ -1847,11 +2043,15 @@ impl MizReader<'_> {
     let mut cases = vec![];
     let otherwise = loop {
       match self.parse_elem(buf)? {
-        Elem::PartialDef(e) => cases.push(DefCase { case: get(e.0).unwrap(), guard: e.1 }),
+        Elem::PartialDef(e) => {
+          let Some(case) = get(e.0) else { return self.err("definiens case") };
+          cases.push(DefCase { case, guard: e.1 })
+        }
         Elem::End => break None,
         e => {
           self.end_tag(buf)?;
-          break Some(get(e).unwrap())
+          let Some(e) = get(e) else { return self.err("definiens case") };
+          break Some(e)
         }
       }
     };

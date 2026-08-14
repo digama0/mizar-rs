@@ -159,7 +159,7 @@ impl XmlReader {
       let attr = attr?;
       match attr.key.0 {
         b"varnr" => var = self.get_attr::<u32>(&attr.value)?.checked_sub(1).map(ConstId),
-        b"spelling" => spelling = attr.unescape_value().unwrap(),
+        b"spelling" => spelling = attr.unescape_value()?,
         // omitted: origin, kind, serialnr, idnr
         _ => {}
       }
@@ -175,8 +175,10 @@ impl MsmParser {
       let file = File::open(&path)?;
       let mut r = XmlReader::new(file, &mut buf)?;
       r.1 = lines;
-      assert!(matches!(r.read_event(&mut buf)?,
-        Event::Start(e) if e.local_name().as_ref() == b"Text-Proper"));
+      match r.read_event(&mut buf)? {
+        Event::Start(e) if e.local_name().as_ref() == b"Text-Proper" => {}
+        _ => return r.err("Text-Proper"),
+      }
       Ok(r)
     })();
     match result {
@@ -189,8 +191,16 @@ impl MsmParser {
     Ok(match self.parse_elem()? {
       Elem::Variable(v) => Some(v),
       Elem::End => None,
-      _ => panic!("expected <Variable>"),
+      _ => return self.r.err("<Variable>"),
     })
+  }
+
+  /// Like [`Self::parse_variable`], but the element is required.
+  fn parse_variable1(&mut self) -> Result<Box<Variable>> {
+    match self.parse_variable()? {
+      Some(v) => Ok(v),
+      None => self.r.err("Variable"),
+    }
   }
 
   fn parse_variables(&mut self) -> Result<Vec<Variable>> {
@@ -210,7 +220,7 @@ impl MsmParser {
         let attr = attr?;
         match attr.key.0 {
           b"y1" => y1 = IdentKind::from_usize(self.r.get_attr::<usize>(&attr.value)?),
-          b"y2" => y2 = self.r.get_attr::<u32>(&attr.value)? - 1,
+          b"y2" => y2 = self.r.idx_attr(&attr.value)?,
           _ => {}
         }
       }
@@ -218,7 +228,7 @@ impl MsmParser {
       vars.push(match y1 {
         IdentKind::Bound => VarKind::Bound(BoundId(y2)),
         IdentKind::Const | IdentKind::DefConst => VarKind::Const(ConstId(y2)),
-        _ => unreachable!(),
+        _ => return self.r.err("bound or constant substitution"),
       })
     }
     Ok(vars)
@@ -227,7 +237,7 @@ impl MsmParser {
   fn parse_formula(&mut self) -> Result<Box<Formula>> {
     Ok(match self.parse_elem()? {
       Elem::Formula(f) => f,
-      _ => panic!("expected formula"),
+      _ => return self.r.err("formula"),
     })
   }
 
@@ -235,8 +245,16 @@ impl MsmParser {
     Ok(match self.parse_elem()? {
       Elem::Term(t) => Some(t),
       Elem::End => None,
-      _ => panic!("expected term"),
+      _ => return self.r.err("term"),
     })
+  }
+
+  /// Like [`Self::parse_term`], but the element is required.
+  fn parse_term1(&mut self) -> Result<Box<Term>> {
+    match self.parse_term()? {
+      Some(t) => Ok(t),
+      None => self.r.err("term"),
+    }
   }
 
   fn parse_terms(&mut self) -> Result<Vec<Term>> {
@@ -251,8 +269,16 @@ impl MsmParser {
     Ok(match self.parse_elem()? {
       Elem::Type(ty) => Some(ty),
       Elem::End => None,
-      _ => panic!("expected type"),
+      _ => return self.r.err("type"),
     })
+  }
+
+  /// Like [`Self::parse_type`], but the element is required.
+  fn parse_type1(&mut self) -> Result<Box<Type>> {
+    match self.parse_type()? {
+      Some(ty) => Ok(ty),
+      None => self.r.err("type"),
+    }
   }
 
   fn parse_types(&mut self) -> Result<Vec<Type>> {
@@ -269,38 +295,48 @@ impl MsmParser {
     let (label, f) = match self.parse_elem()? {
       Elem::Label(lab) => (lab, self.parse_formula()?),
       Elem::Formula(f) => (None, f),
-      _ => panic!("expected formula"),
+      _ => return self.r.err("formula"),
     };
     self.r.end_tag(&mut self.buf)?;
     Ok(Some(Box::new(Proposition { label, f: *f })))
+  }
+
+  /// Like [`Self::parse_proposition`], but the element is required.
+  fn parse_proposition1(&mut self) -> Result<Box<Proposition>> {
+    match self.parse_proposition()? {
+      Some(p) => Ok(p),
+      None => self.r.err("Proposition"),
+    }
   }
 
   fn parse_stmt(&mut self, shape: Shape) -> Result<Statement> {
     Ok(match shape {
       Shape::DiffuseStatement => {
         let (label, bl) = match self.parse_elem()? {
-          Elem::Label(lab) => (lab, self.parse_block()?.unwrap()),
+          Elem::Label(lab) => (lab, self.parse_block1()?),
           Elem::Block(bl) => (None, bl),
-          _ => panic!("expected block"),
+          _ => return self.r.err("block"),
         };
         self.r.end_tag(&mut self.buf)?;
-        assert!(matches!(bl.kind, BlockKind::Now | BlockKind::Hereby));
+        if !matches!(bl.kind, BlockKind::Now | BlockKind::Hereby) {
+          return self.r.err("now or hereby block")
+        }
         Statement::Now { end: bl.pos.1, label, items: bl.items }
       }
       Shape::CompactStatement => {
-        let prop = self.parse_proposition()?.unwrap();
+        let prop = self.parse_proposition1()?;
         let just = self.parse_justification()?;
         self.r.end_tag(&mut self.buf)?;
         Statement::Proposition { prop, just }
       }
       Shape::IterativeEquality => {
-        let prop = self.parse_proposition()?.unwrap();
+        let prop = self.parse_proposition1()?;
         let just = self.parse_justification()?;
         let mut steps = vec![];
         while let Ok(e) = self.r.try_read_start(&mut self.buf, Some("Iterative-Step"))? {
           steps.push(IterStep {
             pos: self.r.get_pos(&e)?,
-            rhs: *self.parse_term()?.unwrap(),
+            rhs: *self.parse_term1()?,
             just: *self.parse_justification()?,
           });
           self.r.end_tag(&mut self.buf)?;
@@ -315,7 +351,7 @@ impl MsmParser {
       Elem::Block(bl) if matches!(bl.kind, BlockKind::Proof) =>
         Justification::Block { pos: bl.pos, items: bl.items },
       Elem::Inference(pos, kind, refs) => Justification::Inference { pos, kind, refs },
-      _ => panic!("expected justification"),
+      _ => return self.r.err("justification"),
     }))
   }
 
@@ -323,21 +359,29 @@ impl MsmParser {
     Ok(match self.parse_elem()? {
       Elem::Block(bl) => Some(bl),
       Elem::End => None,
-      _ => panic!("expected <Block>"),
+      _ => return self.r.err("<Block>"),
     })
+  }
+
+  /// Like [`Self::parse_block`], but the element is required.
+  fn parse_block1(&mut self) -> Result<Box<Block>> {
+    match self.parse_block()? {
+      Some(bl) => Ok(bl),
+      None => self.r.err("Block"),
+    }
   }
 
   fn parse_binder(&mut self) -> Result<Box<BinderGroup>> {
     Ok(match self.parse_elem()? {
       Elem::Binder(var) => var,
-      _ => panic!("expected binder group"),
+      _ => return self.r.err("binder group"),
     })
   }
 
   fn parse_pattern(&mut self) -> Result<Pattern> {
     Ok(match self.parse_elem()? {
       Elem::Pattern(pat) => pat,
-      _ => panic!("expected pattern"),
+      _ => return self.r.err("pattern"),
     })
   }
 
@@ -350,8 +394,8 @@ impl MsmParser {
         for attr in e.attributes() {
           let attr = attr?;
           match attr.key.0 {
-            b"nr" => sym = AttrSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-            b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+            b"nr" => sym = AttrSymId(self.r.idx_attr(&attr.value)?),
+            b"spelling" => spelling = attr.unescape_value()?.to_string(),
             _ => {}
           }
         }
@@ -359,13 +403,20 @@ impl MsmParser {
         Attr::Attr { pos, sym, spelling, args }
       }
       b"NegatedAdjective" => {
-        let attr =
-          Attr::Non { pos: self.r.get_pos(&e)?, attr: Box::new(self.parse_attr()?.unwrap()) };
+        let attr = Attr::Non { pos: self.r.get_pos(&e)?, attr: Box::new(self.parse_attr1()?) };
         self.r.end_tag(&mut self.buf)?;
         attr
       }
-      _ => panic!("expected an adjective"),
+      _ => return self.r.err("adjective"),
     }))
+  }
+
+  /// Like [`Self::parse_attr`], but the element is required.
+  fn parse_attr1(&mut self) -> Result<Attr> {
+    match self.parse_attr()? {
+      Some(a) => Ok(a),
+      None => self.r.err("adjective"),
+    }
   }
 
   fn parse_attrs(&mut self) -> Result<Vec<Attr>> {
@@ -381,7 +432,7 @@ impl MsmParser {
     Ok(match self.parse_elem()? {
       Elem::Definiens(d) => Some(d),
       Elem::End => None,
-      _ => panic!("expected <Definiens>"),
+      _ => return self.r.err("<Definiens>"),
     })
   }
 
@@ -390,6 +441,14 @@ impl MsmParser {
     let v = self.r.parse_variable_attrs(&e)?;
     self.r.end_tag(&mut self.buf)?;
     Ok(Some(v))
+  }
+
+  /// Like [`Self::parse_locus`], but the element is required.
+  fn parse_locus1(&mut self) -> Result<Box<Variable>> {
+    match self.parse_locus()? {
+      Some(v) => Ok(v),
+      None => self.r.err("Locus"),
+    }
   }
 
   fn parse_loci(&mut self, out: &mut Vec<Variable>) -> Result<()> {
@@ -406,8 +465,8 @@ impl MsmParser {
     for attr in e.attributes() {
       let attr = attr?;
       match attr.key.0 {
-        b"nr" => rsym = RightBrkSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-        b"spelling" => rsp = attr.unescape_value().unwrap().to_string(),
+        b"nr" => rsym = RightBrkSymId(self.r.idx_attr(&attr.value)?),
+        b"spelling" => rsp = attr.unescape_value()?.to_string(),
         _ => {}
       }
     }
@@ -419,12 +478,12 @@ impl MsmParser {
     let e = self.r.read_start(&mut self.buf, None)?;
     let pos = self.r.get_pos(&e)?;
     let out = match e.local_name().as_ref() {
-      b"Single-Assumption" => Assumption::Single { pos, prop: self.parse_proposition()?.unwrap() },
+      b"Single-Assumption" => Assumption::Single { pos, prop: self.parse_proposition1()? },
       b"Collective-Assumption" => {
-        let Elem::Conditions(conds) = self.parse_elem()? else { panic!("expected <Conditions>") };
+        let Elem::Conditions(conds) = self.parse_elem()? else { return self.r.err("<Conditions>") };
         Assumption::Collective { pos, conds }
       }
-      _ => panic!("expected assumption"),
+      _ => return self.r.err("assumption"),
     };
     self.r.end_tag(&mut self.buf)?;
     Ok(out)
@@ -436,7 +495,7 @@ impl MsmParser {
       match self.parse_elem()? {
         Elem::Reference(r) => refs.push(r),
         Elem::End => break,
-        _ => panic!("unexpected element"),
+        _ => return self.r.err("reference"),
       }
     }
     Ok(refs)
@@ -450,9 +509,12 @@ impl MsmParser {
       let attr = attr?;
       match attr.key.0 {
         b"kind" => kind = attr.value,
-        b"property" => property = Some((*attr.value).try_into().unwrap()),
+        b"property" => match (*attr.value).try_into() {
+          Ok(p) => property = Some(p),
+          Err(_) => return self.r.err("property kind"),
+        },
         b"shape" => shape = attr.value,
-        b"spelling" => spelling = Some(attr.unescape_value().unwrap()),
+        b"spelling" => spelling = Some(attr.unescape_value()?),
         b"condition" => condition = attr.value,
         // Some((*attr.value).try_into().unwrap()),
         _ => {}
@@ -461,17 +523,21 @@ impl MsmParser {
     let mut end_tag = false;
     let kind = match &*kind {
       b"Definition-Item" => {
-        let Block { pos, kind: BlockKind::Def(kind), items } = *self.parse_block()?.unwrap() else {
-          panic!("expected a definition block")
+        let Block { pos, kind: BlockKind::Def(kind), items } = *self.parse_block1()? else {
+          return self.r.err("definition block")
         };
         ItemKind::Block { end: pos.1, kind, items }
       }
       b"Scheme-Block-Item" => {
-        let Block { pos, kind: BlockKind::Scheme, mut items } = *self.parse_block()?.unwrap()
-        else {
-          panic!("expected a scheme block")
+        let Block { pos, kind: BlockKind::Scheme, mut items } = *self.parse_block1()? else {
+          return self.r.err("scheme block")
         };
-        let ItemKind::SchemeHead(head) = items.remove(0).kind else { panic!() };
+        if items.is_empty() {
+          return self.r.err("scheme head")
+        }
+        let ItemKind::SchemeHead(head) = items.remove(0).kind else {
+          return self.r.err("scheme head")
+        };
         ItemKind::SchemeBlock(Box::new(SchemeBlock { end: pos.1, head: *head, items }))
       }
       b"Scheme-Head" => {
@@ -480,8 +546,8 @@ impl MsmParser {
         for attr in e.attributes() {
           let attr = attr?;
           match attr.key.0 {
-            b"nr" => nr = Some(SchId(self.r.get_attr::<u32>(&attr.value)? - 1)),
-            b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+            b"nr" => nr = Some(SchId(self.r.idx_attr(&attr.value)?)),
+            b"spelling" => spelling = attr.unescape_value()?.to_string(),
             _ => {}
           }
         }
@@ -502,10 +568,10 @@ impl MsmParser {
               tys: self.parse_types()?,
               ret: match self.parse_elem()? {
                 Elem::TypeSpecification(ty) => *ty,
-                _ => panic!("expected <Type-Specification>"),
+                _ => return self.r.err("<Type-Specification>"),
               },
             }),
-            _ => panic!("unexpected scheme variable group"),
+            _ => return self.r.err("scheme variable group"),
           }
           self.r.end_tag(&mut self.buf)?;
         }
@@ -521,19 +587,17 @@ impl MsmParser {
         let sym = if spelling.is_empty() { None } else { Some(spelling.into()) };
         ItemKind::SchemeHead(Box::new(SchemeHead { sym, nr, groups, concl, prems }))
       }
-      b"Theorem-Item" => ItemKind::Theorem {
-        prop: self.parse_proposition()?.unwrap(),
-        just: self.parse_justification()?,
-      },
+      b"Theorem-Item" =>
+        ItemKind::Theorem { prop: self.parse_proposition1()?, just: self.parse_justification()? },
       b"Reservation" => {
         let vars = self.parse_variables()?;
         let tys = if self.msm { Some(self.parse_types()?) } else { None };
-        let ty = self.parse_type()?.unwrap();
+        let ty = self.parse_type1()?;
         let fvars = if self.msm {
           let mut out = IdxVec::default();
           while let Ok(e) = self.r.try_read_start(&mut self.buf, Some("SetMember"))? {
-            let id = self.r.get_attr::<u32>(&e.try_get_attribute(b"x").unwrap().unwrap().value)?;
-            out.push(ReservedId(id - 1));
+            let Some(attr) = e.try_get_attribute(b"x")? else { return self.r.err("x attribute") };
+            out.push(ReservedId(self.r.idx_attr(&attr.value)?));
             self.r.end_tag(&mut self.buf)?;
           }
           end_tag = true;
@@ -550,7 +614,7 @@ impl MsmParser {
           match self.parse_elem()? {
             Elem::Binder(var) => vars.push(*var),
             Elem::Conditions(conds) => break conds,
-            _ => panic!("expected <Conditions>"),
+            _ => return self.r.err("<Conditions>"),
           }
         };
         ItemKind::Consider { vars, conds, just: self.parse_justification()? }
@@ -562,25 +626,23 @@ impl MsmParser {
             Elem::Variable(var) => vars.push(ReconsiderVar::Var(*var)),
             Elem::Equality(var, tm) => vars.push(ReconsiderVar::Equality { var: *var, tm: *tm }),
             Elem::Type(ty) => break ty,
-            _ => panic!("expected variable, equality, or type"),
+            _ => return self.r.err("variable, equality, or type"),
           }
         };
         ItemKind::Reconsider { vars, ty, just: self.parse_justification()? }
       }
       b"Private-Functor-Definition" => ItemKind::DefFunc {
-        var: self.parse_variable()?.unwrap(),
+        var: self.parse_variable1()?,
         tys: self.parse_types()?,
-        value: self.parse_term()?.unwrap(),
+        value: self.parse_term1()?,
       },
       b"Private-Predicate-Definition" => ItemKind::DefPred {
-        var: self.parse_variable()?.unwrap(),
+        var: self.parse_variable1()?,
         tys: self.parse_types()?,
         value: self.parse_formula()?,
       },
-      b"Constant-Definition" => ItemKind::Set(vec![SetDecl {
-        var: self.parse_variable()?.unwrap(),
-        value: self.parse_term()?.unwrap(),
-      }]),
+      b"Constant-Definition" =>
+        ItemKind::Set(vec![SetDecl { var: self.parse_variable1()?, value: self.parse_term1()? }]),
       b"Generalization" | b"Loci-Declaration" =>
         ItemKind::Let { vars: vec![*self.parse_binder()?], conds: vec![] },
       b"Existential-Assumption" => {
@@ -589,7 +651,7 @@ impl MsmParser {
           match self.parse_elem()? {
             Elem::Binder(var) => vars.push(*var),
             Elem::Conditions(conds) => break conds,
-            _ => panic!("expected <Conditions>"),
+            _ => return self.r.err("<Conditions>"),
           }
         };
         ItemKind::Given { vars, conds }
@@ -601,11 +663,15 @@ impl MsmParser {
             Elem::Variable(v) => var = Some(v),
             Elem::Term(t) => term = Some(t),
             Elem::End => break,
-            _ => panic!("unexpected element"),
+            _ => return self.r.err("variable or term"),
           }
         }
         end_tag = true;
-        let term = term.unwrap_or_else(|| Box::new(var.as_deref().unwrap().to_term()));
+        let term = match (term, &var) {
+          (Some(t), _) => t,
+          (None, Some(v)) => Box::new(v.to_term()),
+          (None, None) => return self.r.err("variable or term"),
+        };
         ItemKind::Take(vec![TakeDecl { var, term }])
       }
       b"Unfolding" => {
@@ -614,29 +680,33 @@ impl MsmParser {
       }
       b"Per-Cases" => ItemKind::PerCasesHead(self.parse_justification()?),
       b"Regular-Statement" => {
-        let shape = (*shape).try_into().unwrap();
+        let Ok(shape) = (*shape).try_into() else { return self.r.err("statement shape") };
         end_tag = true;
         ItemKind::Statement(self.parse_stmt(shape)?)
       }
       b"Conclusion" => {
-        let shape = (*shape).try_into().unwrap();
+        let Ok(shape) = (*shape).try_into() else { return self.r.err("statement shape") };
         end_tag = true;
         ItemKind::Thus(self.parse_stmt(shape)?)
       }
       b"Case-Block" => {
-        let mut bl = self.parse_block()?.unwrap();
-        let BlockKind::Case(kind) = bl.kind else { panic!("expected case or suppose block") };
+        let mut bl = self.parse_block1()?;
+        let BlockKind::Case(kind) = bl.kind else { return self.r.err("case or suppose block") };
+        if bl.items.is_empty() {
+          return self.r.err("case/suppose head")
+        }
         let hyp = Box::new(match bl.items.remove(0).kind {
           ItemKind::CaseHead(k2, hyp) if k2 == kind => hyp,
-          _ => panic!("missing case/suppose head"),
+          _ => return self.r.err("case/suppose head"),
         });
         let bl = CaseBlock { end: bl.pos.1, hyp, items: bl.items };
-        let it = &mut items.last_mut().unwrap().kind;
+        let Some(last) = items.last_mut() else { return self.r.err("per cases head") };
+        let it = &mut last.kind;
         match it {
           ItemKind::PerCases { kind: k2, blocks, .. } if *k2 == kind => blocks.push(bl),
           _ => {
             let ItemKind::PerCasesHead(just) = std::mem::take(it) else {
-              panic!("unexpected case block")
+              return self.r.err("per cases head")
             };
             *it = ItemKind::PerCases { just, kind, blocks: vec![bl] };
           }
@@ -648,8 +718,13 @@ impl MsmParser {
       b"Suppose-Head" => ItemKind::CaseHead(CaseKind::Suppose, self.parse_assumption()?),
       b"Assumption" => ItemKind::Assume(self.parse_assumption()?),
       b"Correctness-Condition" => {
-        let kind = (*condition).try_into().unwrap();
-        let corr = items.last_mut().and_then(|it| it.kind.corr_mut()).unwrap().0;
+        let Ok(kind) = (*condition).try_into() else {
+          return self.r.err("correctness condition kind")
+        };
+        let Some(corr) = items.last_mut().and_then(|it| it.kind.corr_mut()) else {
+          return self.r.err("item with correctness conditions")
+        };
+        let corr = corr.0;
         corr.push(CorrCond { pos, kind, just: *self.parse_justification()? });
         self.r.end_tag(&mut self.buf)?;
         return Ok(true)
@@ -661,15 +736,23 @@ impl MsmParser {
           // conds.push((*e.try_get_attribute(b"condition").unwrap().unwrap().value).try_into().unwrap());
           self.r.end_tag(&mut self.buf)?;
         }
-        let corr = items.last_mut().and_then(|it| it.kind.corr_mut()).unwrap().1;
-        assert!(corr.is_none());
+        let Some(corr) = items.last_mut().and_then(|it| it.kind.corr_mut()) else {
+          return self.r.err("item with correctness conditions")
+        };
+        let corr = corr.1;
+        if corr.is_some() {
+          return self.r.err("at most one correctness block")
+        }
         *corr = Some(Correctness { pos, just: *self.parse_justification()? });
         self.r.end_tag(&mut self.buf)?;
         return Ok(true)
       }
       b"Property" => {
-        let props = items.last_mut().and_then(|it| it.kind.property_mut()).unwrap();
-        props.push(Property { pos, kind: property.unwrap(), just: self.parse_justification()? });
+        let Some(props) = items.last_mut().and_then(|it| it.kind.property_mut()) else {
+          return self.r.err("item with properties")
+        };
+        let Some(kind) = property else { return self.r.err("property attribute") };
+        props.push(Property { pos, kind, just: self.parse_justification()? });
         self.r.end_tag(&mut self.buf)?;
         return Ok(true)
       }
@@ -677,23 +760,23 @@ impl MsmParser {
         let (redef, pat) = match self.parse_elem()? {
           Elem::Redefine => (true, self.parse_pattern()?),
           Elem::Pattern(pat) => (false, pat),
-          _ => panic!("expected pattern"),
+          _ => return self.r.err("pattern"),
         };
-        let Pattern::Mode(pat) = pat else { panic!("expected a mode pattern") };
+        let Pattern::Mode(pat) = pat else { return self.r.err("mode pattern") };
         let e = self.r.read_start(&mut self.buf, None)?;
         let kind = match e.local_name().as_ref() {
-          b"Expandable-Mode" => DefModeKind::Expandable { expansion: self.parse_type()?.unwrap() },
+          b"Expandable-Mode" => DefModeKind::Expandable { expansion: self.parse_type1()? },
           b"Standard-Mode" => {
             let (spec, def) = match self.parse_elem()? {
               Elem::TypeSpecification(ty) => (Some(ty), self.parse_definiens()?),
               Elem::Definiens(d) => (None, Some(d)),
               Elem::End => (None, None),
-              _ => panic!("expected <Definiens>"),
+              _ => return self.r.err("<Definiens>"),
             };
             end_tag = def.is_none();
             DefModeKind::Standard { spec, def }
           }
-          _ => panic!("unknown def mode kind"),
+          _ => return self.r.err("def mode kind"),
         };
         self.r.end_tag(&mut self.buf)?;
         let kind = DefinitionKind::Mode { pat, kind };
@@ -704,9 +787,9 @@ impl MsmParser {
         let (redef, pat) = match self.parse_elem()? {
           Elem::Redefine => (true, self.parse_pattern()?),
           Elem::Pattern(pat) => (false, pat),
-          _ => panic!("expected pattern"),
+          _ => return self.r.err("pattern"),
         };
-        let Pattern::Attr(pat) = pat else { panic!("expected an attribute pattern") };
+        let Pattern::Attr(pat) = pat else { return self.r.err("attribute pattern") };
         let def = self.parse_definiens()?;
         end_tag = def.is_none();
         let kind = DefinitionKind::Attr { pat, def };
@@ -717,9 +800,9 @@ impl MsmParser {
         let (redef, pat) = match self.parse_elem()? {
           Elem::Redefine => (true, self.parse_pattern()?),
           Elem::Pattern(pat) => (false, pat),
-          _ => panic!("expected pattern"),
+          _ => return self.r.err("pattern"),
         };
-        let Pattern::Pred(pat) = pat else { panic!("expected a predicate pattern") };
+        let Pattern::Pred(pat) = pat else { return self.r.err("predicate pattern") };
         let def = self.parse_definiens()?;
         end_tag = def.is_none();
         let kind = DefinitionKind::Pred { pat, def };
@@ -731,23 +814,25 @@ impl MsmParser {
           b"No-Definiens" => None,
           b"Means" => Some(false),
           b"Equals" => Some(true),
-          _ => panic!("unexpected functor shape attribute"),
+          _ => return self.r.err("functor shape"),
         };
         let (redef, pat) = match self.parse_elem()? {
           Elem::Redefine => (true, self.parse_pattern()?),
           Elem::Pattern(pat) => (false, pat),
-          _ => panic!("expected pattern"),
+          _ => return self.r.err("pattern"),
         };
-        let Pattern::Func(pat) = pat else { panic!("expected a functor pattern") };
+        let Pattern::Func(pat) = pat else { return self.r.err("functor pattern") };
         let (spec, def) = match self.parse_elem()? {
           Elem::TypeSpecification(ty) => (Some(ty), self.parse_definiens()?),
           Elem::Definiens(d) => (None, Some(d)),
           Elem::End => (None, None),
-          _ => panic!("expected <Definiens>"),
+          _ => return self.r.err("<Definiens>"),
         };
         end_tag = def.is_none();
         let shape2 = def.as_ref().map(|d| matches!(d.kind, DefValue::Term(_)));
-        assert_eq!(shape, shape2, "unexpected shape");
+        if shape != shape2 {
+          return self.r.err("matching definiens shape")
+        }
         let kind = DefinitionKind::Func { pat, spec, def };
         let body = DefinitionBody { redef, conds: vec![], corr: None, props: vec![] };
         ItemKind::Definition(Box::new(Definition { kind, body }))
@@ -763,8 +848,8 @@ impl MsmParser {
         for attr in e.attributes() {
           let attr = attr?;
           match attr.key.0 {
-            b"nr" => sym = StructSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-            b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+            b"nr" => sym = StructSymId(self.r.idx_attr(&attr.value)?),
+            b"spelling" => spelling = attr.unescape_value()?.to_string(),
             _ => {}
           }
         }
@@ -778,7 +863,7 @@ impl MsmParser {
             match self.parse_elem()? {
               Elem::Selector(field) => vars.push(field),
               Elem::Type(ty) => break ty,
-              _ => panic!("expected type"),
+              _ => return self.r.err("type"),
             }
           };
           self.r.end_tag(&mut self.buf)?;
@@ -788,70 +873,70 @@ impl MsmParser {
         ItemKind::DefStruct(Box::new(DefStruct { parents, fields, pat }))
       }
       b"Pred-Synonym" => {
-        let Pattern::Pred(orig) = self.parse_pattern()? else { panic!("expected pred pattern") };
-        let Pattern::Pred(new) = self.parse_pattern()? else { panic!("expected pred pattern") };
+        let Pattern::Pred(orig) = self.parse_pattern()? else { return self.r.err("pred pattern") };
+        let Pattern::Pred(new) = self.parse_pattern()? else { return self.r.err("pred pattern") };
         ItemKind::PatternRedef(PatternRedef::Pred { new, orig, positive: true })
       }
       b"Pred-Antonym" => {
-        let Pattern::Pred(orig) = self.parse_pattern()? else { panic!("expected pred pattern") };
-        let Pattern::Pred(new) = self.parse_pattern()? else { panic!("expected pred pattern") };
+        let Pattern::Pred(orig) = self.parse_pattern()? else { return self.r.err("pred pattern") };
+        let Pattern::Pred(new) = self.parse_pattern()? else { return self.r.err("pred pattern") };
         ItemKind::PatternRedef(PatternRedef::Pred { new, orig, positive: false })
       }
       b"Func-Synonym" => {
-        let Pattern::Func(orig) = self.parse_pattern()? else { panic!("expected func pattern") };
-        let Pattern::Func(new) = self.parse_pattern()? else { panic!("expected func pattern") };
+        let Pattern::Func(orig) = self.parse_pattern()? else { return self.r.err("func pattern") };
+        let Pattern::Func(new) = self.parse_pattern()? else { return self.r.err("func pattern") };
         ItemKind::PatternRedef(PatternRedef::Func { new, orig })
       }
       b"Mode-Synonym" => {
-        let Pattern::Mode(orig) = self.parse_pattern()? else { panic!("expected mode pattern") };
-        let Pattern::Mode(new) = self.parse_pattern()? else { panic!("expected mode pattern") };
+        let Pattern::Mode(orig) = self.parse_pattern()? else { return self.r.err("mode pattern") };
+        let Pattern::Mode(new) = self.parse_pattern()? else { return self.r.err("mode pattern") };
         ItemKind::PatternRedef(PatternRedef::Mode { new, orig })
       }
       b"Attr-Synonym" => {
-        let Pattern::Attr(orig) = self.parse_pattern()? else { panic!("expected attr pattern") };
-        let Pattern::Attr(new) = self.parse_pattern()? else { panic!("expected attr pattern") };
+        let Pattern::Attr(orig) = self.parse_pattern()? else { return self.r.err("attr pattern") };
+        let Pattern::Attr(new) = self.parse_pattern()? else { return self.r.err("attr pattern") };
         ItemKind::PatternRedef(PatternRedef::Attr { new, orig, positive: true })
       }
       b"Attr-Antonym" => {
-        let Pattern::Attr(orig) = self.parse_pattern()? else { panic!("expected attr pattern") };
-        let Pattern::Attr(new) = self.parse_pattern()? else { panic!("expected attr pattern") };
+        let Pattern::Attr(orig) = self.parse_pattern()? else { return self.r.err("attr pattern") };
+        let Pattern::Attr(new) = self.parse_pattern()? else { return self.r.err("attr pattern") };
         ItemKind::PatternRedef(PatternRedef::Attr { new, orig, positive: false })
       }
       b"Cluster" => {
         let e = self.r.read_start(&mut self.buf, None)?;
         let kind = match e.local_name().as_ref() {
           b"Existential-Registration" =>
-            ClusterDeclKind::Exist { concl: self.parse_attrs()?, ty: self.parse_type()?.unwrap() },
+            ClusterDeclKind::Exist { concl: self.parse_attrs()?, ty: self.parse_type1()? },
           b"Conditional-Registration" => ClusterDeclKind::Cond {
             antecedent: self.parse_attrs()?,
             concl: self.parse_attrs()?,
-            ty: self.parse_type()?.unwrap(),
+            ty: self.parse_type1()?,
           },
           b"Functorial-Registration" => {
-            let term = self.parse_term()?.unwrap();
+            let term = self.parse_term1()?;
             let concl = self.parse_attrs()?;
             let ty = self.parse_type()?;
             end_tag = ty.is_none();
             ClusterDeclKind::Func { term, concl, ty }
           }
-          _ => panic!("unexpected cluster registration kind"),
+          _ => return self.r.err("cluster registration kind"),
         };
         self.r.end_tag(&mut self.buf)?;
         ItemKind::Cluster(Box::new(Cluster { kind, conds: vec![], corr: None }))
       }
       b"Identify" => {
         let Pattern::Func(rhs) = self.parse_pattern()? else {
-          panic!("expected a functor pattern")
+          return self.r.err("functor pattern")
         };
         let Pattern::Func(lhs) = self.parse_pattern()? else {
-          panic!("expected a functor pattern")
+          return self.r.err("functor pattern")
         };
         let mut eqs = vec![];
         loop {
           match self.parse_elem()? {
             Elem::LociEquality(x1, x2) => eqs.push((*x1, *x2)),
             Elem::End => break,
-            _ => panic!("expected <LociEquality>"),
+            _ => return self.r.err("<LociEquality>"),
           }
         }
         end_tag = true;
@@ -859,19 +944,22 @@ impl MsmParser {
         ItemKind::IdentifyFunc(Box::new(id))
       }
       b"Property-Registration" => {
-        assert!(matches!(property.unwrap(), PropertyKind::Sethood));
-        ItemKind::SethoodRegistration {
-          ty: self.parse_type()?.unwrap(),
-          just: self.parse_justification()?,
+        if !matches!(property, Some(PropertyKind::Sethood)) {
+          return self.r.err("sethood property")
         }
+        ItemKind::SethoodRegistration { ty: self.parse_type1()?, just: self.parse_justification()? }
       }
       b"Reduction" => {
-        let (t1, t2) = (self.parse_term()?.unwrap(), self.parse_term()?.unwrap());
+        let (t1, t2) = (self.parse_term1()?, self.parse_term1()?);
         let (from, to) = if self.msm { (t2, t1) } else { (t1, t2) }; // Yes, this is silly
         ItemKind::Reduction(Box::new(Reduction { from, to, conds: vec![], corr: None }))
       }
-      b"Pragma" => ItemKind::Pragma(spelling.unwrap().parse().unwrap()),
-      _ => panic!("unrecognized item kind"),
+      b"Pragma" => {
+        let Some(spelling) = spelling else { return self.r.err("spelling attribute") };
+        // the `FromStr` impl for pragmas is infallible
+        ItemKind::Pragma(spelling.parse().unwrap())
+      }
+      _ => return self.r.err("item kind"),
     };
     if !end_tag {
       self.r.end_tag(&mut self.buf)?;
@@ -918,7 +1006,7 @@ impl MsmParser {
                 b"Case" => BlockKind::Case(CaseKind::Case),
                 b"Suppose" => BlockKind::Case(CaseKind::Suppose),
                 b"Scheme-Block" => BlockKind::Scheme,
-                kind => panic!("unrecognized block kind: {}", std::str::from_utf8(kind).unwrap()),
+                _ => return self.r.err("block kind"),
               },
               pos: (start, end),
               items: self.parse_items()?,
@@ -935,14 +1023,14 @@ impl MsmParser {
                     // We can't use it anyway because they aren't labeled, so we just discard it
                     match self.parse_elem()? {
                       Elem::Reference(r) if matches!(r.kind, ReferenceKind::Priv(_)) => {}
-                      _ => panic!("expected local reference for link"),
+                      _ => return self.r.err("local reference for link"),
                     }
                   }
                   link = Some(pos)
                 }
                 Elem::Reference(r) => refs.push(r),
                 Elem::End => break,
-                _ => panic!("unexpected element"),
+                _ => return self.r.err("link or reference"),
               }
             }
             return Ok(Elem::Inference(pos, InferenceKind::By { link }, refs))
@@ -956,33 +1044,36 @@ impl MsmParser {
                 b"nr" => art = self.r.get_attr(&attr.value)?,
                 b"idnr" => id = self.r.get_attr::<u32>(&attr.value)?,
                 b"schnr" => sch = self.r.get_attr::<u32>(&attr.value)?,
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => spelling = attr.unescape_value()?.to_string(),
                 _ => {}
               }
             }
             let refs = self.parse_references()?;
             let sch = if art == ArticleId::SELF {
               if let Some(sch) = sch.checked_sub(1) {
-                let spelling = Article::from_upper(spelling.as_bytes()).unwrap();
+                let spelling = self.r.to_article(spelling.as_bytes())?;
                 SchRef::Resolved { art, spelling, sch: SchId(sch) }
               } else {
                 SchRef::UnresolvedPriv(spelling)
               }
             } else {
-              let spelling = Article::from_upper(spelling.as_bytes()).unwrap();
-              SchRef::Resolved { art, spelling, sch: SchId(id - 1) }
+              let spelling = self.r.to_article(spelling.as_bytes())?;
+              let Some(id) = id.checked_sub(1) else { return self.r.err("scheme number") };
+              SchRef::Resolved { art, spelling, sch: SchId(id) }
             };
             return Ok(Elem::Inference(pos, InferenceKind::From(sch), refs))
           }
           b"Implicitly-Qualified-Segment" => {
-            let nr = match e.try_get_attribute(b"nr").unwrap() {
+            let nr = match e.try_get_attribute(b"nr")? {
               Some(attr) => Some(self.r.get_attr::<u32>(&attr.value)?),
               None => None,
             };
-            let var = self.parse_variable()?.unwrap();
+            let var = self.parse_variable1()?;
             let pos = var.pos;
             let ty = if self.msm {
-              let group = ResGroupId(nr.unwrap() - 1);
+              let Some(nr) = nr else { return self.r.err("nr attribute") };
+              let Some(nr) = nr.checked_sub(1) else { return self.r.err("reservation nr") };
+              let group = ResGroupId(nr);
               Some(Box::new(Type::Reservation { pos, group, subst: self.parse_substitution()? }))
             } else {
               self.r.end_tag(&mut self.buf)?;
@@ -992,7 +1083,7 @@ impl MsmParser {
           }
           b"Explicitly-Qualified-Segment" => Elem::Binder(Box::new(BinderGroup {
             vars: self.parse_variables()?,
-            ty: Some(self.parse_type()?.unwrap()),
+            ty: Some(self.parse_type1()?),
           })),
           b"Conditions" => {
             let mut conds = vec![];
@@ -1002,10 +1093,9 @@ impl MsmParser {
             return Ok(Elem::Conditions(conds))
           }
           b"Variable" => Elem::Variable(self.r.parse_variable_attrs(&e)?),
-          b"Equality" =>
-            Elem::Equality(self.parse_variable()?.unwrap(), self.parse_term()?.unwrap()),
+          b"Equality" => Elem::Equality(self.parse_variable1()?, self.parse_term1()?),
           b"Redefine" => Elem::Redefine,
-          b"Type-Specification" => Elem::TypeSpecification(self.parse_type()?.unwrap()),
+          b"Type-Specification" => Elem::TypeSpecification(self.parse_type1()?),
           b"Definiens" => {
             let (mut kind, mut is_term) = (<Cow<'_, [u8]>>::default(), false);
             let pos = self.r.get_pos(&e)?;
@@ -1017,7 +1107,7 @@ impl MsmParser {
                   is_term = match &*attr.value {
                     b"Term-Expression" => true,
                     b"Formula-Expression" => false,
-                    _ => panic!("unexpected definiens shape"),
+                    _ => return self.r.err("definiens shape"),
                   },
                 _ => {}
               }
@@ -1025,9 +1115,9 @@ impl MsmParser {
             let (label, end_tag, kind) = match &*kind {
               b"Simple-Definiens" if is_term => {
                 let (lab, t) = match self.parse_elem()? {
-                  Elem::Label(lab) => (lab, self.parse_term()?.unwrap()),
+                  Elem::Label(lab) => (lab, self.parse_term1()?),
                   Elem::Term(t) => (None, t),
-                  _ => panic!("expected term"),
+                  _ => return self.r.err("term"),
                 };
                 (lab, false, DefValue::Term(DefBody { cases: vec![], otherwise: Some(t) }))
               }
@@ -1035,7 +1125,7 @@ impl MsmParser {
                 let (lab, f) = match self.parse_elem()? {
                   Elem::Label(lab) => (lab, self.parse_formula()?),
                   Elem::Formula(f) => (None, f),
-                  _ => panic!("expected formula"),
+                  _ => return self.r.err("formula"),
                 };
                 (lab, false, DefValue::Formula(DefBody { cases: vec![], otherwise: Some(f) }))
               }
@@ -1047,7 +1137,7 @@ impl MsmParser {
                     Elem::DefCaseTerm(case) => cases.push(case),
                     Elem::End => break None,
                     Elem::Term(t) => break Some(t),
-                    _ => panic!("unexpected element"),
+                    _ => return self.r.err("definiens case or term"),
                   }
                 };
                 (lab, otherwise.is_none(), DefValue::Term(DefBody { cases, otherwise }))
@@ -1060,20 +1150,19 @@ impl MsmParser {
                     Elem::DefCaseFormula(case) => cases.push(case),
                     Elem::End => break None,
                     Elem::Formula(t) => break Some(t),
-                    _ => panic!("unexpected element"),
+                    _ => return self.r.err("definiens case or formula"),
                   }
                 };
                 (lab, otherwise.is_none(), DefValue::Formula(DefBody { cases, otherwise }))
               }
-              _ => panic!("unknown definiens kind"),
+              _ => return self.r.err("definiens kind"),
             };
             if !end_tag {
               self.r.end_tag(&mut self.buf)?;
             }
             return Ok(Elem::Definiens(Box::new(Definiens { pos, label, kind })))
           }
-          b"LociEquality" =>
-            Elem::LociEquality(self.parse_locus()?.unwrap(), self.parse_locus()?.unwrap()),
+          b"LociEquality" => Elem::LociEquality(self.parse_locus1()?, self.parse_locus1()?),
           b"Label" => {
             let (mut id, mut spelling) = <(_, _)>::default();
             let pos = self.r.get_pos(&e)?;
@@ -1081,7 +1170,7 @@ impl MsmParser {
               let attr = attr?;
               match attr.key.0 {
                 b"labelnr" => id = self.r.get_attr::<u32>(&attr.value)?.checked_sub(1).map(LabelId),
-                b"spelling" => spelling = attr.unescape_value().unwrap(),
+                b"spelling" => spelling = attr.unescape_value()?,
                 _ => {}
               }
             }
@@ -1094,11 +1183,15 @@ impl MsmParser {
           b"Local-Reference" => {
             let pos = self.r.get_pos(&e)?;
             let kind = if self.msm {
-              let attr = e.try_get_attribute(b"labelnr").unwrap().unwrap();
+              let Some(attr) = e.try_get_attribute(b"labelnr")? else {
+                return self.r.err("labelnr attribute")
+              };
               ReferenceKind::Priv(self.r.get_attr::<u32>(&attr.value)?.checked_sub(1).map(LabelId))
             } else {
-              let attr = e.try_get_attribute(b"spelling").unwrap().unwrap();
-              ReferenceKind::UnresolvedPriv(attr.unescape_value().unwrap().to_string())
+              let Some(attr) = e.try_get_attribute(b"spelling")? else {
+                return self.r.err("spelling attribute")
+              };
+              ReferenceKind::UnresolvedPriv(attr.unescape_value()?.to_string())
             };
             Elem::Reference(Reference { pos, kind })
           }
@@ -1109,9 +1202,8 @@ impl MsmParser {
               let attr = attr?;
               match attr.key.0 {
                 b"nr" => art = self.r.get_attr(&attr.value)?,
-                b"spelling" =>
-                  spelling = Article::from_upper(attr.unescape_value().unwrap().as_bytes()).unwrap(),
-                b"number" => id = ThmId(self.r.get_attr::<u32>(&attr.value)? - 1),
+                b"spelling" => spelling = self.r.to_article(attr.unescape_value()?.as_bytes())?,
+                b"number" => id = ThmId(self.r.idx_attr(&attr.value)?),
                 _ => {}
               }
             }
@@ -1125,9 +1217,8 @@ impl MsmParser {
               let attr = attr?;
               match attr.key.0 {
                 b"nr" => art = self.r.get_attr(&attr.value)?,
-                b"spelling" =>
-                  spelling = Article::from_upper(attr.unescape_value().unwrap().as_bytes()).unwrap(),
-                b"number" => id = DefId(self.r.get_attr::<u32>(&attr.value)? - 1),
+                b"spelling" => spelling = self.r.to_article(attr.unescape_value()?.as_bytes())?,
+                b"number" => id = DefId(self.r.idx_attr(&attr.value)?),
                 _ => {}
               }
             }
@@ -1138,16 +1229,15 @@ impl MsmParser {
             Elem::Term(case) => Elem::DefCaseTerm(DefCase { case, guard: self.parse_formula()? }),
             Elem::Formula(case) =>
               Elem::DefCaseFormula(DefCase { case, guard: self.parse_formula()? }),
-            _ => panic!("expected term or formula"),
+            _ => return self.r.err("term or formula"),
           },
           b"Placeholder-Term" => {
             let mut nr = Default::default();
             let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
-              match attr.key.0 {
-                b"nr" => nr = LocusId(self.r.get_attr::<u8>(&attr.value)? - 1),
-                _ => {}
+              if attr.key.0 == b"nr" {
+                nr = LocusId(self.r.idx_attr_u8(&attr.value)?)
               }
             }
             Elem::Term(Box::new(Term::Placeholder { pos, nr }))
@@ -1170,12 +1260,12 @@ impl MsmParser {
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                // b"idnr" => sym = self.r.get_attr::<u32>(&attr.value)? - 1,
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                // b"idnr" => sym = self.r.idx_attr(&attr.value)?,
+                b"spelling" => spelling = attr.unescape_value()?.to_string(),
                 // b"origin" => origin = self.r.get_attr(&attr.value)?,
                 b"kind" => kind = self.r.get_attr(&attr.value)?,
                 // b"serialnr" => serial = self.r.get_attr(&attr.value)?,
-                b"varnr" => var = self.r.get_attr::<u32>(&attr.value)? - 1,
+                b"varnr" => var = self.r.idx_attr(&attr.value)?,
                 _ => {}
               }
             }
@@ -1183,7 +1273,7 @@ impl MsmParser {
               IdentKind::Free => None,
               IdentKind::Bound => Some(VarKind::Bound(BoundId(var))),
               IdentKind::Const | IdentKind::DefConst => Some(VarKind::Const(ConstId(var))),
-              _ => unreachable!(),
+              _ => return self.r.err("variable kind"),
             };
             let term = Term::Var { pos, kind, spelling };
             Elem::Term(Box::new(term))
@@ -1194,11 +1284,11 @@ impl MsmParser {
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                // b"idnr" => id = self.r.get_attr::<u32>(&attr.value)? - 1,
-                b"spelling" => spelling = attr.unescape_value().unwrap(),
+                // b"idnr" => id = self.r.idx_attr(&attr.value)?,
+                b"spelling" => spelling = attr.unescape_value()?,
                 b"shape" => shape = self.r.get_attr(&attr.value)?,
                 // b"serialnr" => serial = self.r.get_attr(&attr.value)?,
-                b"nr" => var = self.r.get_attr::<u32>(&attr.value)? - 1,
+                b"nr" => var = self.r.idx_attr(&attr.value)?,
                 _ => {}
               }
             }
@@ -1207,7 +1297,7 @@ impl MsmParser {
               IdentKind::Free => None,
               IdentKind::PrivFunc => Some(PrivFuncKind::PrivFunc(PrivFuncId(var))),
               IdentKind::SchFunc => Some(PrivFuncKind::SchFunc(SchFuncId(var))),
-              _ => unreachable!(),
+              _ => return self.r.err("private functor kind"),
             };
             let term = Term::PrivFunc { pos, kind, spelling, args };
             return Ok(Elem::Term(Box::new(term)))
@@ -1218,14 +1308,16 @@ impl MsmParser {
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"nr" => sym = FuncSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"nr" => sym = FuncSymId(self.r.idx_attr(&attr.value)?),
+                b"spelling" => spelling = attr.unescape_value()?.to_string(),
                 _ => {}
               }
             }
             self.r.read_start(&mut self.buf, Some("Arguments"))?;
             let mut args = self.parse_terms()?;
-            let left = args.len().try_into().unwrap();
+            let Ok(left) = args.len().try_into() else {
+              return self.r.err("at most 255 arguments")
+            };
             self.r.read_start(&mut self.buf, Some("Arguments"))?;
             while let Some(t) = self.parse_term()? {
               args.push(*t);
@@ -1238,8 +1330,8 @@ impl MsmParser {
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"nr" => lsym = LeftBrkSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => lspelling = attr.unescape_value().unwrap().to_string(),
+                b"nr" => lsym = LeftBrkSymId(self.r.idx_attr(&attr.value)?),
+                b"spelling" => lspelling = attr.unescape_value()?.to_string(),
                 _ => {}
               }
             }
@@ -1253,8 +1345,8 @@ impl MsmParser {
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"nr" => sym = StructSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"nr" => sym = StructSymId(self.r.idx_attr(&attr.value)?),
+                b"spelling" => spelling = attr.unescape_value()?.to_string(),
                 _ => {}
               }
             }
@@ -1267,12 +1359,12 @@ impl MsmParser {
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"nr" => sym = StructSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"nr" => sym = StructSymId(self.r.idx_attr(&attr.value)?),
+                b"spelling" => spelling = attr.unescape_value()?.to_string(),
                 _ => {}
               }
             }
-            let arg = self.parse_term()?.unwrap();
+            let arg = self.parse_term1()?;
             Elem::Term(Box::new(Term::SubAggr { pos, sym, spelling, arg }))
           }
           b"Selector-Term" => {
@@ -1281,12 +1373,12 @@ impl MsmParser {
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"nr" => sym = SelSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"nr" => sym = SelSymId(self.r.idx_attr(&attr.value)?),
+                b"spelling" => spelling = attr.unescape_value()?.to_string(),
                 _ => {}
               }
             }
-            let arg = self.parse_term()?.unwrap();
+            let arg = self.parse_term1()?;
             Elem::Term(Box::new(Term::Selector { pos, sym, spelling, arg }))
           }
           b"Internal-Selector-Term" => {
@@ -1295,9 +1387,9 @@ impl MsmParser {
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"nr" => sym = SelSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
+                b"nr" => sym = SelSymId(self.r.idx_attr(&attr.value)?),
                 b"varnr" => id = self.r.get_attr::<u32>(&attr.value)?.checked_sub(1).map(ConstId),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"spelling" => spelling = attr.unescape_value()?.to_string(),
                 _ => {}
               }
             }
@@ -1305,13 +1397,13 @@ impl MsmParser {
           }
           b"Qualification-Term" => {
             let pos = self.r.get_pos(&e)?;
-            let term = self.parse_term()?.unwrap();
-            let ty = self.parse_type()?.unwrap();
+            let term = self.parse_term1()?;
+            let ty = self.parse_type1()?;
             Elem::Term(Box::new(Term::Qua { pos, term, ty }))
           }
           b"Global-Choice-Term" => {
             let pos = self.r.get_pos(&e)?;
-            let ty = self.parse_type()?.unwrap();
+            let ty = self.parse_type1()?;
             Elem::Term(Box::new(Term::The { pos, ty }))
           }
           b"Simple-Fraenkel-Term" => {
@@ -1321,7 +1413,7 @@ impl MsmParser {
               match self.parse_elem()? {
                 Elem::Binder(var) => vars.push(*var),
                 Elem::Term(t) => break t,
-                _ => panic!("expected <Conditions>"),
+                _ => return self.r.err("<Conditions>"),
               }
             };
             Elem::Term(Box::new(Term::Fraenkel { pos, vars, scope, compr: None, nameck: None }))
@@ -1333,7 +1425,7 @@ impl MsmParser {
               match self.parse_elem()? {
                 Elem::Binder(var) => vars.push(*var),
                 Elem::Term(t) => break t,
-                _ => panic!("expected <Conditions>"),
+                _ => return self.r.err("<Conditions>"),
               }
             };
             let compr = Some(self.parse_formula()?);
@@ -1349,8 +1441,8 @@ impl MsmParser {
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"nr" => sym = ModeSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"nr" => sym = ModeSymId(self.r.idx_attr(&attr.value)?),
+                b"spelling" => spelling = attr.unescape_value()?.to_string(),
                 _ => {}
               }
             }
@@ -1363,8 +1455,8 @@ impl MsmParser {
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"nr" => sym = StructSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"nr" => sym = StructSymId(self.r.idx_attr(&attr.value)?),
+                b"spelling" => spelling = attr.unescape_value()?.to_string(),
                 _ => {}
               }
             }
@@ -1374,16 +1466,15 @@ impl MsmParser {
           b"Clustered-Type" => Elem::Type(Box::new(Type::Cluster {
             pos: self.r.get_pos(&e)?,
             attrs: self.parse_attrs()?,
-            ty: self.parse_type()?.unwrap(),
+            ty: self.parse_type1()?,
           })),
           b"ReservedDscr-Type" if self.msm => {
             let mut group = Default::default();
             let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
-              match attr.key.0 {
-                b"nr" => group = ResGroupId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                _ => {}
+              if attr.key.0 == b"nr" {
+                group = ResGroupId(self.r.idx_attr(&attr.value)?)
               }
             }
             let subst = self.parse_substitution()?;
@@ -1423,14 +1514,16 @@ impl MsmParser {
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"nr" => sym = PredSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"nr" => sym = PredSymId(self.r.idx_attr(&attr.value)?),
+                b"spelling" => spelling = attr.unescape_value()?.to_string(),
                 _ => {}
               }
             }
             self.r.read_start(&mut self.buf, Some("Arguments"))?;
             let mut args = self.parse_terms()?;
-            let left = args.len().try_into().unwrap();
+            let Ok(left) = args.len().try_into() else {
+              return self.r.err("at most 255 arguments")
+            };
             self.r.read_start(&mut self.buf, Some("Arguments"))?;
             while let Some(t) = self.parse_term()? {
               args.push(*t)
@@ -1444,8 +1537,8 @@ impl MsmParser {
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"nr" => sym = PredSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"nr" => sym = PredSymId(self.r.idx_attr(&attr.value)?),
+                b"spelling" => spelling = attr.unescape_value()?.to_string(),
                 _ => {}
               }
             }
@@ -1461,17 +1554,17 @@ impl MsmParser {
                   pred.positive = !pred.positive;
                   pred
                 }
-                _ => panic!("expected predicate"),
+                _ => return self.r.err("predicate"),
               },
               Formula::Pred(pred) => pred,
-              _ => panic!("expected predicate"),
+              _ => return self.r.err("predicate"),
             };
             let mut rest = vec![];
             loop {
               match self.parse_elem()? {
                 Elem::PredRhs(rhs) => rest.push(*rhs),
                 Elem::End => break,
-                _ => panic!("expected <RightSideOf-Predicative-Formula>"),
+                _ => return self.r.err("<RightSideOf-Predicative-Formula>"),
               }
             }
             return Ok(Elem::Formula(Box::new(Formula::ChainPred { pos, first, rest })))
@@ -1482,10 +1575,10 @@ impl MsmParser {
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                // b"idnr" => id = self.r.get_attr::<u32>(&attr.value)? - 1,
-                b"spelling" => spelling = attr.unescape_value().unwrap(),
+                // b"idnr" => id = self.r.idx_attr(&attr.value)?,
+                b"spelling" => spelling = attr.unescape_value()?,
                 b"shape" => shape = self.r.get_attr(&attr.value)?,
-                b"nr" => var = self.r.get_attr::<u32>(&attr.value)? - 1,
+                b"nr" => var = self.r.idx_attr(&attr.value)?,
                 _ => {}
               }
             }
@@ -1494,21 +1587,21 @@ impl MsmParser {
               IdentKind::Free => None,
               IdentKind::PrivPred => Some(PrivPredKind::PrivPred(PrivPredId(var))),
               IdentKind::SchPred => Some(PrivPredKind::SchPred(SchPredId(var))),
-              _ => unreachable!(),
+              _ => return self.r.err("private predicate kind"),
             };
             return Ok(Elem::Formula(Box::new(Formula::PrivPred { pos, kind, spelling, args })))
           }
           b"Attributive-Formula" => Elem::Formula(Box::new(Formula::Attr {
             pos: self.r.get_pos(&e)?,
             positive: true,
-            term: self.parse_term()?.unwrap(),
+            term: self.parse_term1()?,
             attrs: self.parse_attrs()?,
           })),
           b"Qualifying-Formula" => Elem::Formula(Box::new(Formula::Is {
             pos: self.r.get_pos(&e)?,
             positive: true,
-            term: self.parse_term()?.unwrap(),
-            ty: self.parse_type()?.unwrap(),
+            term: self.parse_term1()?,
+            ty: self.parse_type1()?,
           })),
           b"Universal-Quantifier-Formula" => {
             let pos = self.r.get_pos(&e)?;
@@ -1530,8 +1623,8 @@ impl MsmParser {
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"nr" => sym = PredSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"nr" => sym = PredSymId(self.r.idx_attr(&attr.value)?),
+                b"spelling" => spelling = attr.unescape_value()?.to_string(),
                 _ => {}
               }
             }
@@ -1548,8 +1641,8 @@ impl MsmParser {
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"nr" => sym = FuncSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"nr" => sym = FuncSymId(self.r.idx_attr(&attr.value)?),
+                b"spelling" => spelling = attr.unescape_value()?.to_string(),
                 _ => {}
               }
             }
@@ -1566,8 +1659,8 @@ impl MsmParser {
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"nr" => lsym = LeftBrkSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => lspelling = attr.unescape_value().unwrap().to_string(),
+                b"nr" => lsym = LeftBrkSymId(self.r.idx_attr(&attr.value)?),
+                b"spelling" => lspelling = attr.unescape_value()?.to_string(),
                 _ => {}
               }
             }
@@ -1582,8 +1675,8 @@ impl MsmParser {
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"nr" => sym = ModeSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"nr" => sym = ModeSymId(self.r.idx_attr(&attr.value)?),
+                b"spelling" => spelling = attr.unescape_value()?.to_string(),
                 _ => {}
               }
             }
@@ -1598,12 +1691,12 @@ impl MsmParser {
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"nr" => sym = AttrSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"nr" => sym = AttrSymId(self.r.idx_attr(&attr.value)?),
+                b"spelling" => spelling = attr.unescape_value()?.to_string(),
                 _ => {}
               }
             }
-            let arg = self.parse_locus()?.unwrap();
+            let arg = self.parse_locus1()?;
             let mut args = vec![];
             self.parse_loci(&mut args)?;
             args.push(*arg);
@@ -1616,8 +1709,8 @@ impl MsmParser {
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"nr" => sym = SelSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
-                b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
+                b"nr" => sym = SelSymId(self.r.idx_attr(&attr.value)?),
+                b"spelling" => spelling = attr.unescape_value()?.to_string(),
                 _ => {}
               }
             }
