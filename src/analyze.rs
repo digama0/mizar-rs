@@ -71,7 +71,7 @@ macro_rules! try_p {
     match $e {
       Ok(t) => t,
       Err((path, e)) => {
-        e.report(&path);
+        eprintln!("{}: {e}", path.to_string_lossy());
         $self.has_errors = true;
         return
       }
@@ -104,7 +104,9 @@ impl Reader {
         Ok(parser)
       }
       None => {
-        let result = if self.g.cfg.nameck_enabled { path.open_wsx() } else { path.open_msx() };
+        let lines = self.g.lines.clone();
+        let result =
+          if self.g.cfg.nameck_enabled { path.open_wsx(lines) } else { path.open_msx(lines) };
         Err(try_p!(self, result))
       }
     };
@@ -114,7 +116,8 @@ impl Reader {
         items.clear()
       }
     }
-    let write_xml = path.write_xml(self.g.cfg.xml_internals && self.g.cfg.analyzer_full);
+    let write_xml =
+      path.write_xml(self.g.cfg.xml_internals && self.g.cfg.analyzer_full, self.g.lines.clone());
     let write_mpt = path.write_mpt_json(self.g.cfg.mpt_json);
     let mut elab = Analyzer {
       r: self,
@@ -177,7 +180,7 @@ impl Reader {
       elab.write_xml.finish();
       if elab.g.cfg.analyzer_full && elab.g.cfg.xml_internals_self_test {
         path
-          .read_xml(|it| {
+          .read_xml(elab.g.lines.clone(), |it| {
             if elab.g.cfg.item_header {
               Reader::item_header(elab.g.cfg.always_verbose_item, &it)
             }
@@ -303,12 +306,13 @@ impl Analyzer<'_> {
   fn item_header(&mut self, it: &ast::Item, s: &str) {
     self.set_pos(it.pos);
     if let Some(n) = self.g.cfg.first_verbose_line {
-      if self.pos.line > n && self.g.cfg.one_item {
+      let line = self.g.reporter.line(self.pos.start);
+      if line > n && self.g.cfg.one_item {
         self.write_xml.finish();
         eprintln!("exiting");
         std::process::exit(0)
       }
-      set_verbose(self.pos.line >= n);
+      set_verbose(line >= n);
     }
     if self.g.cfg.item_header {
       eprint!("item[{:?}]: ", self.pos);
@@ -432,7 +436,7 @@ impl Analyzer<'_> {
   }
 
   fn elab_scheme(
-    &mut self, pos: Position, ast::SchemeBlock { end, head, items }: &mut ast::SchemeBlock,
+    &mut self, pos: Span, ast::SchemeBlock { end, head, items }: &mut ast::SchemeBlock,
   ) {
     let ast::SchemeHead { sym, nr, groups, concl, prems } = head;
     let id = self.sch_names.1.fresh();
@@ -664,7 +668,7 @@ impl Analyzer<'_> {
     }
   }
 
-  fn elab_stmt(&mut self, pos: Position, stmt: &mut ast::Statement) -> Formula {
+  fn elab_stmt(&mut self, pos: Span, stmt: &mut ast::Statement) -> Formula {
     // vprintln!("elab_stmt (thesis = {:?}) {stmt:?}", self.thesis);
     debug_assert!(self.g.cfg.analyzer_full);
     match stmt {
@@ -717,7 +721,8 @@ impl Analyzer<'_> {
             }
           }
         }
-        self.err(prop.f.pos(), MizError::IterEqualityNotAnEquality(Box::new(f.clone())));
+        let s = format!("{}", self.lc.pp(&f));
+        self.err(prop.f.pos(), MizError::IterEqualityNotAnEquality(s));
         f
       }
       ast::Statement::Now { end, label, items } => {
@@ -742,7 +747,7 @@ impl Analyzer<'_> {
 
   fn elab_proof_intro_reserved(
     &mut self, label: Option<&(Option<LabelId>, Rc<str>)>, thesis: &Formula,
-    items: &mut [ast::Item], (pos, end): (Position, Position), reset: ReserveBlock,
+    items: &mut [ast::Item], (pos, end): (Span, Span), reset: ReserveBlock,
   ) {
     self.scope(label.is_some(), false, false, |this| {
       this.write_xml.on(|w| {
@@ -873,7 +878,7 @@ impl Analyzer<'_> {
   }
 
   fn elab_corr_conds(
-    &mut self, pos: Position, mut cc: CorrConds, conds: &mut [ast::CorrCond],
+    &mut self, pos: Span, mut cc: CorrConds, conds: &mut [ast::CorrCond],
     corr: &mut Option<ast::Correctness>,
   ) {
     if self.g.cfg.analyzer_full {
@@ -941,7 +946,7 @@ impl Analyzer<'_> {
     }
   }
 
-  fn elab_canceled(&mut self, pos: Position, kind: CancelKind, n: u32) {
+  fn elab_canceled(&mut self, pos: Span, kind: CancelKind, n: u32) {
     match kind {
       CancelKind::Def => {
         // canceled defs outside a block don't create a DefTheorem, so they don't increment self.defthms
@@ -972,7 +977,7 @@ impl Analyzer<'_> {
     self.write_xml.on(|w| w.canceled(kind, n))
   }
 
-  fn elab_functor_term(&mut self, pos: Position, fmt: FormatFunc, args: &[ast::Term]) -> Term {
+  fn elab_functor_term(&mut self, pos: Span, fmt: FormatFunc, args: &[ast::Term]) -> Term {
     let args = self.elab_terms_qua(args);
     let fmt = self.formats[&Format::Func(fmt)];
     for pat in self.notations[PKC::Func].iter().rev() {
@@ -992,7 +997,7 @@ impl Analyzer<'_> {
   }
 
   fn elab_pred(
-    &mut self, pos: Position, fmt: FormatPred, args: Vec<TermQua>, positive: bool,
+    &mut self, pos: Span, fmt: FormatPred, args: Vec<TermQua>, positive: bool,
   ) -> Formula {
     let fmt = self.formats[&Format::Pred(fmt)];
     for pat in self.r.notations[PKC::Pred].iter().rev() {
@@ -1099,6 +1104,7 @@ impl Analyzer<'_> {
   fn elab_term_qua(&mut self, tm: &ast::Term) -> TermQua {
     vprintln!("[{}] elab_term {tm:?}", self.reserved_extra_depth);
     let res = (|| match *tm {
+      ast::Term::Error { .. } => Term::Error,
       ast::Term::Placeholder { nr, .. } => Term::Locus(nr),
       ast::Term::Var { pos, kind, ref spelling } =>
         match kind.or_else(|| self.lookup.var.get(&**spelling).copied()) {
@@ -1280,6 +1286,7 @@ impl Analyzer<'_> {
   fn elab_type(&mut self, ty: &ast::Type) -> Type {
     vprintln!("elab_type {ty:?}");
     let res = (|| match ty {
+      ast::Type::Error { .. } => Type::new(TypeKind::Error),
       &ast::Type::Mode { pos, sym, ref args, .. } => {
         let args = self.elab_terms_qua(args);
         let fmt = self.formats[&Format::Mode(FormatMode { sym, args: args.len() as u8 })];
@@ -1780,6 +1787,7 @@ impl Analyzer<'_> {
   fn elab_formula(&mut self, f: &ast::Formula, positive: bool) -> Formula {
     // vprintln!("elab_formula {positive:?} {f:?}");
     let res = match f {
+      ast::Formula::Error { .. } => Formula::Error,
       ast::Formula::Not { f, .. } => self.elab_formula(f, !positive),
       ast::Formula::Binop { kind: FormulaBinop::And, f1, f2, .. } =>
         self.elab_and(f1, f2, true, true).maybe_neg(positive),
@@ -2538,6 +2546,7 @@ pub struct FraenkelNameckResult {
 }
 
 struct CollectReserved<'a> {
+  reporter: &'a dyn Reporter,
   reserved: &'a IdxVec<ReservedId, (IdentId, ResGroupId)>,
   res_groups: &'a IdxVec<ResGroupId, ResGroup>,
   reserved_by_name: &'a HashMap<Rc<str>, ReservedId>,
@@ -2565,6 +2574,7 @@ impl Analyzer<'_> {
     // }
     assert!(self.lc.bound_var.is_empty());
     let mut cr = CollectReserved {
+      reporter: &*self.g.reporter,
       reserved: &self.reserved,
       res_groups: &self.res_groups,
       reserved_by_name: &self.reserved_by_name,
@@ -2655,7 +2665,7 @@ impl Analyzer<'_> {
 }
 
 impl CollectReserved<'_> {
-  fn use_reserved(&mut self, pos: Position, n: ReservedId) {
+  fn use_reserved(&mut self, pos: Span, n: ReservedId) {
     for &m in &self.res_groups[self.reserved[n].1].fvars.as_ref().unwrap().0 {
       if let Some(k) = self.local_lookup.get(&m) {
         assert!(
@@ -2726,6 +2736,7 @@ impl CollectReserved<'_> {
 
   fn visit_term(&mut self, tm: &mut ast::Term) {
     match tm {
+      ast::Term::Error { .. } => {}
       ast::Term::Var { pos, kind, ref spelling } =>
         if kind.is_none() {
           let Some(kind2) = (self.lookup.var.get(&**spelling).copied())
@@ -2794,6 +2805,7 @@ impl CollectReserved<'_> {
 
   fn visit_type(&mut self, ty: &mut ast::Type) {
     match ty {
+      ast::Type::Error { .. } => {}
       ast::Type::Mode { args, .. } | ast::Type::Struct { args, .. } => self.visit_terms(args),
       ast::Type::Cluster { attrs, ty, .. } => {
         self.visit_attrs(attrs);
@@ -2805,6 +2817,7 @@ impl CollectReserved<'_> {
 
   fn visit_formula(&mut self, f: &mut ast::Formula) {
     match f {
+      ast::Formula::Error { .. } => {}
       ast::Formula::Not { f, .. } => self.visit_formula(f),
       ast::Formula::Binop { f1, f2, .. } => {
         self.visit_formula(f1);
@@ -2867,7 +2880,7 @@ trait ReadProof {
 
   fn end_case(&mut self, _: &mut Analyzer, _: &mut Self::CaseIter, _: Self::Output) {}
 
-  fn end_cases(&mut self, _: &mut Analyzer, _: Self::CaseIter, _: Position) {}
+  fn end_cases(&mut self, _: &mut Analyzer, _: Self::CaseIter, _: Span) {}
 
   fn new_supposes(&mut self, elab: &mut Analyzer) -> Self::SupposeRecv;
 
@@ -2875,13 +2888,11 @@ trait ReadProof {
 
   fn end_suppose(&mut self, _: &mut Analyzer, _: &mut Self::SupposeRecv, _: Self::Output) {}
 
-  fn end_supposes(&mut self, _: &mut Analyzer, _: Self::SupposeRecv, _: Position) {}
+  fn end_supposes(&mut self, _: &mut Analyzer, _: Self::SupposeRecv, _: Span) {}
 
-  fn end_block(&mut self, elab: &mut Analyzer, end: Position) -> Self::Output;
+  fn end_block(&mut self, elab: &mut Analyzer, end: Span) -> Self::Output;
 
-  fn super_elab_item(
-    &mut self, elab: &mut Analyzer, it: &mut ast::Item, block_end: Position,
-  ) -> bool {
+  fn super_elab_item(&mut self, elab: &mut Analyzer, it: &mut ast::Item, block_end: Span) -> bool {
     match &it.kind {
       ast::ItemKind::Let { .. } => elab.item_header(it, "Let"),
       ast::ItemKind::Assume { .. } => elab.item_header(it, "Assume"),
@@ -3027,17 +3038,19 @@ trait ReadProof {
         elab.write_xml.on(|w| w.end_cases());
         return false
       }
+      // Parser-reported placeholder; skip and continue with the next block item.
+      ast::ItemKind::Error => {}
       _ => elab.elab_stmt_item(it),
     }
     true
   }
 
-  fn elab_item(&mut self, elab: &mut Analyzer, item: &mut ast::Item, block_end: Position) -> bool {
+  fn elab_item(&mut self, elab: &mut Analyzer, item: &mut ast::Item, block_end: Span) -> bool {
     self.super_elab_item(elab, item, block_end)
   }
 
   fn elab_proof(
-    &mut self, elab: &mut Analyzer, items: &mut [ast::Item], end: Position,
+    &mut self, elab: &mut Analyzer, items: &mut [ast::Item], end: Span,
   ) -> Self::Output {
     for item in items {
       if !self.elab_item(elab, item, end) {
@@ -3365,9 +3378,7 @@ impl ReadProof for WithThesis {
     elab.thesis = Some(Box::new(f));
   }
 
-  fn end_cases(
-    &mut self, elab: &mut Analyzer, (mut case, expansions): Self::CaseIter, end: Position,
-  ) {
+  fn end_cases(&mut self, elab: &mut Analyzer, (mut case, expansions): Self::CaseIter, end: Span) {
     assert!(case.next().is_none());
     self.end_supposes(elab, expansions, end)
   }
@@ -3387,7 +3398,7 @@ impl ReadProof for WithThesis {
     });
   }
 
-  fn end_supposes(&mut self, elab: &mut Analyzer, expansions: Self::SupposeRecv, end: Position) {
+  fn end_supposes(&mut self, elab: &mut Analyzer, expansions: Self::SupposeRecv, end: Span) {
     let thesis = elab.thesis.as_deref_mut().unwrap();
     *thesis = Formula::True;
     elab.write_xml.on(|w| {
@@ -3396,7 +3407,7 @@ impl ReadProof for WithThesis {
     })
   }
 
-  fn end_block(&mut self, elab: &mut Analyzer, end: Position) {
+  fn end_block(&mut self, elab: &mut Analyzer, end: Span) {
     let f = elab.thesis.as_deref().unwrap();
     if !matches!(f, Formula::True) {
       eprintln!(
@@ -3541,7 +3552,7 @@ impl ReadProof for ReconstructThesis {
     self.assume(elab, f.mk_neg().into_conjuncts(), false);
   }
 
-  fn end_cases(&mut self, elab: &mut Analyzer, _: (), end: Position) {
+  fn end_cases(&mut self, elab: &mut Analyzer, _: (), end: Span) {
     let f = self.reconstruct(elab, false, None).mk_neg();
     elab.write_xml.on(|w| {
       w.end_pos(end);
@@ -3564,7 +3575,7 @@ impl ReadProof for ReconstructThesis {
     }
   }
 
-  fn end_supposes(&mut self, elab: &mut Analyzer, recv: Self::SupposeRecv, end: Position) {
+  fn end_supposes(&mut self, elab: &mut Analyzer, recv: Self::SupposeRecv, end: Span) {
     let f = recv.unwrap();
     elab.write_xml.on(|w| {
       w.end_pos(end);
@@ -3573,7 +3584,7 @@ impl ReadProof for ReconstructThesis {
     self.thus(elab, f.into_conjuncts())
   }
 
-  fn end_block(&mut self, elab: &mut Analyzer, _: Position) -> Formula {
+  fn end_block(&mut self, elab: &mut Analyzer, _: Span) -> Formula {
     let mut theses_rev = vec![];
     let (len, vars) = elab.write_xml.on(|_| {
       let mut len = elab.r.lc.fixed_var.len();
@@ -3669,7 +3680,7 @@ struct BlockReader {
   to_const: IdxVec<LocusId, ConstId>,
   primary: IdxVec<LocusId, Type>,
   assums: Vec<ReconstructAssum>,
-  defs: Vec<(Position, Option<PendingDef>)>,
+  defs: Vec<(Span, Option<PendingDef>)>,
   needs_round_up: bool,
 }
 
@@ -3833,7 +3844,7 @@ impl BlockReader {
   }
 
   fn elab_func_def(
-    &mut self, elab: &mut Analyzer, loc: Position, pat: &mut ast::PatternFunc,
+    &mut self, elab: &mut Analyzer, loc: Span, pat: &mut ast::PatternFunc,
     it: &mut ast::DefinitionBody, spec: Option<&ast::Type>, def: &mut Option<Box<ast::Definiens>>,
   ) {
     elab.write_xml.on(|w| {
@@ -3979,7 +3990,7 @@ impl BlockReader {
   }
 
   fn elab_pred_def(
-    &mut self, elab: &mut Analyzer, loc: Position, pat: &mut ast::PatternPred,
+    &mut self, elab: &mut Analyzer, loc: Span, pat: &mut ast::PatternPred,
     it: &mut ast::DefinitionBody, def: &mut Option<Box<ast::Definiens>>,
   ) {
     elab.write_xml.on(|w| {
@@ -4081,7 +4092,7 @@ impl BlockReader {
   }
 
   fn elab_mode_def(
-    &mut self, elab: &mut Analyzer, loc: Position, pat: &mut ast::PatternMode,
+    &mut self, elab: &mut Analyzer, loc: Span, pat: &mut ast::PatternMode,
     kind: &mut ast::DefModeKind, it: &mut ast::DefinitionBody,
   ) {
     let fmt = elab.formats[&Format::Mode(pat.to_format())];
@@ -4238,7 +4249,7 @@ impl BlockReader {
   }
 
   fn elab_attr_def(
-    &mut self, elab: &mut Analyzer, loc: Position, pat: &mut ast::PatternAttr,
+    &mut self, elab: &mut Analyzer, loc: Span, pat: &mut ast::PatternAttr,
     it: &mut ast::DefinitionBody, mut def: Option<&mut ast::Definiens>,
   ) {
     elab.write_xml.on(|w| {
@@ -4331,7 +4342,7 @@ impl BlockReader {
     elab.write_xml.on(|w| w.end_def())
   }
 
-  fn elab_struct_def(&mut self, elab: &mut Analyzer, loc: Position, it: &mut ast::DefStruct) {
+  fn elab_struct_def(&mut self, elab: &mut Analyzer, loc: Span, it: &mut ast::DefStruct) {
     elab.write_xml.on(|w| w.start_struct_def(loc));
     let mut parents: Box<[_]> = it.parents.iter().map(|ty| elab.elab_type(ty)).collect();
     let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect_vec();
@@ -4554,7 +4565,7 @@ impl BlockReader {
   }
 
   fn elab_exist_reg(
-    &mut self, elab: &mut Analyzer, pos: Position, concl: &[ast::Attr], ty: &ast::Type,
+    &mut self, elab: &mut Analyzer, pos: Span, concl: &[ast::Attr], ty: &ast::Type,
     conds: &mut [ast::CorrCond], corr: &mut Option<ast::Correctness>,
   ) {
     let mut ty = elab.elab_type(ty);
@@ -4598,7 +4609,7 @@ impl BlockReader {
 
   #[allow(clippy::too_many_arguments)]
   fn elab_cond_reg(
-    &mut self, elab: &mut Analyzer, pos: Position, antecedent: &[ast::Attr], concl: &[ast::Attr],
+    &mut self, elab: &mut Analyzer, pos: Span, antecedent: &[ast::Attr], concl: &[ast::Attr],
     ty: &ast::Type, conds: &mut [ast::CorrCond], corr: &mut Option<ast::Correctness>,
   ) {
     let mut ty = elab.elab_type(ty);
@@ -4658,7 +4669,7 @@ impl BlockReader {
 
   #[allow(clippy::too_many_arguments)]
   fn elab_func_reg(
-    &mut self, elab: &mut Analyzer, pos: Position, term: &ast::Term, concl: &[ast::Attr],
+    &mut self, elab: &mut Analyzer, pos: Span, term: &ast::Term, concl: &[ast::Attr],
     oty: Option<&ast::Type>, conds: &mut [ast::CorrCond], corr: &mut Option<ast::Correctness>,
   ) {
     let term = elab.elab_term(term);
@@ -4668,6 +4679,8 @@ impl BlockReader {
         Term::Functor { nr, args: args.to_vec().into() }
       }
       Term::Aggregate { .. } | Term::Selector { .. } => term.clone(),
+      // Error target already reported; otherwise report and skip the registration.
+      Term::Error => return,
       _ => panic!("invalid functor registration target"),
     };
     let mut ty = match oty {
@@ -4755,7 +4768,7 @@ impl BlockReader {
     panic!("type error")
   }
 
-  fn elab_identify_func(&mut self, elab: &mut Analyzer, pos: Position, it: &mut ast::IdentifyFunc) {
+  fn elab_identify_func(&mut self, elab: &mut Analyzer, pos: Span, it: &mut ast::IdentifyFunc) {
     let lhs_pat = self.elab_identify_pattern_func(elab, &mut it.lhs);
     let rhs_pat = self.elab_identify_pattern_func(elab, &mut it.rhs);
     assert!(
@@ -4818,7 +4831,7 @@ impl BlockReader {
     elab.write_xml.on(|w| w.end_identify_func());
   }
 
-  fn elab_reduction(&mut self, elab: &mut Analyzer, pos: Position, it: &mut ast::Reduction) {
+  fn elab_reduction(&mut self, elab: &mut Analyzer, pos: Span, it: &mut ast::Reduction) {
     fn is_ssubterm(ctx: &mut EqCtx<'_>, sup: &Term, sub: &Term) -> bool {
       use Term::*;
       match sup {
@@ -4830,6 +4843,9 @@ impl BlockReader {
         | Selector { args, .. } => subterm_list(ctx, args, sub),
         The { .. } | Fraenkel { .. } => false,
         EqClass(_) | EqMark(_) | Qua { .. } | FreeVar(_) | It => unreachable!(),
+        // A subterm may elaborate to an error value on malformed input; it is not a
+        // subterm of anything, so the reduction is simply rejected (`BadReduction`).
+        Error => false,
       }
     }
     fn subterm_list(ctx: &mut EqCtx<'_>, args: &[Term], sub: &Term) -> bool {
@@ -4862,7 +4878,7 @@ impl BlockReader {
   }
 
   fn elab_sethood_registration(
-    &mut self, elab: &mut Analyzer, pos: Position, ty: &ast::Type, just: &mut ast::Justification,
+    &mut self, elab: &mut Analyzer, pos: Span, ty: &ast::Type, just: &mut ast::Justification,
   ) {
     let ty = elab.elab_type(ty);
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
@@ -5018,7 +5034,7 @@ impl BlockReader {
     )
   }
 
-  fn elab_canceled_def(&mut self, elab: &mut Analyzer, loc: Position, n: u32) {
+  fn elab_canceled_def(&mut self, elab: &mut Analyzer, loc: Span, n: u32) {
     elab.defthms.0 += n;
     if elab.g.cfg.exporter_enabled {
       self.defs.extend((0..n).map(|_| (loc, None)))
@@ -5065,7 +5081,7 @@ impl ReadProof for BlockReader {
 
   fn new_supposes(&mut self, _: &mut Analyzer) -> Self::SupposeRecv { panic!("invalid item") }
 
-  fn end_block(&mut self, elab: &mut Analyzer, _: Position) {
+  fn end_block(&mut self, elab: &mut Analyzer, _: Span) {
     if self.needs_round_up {
       let mut attrs = elab.g.numeral_type.attrs.1.clone();
       attrs.round_up_with(&elab.g, &elab.lc, &elab.g.numeral_type, false);
@@ -5081,7 +5097,7 @@ impl ReadProof for BlockReader {
     }
   }
 
-  fn elab_item(&mut self, elab: &mut Analyzer, it: &mut ast::Item, block_end: Position) -> bool {
+  fn elab_item(&mut self, elab: &mut Analyzer, it: &mut ast::Item, block_end: Span) -> bool {
     match &it.kind {
       ast::ItemKind::Definition { .. } => elab.item_header(it, "Definition"),
       ast::ItemKind::DefStruct { .. } => elab.item_header(it, "DefStruct"),

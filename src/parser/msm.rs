@@ -3,15 +3,16 @@ use super::{ParseError, PathResult, Result, XmlReader};
 use crate::ast::{SchRef, *};
 use crate::types::{
   Article, ArticleId, AttrSymId, BoundId, ConstId, DefId, FuncSymId, IdxVec, LabelId, LeftBrkSymId,
-  LocusId, ModeSymId, Position, PredSymId, PrivFuncId, PrivPredId, PropertyKind, RightBrkSymId,
-  SchFuncId, SchId, SchPredId, SelSymId, StructSymId, ThmId,
+  LocusId, ModeSymId, PredSymId, PrivFuncId, PrivPredId, PropertyKind, RightBrkSymId, SchFuncId,
+  SchId, SchPredId, SelSymId, Span, StructSymId, ThmId,
 };
-use crate::{types, MizPath};
+use crate::{types, LineMap, MizPath};
 use enum_map::Enum;
 use quick_xml::events::{BytesStart, Event};
 use std::borrow::Cow;
 use std::fs::File;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 // Parser for WSM and MSM formats
 pub struct MsmParser {
@@ -23,12 +24,12 @@ pub struct MsmParser {
 }
 
 impl MizPath {
-  pub fn open_msx(&self) -> PathResult<MsmParser> {
-    MsmParser::new(self.to_path(true, false, "msx"), true)
+  pub fn open_msx(&self, lines: Option<Arc<LineMap>>) -> PathResult<MsmParser> {
+    MsmParser::new(self.to_path(true, false, "msx"), true, lines)
   }
 
-  pub fn open_wsx(&self) -> PathResult<MsmParser> {
-    MsmParser::new(self.to_path(true, false, "wsx"), false)
+  pub fn open_wsx(&self, lines: Option<Arc<LineMap>>) -> PathResult<MsmParser> {
+    MsmParser::new(self.to_path(true, false, "wsx"), false, lines)
   }
 }
 
@@ -94,7 +95,7 @@ pub enum BlockKind {
 #[derive(Debug)]
 struct Block {
   kind: BlockKind,
-  pos: (Position, Position),
+  pos: (Span, Span),
   items: Vec<Item>,
 }
 
@@ -126,7 +127,7 @@ pub enum Shape {
 #[derive(Debug)]
 enum Elem {
   Block(Box<Block>),
-  Inference(Position, InferenceKind, Vec<Reference>),
+  Inference(Span, InferenceKind, Vec<Reference>),
   Binder(Box<BinderGroup>),
   Conditions(Vec<Proposition>),
   Variable(Box<Variable>),
@@ -141,7 +142,7 @@ enum Elem {
   Definiens(Box<Definiens>),
   LociEquality(Box<Variable>, Box<Variable>),
   Label(Option<Box<Label>>),
-  Link(Position),
+  Link(Span),
   Reference(Reference),
   DefCaseTerm(DefCase<Term>),
   DefCaseFormula(DefCase<Formula>),
@@ -152,12 +153,11 @@ enum Elem {
 
 impl XmlReader {
   fn parse_variable_attrs(&mut self, e: &BytesStart<'_>) -> Result<Box<Variable>> {
-    let (mut pos, (mut var, mut spelling)) = <(Position, _)>::default();
+    let (mut var, mut spelling) = <(_, _)>::default();
+    let pos = self.get_pos(e)?;
     for attr in e.attributes() {
       let attr = attr?;
       match attr.key.0 {
-        b"line" => pos.line = self.get_attr(&attr.value)?,
-        b"col" => pos.col = self.get_attr(&attr.value)?,
         b"varnr" => var = self.get_attr::<u32>(&attr.value)?.checked_sub(1).map(ConstId),
         b"spelling" => spelling = attr.unescape_value().unwrap(),
         // omitted: origin, kind, serialnr, idnr
@@ -169,11 +169,12 @@ impl XmlReader {
 }
 
 impl MsmParser {
-  fn new(path: PathBuf, msm: bool) -> PathResult<MsmParser> {
+  fn new(path: PathBuf, msm: bool, lines: Option<Arc<LineMap>>) -> PathResult<MsmParser> {
     let mut buf = vec![];
     let result = (|| {
       let file = File::open(&path)?;
       let mut r = XmlReader::new(file, &mut buf)?;
+      r.1 = lines;
       assert!(matches!(r.read_event(&mut buf)?,
         Event::Start(e) if e.local_name().as_ref() == b"Text-Proper"));
       Ok(r)
@@ -344,12 +345,11 @@ impl MsmParser {
     let Ok(e) = self.r.try_read_start(&mut self.buf, None)? else { return Ok(None) };
     Ok(Some(match e.local_name().as_ref() {
       b"Adjective" => {
-        let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
+        let (mut sym, mut spelling) = <(_, _)>::default();
+        let pos = self.r.get_pos(&e)?;
         for attr in e.attributes() {
           let attr = attr?;
           match attr.key.0 {
-            b"line" => pos.line = self.r.get_attr(&attr.value)?,
-            b"col" => pos.col = self.r.get_attr(&attr.value)?,
             b"nr" => sym = AttrSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
             b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
             _ => {}
@@ -444,13 +444,11 @@ impl MsmParser {
 
   pub fn push_parse_item(&mut self, items: &mut Vec<Item>) -> Result<bool> {
     let Ok(e) = self.r.try_read_start(&mut self.buf, Some("Item"))? else { return Ok(false) };
-    let (mut pos, (mut kind, mut property, mut shape, mut spelling, mut condition)) =
-      <(Position, _)>::default();
+    let (mut kind, mut property, mut shape, mut spelling, mut condition) = Default::default();
+    let pos = self.r.get_pos(&e)?;
     for attr in e.attributes() {
       let attr = attr?;
       match attr.key.0 {
-        b"line" => pos.line = self.r.get_attr(&attr.value)?,
-        b"col" => pos.col = self.r.get_attr(&attr.value)?,
         b"kind" => kind = attr.value,
         b"property" => property = Some((*attr.value).try_into().unwrap()),
         b"shape" => shape = attr.value,
@@ -897,14 +895,14 @@ impl MsmParser {
       Ok(if let Event::Start(e) = self.r.read_event(&mut self.buf)? {
         let elem = match e.local_name().as_ref() {
           b"Block" => {
-            let (mut start, mut end, mut kind) = <(Position, Position, Cow<'_, [u8]>)>::default();
+            let mut kind: Cow<'_, [u8]> = Default::default();
+            // The block's start (`line`/`col`) and end (`posline`/`poscol`) are
+            // recovered as the two endpoints of the element's position span.
+            let bl = self.r.get_pos(&e)?;
+            let (start, end) = (Span::at(bl.start), Span::at(bl.end));
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => start.line = self.r.get_attr(&attr.value)?,
-                b"col" => start.col = self.r.get_attr(&attr.value)?,
-                b"posline" => end.line = self.r.get_attr(&attr.value)?,
-                b"poscol" => end.col = self.r.get_attr(&attr.value)?,
                 b"kind" => kind = attr.value,
                 _ => {}
               }
@@ -950,12 +948,11 @@ impl MsmParser {
             return Ok(Elem::Inference(pos, InferenceKind::By { link }, refs))
           }
           b"Scheme-Justification" => {
-            let (mut pos, (mut art, mut sch, mut id, mut spelling)) = <(Position, _)>::default();
+            let (mut art, mut sch, mut id, mut spelling) = <(_, _, _, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => art = self.r.get_attr(&attr.value)?,
                 b"idnr" => id = self.r.get_attr::<u32>(&attr.value)?,
                 b"schnr" => sch = self.r.get_attr::<u32>(&attr.value)?,
@@ -1010,12 +1007,11 @@ impl MsmParser {
           b"Redefine" => Elem::Redefine,
           b"Type-Specification" => Elem::TypeSpecification(self.parse_type()?.unwrap()),
           b"Definiens" => {
-            let ((mut pos, mut kind), mut is_term) = (<(Position, _)>::default(), false);
+            let (mut kind, mut is_term) = (<Cow<'_, [u8]>>::default(), false);
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"kind" => kind = attr.value,
                 b"shape" =>
                   is_term = match &*attr.value {
@@ -1079,12 +1075,11 @@ impl MsmParser {
           b"LociEquality" =>
             Elem::LociEquality(self.parse_locus()?.unwrap(), self.parse_locus()?.unwrap()),
           b"Label" => {
-            let (mut pos, (mut id, mut spelling)) = <(Position, _)>::default();
+            let (mut id, mut spelling) = <(_, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"labelnr" => id = self.r.get_attr::<u32>(&attr.value)?.checked_sub(1).map(LabelId),
                 b"spelling" => spelling = attr.unescape_value().unwrap(),
                 _ => {}
@@ -1108,12 +1103,11 @@ impl MsmParser {
             Elem::Reference(Reference { pos, kind })
           }
           b"Theorem-Reference" => {
-            let (mut pos, (mut art, mut id, mut spelling)) = <(Position, _)>::default();
+            let (mut art, mut id, mut spelling) = <(_, _, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => art = self.r.get_attr(&attr.value)?,
                 b"spelling" =>
                   spelling = Article::from_upper(attr.unescape_value().unwrap().as_bytes()).unwrap(),
@@ -1125,12 +1119,11 @@ impl MsmParser {
             Elem::Reference(Reference { pos, kind: ReferenceKind::Global { art, spelling, refs } })
           }
           b"Definition-Reference" => {
-            let (mut pos, (mut art, mut id, mut spelling)) = <(Position, _)>::default();
+            let (mut art, mut id, mut spelling) = <(_, _, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => art = self.r.get_attr(&attr.value)?,
                 b"spelling" =>
                   spelling = Article::from_upper(attr.unescape_value().unwrap().as_bytes()).unwrap(),
@@ -1148,12 +1141,11 @@ impl MsmParser {
             _ => panic!("expected term or formula"),
           },
           b"Placeholder-Term" => {
-            let (mut pos, mut nr) = <(Position, _)>::default();
+            let mut nr = Default::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => nr = LocusId(self.r.get_attr::<u8>(&attr.value)? - 1),
                 _ => {}
               }
@@ -1161,12 +1153,11 @@ impl MsmParser {
             Elem::Term(Box::new(Term::Placeholder { pos, nr }))
           }
           b"Numeral-Term" => {
-            let (mut pos, mut value) = <(Position, _)>::default();
+            let mut value = Default::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"number" => value = self.r.get_attr(&attr.value)?,
                 _ => {}
               }
@@ -1174,12 +1165,11 @@ impl MsmParser {
             Elem::Term(Box::new(Term::Numeral { pos, value }))
           }
           b"Simple-Term" => {
-            let (mut pos, (mut kind, mut var, mut spelling)) = <(Position, _)>::default();
+            let (mut kind, mut var, mut spelling) = <(_, _, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 // b"idnr" => sym = self.r.get_attr::<u32>(&attr.value)? - 1,
                 b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
                 // b"origin" => origin = self.r.get_attr(&attr.value)?,
@@ -1199,12 +1189,11 @@ impl MsmParser {
             Elem::Term(Box::new(term))
           }
           b"Private-Functor-Term" => {
-            let (mut pos, (mut shape, mut var, mut spelling)) = <(Position, _)>::default();
+            let (mut shape, mut var, mut spelling) = <(_, _, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 // b"idnr" => id = self.r.get_attr::<u32>(&attr.value)? - 1,
                 b"spelling" => spelling = attr.unescape_value().unwrap(),
                 b"shape" => shape = self.r.get_attr(&attr.value)?,
@@ -1224,12 +1213,11 @@ impl MsmParser {
             return Ok(Elem::Term(Box::new(term)))
           }
           b"Infix-Term" => {
-            let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
+            let (mut sym, mut spelling) = <(_, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = FuncSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
                 _ => {}
@@ -1245,12 +1233,11 @@ impl MsmParser {
             Elem::Term(Box::new(Term::Infix { pos, sym, spelling, left, args }))
           }
           b"Circumfix-Term" => {
-            let (mut pos, (mut lsym, mut lspelling)) = <(Position, _)>::default();
+            let (mut lsym, mut lspelling) = <(_, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => lsym = LeftBrkSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 b"spelling" => lspelling = attr.unescape_value().unwrap().to_string(),
                 _ => {}
@@ -1261,12 +1248,11 @@ impl MsmParser {
             return Ok(Elem::Term(Box::new(term)))
           }
           b"Aggregate-Term" => {
-            let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
+            let (mut sym, mut spelling) = <(_, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = StructSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
                 _ => {}
@@ -1276,12 +1262,11 @@ impl MsmParser {
             return Ok(Elem::Term(Box::new(Term::Aggregate { pos, sym, spelling, args })))
           }
           b"Forgetful-Functor-Term" => {
-            let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
+            let (mut sym, mut spelling) = <(_, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = StructSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
                 _ => {}
@@ -1291,12 +1276,11 @@ impl MsmParser {
             Elem::Term(Box::new(Term::SubAggr { pos, sym, spelling, arg }))
           }
           b"Selector-Term" => {
-            let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
+            let (mut sym, mut spelling) = <(_, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = SelSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
                 _ => {}
@@ -1306,12 +1290,11 @@ impl MsmParser {
             Elem::Term(Box::new(Term::Selector { pos, sym, spelling, arg }))
           }
           b"Internal-Selector-Term" => {
-            let (mut pos, (mut sym, mut spelling, mut id)) = <(Position, _)>::default();
+            let (mut sym, mut spelling, mut id) = <(_, _, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = SelSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 b"varnr" => id = self.r.get_attr::<u32>(&attr.value)?.checked_sub(1).map(ConstId),
                 b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
@@ -1361,12 +1344,11 @@ impl MsmParser {
             Elem::Term(Box::new(Term::It { pos }))
           }
           b"Standard-Type" => {
-            let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
+            let (mut sym, mut spelling) = <(_, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = ModeSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
                 _ => {}
@@ -1376,12 +1358,11 @@ impl MsmParser {
             return Ok(Elem::Type(Box::new(Type::Mode { pos, sym, spelling, args })))
           }
           b"Struct-Type" => {
-            let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
+            let (mut sym, mut spelling) = <(_, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = StructSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
                 _ => {}
@@ -1396,12 +1377,11 @@ impl MsmParser {
             ty: self.parse_type()?.unwrap(),
           })),
           b"ReservedDscr-Type" if self.msm => {
-            let (mut pos, mut group) = <(Position, _)>::default();
+            let mut group = Default::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => group = ResGroupId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 _ => {}
               }
@@ -1438,12 +1418,11 @@ impl MsmParser {
             Elem::Formula(Box::new(Formula::Binop { kind: FormulaBinop::FlexOr, pos, f1, f2 }))
           }
           b"Predicative-Formula" => {
-            let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
+            let (mut sym, mut spelling) = <(_, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = PredSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
                 _ => {}
@@ -1460,12 +1439,11 @@ impl MsmParser {
             Elem::Formula(Box::new(Formula::Pred(pred)))
           }
           b"RightSideOf-Predicative-Formula" => {
-            let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
+            let (mut sym, mut spelling) = <(_, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = PredSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
                 _ => {}
@@ -1499,12 +1477,11 @@ impl MsmParser {
             return Ok(Elem::Formula(Box::new(Formula::ChainPred { pos, first, rest })))
           }
           b"Private-Predicate-Formula" => {
-            let (mut pos, (mut shape, mut var, mut spelling)) = <(Position, _)>::default();
+            let (mut shape, mut var, mut spelling) = <(_, _, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 // b"idnr" => id = self.r.get_attr::<u32>(&attr.value)? - 1,
                 b"spelling" => spelling = attr.unescape_value().unwrap(),
                 b"shape" => shape = self.r.get_attr(&attr.value)?,
@@ -1548,12 +1525,11 @@ impl MsmParser {
           b"Thesis" => Elem::Formula(Box::new(Formula::Thesis { pos: self.r.get_pos(&e)? })),
           b"Contradiction" => Elem::Formula(Box::new(Formula::False { pos: self.r.get_pos(&e)? })),
           b"Predicate-Pattern" => {
-            let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
+            let (mut sym, mut spelling) = <(_, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = PredSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
                 _ => {}
@@ -1567,12 +1543,11 @@ impl MsmParser {
             Elem::Pattern(Pattern::Pred(Box::new(pat)))
           }
           b"Operation-Functor-Pattern" => {
-            let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
+            let (mut sym, mut spelling) = <(_, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = FuncSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
                 _ => {}
@@ -1586,12 +1561,11 @@ impl MsmParser {
             Elem::Pattern(Pattern::Func(Box::new(pat)))
           }
           b"Bracket-Functor-Pattern" => {
-            let (mut pos, (mut lsym, mut lspelling)) = <(Position, _)>::default();
+            let (mut lsym, mut lspelling) = <(_, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => lsym = LeftBrkSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 b"spelling" => lspelling = attr.unescape_value().unwrap().to_string(),
                 _ => {}
@@ -1603,12 +1577,11 @@ impl MsmParser {
             Elem::Pattern(Pattern::Func(Box::new(pat)))
           }
           b"Mode-Pattern" => {
-            let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
+            let (mut sym, mut spelling) = <(_, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = ModeSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
                 _ => {}
@@ -1620,12 +1593,11 @@ impl MsmParser {
             Elem::Pattern(Pattern::Mode(Box::new(pat)))
           }
           b"Attribute-Pattern" => {
-            let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
+            let (mut sym, mut spelling) = <(_, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = AttrSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
                 _ => {}
@@ -1639,12 +1611,11 @@ impl MsmParser {
             Elem::Pattern(Pattern::Attr(Box::new(pat)))
           }
           b"Selector" => {
-            let (mut pos, (mut sym, mut spelling)) = <(Position, _)>::default();
+            let (mut sym, mut spelling) = <(_, _)>::default();
+            let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
               match attr.key.0 {
-                b"line" => pos.line = self.r.get_attr(&attr.value)?,
-                b"col" => pos.col = self.r.get_attr(&attr.value)?,
                 b"nr" => sym = SelSymId(self.r.get_attr::<u32>(&attr.value)? - 1),
                 b"spelling" => spelling = attr.unescape_value().unwrap().to_string(),
                 _ => {}

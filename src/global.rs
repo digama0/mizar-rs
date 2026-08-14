@@ -1,7 +1,7 @@
 use crate::bignum::Complex;
 use crate::format::Formatter;
 use crate::types::*;
-use crate::{mizfiles, stat, Config};
+use crate::{mizfiles, stat, Config, LineMap, Reporter};
 use enum_map::EnumMap;
 use itertools::EitherOrBoth;
 use serde::Deserialize;
@@ -375,6 +375,9 @@ impl Term {
         (It, It) => Ordering::Equal,
         (Qua { value: val1, ty: ty1 }, Qua { value: val2, ty: ty2 }) =>
           val1.cmp(ctx, lc, val2, style).then_with(|| ty1.cmp(ctx, lc, ty2, style)),
+        // Error values compare equal to each other. They only arise after a reported
+        // error, but they do reach comparison, so this is not unreachable.
+        (Error, Error) => Ordering::Equal,
         _ => unreachable!(),
       })
     }
@@ -511,6 +514,8 @@ impl Type {
         Some(Box::new(ty))
       }
       TypeKind::Struct(_) => Some(Box::new(Type::SET)), // should be ANY? (comment from original)
+      // Value op: an error type has no widening. Already reported.
+      TypeKind::Error => None,
     }
   }
 
@@ -528,6 +533,10 @@ impl Type {
   pub fn widening_of<'a>(
     &self, g: &Global, lc: &LocalContext, from: &'a Type,
   ) -> Option<CowBox<'a, Self>> {
+    // Value op: no widening relates an error type to anything. Already reported.
+    if let TypeKind::Error = from.kind {
+      return None
+    }
     match self.kind {
       TypeKind::Mode(n) => {
         let (n, _) = Type::adjust(n, &self.args, &g.constrs);
@@ -569,6 +578,7 @@ impl Type {
         }
         Some(CowBox::Owned(ty))
       }
+      TypeKind::Error => None,
     }
   }
 
@@ -595,6 +605,7 @@ impl Type {
         let Some(w) = self.widening_of(g, lc, other) else { return false };
         g.eq_radices(lc, self, &w)
       }
+      TypeKind::Error => todo!(),
     }
   }
 
@@ -697,6 +708,9 @@ impl Formula {
           Term::cmp_list(ctx, lc, &**t1, &**t2, style).then_with(|| sc1.cmp(ctx, lc, sc2, style)),
         (LegacyFlexAnd { orig: args1, .. }, LegacyFlexAnd { orig: args2, .. }) =>
           Formula::cmp_list(ctx, lc, &**args1, &**args2, style),
+        // As in `Term::cmp`: error values compare equal to each other. They arise only
+        // after a reported error but do reach comparison.
+        (Error, Error) => Ordering::Equal,
         _ => unreachable!(),
       }
     })
@@ -827,6 +841,7 @@ pub trait Equate {
       (_, &EqClass(nr)) => self.eq_class_right(ctx, t1, nr),
       (PrivFunc { .. }, _) | (_, PrivFunc { .. }) =>
         self.eq_term(ctx, t1.skip_priv_func(Some(ctx.lc)), t2.skip_priv_func(Some(ctx.lc))),
+      (Error, _) | (_, Error) => todo!(),
       _ => false,
     }
   }
@@ -928,6 +943,7 @@ pub trait Equate {
         LegacyFlexAnd { orig: args1, expansion: e1, .. },
         LegacyFlexAnd { orig: args2, expansion: e2, .. },
       ) => self.eq_formulas(ctx, &**args1, &**args2) && self.eq_formula(ctx, e1, e2),
+      (Error, _) | (_, Error) => todo!(),
       _ => false,
     }
     // vprintln!("eq_formula {f1:?} <> {f2:?} -> {res}");
@@ -1098,6 +1114,7 @@ macro_rules! mk_visit {
             self.visit_term(value);
             self.visit_type(ty);
           }
+          Term::Error => {}
         }
       }
 
@@ -1118,6 +1135,7 @@ macro_rules! mk_visit {
         match &$($mutbl)? ty.kind {
           TypeKind::Mode(nr) => self.visit_mode_id($(&$mutbl)? *nr),
           TypeKind::Struct(nr) => self.visit_struct_id($(&$mutbl)? *nr),
+          TypeKind::Error => {}
         }
         self.visit_terms(&$($mutbl)? ty.args);
       }
@@ -1199,7 +1217,7 @@ macro_rules! mk_visit {
             }
             self.visit_formula(expansion);
           },
-          Formula::True => {}
+          Formula::True | Formula::Error => {}
         }
       }
 
@@ -1470,6 +1488,8 @@ impl Term {
       Term::The { ref ty } | Term::Qua { ref ty, .. } => (**ty).clone(),
       Term::EqMark(m) => lc.marks[m].0.get_type_uncached(g, lc),
       Term::EqClass(_) | Term::FreeVar(_) => unreachable!("get_type_uncached(EqClass | FreeVar)"),
+      // Value op: the type of an error term is the error type. Already reported.
+      Term::Error => Type::new(TypeKind::Error),
     };
     // vprintln!("[{:?}] get_type {:?} -> {:?}", lc.infer_const.borrow().len(), self, ty);
     ty
@@ -2527,6 +2547,7 @@ impl VisitMut for InternConst<'_> {
       }
       Term::FreeVar(_) | Term::EqClass(_) | Term::EqMark(_) | Term::It | Term::Qua { .. } =>
         unreachable!("CollectConst::visit_term(FreeVar | EqConst | EqMark | It | Qua)"),
+      Term::Error => {}
     }
     // vprintln!("InternConst {foo} @ {} -> {tm:?}", self.depth);
     self.only_constants &= only_constants;
@@ -2647,6 +2668,12 @@ pub struct FuncDef {
 #[derive(Debug)]
 pub struct Global {
   pub cfg: Config,
+  /// The sink for structured diagnostics. See `notes/error-handling.md`.
+  pub reporter: std::sync::Arc<dyn Reporter>,
+  /// Line map of the article source, shared with the reporter and the XML
+  /// readers/writer to translate between byte offsets and `line:col`. `None`
+  /// when the source is unavailable.
+  pub lines: Option<std::sync::Arc<LineMap>>,
   pub reqs: RequirementIndexes,
   pub constrs: Constructors,
   pub clusters: Clusters,

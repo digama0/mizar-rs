@@ -1,11 +1,13 @@
 use crate::ast::*;
 use crate::parser::{JsonParser, MizParser};
 use crate::types::{
-  Article, ArticleId, Directives, Format, FormatId, FuncSymId, IdxVec, Position, PredSymId,
-  PriorityKind, SymbolKind, Symbols,
+  Article, ArticleId, Directives, Format, FormatId, FuncSymId, IdxVec, PredSymId, PriorityKind,
+  Span, SymbolKind, Symbols,
 };
 use crate::write::OWriteJson;
+use crate::Reporter;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub enum Parser<'a> {
   Miz(MizParser<'a>),
@@ -20,10 +22,12 @@ pub struct ParserCore {
   #[allow(clippy::box_collection)]
   pub format_lookup: Box<HashMap<Format, FormatId>>,
   pub write_json: OWriteJson,
+  /// The sink for structured diagnostics. See `notes/error-handling.md`.
+  pub reporter: Arc<dyn Reporter>,
 }
 
 impl ParserCore {
-  pub fn new(art: Article, write_json: OWriteJson) -> Self {
+  pub fn new(art: Article, write_json: OWriteJson, reporter: Arc<dyn Reporter>) -> Self {
     Self {
       art,
       articles: Default::default(),
@@ -31,6 +35,7 @@ impl ParserCore {
       func_prio: Default::default(),
       format_lookup: Default::default(),
       write_json,
+      reporter,
     }
   }
 
@@ -49,7 +54,7 @@ impl ParserCore {
     infinitives.iter().for_each(|&(n, s)| f(SymbolKind::Pred(n), s))
   }
 
-  pub fn push_format(&mut self, _pos: Position, fmt: Format) -> bool {
+  pub fn push_format(&mut self, _pos: Span, fmt: Format) -> bool {
     if let std::collections::hash_map::Entry::Vacant(e) = self.format_lookup.entry(fmt) {
       e.insert(self.formats.push(fmt));
       return true
@@ -57,7 +62,7 @@ impl ParserCore {
     false
   }
 
-  pub fn after_definition(&mut self, pos: Position, redef: bool, fmt: Format) -> bool {
+  pub fn after_definition(&mut self, pos: Span, redef: bool, fmt: Format) -> bool {
     if redef {
       assert!(self.format_lookup.contains_key(&fmt), "{:?}: unknown format for redeclaration", pos);
       false
@@ -66,9 +71,7 @@ impl ParserCore {
     }
   }
 
-  pub fn after_def_struct(
-    pos: Position, def: &DefStruct, mut push_format: impl FnMut(Position, Format),
-  ) {
+  pub fn after_def_struct(pos: Span, def: &DefStruct, mut push_format: impl FnMut(Span, Format)) {
     let num_fields = def.fields.iter().map(|f| f.vars.len()).sum();
     push_format(pos, Format::SubAggr(def.pat.to_subaggr_format()));
     push_format(pos, Format::Struct(def.pat.to_mode_format()));

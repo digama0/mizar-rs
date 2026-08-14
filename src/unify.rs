@@ -411,6 +411,7 @@ impl Standardize<'_> {
           self.visit_type(ty)
         }
         Formula::LegacyFlexAnd { .. } | Formula::FlexAnd { .. } | Formula::True => {}
+        Formula::Error => todo!(),
       }
       break
     }
@@ -707,6 +708,7 @@ impl Unify<'_> {
                     if let Some(ty) = ty2.widening_of(self.g, self.lc, ty) {
                       inst2 = self.unify_radix_type(&ty, ty2)?;
                     },
+                  TypeKind::Error => todo!(),
                 }
                 inst1.mk_and(inst2)?;
                 inst.mk_or(inst1)?;
@@ -966,6 +968,7 @@ impl Unify<'_> {
         Dnf::mk_bool(Some(self.get_eq_class(t1).unwrap()) == self.get_eq_class(t2)),
       Term::EqMark(m) => self.unify_term(&self.lc.marks[m].0, t2)?,
       Term::Locus(_) | Term::Qua { .. } | Term::It => unreachable!(),
+      Term::Error => todo!(),
     };
     // vprintln!("unify_term {t1:?} <> {t2:?} -> {res:?}");
     Ok(res)
@@ -1295,6 +1298,7 @@ impl EquateClass<'_> {
         .map(|p| p.0),
       Term::EqMark(m) => self.get(g, lc, &lc.marks[m].0),
       Term::Const(_) | Term::FreeVar(_) | Term::Qua { .. } | Term::It => unreachable!(),
+      Term::Error => todo!(),
     }
     // vprintln!("get_eq_class {tm:?} -> {res:?}");
   }

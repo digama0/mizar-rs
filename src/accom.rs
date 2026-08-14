@@ -1,8 +1,8 @@
-use crate::error::report_accom_warning;
+use crate::error::accom_warning;
 use crate::parser::{catch_missing, ParseError, PathResult};
 use crate::reader::DefiniensId;
 use crate::types::*;
-use crate::{mk_id, CmpStyle, MizPath, VisitMut};
+use crate::{mk_id, CmpStyle, MizPath, Reporter, VisitMut};
 use std::collections::HashMap;
 use std::io;
 
@@ -122,13 +122,14 @@ impl SigBuilder {
 
 #[derive(Debug, Default)]
 pub struct Accomodator {
-  article: Article,
+  pub article: Article,
   pub dirs: Directives,
   pub sig: SigBuilder,
   pub articles_vec: IdxVec<ArticleId, Option<Article>>,
   pub articles: HashMap<Article, ArticleId>,
   dict: VocBuilder,
   pub has_errors: bool,
+  pub reporter: Option<std::sync::Arc<dyn Reporter>>,
 }
 
 #[derive(Debug, Default)]
@@ -207,10 +208,10 @@ impl VisitMut for RenameConstr<'_> {
 
 macro_rules! try_p {
   ($self:expr, $e:expr) => {
-    Accomodator::report_parse_err(&mut $self.has_errors, $e)
+    Accomodator::report_parse_err(&$self.reporter, &mut $self.has_errors, $e)
   };
-  ($self:expr, $pos:expr => $msg:expr, $e:expr) => {
-    Accomodator::report_missing_warning(&mut $self.has_errors, $self.article, $pos, $e, {
+  ($self:expr, $art:expr, $pos:expr => $msg:expr, $e:expr) => {
+    Accomodator::report_missing_warning(&$self.reporter, &mut $self.has_errors, $art, $pos, $e, {
       #[allow(unused)]
       use DirectiveKind::*;
       $msg
@@ -218,28 +219,41 @@ macro_rules! try_p {
   };
 }
 
+type Sink = Option<std::sync::Arc<dyn Reporter>>;
+
 impl Accomodator {
-  fn report_parse_err<T>(has_errors: &mut bool, val: PathResult<T>) -> Option<T> {
+  fn emit_to(reporter: &Sink, diag: crate::Diagnostic) {
+    match reporter {
+      Some(r) => r.emit(diag),
+      // No sink yet (only before `with_reader` installs one): don't lose the message.
+      None => eprintln!("error: {}", diag.title()),
+    }
+  }
+
+  fn emit(&self, diag: crate::Diagnostic) { Self::emit_to(&self.reporter, diag) }
+
+  fn report_parse_err<T>(reporter: &Sink, has_errors: &mut bool, val: PathResult<T>) -> Option<T> {
     match val {
       Ok(t) => Some(t),
       Err((path, e)) => {
-        e.report(&path);
+        Self::emit_to(reporter, e.to_diagnostic(&path));
         *has_errors = true;
         None
       }
     }
   }
   fn report_missing_warning<T>(
-    has_errors: &mut bool, art: Article, pos: Position, val: PathResult<T>, kind: DirectiveKind,
+    reporter: &Sink, has_errors: &mut bool, art: Article, pos: Span, val: PathResult<T>,
+    kind: DirectiveKind,
   ) -> Option<T> {
     match val {
       Ok(t) => Some(t),
       Err((path, ParseError::MissingFile)) => {
-        report_accom_warning(kind, path, art, pos);
+        Self::emit_to(reporter, accom_warning(kind, path, art, pos));
         None
       }
       Err((path, e)) => {
-        e.report(&path);
+        Self::emit_to(reporter, e.to_diagnostic(&path));
         *has_errors = true;
         None
       }
@@ -272,7 +286,8 @@ impl Accomodator {
           continue
         }
         Err(e) => {
-          e.report(crate::mml_vct_path().as_ref());
+          let p = std::path::PathBuf::from(crate::mml_vct_path());
+          self.emit(e.to_diagnostic(&p));
           self.has_errors = true;
           continue
         }
@@ -331,7 +346,7 @@ impl Accomodator {
     for &ArticleAt { pos, art } in &self.dirs.0[DirectiveKind::Constructors] {
       let mut dco = Default::default();
       let result = MizPath { art }.read_dco(false, &mut dco, true);
-      if try_p!(self, pos => Constructors, result).is_none() {
+      if try_p!(self, art, pos => Constructors, result).is_none() {
         continue
       }
       for &art2 in &dco.sig {
@@ -351,7 +366,7 @@ impl Accomodator {
   ) -> io::Result<()> {
     for &ArticleAt { pos, art } in &self.dirs.0[DirectiveKind::Requirements] {
       let mut dre = Default::default();
-      if try_p!(self, pos => Requirements, MizPath { art }.read_dre(&mut dre)).is_none() {
+      if try_p!(self, art, pos => Requirements, MizPath { art }.read_dre(&mut dre)).is_none() {
         continue
       }
       let len = self.sig.sig.len();
@@ -412,7 +427,7 @@ impl Accomodator {
       let dict_len = self.dict.voc.len();
       let mut dno = Default::default();
       let result = MizPath { art }.read_dno(false, &mut dno);
-      let Some(_) = try_p!(self, pos => Notations, result) else { continue };
+      let Some(_) = try_p!(self, art, pos => Notations, result) else { continue };
       let mut s_rename = RenameSymbol::default();
       for &(art, ref val) in &dno.vocs.0 {
         let i = self.dict.get_or_push(art, val);
@@ -516,7 +531,7 @@ impl Accomodator {
     for &ArticleAt { pos, art } in &self.dirs.0[kind] {
       let (mut sig, mut def) = Default::default();
       let result = MizPath { art }.read_def(false, &mut sig, &mut def);
-      let Some(_) = try_p!(self, pos => kind, result) else { continue };
+      let Some(_) = try_p!(self, art, pos => kind, result) else { continue };
       let len = self.sig.sig.len();
       let Some(mut rename) = try_p!(self, self.sig.rename(&sig, Some(ctx))) else { continue };
       for mut def in def {
@@ -541,7 +556,7 @@ impl Accomodator {
     for &ArticleAt { pos, art } in &self.dirs.0[DirectiveKind::Theorems] {
       let mut thms = Default::default();
       let result = MizPath { art }.read_the(false, &mut thms);
-      let Some(_) = try_p!(self, pos => Theorems, result) else { continue };
+      let Some(_) = try_p!(self, art, pos => Theorems, result) else { continue };
       let len = self.sig.sig.len();
       let Some(mut rename) = try_p!(self, self.sig.rename(&thms.sig, Some(ctx))) else { continue };
       let (mut thm_nr, mut def_nr) = <(ThmId, DefId)>::default();
@@ -590,7 +605,7 @@ impl Accomodator {
     for &ArticleAt { pos, art } in &self.dirs.0[DirectiveKind::Schemes] {
       let mut schs = Default::default();
       let result = MizPath { art }.read_sch(false, &mut schs);
-      let Some(_) = try_p!(self, pos => Schemes, result) else { continue };
+      let Some(_) = try_p!(self, art, pos => Schemes, result) else { continue };
       let len = self.sig.sig.len();
       let Some(mut rename) = try_p!(self, self.sig.rename(&schs.sig, Some(ctx))) else { continue };
       let mut sch_nr = SchId::default();

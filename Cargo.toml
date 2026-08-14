@@ -37,3 +37,4 @@ num_cpus = "1.15"
 serde = { version = "1.0", features = ["rc"] }
 serde_derive = "1.0"
 serde_json = { version = "1.0", features = ["unbounded_depth"] }
+annotate-snippets = "0.12"

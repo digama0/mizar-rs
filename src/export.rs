@@ -215,7 +215,7 @@ impl AccumConstructors {
 
 macro_rules! try_p {
   ($self:expr, $e:expr) => {
-    ok_parse_err(&mut $self.r.has_errors, $e)
+    ok_parse_err($self.r.g.reporter.clone(), &mut $self.r.has_errors, $e)
   };
 }
 macro_rules! assert_eq_nonempty {
@@ -225,11 +225,13 @@ macro_rules! assert_eq_nonempty {
     }
   };
 }
-fn ok_parse_err<T>(has_errors: &mut bool, val: PathResult<T>) -> Option<T> {
+fn ok_parse_err<T>(
+  reporter: std::sync::Arc<dyn crate::Reporter>, has_errors: &mut bool, val: PathResult<T>,
+) -> Option<T> {
   match val {
     Ok(t) => Some(t),
     Err((path, e)) => {
-      e.report(&path);
+      e.report(&*reporter, &path);
       *has_errors = true;
       None
     }

@@ -47,7 +47,7 @@ pub struct Reader {
   labels: IdxVec<LabelId, Option<usize>>,
   pending_defs: Vec<PendingDef>,
   pub def_map: HashMap<DefRef, DefiniensId>,
-  pub pos: Position,
+  pub pos: Span,
   pub progress: Option<ProgressBar>,
 }
 impl WithGlobalLocal for Reader {
@@ -61,15 +61,31 @@ impl MizPath {
     f: &mut dyn FnMut(&mut Reader, Option<&mut Parser<'_>>),
   ) -> io::Result<bool> {
     let mut accom = cfg.accom_enabled.then(Box::<Accomodator>::default);
-    let data;
+
+    // Read the article source up front, shared by the parser, the reporter (for
+    // source-snippet diagnostics), and the XML readers/writer (to translate the
+    // legacy `line:col` positions against it). The `.miz` parser requires it;
+    // other modes read it best-effort so translation still works when present.
+    let data: Option<Vec<u8>> = if cfg.parser_enabled && !cfg.json_parse_in {
+      Some(self.read_miz().unwrap())
+    } else {
+      self.read_miz().ok()
+    };
+    let source = data.as_deref().map(|b| String::from_utf8_lossy(b).into_owned());
+    let lines = data.as_deref().map(|b| std::sync::Arc::new(LineMap::new(b)));
+    let reporter: std::sync::Arc<dyn Reporter> = std::sync::Arc::new(WriteReporter::new(
+      self.to_path(true, false, "miz"),
+      source,
+      lines.clone(),
+    ));
+
     let mut parser = if cfg.parser_enabled {
-      let core = ParserCore::new(self.art, self.write_json(cfg.json_parse_out));
+      let core = ParserCore::new(self.art, self.write_json(cfg.json_parse_out), reporter.clone());
       if cfg.json_parse_in {
         let jv = self.read_miz_json().unwrap();
         Some(Box::new(Parser::Json(JsonParser::new(core, jv))))
       } else {
-        data = self.read_miz().unwrap();
-        Some(Box::new(Parser::Miz(MizParser::new(core, progress, &data))))
+        Some(Box::new(Parser::Miz(MizParser::new(core, progress, data.as_deref().unwrap()))))
       }
     } else {
       None
@@ -94,7 +110,7 @@ impl MizPath {
     };
 
     // Load_EnvConstructors
-    let mut v = Reader::new(cfg, progress.cloned(), accom, self.art);
+    let mut v = Reader::new(cfg, progress.cloned(), accom, self.art, reporter.clone(), lines);
     v.lc.attr_sort_bug = cfg.attr_sort_bug;
     v.lc.formatter.dump = cfg.dump.formatter;
     let old = v.lc.start_stash();
@@ -378,7 +394,9 @@ impl MizPath {
     f(&mut v, parser.as_deref_mut());
 
     LocalContext::end_stash(old);
-    Ok(v.has_errors)
+    // `has_errors` covers legacy report sites; the reporter covers those already
+    // migrated. Either flagging an error fails the file.
+    Ok(v.has_errors || v.g.reporter.errors() > 0)
   }
 }
 
@@ -394,10 +412,13 @@ pub struct Scope {
 impl Reader {
   pub fn new(
     cfg: &Config, progress: Option<ProgressBar>, accom: Option<Box<Accomodator>>, article: Article,
+    reporter: std::sync::Arc<dyn Reporter>, lines: Option<std::sync::Arc<LineMap>>,
   ) -> Self {
     Reader {
       g: Global {
         cfg: cfg.clone(),
+        reporter,
+        lines,
         reqs: Default::default(),
         constrs: Default::default(),
         clusters: Default::default(),
@@ -430,9 +451,7 @@ impl Reader {
     }
   }
 
-  pub fn err(&mut self, pos: Position, msg: MizError) {
-    self.has_errors |= msg.report(self.article, pos, &self.g, &self.lc);
-  }
+  pub fn err(&mut self, pos: Span, msg: MizError) { msg.report(pos, &self.g); }
 
   pub fn intern<'a, T: Clone + Visitable<InternConst<'a>>>(&'a self, t: &T) -> T {
     let mut t = t.clone();
@@ -536,7 +555,7 @@ impl Reader {
 
   /// Prepare
   pub fn run_checker(&mut self, path: &MizPath) {
-    let result = path.read_xml(|it| {
+    let result = path.read_xml(self.g.lines.clone(), |it| {
       assert!(matches!(
         it,
         Item::Auxiliary(_)
@@ -555,15 +574,15 @@ impl Reader {
       self.read_item(&it);
     });
     if let Err((path, e)) = result {
-      e.report(&path);
+      e.report(&*self.g.reporter, &path);
       self.has_errors = true;
     }
   }
 
-  pub fn set_pos(&mut self, pos: Position) {
+  pub fn set_pos(&mut self, pos: Span) {
     self.pos = pos;
     if let Some(progress) = &self.progress {
-      progress.set_position(pos.line.into())
+      progress.set_position(self.g.reporter.line(pos.start).into())
     }
   }
 
@@ -613,11 +632,12 @@ impl Reader {
       self.set_pos(pos);
     }
     if let Some(n) = self.g.cfg.first_verbose_line {
-      if self.pos.line > n && self.g.cfg.one_item {
+      let line = self.g.reporter.line(self.pos.start);
+      if line > n && self.g.cfg.one_item {
         eprintln!("exiting");
         std::process::exit(0)
       }
-      set_verbose(self.pos.line >= n);
+      set_verbose(line >= n);
     }
     if self.g.cfg.item_header {
       Self::item_header(self.g.cfg.always_verbose_item, it)

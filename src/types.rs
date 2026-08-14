@@ -621,10 +621,26 @@ impl<V, A: Visitable<V>, B: Visitable<V>> Visitable<V> for (A, B) {
 }
 
 /// This type alias is used to indicate that the term might have a Qua at the top level.
+/// An error value was encountered during a comparison. This is *not* "not equal": the
+/// comparison could not be performed at all.
+///
+/// A comparison which cannot be performed must poison rather than answer `false`. Neither
+/// the checker nor the analyzer is monotonic in information: in the checker a spurious
+/// `false` changes the shape of the structure the refutation runs over, and in the analyzer
+/// it can select a *different* notation or pattern rather than merely failing to match.
+///
+/// The cause was already reported where the error value was created, so an `ErrorValue`
+/// needs no diagnostic of its own.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ErrorValue;
+
 pub type TermQua = Term;
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum Term {
+  /// An error value: elaboration of a parser error node. Filtered out at the
+  /// item level before reaching the checker/writer (see notes/error-handling.md).
+  Error,
   /// Invariant: nr != 0. Zero is not a numeral (!),
   /// it is a `Functor` using Requirement::ZeroNumber
   Numeral(u32),
@@ -742,6 +758,8 @@ impl Term {
       Term::Fraenkel { .. } => 232,
       Term::Qua { .. } => 213,
       Term::It => 234,
+      // Value op: distinct discriminant so error terms sort/compare totally. Already reported.
+      Term::Error => 0,
     }
   }
 }
@@ -769,6 +787,7 @@ impl Type {
     match self.kind {
       TypeKind::Mode(_) => panic!("not a struct"),
       TypeKind::Struct(n) => n,
+      TypeKind::Error => unreachable!("error value in Type::struct_id"),
     }
   }
 }
@@ -779,6 +798,7 @@ impl<V: VisitMut> Visitable<V> for Type {
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TypeKind {
+  Error,
   Struct(StructId),
   Mode(ModeId),
 }
@@ -792,6 +812,7 @@ impl std::fmt::Debug for TypeKind {
     match *self {
       Self::Struct(n) => write!(f, "S{n:?}"),
       Self::Mode(n) => write!(f, "M{n:?}"),
+      Self::Error => write!(f, "Error"),
     }
   }
 }
@@ -809,12 +830,15 @@ impl TypeKind {
     match self {
       TypeKind::Mode(_) => b'M',
       TypeKind::Struct(_) => b'G',
+      // Value op: distinct discriminant so error types sort/compare totally. Already reported.
+      TypeKind::Error => 0,
     }
   }
 }
 
 #[derive(Clone, PartialEq, Eq, Default)]
 pub enum Formula {
+  Error,
   SchPred {
     nr: SchPredId,
     args: Box<[Term]>,
@@ -888,6 +912,8 @@ impl Formula {
       Formula::FlexAnd { .. } | Formula::LegacyFlexAnd { .. } => b'b',
       Formula::True => b'%',
       // Formula::Thesis => b'$',
+      // Value op: distinct discriminant so error formulas sort/compare totally. Already reported.
+      Formula::Error => 0,
     }
   }
 
@@ -1048,7 +1074,11 @@ impl serde::Serialize for Article {
 impl<'de> serde::Deserialize<'de> for Article {
   fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
   where D: serde::Deserializer<'de> {
-    Ok(Article::from_upper(<Cow<'_, str>>::deserialize(deserializer)?.as_bytes()).unwrap())
+    // A malformed `.miz.json` can carry an over-long or non-ASCII article name;
+    // surface it as a deserialize error (which `JsonParser::push_parse_item` reports
+    // and turns into an error item) rather than `unwrap`-panicking.
+    let s = <Cow<'_, str>>::deserialize(deserializer)?;
+    Article::from_upper(s.as_bytes()).map_err(serde::de::Error::custom)
   }
 }
 
@@ -1875,33 +1905,63 @@ impl<V: VisitMut> Visitable<V> for Libraries {
   }
 }
 
-#[derive(Copy, Clone, Default, Eq)]
-pub struct Position {
-  pub line: u32,
-  pub col: u32,
+/// A half-open byte-offset span `[start, end)` into an article's source text.
+/// `start == end` is a point location; [`Span::NONE`] marks an unknown/absent
+/// location (e.g. a synthesized node, or an imported position with no source).
+///
+/// Positions used to be `line:col` [`Position`]s; they are now byte offsets so
+/// the parser (which works in offsets) is authoritative and the reporter maps
+/// offsets to `line:col` against the source. See `notes/error-handling.md`.
+#[derive(Copy, Clone, Eq)]
+pub struct Span {
+  pub start: u32,
+  pub end: u32,
 }
 
-impl PartialEq for Position {
-  /// When used in export verification, we don't compare positions
+impl Span {
+  /// The unknown / absent span.
+  pub const NONE: Span = Span { start: u32::MAX, end: u32::MAX };
+
+  pub fn new(start: u32, end: u32) -> Self { Span { start, end } }
+
+  /// A zero-width span at a single byte offset.
+  pub fn at(offset: u32) -> Self { Span { start: offset, end: offset } }
+
+  pub fn is_none(&self) -> bool { self.start == u32::MAX }
+}
+
+impl Default for Span {
+  fn default() -> Self { Span::NONE }
+}
+
+impl PartialEq for Span {
+  /// Like [`Position`], spans compare equal so that structural comparisons
+  /// (notably export verification) ignore source locations.
   fn eq(&self, _: &Self) -> bool { true }
 }
 
-impl std::fmt::Debug for Position {
+impl std::fmt::Debug for Span {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "{}:{}", self.line, self.col)
+    if self.is_none() {
+      write!(f, "?")
+    } else if self.start == self.end {
+      write!(f, "@{}", self.start)
+    } else {
+      write!(f, "{}..{}", self.start, self.end)
+    }
   }
 }
-impl serde::Serialize for Position {
+impl serde::Serialize for Span {
   fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
   where S: serde::Serializer {
-    (self.line, self.col).serialize(serializer)
+    (self.start, self.end).serialize(serializer)
   }
 }
-impl<'de> serde::Deserialize<'de> for Position {
+impl<'de> serde::Deserialize<'de> for Span {
   fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
   where D: serde::Deserializer<'de> {
-    let (line, col) = <_>::deserialize(deserializer)?;
-    Ok(Position { line, col })
+    let (start, end) = <_>::deserialize(deserializer)?;
+    Ok(Span { start, end })
   }
 }
 
@@ -1934,14 +1994,14 @@ pub enum ReferenceKind {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Reference {
-  pub pos: Position,
+  pub pos: Span,
   pub kind: ReferenceKind,
 }
 
 #[derive(Debug)]
 pub struct Inference {
   pub kind: InferenceKind,
-  pub pos: Position,
+  pub pos: Span,
   pub refs: Vec<Reference>,
 }
 
@@ -1955,7 +2015,7 @@ pub struct Thesis {
 pub enum Justification {
   Simple(Inference),
   Proof {
-    pos: (Position, Position),
+    pos: (Span, Span),
     label: Option<LabelId>,
     thesis: Formula,
     items: Vec<(Item, Option<Thesis>)>,
@@ -2011,7 +2071,7 @@ pub struct JustifiedProperty {
 
 #[derive(Debug)]
 pub struct Definition {
-  pub pos: Position,
+  pub pos: Span,
   pub label: Option<LabelId>,
   pub redef: bool,
   pub kind: DefinitionKind,
@@ -2024,7 +2084,7 @@ pub struct Definition {
 
 #[derive(Debug)]
 pub struct DefStruct {
-  pub pos: Position,
+  pub pos: Span,
   pub constrs: Vec<ConstructorDef>,
   pub cl: ClusterDecl,
   pub patts: Vec<Pattern>,
@@ -2032,7 +2092,7 @@ pub struct DefStruct {
 
 #[derive(Clone)]
 pub struct Proposition {
-  pub pos: Position,
+  pub pos: Span,
   pub label: Option<LabelId>,
   pub f: Formula,
 }
@@ -2052,11 +2112,11 @@ impl<V: VisitMut> Visitable<V> for Proposition {
 #[derive(Debug)]
 pub enum Statement {
   Proposition { prop: Proposition, just: Justification },
-  IterEquality { start: Position, label: Option<LabelId>, lhs: Term, steps: Vec<(Term, Inference)> },
-  Now { pos: (Position, Position), label: Option<LabelId>, thesis: Formula, items: Box<[Item]> },
+  IterEquality { start: Span, label: Option<LabelId>, lhs: Term, steps: Vec<(Term, Inference)> },
+  Now { pos: (Span, Span), label: Option<LabelId>, thesis: Formula, items: Box<[Item]> },
 }
 impl Statement {
-  pub fn pos(&self) -> Position {
+  pub fn pos(&self) -> Span {
     match self {
       Statement::Proposition { prop, .. } => prop.pos,
       Statement::IterEquality { start, .. } => *start,
@@ -2106,7 +2166,7 @@ pub enum AuxiliaryItem {
   },
 }
 impl AuxiliaryItem {
-  pub fn pos(&self) -> Option<Position> {
+  pub fn pos(&self) -> Option<Span> {
     match self {
       AuxiliaryItem::Statement(stmt) => Some(stmt.pos()),
       AuxiliaryItem::Consider { prop, .. } => Some(prop.pos),
@@ -2197,7 +2257,7 @@ pub struct Correctness {
 
 #[derive(Debug)]
 pub struct SchemeBlock {
-  pub pos: (Position, Position),
+  pub pos: (Span, Span),
   pub nr: SchId,
   pub decls: Vec<SchemeDecl>,
   pub prems: Vec<Proposition>,
@@ -2230,7 +2290,7 @@ pub enum CaseKind {
 
 #[derive(Debug)]
 pub struct CaseBlock {
-  pub pos: (Position, Position),
+  pub pos: (Span, Span),
   pub block_thesis: Formula,
   pub cs: CaseKind,
   pub items: Vec<(Item, Option<Thesis>)>,
@@ -2239,7 +2299,7 @@ pub struct CaseBlock {
 
 #[derive(Debug)]
 pub struct PerCases {
-  pub pos: (Position, Position),
+  pub pos: (Span, Span),
   pub block_thesis: Formula,
   pub cases: Vec<CaseBlock>,
   pub prop: Proposition,
@@ -2307,13 +2367,13 @@ pub enum Item {
   Pattern(Pattern),
   Block {
     kind: BlockKind,
-    pos: (Position, Position),
+    pos: (Span, Span),
     items: Vec<Item>,
   },
 }
 
 impl Item {
-  pub fn pos(&self) -> Option<Position> {
+  pub fn pos(&self) -> Option<Span> {
     match self {
       Item::Given(it) => Some(it.prop.pos),
       Item::Thus(stmt) => Some(stmt.pos()),
@@ -2773,7 +2833,7 @@ impl<V: VisitMut> Visitable<V> for TheoremKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Theorem {
-  pub pos: Position,
+  pub pos: Span,
   pub kind: TheoremKind,
   pub stmt: Formula,
 }
@@ -2839,7 +2899,7 @@ impl DirectiveKind {
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct ArticleAt {
-  pub pos: Position,
+  pub pos: Span,
   pub art: Article,
 }
 

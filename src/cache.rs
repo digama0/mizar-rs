@@ -70,13 +70,22 @@ impl MizPath {
 
   fn get_cache_basic<A: Default + Clone, R, E>(
     &self, no: bool, args: &mut A, get: impl FnOnce(&Cache) -> &OnceCell<A>,
-    read: impl FnOnce(&mut A) -> Result<R, E>, result: impl FnOnce(&A) -> Result<R, E>,
+    read: impl FnOnce(&mut A) -> Result<R, E>, result: impl Fn(&A) -> Result<R, E>,
   ) -> Result<R, E> {
+    let result = &result;
     self.get_cache(
       no,
       args,
       get,
-      |a, _| read(a),
+      // `cached` = this read is populating the cache; the check then runs in `copy`.
+      move |a, cached| {
+        let r = read(a)?;
+        if cached {
+          Ok(r)
+        } else {
+          result(a)
+        }
+      },
       |a, _| std::mem::take(a),
       |a, t| {
         a.clone_from(t);

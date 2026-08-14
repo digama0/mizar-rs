@@ -2,7 +2,7 @@ use crate::accom::SigBuilder;
 use crate::ast::CaseKind;
 use crate::reader::DefiniensId;
 use crate::types::{self, *};
-use crate::{Global, LocalContext, MizPath};
+use crate::{Global, LineMap, LocalContext, MizPath};
 use enum_map::{Enum, EnumMap};
 use quick_xml::events::attributes::Attribute;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
@@ -15,6 +15,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{self, BufWriter, ErrorKind, Write};
 use std::rc::Rc;
+use std::sync::Arc;
 
 const INDENT: usize = 0;
 
@@ -25,6 +26,10 @@ struct MizWriter {
   depth: u32,
   lift: u32,
   shift: Vec<u32>,
+  /// Source line map, injected into each [`Elem`] so byte-offset spans can be
+  /// written as `line:col`. `None` for library writers (which never emit source
+  /// positions) and when the article source is unavailable.
+  lines: Option<Arc<LineMap>>,
 }
 
 impl MizPath {
@@ -32,7 +37,15 @@ impl MizPath {
     let w = BufWriter::new(self.create(mml, new_prel, ext)?);
     let mut w = quick_xml::Writer::new_with_indent(w, b' ', INDENT);
     w.write_event(Event::Decl(BytesDecl::new("1.0", None, None))).unwrap();
-    Ok(MizWriter { w, pending: None, depth: 0, lift: 0, two_clusters: false, shift: vec![] })
+    Ok(MizWriter {
+      w,
+      pending: None,
+      depth: 0,
+      lift: 0,
+      two_clusters: false,
+      shift: vec![],
+      lines: None,
+    })
   }
 
   pub fn write_dfr(&self, new_prel: bool, vocs: &Vocabularies, formats: &[Format]) {
@@ -414,7 +427,9 @@ impl WriteEsh {
   pub fn finish(self) { Self::finish_part(self.0) }
 }
 
-struct Elem(BytesStart<'static>);
+/// The second field is the source line map (shared from the writer), used to
+/// translate byte-offset [`Span`]s to the `line:col` the XML format uses.
+struct Elem(BytesStart<'static>, Option<Arc<LineMap>>);
 
 impl Elem {
   fn attr<'a>(&mut self, key: &[u8], value: impl Into<Cow<'a, [u8]>>) {
@@ -436,9 +451,19 @@ impl Elem {
     self.attr(key, value)
   }
 
-  fn pos(&mut self, pos: Position) {
-    self.attr_str(b"line", pos.line);
-    self.attr_str(b"col", pos.col);
+  /// Convert a byte offset to `line:col` for output, using the source line map
+  /// when available (else the raw offset as a degenerate fallback).
+  fn pos(&mut self, pos: Span) {
+    let Some(lines) = self.1.clone() else { return };
+    let (line, col) = lines.line_col(pos.start);
+    self.attr_str(b"line", line);
+    self.attr_str(b"col", col);
+    // Optional end position (backward-compatible extension of the XML format).
+    if !pos.is_none() && pos.end != pos.start {
+      let (eline, ecol) = lines.line_col(pos.end);
+      self.attr_str(b"posline", eline);
+      self.attr_str(b"poscol", ecol);
+    }
   }
 
   fn label(&mut self, label: Option<(LabelId, IdentId)>) {
@@ -447,7 +472,7 @@ impl Elem {
       self.vid(id)
     }
   }
-  fn pos_and_label(&mut self, pos: Position, label: Option<(LabelId, IdentId)>) {
+  fn pos_and_label(&mut self, pos: Span, label: Option<(LabelId, IdentId)>) {
     self.pos(pos);
     self.label(label)
   }
@@ -482,7 +507,7 @@ impl MizWriter {
 
   fn start(&mut self, tag: &'static str) -> &mut Elem {
     self.clear_pending();
-    self.pending.insert(Elem(BytesStart::new(tag)))
+    self.pending.insert(Elem(BytesStart::new(tag), self.lines.clone()))
   }
 
   fn finish(mut self) {
@@ -838,6 +863,7 @@ impl MizWriter {
       let (kind, n) = match ty.kind {
         TypeKind::Struct(n) => (b'G', n.0),
         TypeKind::Mode(n) => (b'M', n.0),
+        TypeKind::Error => todo!(),
       };
       w.attr(b"kind", &[kind][..]);
       w.attr_str(b"nr", n + 1);
@@ -914,6 +940,7 @@ impl MizWriter {
       | Term::FreeVar(_)
       | Term::Qua { .. }
       | Term::It => unreachable!(),
+      Term::Error => self.with0("ErrorTrm", |_| {}),
     }
   }
   fn write_terms(&mut self, lc: Option<&LocalContext>, tys: &[Term]) {
@@ -975,6 +1002,7 @@ impl MizWriter {
         w.write_formula(lc, expansion)
       }),
       Formula::True => self.with0("Verum", |_| {}),
+      Formula::Error => self.with0("ErrorFrm", |_| {}),
     }
   }
 
@@ -987,8 +1015,7 @@ impl MizWriter {
   }
 
   fn write_proposition(
-    &mut self, lc: Option<&LocalContext>, pos: Position, label: Option<(LabelId, IdentId)>,
-    f: &Formula,
+    &mut self, lc: Option<&LocalContext>, pos: Span, label: Option<(LabelId, IdentId)>, f: &Formula,
   ) {
     self.with("Proposition", |w| w.pos_and_label(pos, label), |w| w.write_formula(lc, f))
   }
@@ -1025,9 +1052,10 @@ trait ForeachConstructor: Copy {
 pub struct OWriteXml(Option<Box<WriteXml>>);
 
 impl MizPath {
-  pub fn write_xml(&self, write: bool) -> OWriteXml {
+  pub fn write_xml(&self, write: bool, lines: Option<Arc<LineMap>>) -> OWriteXml {
     OWriteXml(write.then(|| {
       let mut w = self.create_xml(true, false, "xml").unwrap();
+      w.lines = lines;
       w.two_clusters = true;
       w.xsl();
       let art = self.art.as_str().to_ascii_uppercase();
@@ -1175,7 +1203,7 @@ impl WriteXml {
     self.with(tag, |_| {}, body);
   }
 
-  pub fn end_pos(&mut self, pos: Position) {
+  pub fn end_pos(&mut self, pos: Span) {
     match self.state {
       State::SchemeBlock3 => self.state = State::SchemeBlock4,
       State::Block(kind) => self.state = State::EndBlock(kind),
@@ -1200,7 +1228,7 @@ impl WriteXml {
     self.w.write_formula(Some(lc), f)
   }
   pub fn write_proposition(
-    &mut self, lc: &LocalContext, pos: Position, label: Option<(LabelId, IdentId)>, f: &Formula,
+    &mut self, lc: &LocalContext, pos: Span, label: Option<(LabelId, IdentId)>, f: &Formula,
   ) {
     match self.state {
       State::SchemePremises | State::Assume(_) | State::InnerAssume | State::Case1(_, _) => {}
@@ -1297,8 +1325,8 @@ impl WriteXml {
 
   #[allow(clippy::type_complexity)]
   pub fn given(
-    &mut self, lc: &LocalContext, pos: Position, start: usize,
-    conds: &[(Position, Option<(LabelId, IdentId)>, Formula)], ex: &Formula,
+    &mut self, lc: &LocalContext, pos: Span, start: usize,
+    conds: &[(Span, Option<(LabelId, IdentId)>, Formula)], ex: &Formula,
   ) {
     let State::Block(kind) = self.state else { unreachable!() };
     self.state = State::InnerAssume;
@@ -1350,7 +1378,7 @@ impl WriteXml {
     self.w.with0("Unfolding", |w| w.write_references(refs))
   }
 
-  pub fn start_now(&mut self, pos: Position, label: Option<(LabelId, IdentId)>) {
+  pub fn start_now(&mut self, pos: Span, label: Option<(LabelId, IdentId)>) {
     let State::Block(kind) = self.state else { unreachable!("{:?}", self.state) };
     self.state = State::Block(BlockKind::Diffuse);
     self.stack.push(Stack::Now(kind));
@@ -1364,7 +1392,7 @@ impl WriteXml {
   }
 
   pub fn start_iter_equality(
-    &mut self, lc: &LocalContext, pos: Position, label: Option<(LabelId, IdentId)>, lhs: &Term,
+    &mut self, lc: &LocalContext, pos: Span, label: Option<(LabelId, IdentId)>, lhs: &Term,
   ) {
     let State::Block(kind) = self.state else { unreachable!() };
     self.state = State::IterEquality(kind);
@@ -1390,7 +1418,7 @@ impl WriteXml {
     self.end_tag("IterStep")
   }
 
-  pub fn start_cases(&mut self, pos: Position) {
+  pub fn start_cases(&mut self, pos: Span) {
     self.state = match self.state {
       State::Block(BlockKind::Proof) => State::PerCases0Proof,
       State::Block(kind @ BlockKind::Diffuse) => State::PerCases1(kind),
@@ -1407,7 +1435,7 @@ impl WriteXml {
     self.end_tag("PerCasesReasoning")
   }
 
-  pub fn start_cases_just(&mut self, lc: &LocalContext, pos: Position, f: &Formula) {
+  pub fn start_cases_just(&mut self, lc: &LocalContext, pos: Span, f: &Formula) {
     let State::PerCases1(diff) = self.state else { unreachable!() };
     self.state = State::PerCases2(diff);
     self.start_tag("PerCases");
@@ -1420,7 +1448,7 @@ impl WriteXml {
   }
 
   pub fn start_case(
-    &mut self, lc: &LocalContext, ck: CaseKind, pos: Position, thesis: Option<&Formula>,
+    &mut self, lc: &LocalContext, ck: CaseKind, pos: Span, thesis: Option<&Formula>,
   ) {
     let State::PerCases1(diff) = self.state else { unreachable!() };
     self.state = State::Case1(diff, ck);
@@ -1464,7 +1492,7 @@ impl WriteXml {
     self.w.newline()
   }
 
-  pub fn start_scheme(&mut self, pos: Position, nr: SchId, id: IdentId) {
+  pub fn start_scheme(&mut self, pos: Span, nr: SchId, id: IdentId) {
     assert!(matches!(self.state, State::Block(BlockKind::Top)));
     self.state = State::SchemeBlock1;
     let w = self.w.start("SchemeBlock");
@@ -1472,7 +1500,7 @@ impl WriteXml {
     w.attr_str(b"schemenr", nr.0 + 1);
     w.vid(id)
   }
-  pub fn end_scheme(&mut self, end: Position) {
+  pub fn end_scheme(&mut self, end: Span) {
     self.end_pos(end);
     assert!(matches!(self.state, State::SchemeBlock4));
     self.state = State::Block(BlockKind::Top);
@@ -1520,8 +1548,7 @@ impl WriteXml {
   }
 
   pub fn start_proof(
-    &mut self, lc: &LocalContext, pos: Position, label: Option<(LabelId, IdentId)>,
-    thesis: &Formula,
+    &mut self, lc: &LocalContext, pos: Span, label: Option<(LabelId, IdentId)>, thesis: &Formula,
   ) {
     assert!(matches!(self.state, State::Justification));
     self.state = State::Reasoning1;
@@ -1565,7 +1592,7 @@ impl WriteXml {
   }
 
   pub fn start_theorem(
-    &mut self, lc: &LocalContext, pos: Position, label: Option<(LabelId, IdentId)>, f: &Formula,
+    &mut self, lc: &LocalContext, pos: Span, label: Option<(LabelId, IdentId)>, f: &Formula,
   ) {
     assert!(matches!(self.state, State::Block(BlockKind::Top)));
     self.state = State::Block(BlockKind::Proof);
@@ -1609,7 +1636,7 @@ impl WriteXml {
   }
 
   pub fn start_consider(
-    &mut self, lc: &LocalContext, pos: Position, label: Option<(LabelId, IdentId)>, f: &Formula,
+    &mut self, lc: &LocalContext, pos: Span, label: Option<(LabelId, IdentId)>, f: &Formula,
   ) {
     let State::Block(kind) = self.state else { unreachable!() };
     self.state = State::Prop1(PropKind::Consider(kind));
@@ -1619,9 +1646,7 @@ impl WriteXml {
   #[allow(clippy::type_complexity)]
   pub fn end_consider<'a>(
     &mut self, lc: &mut LocalContext, start: usize,
-    mut assums: impl FnMut(
-      &mut LocalContext,
-    ) -> Option<(Position, Option<(LabelId, IdentId)>, &'a Formula)>,
+    mut assums: impl FnMut(&mut LocalContext) -> Option<(Span, Option<(LabelId, IdentId)>, &'a Formula)>,
   ) {
     let State::Prop2(PropKind::Consider(kind)) = self.state else { unreachable!() };
     for fv in &lc.fixed_var.0[start..] {
@@ -1652,7 +1677,7 @@ impl WriteXml {
     self.write_term(lc, tm);
   }
 
-  pub fn start_block(&mut self, kind: types::BlockKind, pos: Position) {
+  pub fn start_block(&mut self, kind: types::BlockKind, pos: Span) {
     assert!(matches!(self.state, State::Block(BlockKind::Top)));
     self.state = State::Block(BlockKind::Block);
     self.stack.push(Stack::Block(kind));
@@ -1673,8 +1698,8 @@ impl WriteXml {
   }
 
   pub fn write_defthm(
-    &mut self, lc: &LocalContext, kind: &ConstrKind, pos: Position,
-    label: Option<(LabelId, IdentId)>, f: &Formula,
+    &mut self, lc: &LocalContext, kind: &ConstrKind, pos: Span, label: Option<(LabelId, IdentId)>,
+    f: &Formula,
   ) {
     assert!(matches!(self.state, State::Block(BlockKind::Top)));
     let attrs = |w: &mut Elem| w.constr_kind(kind);
@@ -1682,7 +1707,7 @@ impl WriteXml {
   }
 
   pub fn start_def(
-    &mut self, kind: DefinitionKind, pos: Position, label: Option<Option<(LabelId, IdentId)>>,
+    &mut self, kind: DefinitionKind, pos: Span, label: Option<Option<(LabelId, IdentId)>>,
     redef: bool,
   ) {
     assert!(matches!(self.state, State::Block(BlockKind::Block)));
@@ -1712,7 +1737,7 @@ impl WriteXml {
     self.w.end_tag("Definition")
   }
 
-  pub fn start_struct_def(&mut self, pos: Position) {
+  pub fn start_struct_def(&mut self, pos: Span) {
     assert!(matches!(self.state, State::Block(BlockKind::Block)));
     self.state = State::StructDef1;
     let w = self.w.start("Definition");
@@ -1962,7 +1987,7 @@ impl WriteJson {
         let mut first = true;
         for ArticleAt { pos, art } in arts {
           JsonFormatter.begin_array_value(&mut self.w, std::mem::take(&mut first)).unwrap();
-          write!(self.w, "{{\"pos\":[{},{}],\"art\":\"{}\"}}", pos.line, pos.col, art).unwrap();
+          write!(self.w, "{{\"pos\":[{},{}],\"art\":\"{}\"}}", pos.start, pos.end, art).unwrap();
           JsonFormatter.end_array_value(&mut self.w).unwrap();
         }
         JsonFormatter.end_object_value(&mut self.w).unwrap();
@@ -2032,13 +2057,13 @@ impl OWriteMptJson {
 }
 
 impl WriteMptJson {
-  pub fn write<I: Idx>(&mut self, pos: Position, fmt: FormatId, pid: I) {
+  pub fn write<I: Idx>(&mut self, pos: Span, fmt: FormatId, pid: I) {
     JsonFormatter.begin_array_value(&mut self.w, std::mem::take(&mut self.state)).unwrap();
     write!(
       self.w,
       "\n{{\"pos\":[{},{}],\"fmt\":{},\"pid\":{}}}",
-      pos.line,
-      pos.col,
+      pos.start,
+      pos.end,
       fmt.into_usize(),
       pid.into_usize()
     )

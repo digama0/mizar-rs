@@ -32,7 +32,7 @@ enum ArticleElem {
   Proposition(Proposition),
   CaseBlock(CaseBlock),
   Case(CaseKind),
-  EndPosition(Position),
+  EndPosition(Span),
   Other,
   End,
 }
@@ -108,7 +108,7 @@ impl ArticleParser<'_> {
   }
 
   #[allow(clippy::type_complexity)]
-  fn parse_reasoning(&mut self, diffuse: bool) -> Result<(Vec<(Item, Option<Thesis>)>, Position)> {
+  fn parse_reasoning(&mut self, diffuse: bool) -> Result<(Vec<(Item, Option<Thesis>)>, Span)> {
     let mut items = vec![];
     let end = loop {
       let e = self.parse_elem()?;
@@ -212,7 +212,7 @@ impl ArticleParser<'_> {
     })
   }
 
-  fn parse_end_pos(&mut self) -> Result<Position> {
+  fn parse_end_pos(&mut self) -> Result<Span> {
     let ArticleElem::EndPosition(pos) = self.parse_elem()? else {
       panic!("expected <EndPosition>")
     };
@@ -249,7 +249,7 @@ impl ArticleParser<'_> {
     })
   }
 
-  fn parse_case_block(&mut self, (start, label): (Position, Option<LabelId>)) -> Result<CaseBlock> {
+  fn parse_case_block(&mut self, (start, label): (Span, Option<LabelId>)) -> Result<CaseBlock> {
     assert!(label.is_none());
     let mut block_thesis = None;
     let cs = loop {

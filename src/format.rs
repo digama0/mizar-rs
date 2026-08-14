@@ -457,6 +457,7 @@ impl<'a> Pretty<'a> {
         self.parens_if(prec, doc)
       }
       Term::It => self.text("it"),
+      Term::Error => self.text("<error>"),
     }
   }
 
@@ -551,6 +552,8 @@ impl<'a> Pretty<'a> {
             ovis = (!self.cfg.show_invisible || vis.len() == ty.args.len()).then_some(&**vis);
             s = Some(sym)
           },
+        // Leave `s = None`; the Debug of `TypeKind::Error` prints "Error" below.
+        TypeKind::Error => {}
       }
     }
     let doc = if self.cfg.both_clusters {
@@ -575,6 +578,7 @@ impl<'a> Pretty<'a> {
         let of = match ty.kind {
           TypeKind::Mode(_) => " of ",
           TypeKind::Struct(_) => " over ",
+          TypeKind::Error => " of ",
         };
         doc.append(of).append(self.parens_if(n != 1, self.terms(ovis, &ty.args, vars, depth, lift)))
       }
@@ -699,6 +703,7 @@ impl<'a> Pretty<'a> {
         self.parens_if(prec, doc.group())
       }
       (false, _) => self.text("¬").append(self.formula(true, true, fmla, vars, depth, lift)),
+      (_, Formula::Error) => self.text("<error>"),
     }
   }
 }

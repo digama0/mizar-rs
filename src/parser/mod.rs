@@ -1,15 +1,16 @@
 use crate::parser::article::ArticleParser;
 use crate::types::*;
-use crate::{CmpStyle, MizPath, OnVarMut, RequirementIndexes, VisitMut};
+use crate::{CmpStyle, LineMap, MizPath, OnVarMut, RequirementIndexes, VisitMut};
 use enum_map::Enum;
 use quick_xml::events::{BytesStart, Event};
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::result::Result as StdResult;
 use std::str::FromStr;
+use std::sync::Arc;
 
 mod article;
 mod core;
@@ -19,7 +20,7 @@ mod msm;
 
 pub use core::{Parser, ParserCore};
 pub use json::JsonParser;
-pub use miz::MizParser;
+pub use miz::{MizParser, ParseErr};
 pub use msm::MsmParser;
 
 impl MizPath {
@@ -284,20 +285,12 @@ pub fn catch_missing<T>(result: PathResult<T>) -> PathResult<Option<T>> {
   }
 }
 
-pub fn try_to_line_col(path: &Path, pos: usize) -> io::Result<(usize, usize)> {
-  let mut file = File::open(path)?;
-  let mut buf = vec![0; pos];
-  file.read_exact(&mut buf)?;
-  let mut buf = &*buf;
-  let mut lines = 0;
-  while let Some(i) = memchr::memchr(b'\n', buf) {
-    buf = &buf[i + 1..];
-    lines += 1;
-  }
-  Ok((lines, buf.len()))
-}
-
-struct XmlReader(quick_xml::Reader<BufReader<File>>);
+/// The second field is the line map of the current article's `.miz` source,
+/// used to translate the legacy `line:col` positions in the XML back into
+/// byte-offset [`Span`]s. `None` when the source is unavailable, in which case
+/// positions become [`Span::NONE`]. TODO(spans): thread the source through the
+/// secondary (`-P`/`-c`) read paths so this is populated.
+struct XmlReader(quick_xml::Reader<BufReader<File>>, Option<Arc<LineMap>>);
 
 impl XmlReader {
   fn new(file: File, buf: &mut Vec<u8>) -> Result<Self> {
@@ -306,7 +299,7 @@ impl XmlReader {
     r.expand_empty_elements(true);
     r.check_end_names(true);
     assert!(matches!(r.read_event_into(buf)?, Event::Decl(_)));
-    Ok(Self(r))
+    Ok(Self(r, None))
   }
 
   fn set_pos(&self, e: &mut ParseError) {
@@ -395,31 +388,41 @@ impl XmlReader {
     println!("{}", std::str::from_utf8(&out[..1024]).unwrap());
   }
 
-  fn get_pos(&mut self, e: &BytesStart<'_>) -> Result<Position> {
-    let mut pos = Position::default();
+  /// Translate a legacy `line:col` (with optional `posline:poscol` end) into a
+  /// byte-offset [`Span`], or [`Span::NONE`] if no source line map is loaded.
+  fn to_span(&self, start: (u32, u32), end: (u32, u32)) -> Span {
+    self.1.as_ref().map_or(Span::NONE, |lines| lines.span(start, end))
+  }
+
+  fn get_pos(&mut self, e: &BytesStart<'_>) -> Result<Span> {
+    let (mut start, mut end) = ((0, 0), (0, 0));
     for attr in e.attributes() {
       let attr = attr?;
       match attr.key.0 {
-        b"line" => pos.line = self.get_attr(&attr.value)?,
-        b"col" => pos.col = self.get_attr(&attr.value)?,
+        b"line" => start.0 = self.get_attr(&attr.value)?,
+        b"col" => start.1 = self.get_attr(&attr.value)?,
+        b"posline" => end.0 = self.get_attr(&attr.value)?,
+        b"poscol" => end.1 = self.get_attr(&attr.value)?,
         _ => {}
       }
     }
-    Ok(pos)
+    Ok(self.to_span(start, end))
   }
 
-  fn get_pos_and_label(&mut self, e: &BytesStart<'_>) -> Result<(Position, Option<LabelId>)> {
-    let (mut pos, mut nr) = (Position::default(), 0u32);
+  fn get_pos_and_label(&mut self, e: &BytesStart<'_>) -> Result<(Span, Option<LabelId>)> {
+    let (mut start, mut end, mut nr) = ((0, 0), (0, 0), 0u32);
     for attr in e.attributes() {
       let attr = attr?;
       match attr.key.0 {
-        b"line" => pos.line = self.get_attr(&attr.value)?,
-        b"col" => pos.col = self.get_attr(&attr.value)?,
+        b"line" => start.0 = self.get_attr(&attr.value)?,
+        b"col" => start.1 = self.get_attr(&attr.value)?,
+        b"posline" => end.0 = self.get_attr(&attr.value)?,
+        b"poscol" => end.1 = self.get_attr(&attr.value)?,
         b"nr" => nr = self.get_attr(&attr.value)?,
         _ => {}
       }
     }
-    Ok((pos, nr.checked_sub(1).map(LabelId)))
+    Ok((self.to_span(start, end), nr.checked_sub(1).map(LabelId)))
   }
 
   fn parse_loci(&mut self, buf: &mut Vec<u8>) -> Result<Box<[LocusId]>> {
@@ -862,7 +865,7 @@ impl MizPath {
             },
             _ => panic!("unknown theorem kind"),
           };
-          thms.thm.push(Theorem { pos: Position::default(), kind, stmt });
+          thms.thm.push(Theorem { pos: Span::default(), kind, stmt });
         }
         r.eof(buf)
       })
@@ -933,9 +936,10 @@ impl MizPath {
     })
   }
 
-  pub fn read_xml(&self, mut f: impl FnMut(Item)) -> PathResult<()> {
+  pub fn read_xml(&self, lines: Option<Arc<LineMap>>, mut f: impl FnMut(Item)) -> PathResult<()> {
     with_open0(self.to_path(true, false, "xml"), |file| {
       let (mut r, mut buf) = MizReader::new(file, MaybeMut::None, true)?;
+      r.r.1 = lines;
       r.read_pi(&mut buf)?;
       r.read_start(&mut buf, Some("Article"))?;
       let mut p = ArticleParser { r, buf };
@@ -1887,7 +1891,7 @@ impl TryFrom<Elem> for Type {
 }
 impl TryFrom<Elem> for Term {
   type Error = ();
-  fn try_from(e: Elem) -> StdResult<Term, Self::Error> {
+  fn try_from(e: Elem) -> StdResult<Term, ()> {
     match e {
       Elem::Term(v) => Ok(v),
       _ => Err(()),
@@ -1896,7 +1900,7 @@ impl TryFrom<Elem> for Term {
 }
 impl TryFrom<Elem> for Formula {
   type Error = ();
-  fn try_from(e: Elem) -> StdResult<Formula, Self::Error> {
+  fn try_from(e: Elem) -> StdResult<Formula, ()> {
     match e {
       Elem::Formula(v) => Ok(v),
       _ => Err(()),

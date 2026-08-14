@@ -2,14 +2,15 @@ use crate::ast::{SchRef, *};
 use crate::parser::core::ParserCore;
 use crate::types::{
   Article, ArticleAt, BlockKind, CorrCondKind, DefId, DirectiveKind, Directives, Format,
-  FormatFunc, FuncSymId, LeftBrkSymId, LocusId, ModeSymId, Position, PredSymId, PriorityKind,
-  PropertyKind, RightBrkSymId, SchId, StructSymId, SymbolKind, Symbols, ThmId,
+  FormatFunc, FuncSymId, LeftBrkSymId, LocusId, ModeSymId, PredSymId, PriorityKind, PropertyKind,
+  RightBrkSymId, SchId, Span, StructSymId, SymbolKind, Symbols, ThmId,
 };
-use crate::READ_MAX_LINE_COUNT;
+use crate::{Reporter, READ_MAX_LINE_COUNT};
 use enum_map::Enum;
 use indicatif::ProgressBar;
 use radix_trie::{Trie, TrieCommon};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 macro_rules! mk_keywords {
   ($($id:ident: $lit:expr,)*) => {
@@ -122,6 +123,301 @@ mk_keywords! {
   With: b"with",
 }
 
+// --- parser error vocabulary (defined here in the error-infrastructure commit; unused
+// until the parser module is migrated to produce/report these) ---
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DiagClass {
+  Syntax,
+  Validation,
+}
+
+/// How many syntax diagnostics may pile up at one offset before we call it a
+/// non-advancing recovery loop. Genuine alternation produces two or three (one per
+/// failed alternative); the runaway that motivated this check produced tens of
+/// thousands.
+#[cfg(debug_assertions)]
+const MAX_SYNTAX_REPEAT: u32 = 16;
+
+/// A syntax or well-formedness error from the `.miz` parser.
+///
+/// Call sites pick a variant and supply its interpolants; they never write a
+/// message or a code. [`ParseErr::format`] renders the message and
+/// [`ParseErr::code`] supplies the legacy Mizar number for `.err` output.
+///
+/// Not to be confused with [`crate::parser::ParseError`], which covers malformed
+/// *XML* (dependency files and pre-accommodated artifacts).
+#[derive(Debug)]
+pub enum ParseErr {
+  // --- syntax: reported at the token the parser is stuck on ---
+  /// A specific token was required. `what` is the rendered expectation.
+  Expected(ExpectedTok),
+  ExpectedIdent,
+  ExpectedLabel,
+  ExpectedNumeral,
+  ExpectedNonzeroNumeral,
+  ExpectedPlaceholderIndex,
+  ExpectedType,
+  ExpectedAttribute,
+  ExpectedFunctorSymbol,
+  ExpectedPredicateSymbol,
+  ExpectedFunctorOrPredicateSymbol,
+  ExpectedAttrSymbol,
+  ExpectedStructSymbol,
+  ExpectedSelectorSymbol,
+  ExpectedRightBracket,
+  ExpectedCommaOrSemicolon,
+  ExpectedBegin,
+  ExpectedHolds,
+  ExpectedPatternStart,
+  ExpectedRedefKind,
+  ExpectedArrowOrFor,
+  ExpectedCaseOrSuppose,
+  /// A symbol that exists in the vocabulary but has no format declared at this
+  /// arity, so the parser cannot tell how many arguments to read.
+  UnknownFormat(PatKind),
+  MixedCaseSuppose,
+  InvalidArticleName,
+
+  // --- validation: reported at the head of the construct being judged ---
+  BadInfixExpression,
+  LinkNotAllowed,
+  NoCases,
+  ExpectedPattern(PatKind),
+  PatternTypeMismatch,
+  AntonymNotAllowed,
+  UnsupportedIdentification,
+  IllegalPropertyRegistration(PropertyKind),
+  /// An article referenced without the corresponding environment directive.
+  ArticleNotFound {
+    spelling: String,
+    directive: &'static str,
+  },
+  /// A functor/predicate application or pattern with more than 255 arguments on one
+  /// side (the argument count is stored in a `u8`).
+  TooManyArgs,
+}
+
+/// The kind of pattern a definition/notation item required.
+#[derive(Copy, Clone, Debug)]
+pub enum PatKind {
+  Mode,
+  Attr,
+  Func,
+  Pred,
+  Struct,
+}
+
+impl PatKind {
+  fn name(self) -> &'static str {
+    match self {
+      PatKind::Mode => "mode",
+      PatKind::Attr => "attr",
+      PatKind::Func => "func",
+      PatKind::Pred => "pred",
+      PatKind::Struct => "structure",
+    }
+  }
+}
+
+/// A token expectation, carrying enough structure for [`ParseErr::code`] to pick
+/// the matching legacy code without exposing the parser's `TokenKind`.
+#[derive(Debug)]
+pub enum ExpectedTok {
+  Semicolon,
+  Of,
+  For,
+  Is,
+  St,
+  As,
+  Means,
+  Proof,
+  That,
+  Such,
+  RightParen,
+  RightSquare,
+  RightCurly,
+  /// Anything else, rendered from the token kind's `Debug`.
+  Other(String),
+}
+
+impl ExpectedTok {
+  fn name(&self) -> &str {
+    match self {
+      ExpectedTok::Semicolon => "';'",
+      ExpectedTok::Of => "'of'",
+      ExpectedTok::For => "'for'",
+      ExpectedTok::Is => "'is'",
+      ExpectedTok::St => "'st'",
+      ExpectedTok::As => "'as'",
+      ExpectedTok::Means => "'means'",
+      ExpectedTok::Proof => "'proof'",
+      ExpectedTok::That => "'that'",
+      ExpectedTok::Such => "'such'",
+      ExpectedTok::RightParen => "')'",
+      ExpectedTok::RightSquare => "']'",
+      ExpectedTok::RightCurly => "'}'",
+      ExpectedTok::Other(s) => s,
+    }
+  }
+
+  /// The legacy `pa*Exp` code for this expectation.
+  fn code(&self) -> Option<u32> {
+    Some(match self {
+      ExpectedTok::Semicolon => 330, // Unexpected end of an item (perhaps ";" missing) // approximate
+      ExpectedTok::Of => 256,        // "of" expected
+      ExpectedTok::For => 382,       // "for" expected
+      ExpectedTok::Is => 383,        // "is" expected
+      ExpectedTok::St => 387,        // "st" expected
+      ExpectedTok::As => 388,        // "as" expected
+      ExpectedTok::Means => 386,     // "means" or "equals" expected // approximate
+      ExpectedTok::Proof => 389,     // "proof" expected
+      ExpectedTok::That => 350,      // "that" expected
+      ExpectedTok::Such => 403,      // "such" expected
+      ExpectedTok::RightParen => 370, // ")" expected
+      ExpectedTok::RightSquare => 371, // "]" expected
+      ExpectedTok::RightCurly => 372, // "}" expected
+      ExpectedTok::Other(_) => return None,
+    })
+  }
+}
+
+impl ParseErr {
+  /// See [`DiagClass`]. Derived from the variant, so it cannot drift from the
+  /// position a call site actually passes.
+  pub fn class(&self) -> DiagClass {
+    match self {
+      ParseErr::BadInfixExpression
+      | ParseErr::LinkNotAllowed
+      | ParseErr::NoCases
+      | ParseErr::ExpectedPattern(_)
+      | ParseErr::PatternTypeMismatch
+      | ParseErr::AntonymNotAllowed
+      | ParseErr::UnsupportedIdentification
+      | ParseErr::IllegalPropertyRegistration(_)
+      | ParseErr::UnknownFormat(_)
+      | ParseErr::ArticleNotFound { .. } => DiagClass::Validation,
+      _ => DiagClass::Syntax,
+    }
+  }
+
+  /// The legacy Mizar error number from `mizar.msg`, where one corresponds.
+  ///
+  /// Named after the constant in the Pascal parser (`base/parser.pas:27-148`).
+  /// Many-to-one is expected: Mizar itself names each *site*
+  /// (`paIdentExp1`..`paIdentExp13`) but collapses them onto one code (300).
+  /// `None` means we report something Mizar has no code for.
+  pub fn code(&self) -> Option<u32> {
+    Some(match self {
+      ParseErr::Expected(e) => return e.code(),
+      ParseErr::ExpectedIdent => 300,   // Identifier expected
+      ParseErr::ExpectedLabel => 300,   // Identifier expected // approximate
+      ParseErr::ExpectedNumeral => 307, // Numeral expected
+      ParseErr::ExpectedPlaceholderIndex => 307, // Numeral expected // approximate
+      ParseErr::ExpectedNonzeroNumeral => 146, // Theorem number must be > 0 // approximate
+      ParseErr::ExpectedType => 398,    // Type expected
+      ParseErr::ExpectedAttribute => 306, // Attribute symbol expected // approximate
+      ParseErr::ExpectedAttrSymbol => 306, // Attribute symbol expected
+      ParseErr::ExpectedFunctorSymbol => 302, // Functor symbol expected
+      ParseErr::ExpectedPredicateSymbol => 301, // Predicate symbol expected
+      ParseErr::ExpectedFunctorOrPredicateSymbol => 314, // Incorrect beginning of a pattern // approximate
+      ParseErr::ExpectedStructSymbol => 304,             // Structure symbol expected
+      ParseErr::ExpectedSelectorSymbol => 305,           // Selector symbol expected
+      ParseErr::ExpectedRightBracket => 311, // Paired functor brackets must be of the same kind // approximate
+      ParseErr::ExpectedCommaOrSemicolon => 330, // Unexpected end of an item // approximate
+      ParseErr::ExpectedBegin => 213,        // "begin" missing
+      ParseErr::ExpectedHolds => 340,        // "holds", "for" or "ex" expected // approximate
+      ParseErr::ExpectedPatternStart => 314, // Incorrect beginning of a pattern
+      ParseErr::ExpectedRedefKind => 314,    // Incorrect beginning of a pattern // approximate
+      ParseErr::ExpectedArrowOrFor => 406,   // "for" or "->" expected
+      ParseErr::ExpectedCaseOrSuppose => 232, // "case" or "suppose" expected
+      ParseErr::UnknownFormat(k) => match k {
+        PatKind::Mode => 151,   // Unknown mode format
+        PatKind::Pred => 153,   // Unknown predicate format
+        PatKind::Func => 165,   // Unknown functor format
+        PatKind::Attr => 175,   // Unknown attribute format
+        PatKind::Struct => 176, // Unknown structure format
+      },
+      ParseErr::MixedCaseSuppose => 58, // Mixing "case" with "suppose" is not allowed ...
+      ParseErr::InvalidArticleName => 391, // Incorrect beginning of a text item // approximate
+      ParseErr::BadInfixExpression => 397, // Term expected // approximate
+      ParseErr::LinkNotAllowed => 164,  // Nothing to link // approximate
+      ParseErr::NoCases => 351,         // "cases" expected // approximate
+      ParseErr::ExpectedPattern(_) => 314, // Incorrect beginning of a pattern // approximate
+      ParseErr::PatternTypeMismatch => 273, // "redefine" is not allowed here // approximate
+      ParseErr::AntonymNotAllowed => 198, // It is meaningless to define an antonym to a functor or a mode
+      ParseErr::UnsupportedIdentification => 400, // Still not implemented // approximate
+      ParseErr::IllegalPropertyRegistration(_) => 400, // Still not implemented // approximate
+      ParseErr::ArticleNotFound { .. } => 191, // Check if scheme is in "schemes" ... // approximate
+      ParseErr::TooManyArgs => return None, // no legacy counterpart (a u8-arity limit)
+    })
+  }
+
+  /// The human-readable message.
+  pub fn format(&self) -> String {
+    match self {
+      ParseErr::Expected(e) => format!("expected {}", e.name()),
+      ParseErr::ExpectedIdent => "expected identifier".to_string(),
+      ParseErr::ExpectedLabel => "expected label".to_string(),
+      ParseErr::ExpectedNumeral => "expected numeral".to_string(),
+      ParseErr::ExpectedNonzeroNumeral => "expected nonzero numeral".to_string(),
+      ParseErr::ExpectedPlaceholderIndex =>
+        "expected a placeholder index like '$1' or '$2'".to_string(),
+      ParseErr::ExpectedType => "expected type".to_string(),
+      ParseErr::ExpectedAttribute => "expected attribute".to_string(),
+      ParseErr::ExpectedFunctorSymbol => "expected functor symbol".to_string(),
+      ParseErr::ExpectedPredicateSymbol => "expected predicate symbol".to_string(),
+      ParseErr::ExpectedFunctorOrPredicateSymbol =>
+        "expected functor or predicate symbol".to_string(),
+      ParseErr::ExpectedAttrSymbol => "expected an attribute symbol".to_string(),
+      ParseErr::ExpectedStructSymbol => "expected a structure symbol".to_string(),
+      ParseErr::ExpectedSelectorSymbol => "expected a selector symbol".to_string(),
+      ParseErr::ExpectedRightBracket => "expected a closing bracket symbol".to_string(),
+      ParseErr::ExpectedCommaOrSemicolon => "expected ',' or ';'".to_string(),
+      ParseErr::ExpectedBegin => "expected 'begin' to start the text proper".to_string(),
+      ParseErr::ExpectedHolds => "expected 'holds' after the quantifier".to_string(),
+      ParseErr::ExpectedPatternStart =>
+        "expected the start of a pattern: ',', '[', or '{'".to_string(),
+      ParseErr::ExpectedRedefKind =>
+        "expected the kind being redefined: 'mode', 'attr', 'func', or 'pred'".to_string(),
+      ParseErr::ExpectedArrowOrFor => "expected '->' or 'for'".to_string(),
+      ParseErr::ExpectedCaseOrSuppose => "expected 'case' or 'suppose'".to_string(),
+      ParseErr::UnknownFormat(k) =>
+        format!("no {} notation with this symbol and argument count has been declared", k.name()),
+      ParseErr::MixedCaseSuppose =>
+        "a 'per cases' block cannot mix 'case' and 'suppose'; use one or the other".to_string(),
+      ParseErr::InvalidArticleName => "not a valid article name".to_string(),
+      ParseErr::BadInfixExpression =>
+        "could not parse this expression: the symbols do not form a valid term (check the \
+         notation and bracketing)"
+          .to_string(),
+      ParseErr::LinkNotAllowed =>
+        "'then' cannot appear here: it must follow a statement in the same reasoning".to_string(),
+      ParseErr::NoCases =>
+        "a 'per cases' block must contain at least one 'case' or 'suppose'".to_string(),
+      ParseErr::ExpectedPattern(k) => format!("expected a {} pattern here", k.name()),
+      ParseErr::PatternTypeMismatch =>
+        "the two sides are different kinds of pattern (e.g. a functor and a predicate)".to_string(),
+      ParseErr::AntonymNotAllowed =>
+        "'antonym' can only be declared for a predicate or attribute, not a functor or mode"
+          .to_string(),
+      ParseErr::UnsupportedIdentification =>
+        "'identify' is only supported between two functor patterns".to_string(),
+      ParseErr::IllegalPropertyRegistration(prop) =>
+        format!("the {prop:?} property cannot be registered on its own here"),
+      ParseErr::ArticleNotFound { spelling, directive } => format!(
+        "no imported article named '{spelling}'; did you forget to list it in your \
+         '{directive}' directive?"
+      ),
+      ParseErr::TooManyArgs =>
+        "too many arguments here: at most 255 are allowed on one side".to_string(),
+    }
+  }
+}
+
+impl std::fmt::Display for ParseErr {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str(&self.format()) }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TokenKind {
   Pragma,
@@ -155,19 +451,19 @@ impl TokenKind {
 #[derive(Clone, Copy, Debug)]
 struct Token<'a> {
   spelling: &'a str,
-  pos: Position,
+  pos: Span,
   kind: TokenKind,
 }
 
 impl<'a> Token<'a> {
-  fn end(&self) -> Position {
-    Position { line: self.pos.line, col: self.pos.col + self.spelling.len() as u32 }
-  }
+  /// A zero-width span at the byte offset just past this token.
+  fn end(&self) -> Span { Span::at(self.pos.end) }
 }
 
 struct Scanner<'a> {
   data: &'a [u8],
-  line: u32,
+  /// Byte offset of the start of the current line, used to detect `::$` pragmas
+  /// (which must begin a line).
   line_start: usize,
   pos: usize,
   allow_underscore: bool,
@@ -175,10 +471,11 @@ struct Scanner<'a> {
   tokens: Trie<Vec<u8>, TokenKind>,
   lookahead: Option<Token<'a>>,
   lookahead2: Option<Token<'a>>,
+  reporter: Arc<dyn Reporter>,
 }
 
 impl<'a> Scanner<'a> {
-  fn new(data: &'a [u8], progress: Option<&ProgressBar>) -> Self {
+  fn new(data: &'a [u8], progress: Option<&ProgressBar>, reporter: Arc<dyn Reporter>) -> Self {
     let mut tokens = Trie::default();
     let mut push1 = |cc: &[u8], kind| assert!(tokens.insert(cc.to_owned(), kind).is_none());
     push1(b"$", TokenKind::Dollar(0));
@@ -204,7 +501,6 @@ impl<'a> Scanner<'a> {
     }
     Self {
       data,
-      line: 1,
       line_start: 0,
       pos: 0,
       phrase_end: None,
@@ -212,12 +508,12 @@ impl<'a> Scanner<'a> {
       tokens,
       lookahead: None,
       lookahead2: None,
+      reporter,
     }
   }
 
-  fn pos(&self) -> Position {
-    Position { line: self.line, col: (self.pos - self.line_start) as u32 + 1 }
-  }
+  /// The current byte offset.
+  fn pos(&self) -> u32 { self.pos as u32 }
 
   fn undo(&mut self, tok: Token<'a>) {
     // vprintln!("undo <- {tok:?}, {:?}, {:?}", self.lookahead, self.lookahead2);
@@ -294,11 +590,11 @@ impl<'a> Scanner<'a> {
         if tok_end == end {
           self.phrase_end = None;
         }
-        return Token { spelling, pos, kind }
+        return Token { spelling, pos: Span::new(pos, self.pos as u32), kind }
       }
       loop {
         let Some(&c) = self.data.get(self.pos) else {
-          return Token { spelling: "", pos: self.pos(), kind: TokenKind::Eof }
+          return Token { spelling: "", pos: Span::at(self.pos()), kind: TokenKind::Eof }
         };
         if c == b' ' {
           self.pos += 1;
@@ -306,7 +602,6 @@ impl<'a> Scanner<'a> {
         }
         if c == b'\n' {
           self.pos += 1;
-          self.line += 1;
           self.line_start = self.pos;
           continue
         }
@@ -317,7 +612,6 @@ impl<'a> Scanner<'a> {
             self.pos += 3;
             let spelling = if let Some(len) = memchr::memchr(b'\n', &self.data[self.pos..]) {
               self.pos += len + 1;
-              self.line += 1;
               self.line_start = self.pos;
               &self.data[start..][..len + 3]
             } else {
@@ -325,14 +619,13 @@ impl<'a> Scanner<'a> {
               &self.data[start..]
             };
             let spelling = std::str::from_utf8(spelling).unwrap();
-            return Token { spelling, pos, kind: TokenKind::Pragma }
+            return Token { spelling, pos: Span::new(pos, self.pos as u32), kind: TokenKind::Pragma }
           }
           self.pos += 2;
           match memchr::memchr(b'\n', &self.data[self.pos..]) {
             Some(x) => self.pos += x + 1,
             None => self.pos = self.data.len(),
           }
-          self.line += 1;
           self.line_start = self.pos;
           continue
         }
@@ -381,8 +674,8 @@ pub struct MizParser<'a> {
 impl<'a> MizParser<'a> {
   pub fn new(core: ParserCore, progress: Option<&ProgressBar>, data: &'a [u8]) -> Self {
     Self {
+      scan: Scanner::new(data, progress, core.reporter.clone()),
       core,
-      scan: Scanner::new(data, progress),
       allow_internal_selector: false,
       max_mode_args: Default::default(),
       max_struct_args: Default::default(),
@@ -417,7 +710,7 @@ impl<'a> MizParser<'a> {
     self.core.load_prio(prio);
   }
 
-  pub fn push_format(&mut self, pos: Position, fmt: Format) {
+  pub fn push_format(&mut self, pos: Span, fmt: Format) {
     if self.core.push_format(pos, fmt) {
       self.read_format(&fmt);
     }
@@ -428,7 +721,7 @@ impl<'a> MizParser<'a> {
   }
 
   pub fn parse_env(&mut self, dirs: &mut Directives) {
-    let hidden = ArticleAt { pos: Position::default(), art: Article::HIDDEN };
+    let hidden = ArticleAt { pos: Span::default(), art: Article::HIDDEN };
     dirs.0[DirectiveKind::Vocabularies].push(hidden);
     dirs.0[DirectiveKind::Notations].push(hidden);
     dirs.0[DirectiveKind::Constructors].push(hidden);
@@ -608,7 +901,7 @@ impl<'a> MizParser<'a> {
 #[derive(Debug)]
 struct TermElem<'a> {
   lhs: Vec<Term>,
-  pos: Position,
+  pos: Span,
   sym: FuncSymId,
   spelling: &'a str,
   prio: u32,
@@ -620,7 +913,7 @@ struct TermElem<'a> {
 struct LongTermBuilder<'a> {
   stack: Vec<TermElem<'a>>,
   rhs: Vec<Term>,
-  fast_path: Result<(), Position>,
+  fast_path: Result<(), Span>,
 }
 
 impl<'a> LongTermBuilder<'a> {
@@ -679,7 +972,7 @@ impl<'a> LongTermBuilder<'a> {
     for k in 1..self.stack.len() {
       self.stack[k].to_right = self.stack[k - 1].prio < self.stack[k].prio;
     }
-    let assert = |ok: bool, pos: Position| assert!(ok, "{pos:?}: failed to parse infix expression");
+    let assert = |ok: bool, pos: Span| assert!(ok, "{pos:?}: failed to parse infix expression");
     let mut bl = if self.valid(p, 0) {
       0
     } else {
@@ -1129,7 +1422,7 @@ impl<'a> MizParser<'a> {
     Proposition { label: self.parse_label(), f: *self.parse_formula() }
   }
 
-  fn assert_no_link(link: Option<Position>) {
+  fn assert_no_link(link: Option<Span>) {
     if let Some(pos) = link {
       panic!("{pos:?}: 'then' not expected here");
     }
@@ -1180,7 +1473,7 @@ impl<'a> MizParser<'a> {
     })
   }
 
-  fn parse_simple_justification(&mut self, link: Option<Position>) -> Justification {
+  fn parse_simple_justification(&mut self, link: Option<Span>) -> Justification {
     let tok = self.scan.next();
     match tok.kind {
       TokenKind::Keyword(Keyword::By) => Justification::Inference {
@@ -1217,7 +1510,7 @@ impl<'a> MizParser<'a> {
     }
   }
 
-  fn parse_justification(&mut self, link: Option<Position>) -> Justification {
+  fn parse_justification(&mut self, link: Option<Span>) -> Justification {
     if let Some(tok) = self.scan.next_if(|tok| tok.kind == Keyword::Proof.into()) {
       Self::assert_no_link(link);
       let (items, end) = self.parse_proof(false);
@@ -1227,7 +1520,7 @@ impl<'a> MizParser<'a> {
     }
   }
 
-  fn parse_justification_semi(&mut self, link: Option<Position>) -> Justification {
+  fn parse_justification_semi(&mut self, link: Option<Span>) -> Justification {
     let just = self.parse_justification(link);
     self.scan.accept(Keyword::Semicolon);
     just
@@ -1287,7 +1580,7 @@ impl<'a> MizParser<'a> {
     }
   }
 
-  fn parse_pattern_rhs(&mut self, pos: Position, paren: bool, mut args: Vec<Variable>) -> Pattern {
+  fn parse_pattern_rhs(&mut self, pos: Span, paren: bool, mut args: Vec<Variable>) -> Pattern {
     let tok = self.scan.next();
     match tok.kind {
       TokenKind::Symbol(SymbolKind::Func(sym)) if paren || args.len() <= 1 => {
@@ -1468,7 +1761,7 @@ impl<'a> MizParser<'a> {
     (vars, conds)
   }
 
-  fn parse_then(&mut self) -> Option<Position> {
+  fn parse_then(&mut self) -> Option<Span> {
     let tok = self.scan.peek();
     if let TokenKind::Keyword(Keyword::Then) = tok.kind {
       Some(self.scan.next().pos)
@@ -1477,7 +1770,7 @@ impl<'a> MizParser<'a> {
     }
   }
 
-  fn parse_stmt(&mut self, link: Option<Position>) -> Statement {
+  fn parse_stmt(&mut self, link: Option<Span>) -> Statement {
     let label = self.parse_label();
     let tok = self.scan.next();
     match tok.kind {
@@ -1568,7 +1861,7 @@ impl<'a> MizParser<'a> {
     }
   }
 
-  fn parse_assumption(&mut self, pos: Position) -> Assumption {
+  fn parse_assumption(&mut self, pos: Span) -> Assumption {
     if self.scan.try_accept(Keyword::That) {
       let conds = self.separated(Keyword::And, |this| this.parse_proposition());
       Assumption::Collective { pos, conds }
@@ -1578,8 +1871,8 @@ impl<'a> MizParser<'a> {
   }
 
   fn parse_per_cases(
-    &mut self, diffuse: bool, link: Option<Position>, pos: Position, items: &mut Vec<Item>,
-  ) -> Position {
+    &mut self, diffuse: bool, link: Option<Span>, pos: Span, items: &mut Vec<Item>,
+  ) -> Span {
     self.scan.accept(Keyword::Cases);
     let just = Box::new(self.parse_simple_justification(link));
     self.scan.accept(Keyword::Semicolon);
@@ -1607,7 +1900,7 @@ impl<'a> MizParser<'a> {
     end
   }
 
-  fn parse_proof(&mut self, diffuse: bool) -> (Vec<Item>, Position) {
+  fn parse_proof(&mut self, diffuse: bool) -> (Vec<Item>, Span) {
     let mut items = vec![];
     let end = loop {
       let tok = self.scan.next();
@@ -1658,7 +1951,7 @@ impl<'a> MizParser<'a> {
     (items, end)
   }
 
-  fn parse_block_item(&mut self, pos: Position, tok: Token<'a>) -> ItemKind {
+  fn parse_block_item(&mut self, pos: Span, tok: Token<'a>) -> ItemKind {
     match tok.kind {
       TokenKind::Keyword(Keyword::Let) => {
         let vars = self.parse_binders();

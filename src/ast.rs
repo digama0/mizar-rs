@@ -6,7 +6,7 @@ use std::str::FromStr;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Variable {
-  pub pos: Position,
+  pub pos: Span,
   /// 'varnr' attribute, MSLocusObj.nVarNr, MSVariableObj.nVarNr
   #[serde(skip_serializing_if = "Option::is_none", skip_deserializing)]
   pub var: Option<ConstId>,
@@ -41,22 +41,26 @@ pub enum PrivFuncKind {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Term {
+  /// A term the parser could not parse and recovered from (already reported).
+  Error {
+    pos: Span,
+  },
   Placeholder {
-    pos: Position,
+    pos: Span,
     nr: LocusId,
   },
   Numeral {
-    pos: Position,
+    pos: Span,
     value: u32,
   },
   Var {
-    pos: Position,
+    pos: Span,
     #[serde(skip_serializing_if = "Option::is_none", skip_deserializing)]
     kind: Option<VarKind>,
     spelling: String,
   },
   PrivFunc {
-    pos: Position,
+    pos: Span,
     #[serde(skip_serializing_if = "Option::is_none", skip_deserializing)]
     kind: Option<PrivFuncKind>,
     spelling: Rc<str>,
@@ -64,7 +68,7 @@ pub enum Term {
     args: Vec<Term>,
   },
   Infix {
-    pos: Position,
+    pos: Span,
     #[serde(skip_deserializing)]
     sym: FuncSymId,
     spelling: String,
@@ -73,7 +77,7 @@ pub enum Term {
     args: Vec<Term>,
   },
   Bracket {
-    pos: Position,
+    pos: Span,
     #[serde(skip_deserializing)]
     lsym: LeftBrkSymId,
     lspelling: String,
@@ -84,7 +88,7 @@ pub enum Term {
     args: Vec<Term>,
   },
   Aggregate {
-    pos: Position,
+    pos: Span,
     #[serde(skip_deserializing)]
     sym: StructSymId,
     spelling: String,
@@ -92,21 +96,21 @@ pub enum Term {
     args: Vec<Term>,
   },
   SubAggr {
-    pos: Position,
+    pos: Span,
     #[serde(skip_deserializing)]
     sym: StructSymId,
     spelling: String,
     arg: Box<Term>,
   },
   Selector {
-    pos: Position,
+    pos: Span,
     #[serde(skip_deserializing)]
     sym: SelSymId,
     spelling: String,
     arg: Box<Term>,
   },
   InternalSelector {
-    pos: Position,
+    pos: Span,
     #[serde(skip_deserializing)]
     sym: SelSymId,
     spelling: String,
@@ -114,16 +118,16 @@ pub enum Term {
     id: Option<ConstId>,
   },
   Qua {
-    pos: Position,
+    pos: Span,
     term: Box<Term>,
     ty: Box<Type>,
   },
   The {
-    pos: Position,
+    pos: Span,
     ty: Box<Type>,
   },
   Fraenkel {
-    pos: Position,
+    pos: Span,
     vars: Vec<BinderGroup>,
     scope: Box<Term>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -132,11 +136,11 @@ pub enum Term {
     nameck: Option<Box<crate::analyze::FraenkelNameckResult>>,
   },
   It {
-    pos: Position,
+    pos: Span,
   },
 }
 impl Term {
-  pub fn pos(&self) -> Position {
+  pub fn pos(&self) -> Span {
     match self {
       Term::Placeholder { pos, .. }
       | Term::Numeral { pos, .. }
@@ -151,6 +155,7 @@ impl Term {
       | Term::Qua { pos, .. }
       | Term::The { pos, .. }
       | Term::Fraenkel { pos, .. }
+      | Term::Error { pos }
       | Term::It { pos } => *pos,
     }
   }
@@ -163,8 +168,10 @@ mk_id! {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Type {
+  /// A type the parser could not parse and recovered from (already reported).
+  Error { pos: Span },
   Mode {
-    pos: Position,
+    pos: Span,
     #[serde(skip_deserializing)]
     sym: ModeSymId,
     spelling: String,
@@ -172,7 +179,7 @@ pub enum Type {
     args: Vec<Term>,
   },
   Struct {
-    pos: Position,
+    pos: Span,
     #[serde(skip_deserializing)]
     sym: StructSymId,
     spelling: String,
@@ -180,25 +187,26 @@ pub enum Type {
     args: Vec<Term>,
   },
   Cluster {
-    pos: Position,
+    pos: Span,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     attrs: Vec<Attr>,
     ty: Box<Type>,
   },
   #[serde(skip_deserializing)]
   Reservation {
-    pos: Position,
+    pos: Span,
     group: ResGroupId,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     subst: Vec<VarKind>,
   },
 }
 impl Type {
-  pub fn pos(&self) -> Position {
+  pub fn pos(&self) -> Span {
     match self {
       Type::Mode { pos, .. }
       | Type::Struct { pos, .. }
       | Type::Cluster { pos, .. }
+      | Type::Error { pos }
       | Type::Reservation { pos, .. } => *pos,
     }
   }
@@ -228,7 +236,7 @@ pub enum FormulaBinder {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Pred {
-  pub pos: Position,
+  pub pos: Span,
   pub positive: bool,
   #[serde(skip_deserializing)]
   pub sym: PredSymId,
@@ -240,7 +248,7 @@ pub struct Pred {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PredRhs {
-  pub pos: Position,
+  pub pos: Span,
   pub positive: bool,
   #[serde(skip_deserializing)]
   pub sym: PredSymId,
@@ -251,24 +259,28 @@ pub struct PredRhs {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Formula {
+  /// A formula the parser could not parse and recovered from (already reported).
+  Error {
+    pos: Span,
+  },
   Not {
-    pos: Position,
+    pos: Span,
     f: Box<Formula>,
   },
   Binop {
     kind: FormulaBinop,
-    pos: Position,
+    pos: Span,
     f1: Box<Formula>,
     f2: Box<Formula>,
   },
   Pred(Box<Pred>),
   ChainPred {
-    pos: Position,
+    pos: Span,
     first: Box<Pred>,
     rest: Vec<PredRhs>,
   },
   PrivPred {
-    pos: Position,
+    pos: Span,
     #[serde(skip_serializing_if = "Option::is_none", skip_deserializing)]
     kind: Option<PrivPredKind>,
     spelling: Rc<str>,
@@ -276,35 +288,35 @@ pub enum Formula {
     args: Vec<Term>,
   },
   Attr {
-    pos: Position,
+    pos: Span,
     positive: bool,
     term: Box<Term>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     attrs: Vec<Attr>,
   },
   Is {
-    pos: Position,
+    pos: Span,
     positive: bool,
     term: Box<Term>,
     ty: Box<Type>,
   },
   Binder {
     kind: FormulaBinder,
-    pos: Position,
+    pos: Span,
     vars: Vec<BinderGroup>,
     #[serde(skip_serializing_if = "Option::is_none")]
     st: Option<Box<Formula>>,
     scope: Box<Formula>,
   },
   False {
-    pos: Position,
+    pos: Span,
   },
   Thesis {
-    pos: Position,
+    pos: Span,
   },
 }
 impl Formula {
-  pub fn pos(&self) -> Position {
+  pub fn pos(&self) -> Span {
     match self {
       Formula::Pred(p) => p.pos,
       Formula::Not { pos, .. }
@@ -315,6 +327,7 @@ impl Formula {
       | Formula::Attr { pos, .. }
       | Formula::Is { pos, .. }
       | Formula::Binder { pos, .. }
+      | Formula::Error { pos }
       | Formula::Thesis { pos } => *pos,
     }
   }
@@ -344,15 +357,15 @@ pub enum SchRef {
 pub enum InferenceKind {
   By {
     #[serde(skip_serializing_if = "Option::is_none")]
-    link: Option<Position>,
+    link: Option<Span>,
   },
   From(SchRef),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RefFragment {
-  Thm { pos: Position, id: ThmId },
-  Def { pos: Position, id: DefId },
+  Thm { pos: Span, id: ThmId },
+  Def { pos: Span, id: DefId },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -371,20 +384,20 @@ pub enum ReferenceKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reference {
-  pub pos: Position,
+  pub pos: Span,
   pub kind: ReferenceKind,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Justification {
   Inference {
-    pos: Position,
+    pos: Span,
     kind: InferenceKind,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     refs: Vec<Reference>,
   },
   Block {
-    pos: (Position, Position),
+    pos: (Span, Span),
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     items: Vec<Item>,
   },
@@ -393,13 +406,13 @@ pub enum Justification {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum SchemeBinderGroup {
   Pred {
-    pos: Position,
+    pos: Span,
     vars: Vec<Variable>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     tys: Vec<Type>,
   },
   Func {
-    pos: Position,
+    pos: Span,
     vars: Vec<Variable>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     tys: Vec<Type>,
@@ -427,7 +440,7 @@ pub enum ReconsiderVar {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Item {
-  pub pos: Position,
+  pub pos: Span,
   pub kind: ItemKind,
 }
 
@@ -453,7 +466,7 @@ impl CaseKind {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Field {
-  pub pos: Position,
+  pub pos: Span,
   #[serde(skip_deserializing)]
   pub sym: SelSymId,
   pub spelling: Rc<str>,
@@ -461,7 +474,7 @@ pub struct Field {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FieldGroup {
-  pub pos: Position,
+  pub pos: Span,
   pub vars: Vec<Field>,
   pub ty: Type,
 }
@@ -488,7 +501,7 @@ impl PatternStruct {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum PatternFunc {
   Func {
-    pos: Position,
+    pos: Span,
     #[serde(skip_deserializing)]
     sym: FuncSymId,
     spelling: String,
@@ -497,7 +510,7 @@ pub enum PatternFunc {
     args: Vec<Variable>,
   },
   Bracket {
-    pos: Position,
+    pos: Span,
     #[serde(skip_deserializing)]
     lsym: LeftBrkSymId,
     lspelling: String,
@@ -510,7 +523,7 @@ pub enum PatternFunc {
 }
 
 impl PatternFunc {
-  pub fn pos(&self) -> Position {
+  pub fn pos(&self) -> Span {
     let (PatternFunc::Func { pos, .. } | PatternFunc::Bracket { pos, .. }) = *self;
     pos
   }
@@ -534,7 +547,7 @@ impl PatternFunc {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PatternPred {
-  pub pos: Position,
+  pub pos: Span,
   #[serde(skip_deserializing)]
   pub sym: PredSymId,
   pub spelling: String,
@@ -550,7 +563,7 @@ impl PatternPred {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PatternMode {
-  pub pos: Position,
+  pub pos: Span,
   #[serde(skip_deserializing)]
   pub sym: ModeSymId,
   pub spelling: String,
@@ -565,7 +578,7 @@ impl PatternMode {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PatternAttr {
-  pub pos: Position,
+  pub pos: Span,
   #[serde(skip_deserializing)]
   pub sym: AttrSymId,
   pub spelling: String,
@@ -587,7 +600,7 @@ pub enum Pattern {
 }
 
 impl Pattern {
-  pub fn pos(&self) -> Position {
+  pub fn pos(&self) -> Span {
     match self {
       Pattern::Pred(p) => p.pos,
       Pattern::Func(p) => p.pos(),
@@ -620,7 +633,7 @@ pub enum DefValue {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Definiens {
-  pub pos: Position,
+  pub pos: Span,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub label: Option<Box<Label>>,
   pub kind: DefValue,
@@ -650,7 +663,7 @@ pub enum PatternRedef {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Attr {
   Attr {
-    pos: Position,
+    pos: Span,
     #[serde(skip_deserializing)]
     sym: AttrSymId,
     spelling: String,
@@ -658,13 +671,13 @@ pub enum Attr {
     args: Vec<Term>,
   },
   Non {
-    pos: Position,
+    pos: Span,
     attr: Box<Attr>,
   },
 }
 
 impl Attr {
-  pub fn pos(&self) -> Position {
+  pub fn pos(&self) -> Span {
     match *self {
       Attr::Attr { pos, .. } | Attr::Non { pos, .. } => pos,
     }
@@ -693,7 +706,7 @@ pub enum ClusterDeclKind {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Label {
-  pub pos: Position,
+  pub pos: Span,
   #[serde(skip_deserializing)]
   pub id: Option<LabelId>,
   pub spelling: Rc<str>,
@@ -701,8 +714,8 @@ pub struct Label {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Assumption {
-  Single { pos: Position, prop: Box<Proposition> },
-  Collective { pos: Position, conds: Vec<Proposition> },
+  Single { pos: Span, prop: Box<Proposition> },
+  Collective { pos: Span, conds: Vec<Proposition> },
 }
 impl Assumption {
   pub fn conds(&mut self) -> &mut [Proposition] {
@@ -728,7 +741,7 @@ pub struct TakeDecl {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IterStep {
-  pub pos: Position,
+  pub pos: Span,
   pub rhs: Term,
   pub just: Justification,
 }
@@ -751,7 +764,7 @@ pub enum Statement {
     label: Option<Box<Label>>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     items: Vec<Item>,
-    end: Position,
+    end: Span,
   },
 }
 
@@ -781,7 +794,7 @@ pub enum DefinitionKind {
 }
 
 impl DefinitionKind {
-  pub fn pos(&self) -> Position {
+  pub fn pos(&self) -> Span {
     match self {
       DefinitionKind::Func { pat, .. } => match **pat {
         PatternFunc::Func { pos, .. } | PatternFunc::Bracket { pos, .. } => pos,
@@ -803,20 +816,20 @@ impl DefinitionKind {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CorrCond {
-  pub pos: Position,
+  pub pos: Span,
   pub kind: CorrCondKind,
   pub just: Justification,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Correctness {
-  pub pos: Position,
+  pub pos: Span,
   pub just: Justification,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Property {
-  pub pos: Position,
+  pub pos: Span,
   pub kind: PropertyKind,
   pub just: Box<Justification>,
 }
@@ -838,7 +851,7 @@ pub struct SchemeBlock {
   pub head: SchemeHead,
   #[serde(skip_serializing_if = "Vec::is_empty", default)]
   pub items: Vec<Item>,
-  pub end: Position,
+  pub end: Span,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -914,7 +927,7 @@ pub struct CaseBlock {
   pub hyp: Box<Assumption>,
   #[serde(skip_serializing_if = "Vec::is_empty", default)]
   pub items: Vec<Item>,
-  pub end: Position,
+  pub end: Span,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -935,19 +948,20 @@ pub enum Pragma {
 impl FromStr for Pragma {
   type Err = std::convert::Infallible;
   fn from_str(spelling: &str) -> Result<Self, Self::Err> {
-    let parse_num = |s: &str| {
+    // On a malformed numeric suffix, fall through to `Pragma::Other` instead of panicking.
+    let parse_num = |s: &str| -> Option<u32> {
       if s.is_empty() {
-        1
+        Some(1)
       } else {
-        s.trim().parse::<u32>().unwrap()
+        s.trim().parse::<u32>().ok()
       }
     };
-    Ok(if let Some(s) = spelling.strip_prefix("$CD") {
-      Pragma::Canceled(CancelKind::Def, parse_num(s))
-    } else if let Some(s) = spelling.strip_prefix("$CT") {
-      Pragma::Canceled(CancelKind::Thm, parse_num(s))
-    } else if let Some(s) = spelling.strip_prefix("$CS") {
-      Pragma::Canceled(CancelKind::Sch, parse_num(s))
+    Ok(if let Some(n) = spelling.strip_prefix("$CD").and_then(parse_num) {
+      Pragma::Canceled(CancelKind::Def, n)
+    } else if let Some(n) = spelling.strip_prefix("$CT").and_then(parse_num) {
+      Pragma::Canceled(CancelKind::Thm, n)
+    } else if let Some(n) = spelling.strip_prefix("$CS").and_then(parse_num) {
+      Pragma::Canceled(CancelKind::Sch, n)
     } else if let Some(s) = spelling.strip_prefix("$N") {
       Pragma::ThmDesc(s.trim_start().to_owned())
     } else if let Some(s) = spelling.strip_prefix("$INSERT") {
@@ -968,11 +982,14 @@ impl FromStr for Pragma {
 pub enum ItemKind {
   #[default]
   Section,
+  /// A malformed item that the parser recovered from (a diagnostic was already
+  /// reported); the analyzer skips it.
+  Error,
   Block {
     kind: BlockKind,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     items: Vec<Item>,
-    end: Position,
+    end: Span,
   },
   SchemeBlock(Box<SchemeBlock>),
   Theorem {

@@ -5,8 +5,8 @@ use crate::util::RetainMutFrom;
 #[allow(unused)]
 use crate::vprintln;
 use crate::{
-  set_verbose, stat, Assignment, CheckBound, ExpandPrivFunc, FixedVar, Global, Inst, Inst0,
-  InternConst, LocalContext, OnVarMut, Visit, VisitMut, WithGlobalLocal,
+  set_verbose, stat, Assignment, CheckBound, Diagnostic, ExpandPrivFunc, FixedVar, Global, Inst,
+  Inst0, InternConst, LocalContext, OnVarMut, Visit, VisitMut, WithGlobalLocal,
 };
 use itertools::Itertools;
 use std::borrow::Cow;
@@ -22,7 +22,7 @@ pub struct Checker<'a> {
   pub func_ids: &'a BTreeMap<ConstrKind, Vec<usize>>,
   pub reductions: &'a [Reduction],
   pub article: Article,
-  pub pos: Position,
+  pub pos: Span,
 }
 
 impl<'a> Checker<'a> {
@@ -32,7 +32,7 @@ impl<'a> Checker<'a> {
 
   pub fn justify(&mut self, premises: Vec<&'a Formula>) {
     if let Some(n) = self.g.cfg.first_verbose_line {
-      set_verbose(self.pos.line >= n);
+      set_verbose(self.g.reporter.line(self.pos.start) >= n);
     }
     if self.g.cfg.skip_to_verbose && !crate::verbose() {
       return
@@ -115,7 +115,7 @@ impl<'a> Checker<'a> {
           );
         }
         stat("failure", true);
-        println!("failed to justify {:?}:{:?}.{i}", self.article, self.pos);
+        self.g.reporter.emit(Diagnostic::error(self.pos, "failed to justify"));
         if self.g.cfg.panic_on_fail {
           panic!("failed to justify {:?}:{:?}.{i}", self.article, self.pos);
         }
@@ -202,7 +202,7 @@ impl<'a> Checker<'a> {
 
   pub fn justify_scheme(&mut self, sch: &Scheme, premises: Vec<&'a Formula>, thesis: &'a Formula) {
     if let Some(n) = self.g.cfg.first_verbose_line {
-      set_verbose(self.pos.line >= n);
+      set_verbose(self.g.reporter.line(self.pos.start) >= n);
     }
     if self.g.cfg.skip_to_verbose && !crate::verbose() {
       return
@@ -232,7 +232,7 @@ impl<'a> Checker<'a> {
       if self.g.cfg.checker_result {
         eprintln!("FAILED TO JUSTIFY sch {:?}:{:?}", self.article, self.pos);
       }
-      println!("failed to justify sch {:?}:{:?}", self.article, self.pos);
+      self.g.reporter.emit(Diagnostic::error(self.pos, "failed to justify scheme"));
       if self.g.cfg.panic_on_fail {
         panic!("failed to justify sch {:?}:{:?}", self.article, self.pos);
       }
@@ -310,7 +310,8 @@ impl Expand<'_> {
       | Formula::PrivPred { .. }
       | Formula::Is { .. }
       | Formula::ForAll { .. }
-      | Formula::True => {}
+      | Formula::True
+      | Formula::Error => {}
     }
   }
 
@@ -428,6 +429,7 @@ impl Formula {
         | Formula::Is { .. }
         | Formula::FlexAnd { .. }
         | Formula::True => ExpandPrivFunc(ctx, lc).visit_formula(self),
+        Formula::Error => {}
       }
       break
     }
@@ -479,7 +481,8 @@ pub trait Open {
         | Formula::PrivPred { .. }
         | Formula::Is { .. }
         | Formula::FlexAnd { .. }
-        | Formula::True => {}
+        | Formula::True
+        | Formula::Error => {}
       }
       return
     }

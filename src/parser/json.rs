@@ -323,7 +323,7 @@ impl JsonParser {
 
   fn fix_item(&mut self, i: &mut Item) {
     match &mut i.kind {
-      ItemKind::Section | ItemKind::Pragma(_) => {}
+      ItemKind::Section | ItemKind::Pragma(_) | ItemKind::Error => {}
       ItemKind::Block { items, .. } => self.fix_items(items),
       ItemKind::SchemeBlock(s) => {
         for g in &mut s.head.groups {

@@ -27,12 +27,14 @@ mod format;
 mod global;
 mod parser;
 mod reader;
+mod report;
 mod types;
 mod unify;
 mod util;
 mod write;
 
 pub use global::*;
+pub use report::*;
 
 thread_local! {
   static JOB_ID: Cell<Option<usize>> = const { Cell::new(None) };

@@ -467,6 +467,7 @@ impl VisitMut for Y<'_, '_> {
       | Term::Numeral(_)
       | Term::Qua { .. }
       | Term::It => unreachable!("{tm:?}"),
+      Term::Error => todo!(),
     };
     let ty = tm.get_type_uncached(self.g, self.lc);
     y_try!(self, self.insert_type(ty, et));
@@ -600,6 +601,7 @@ impl Equalizer<'_> {
       | Term::FreeVar(_)
       | Term::Qua { .. }
       | Term::It => unreachable!(),
+      Term::Error => todo!(),
     }
   }
 }
@@ -778,6 +780,7 @@ impl Instantiate<'_> {
           }
         }
       }
+      TypeKind::Error => todo!(),
     }
     self.and_inst_attrs(&ty.attrs.0, et, &mut res);
     res
@@ -2520,6 +2523,7 @@ impl<'a> Equalizer<'a> {
           let adj1 = match ty.kind {
             TypeKind::Mode(n) => Some(Type::adjust(n, &ty.args, &self.g.constrs)),
             TypeKind::Struct(_) => None,
+            TypeKind::Error => todo!(),
           };
           let m1 = term.mark().unwrap();
           let et1 = self.lc.marks[m1].1;
