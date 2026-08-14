@@ -506,7 +506,7 @@ pub(super) fn gaussian_elimination<I: Idx>(
       eq *= v.coeff.clone().inv();
       eqs.insert(eq);
     } else if eq.cnst != Complex::ZERO {
-      return Err(Unsat)
+      return Err(Unsat::Refuted)
     }
   }
 
@@ -523,7 +523,7 @@ pub(super) fn gaussian_elimination<I: Idx>(
         eq *= v.coeff.clone().inv();
         eqs.insert(eq);
       } else if eq.cnst != Complex::ZERO {
-        return Err(Unsat)
+        return Err(Unsat::Refuted)
       }
     }
     eqs2.push(eq1);
@@ -548,7 +548,7 @@ pub(super) fn gaussian_elimination<I: Idx>(
     }
   });
   if unsat {
-    return Err(Unsat)
+    return Err(Unsat::Refuted)
   }
   Ok(eqs2)
 }

@@ -71,7 +71,7 @@ macro_rules! try_p {
     match $e {
       Ok(t) => t,
       Err((path, e)) => {
-        eprintln!("{}: {e}", path.to_string_lossy());
+        $self.g.reporter.emit(e.to_diagnostic(&path));
         $self.has_errors = true;
         return
       }
@@ -193,7 +193,19 @@ impl Reader {
       }
     }
     if elab.g.cfg.exporter_enabled {
-      elab.export()
+      // Only publish prel artifacts for an article that fully verified. Any logged
+      // error — an error value left as a sorry, or a failed justification — means a
+      // dependent article would trust an unsound statement, so skip export.
+      //
+      // This must be the *same* predicate that fails the article in `with_reader`,
+      // including `has_errors`: that flag covers report sites which do not go through
+      // the reporter, and gating on the reporter alone let such an article export
+      // while still being reported as failed.
+      if !elab.r.has_errors && elab.g.reporter.errors() == 0 {
+        elab.export()
+      } else {
+        stat("export skipped (article has errors)", false);
+      }
     }
   }
 }
@@ -206,7 +218,14 @@ impl<F> Pattern<F> {
       return Some(Subst::new(0))
     }
     let mut subst = Subst::from_essential(self.primary.len(), &self.visible, args);
-    if subst.check_types(g, lc, &self.primary) {
+    // `Err` (an error value among the args) is not a match — it is treated exactly
+    // as "no matching pattern". This is deliberately *skip*, not *poison*: the
+    // checker poisons because a wrong comparison there changes what is reported
+    // proved, but a notation match is only ever consulted to elaborate a term, and
+    // an error value among the args means `args_tainted`/`CheckError` already have
+    // the enclosing item failing. Declining this pattern cannot pick a wrong
+    // notation, since the item that would use it is not trusted regardless.
+    if subst.check_types(g, lc, &self.primary) == Ok(true) {
       Some(subst)
     } else {
       None
@@ -217,7 +236,8 @@ impl<F> Pattern<F> {
 /// Agree
 fn agrees(g: &Global, lc: &LocalContext, tms: &[TermQua], tys: &[Type]) -> bool {
   let mut subst = Subst { subst_term: tms.iter().map(|tm| Some(CowBox::Borrowed(tm))).collect() };
-  subst.check_types(g, lc, tys)
+  // See `Pattern::check_types`: an error value does not agree.
+  subst.check_types(g, lc, tys) == Ok(true)
 }
 
 struct Scope {
@@ -262,6 +282,10 @@ impl Analyzer<'_> {
     let mut r = f(self);
     let mut dsc = self.close_scope(sc, check_for_local_const);
     r.visit(&mut dsc);
+    if dsc.nongeneralizable {
+      // No position is available here; the diagnostic is still counted.
+      self.err(Span::NONE, MizError::NongeneralizableVariable);
+    }
     r
   }
 
@@ -286,8 +310,9 @@ impl Analyzer<'_> {
     primary: Box<[Type]>, visible: Box<[LocusId]>, pos: bool,
   ) {
     let pat = self.mk_pattern(c, kind, fmt, primary, visible, pos);
-    if check_access {
-      pat.check_access();
+    // No position is available here; the diagnostic is still counted.
+    if check_access && pat.check_access() {
+      self.err(Span::NONE, MizError::UnusedLocus);
     }
     self.push_pattern(pat)
   }
@@ -348,7 +373,9 @@ impl Analyzer<'_> {
         self.scope(false, false, false, |this| this.elab_scheme(it.pos, bl)),
       ast::ItemKind::Theorem { prop, just } => {
         let (f, block) = self.elab_formula_forall_reserved(&mut prop.f, true);
-        Exportable.visit_formula(&f);
+        if Exportable::check(|e| e.visit_formula(&f)) {
+          self.err(it.pos, MizError::NotExportable);
+        }
         if self.g.cfg.analyzer_full {
           self.write_xml.on(|w| {
             let label = prop
@@ -406,7 +433,9 @@ impl Analyzer<'_> {
             Some(IdxVec::from(fvars))
           };
           self.lc.bound_var.0.clear();
-          Exportable.visit_type(&ty);
+          if Exportable::check(|e| e.visit_type(&ty)) {
+            self.err(it.ty.pos(), MizError::NotExportable);
+          }
           self.write_xml.on(|w| w.reservation(&self.r.lc, self.reserved.len(), it.vars.len(), &ty));
           let group = self.res_groups.push(ResGroup { ty, fvars });
           for v in &it.vars {
@@ -427,10 +456,14 @@ impl Analyzer<'_> {
           // This is intentionally stricter than necessary to ensure that MML has no weird
           // pragmas. The line below should be uncommented to allow pragmas for general use.
           // Pragma::Other(_) => {}
-          Pragma::Other(ref mut s) =>
-            self.err(it.pos, MizError::UnexpectedPragma(std::mem::take(s))),
+          Pragma::Other(ref mut s) => {
+            self.err(it.pos, MizError::UnexpectedPragma(std::mem::take(s)));
+          }
         }
       }
+      // The parser already reported the problem and produced this placeholder;
+      // skip it (sync point: the enclosing block continues with the next item).
+      ast::ItemKind::Error => {}
       _ => self.elab_stmt_item(it),
     }
   }
@@ -530,9 +563,14 @@ impl Analyzer<'_> {
     let primary: Box<[_]> = self.lc.sch_func_ty.0.drain(..).collect();
     let mut sch = Scheme { sch_funcs: primary, prems, thesis };
     self.lc.expand_consts(&self.g.constrs, |c| sch.visit(c));
-    sch.sch_funcs.iter().for_each(|ty| Exportable.visit_type(ty));
-    sch.prems.iter().for_each(|ty| Exportable.visit_formula(ty));
-    Exportable.visit_formula(&sch.thesis);
+    let leaks = Exportable::check(|e| {
+      sch.sch_funcs.iter().for_each(|ty| e.visit_type(ty));
+      sch.prems.iter().for_each(|ty| e.visit_formula(ty));
+      e.visit_formula(&sch.thesis)
+    });
+    if leaks {
+      self.err(pos, MizError::NotExportable);
+    }
     self.lc.infer_const.get_mut().truncate(infer_consts);
     self.sch_func_args.0.clear();
     self.sch_pred_args.0.clear();
@@ -556,7 +594,9 @@ impl Analyzer<'_> {
       ast::ItemKind::Set(decls) =>
         for ast::SetDecl { var, value } in decls {
           let term = self.elab_intern_term_no_reserve(value);
-          let ty = term.get_type_uncached(&self.g, &self.lc);
+          let ty = term
+            .get_type_uncached(&self.g, &self.lc)
+            .unwrap_or_else(|_| Type::new(TypeKind::Error));
           let id = self.intern_id(&var.spelling);
           self.write_xml.on(|w| w.set(&self.r.lc, id, &term, &ty));
           let c = self.lc.fixed_var.push(FixedVar { id, ty, def: Some((Box::new(term), true)) });
@@ -568,7 +608,8 @@ impl Analyzer<'_> {
         self.lc.term_cache.get_mut().open_scope();
         self.elab_intern_push_locus_tys(tys);
         let value = self.elab_intern_term_no_reserve(value);
-        let ty = value.get_type(&self.g, &self.lc, false);
+        let ty =
+          value.get_type(&self.g, &self.lc, false).unwrap_or_else(|_| Type::new(TypeKind::Error));
         let primary: Box<[_]> = self.r.lc.locus_ty.0.drain(..).collect();
         self
           .write_xml
@@ -664,7 +705,14 @@ impl Analyzer<'_> {
         if self.g.cfg.analyzer_full {
           self.elab_stmt(it.pos, stmt);
         },
-      _ => unreachable!("unexpected item: {it:?}"),
+      // A pragma is benign wherever it lands (top-level pragmas are handled by
+      // elab_top_item / elab_canceled); ignore it in a reasoning/definition block.
+      ast::ItemKind::Pragma(..) => {}
+      // Any other item reaching here appears in a block that does not allow it —
+      // usually mangled block structure on malformed input. Report, don't panic.
+      _ => {
+        self.err(it.pos, MizError::UnexpectedItem);
+      }
     }
   }
 
@@ -721,8 +769,8 @@ impl Analyzer<'_> {
             }
           }
         }
-        let s = format!("{}", self.lc.pp(&f));
-        self.err(prop.f.pos(), MizError::IterEqualityNotAnEquality(s));
+        let it = self.lc.pp(&f).to_string();
+        self.err(prop.f.pos(), MizError::IterEqualityNotAnEquality(it));
         f
       }
       ast::Statement::Now { end, label, items } => {
@@ -774,25 +822,32 @@ impl Analyzer<'_> {
         self.lc.fixed_var.push(FixedVar { id, ty: ty.clone(), def: None });
       }
     } else {
-      assert!(vars.len() == 1);
-      let Some(&nr) = self.reserved_by_name.get(&vars[0].spelling) else {
-        panic!("{:?}: variable missing type", vars[0].pos)
-      };
-      let ResGroup { ty, fvars } = &self.res_groups[self.reserved[nr].1];
-      let subst = (fvars.as_ref().unwrap().0.iter())
-        .map(|&i| {
-          *self.reserved_lookup.get(&i).unwrap_or_else(|| {
-            panic!("{:?}: cannot introduce reserved variable here", vars[0].pos);
-          })
-        })
-        .collect_vec();
-      let mut ty = ty.clone();
-      if !subst.is_empty() {
-        InstReservation(self, |i| subst[i.0 as usize]).visit_type(&mut ty)
+      let nr =
+        (vars.len() == 1).then(|| self.reserved_by_name.get(&vars[0].spelling).copied()).flatten();
+      let missing_dep = nr.is_some_and(|nr| {
+        (self.res_groups[self.reserved[nr].1].fvars.as_ref().unwrap().0.iter())
+          .any(|i| !self.reserved_lookup.contains_key(i))
+      });
+      if let Some(nr) = nr.filter(|_| !missing_dep) {
+        let ResGroup { ty, fvars } = &self.res_groups[self.reserved[nr].1];
+        let subst =
+          (fvars.as_ref().unwrap().0.iter()).map(|&i| self.reserved_lookup[&i]).collect_vec();
+        let mut ty = ty.clone();
+        if !subst.is_empty() {
+          InstReservation(self, |i| subst[i.0 as usize]).visit_type(&mut ty)
+        }
+        let id = self.intern_id(&vars[0].spelling);
+        let c = self.lc.fixed_var.push(FixedVar { id, ty, def: None });
+        self.reserved_lookup.insert(nr, VarKind::Const(c));
+      } else {
+        // Untyped binder with no (in-scope) reservation: report and give it an error
+        // type so elaboration continues.
+        self.err(vars[0].pos, MizError::MissingVarType);
+        for var in &*vars {
+          let id = self.intern_id(&var.spelling);
+          self.lc.fixed_var.push(FixedVar { id, ty: Type::new(TypeKind::Error), def: None });
+        }
       }
-      let id = self.intern_id(&vars[0].spelling);
-      let c = self.lc.fixed_var.push(FixedVar { id, ty, def: None });
-      self.reserved_lookup.insert(nr, VarKind::Const(c));
     }
     if self.g.cfg.nameck_enabled {
       let lookup = Rc::make_mut(&mut self.lookup);
@@ -812,7 +867,7 @@ impl Analyzer<'_> {
     f
   }
 
-  fn elab_references(&mut self, rs: &[ast::Reference]) -> Vec<Reference> {
+  fn elab_references(&mut self, rs: &[ast::Reference]) -> MizResult<Vec<Reference>> {
     let mut out = vec![];
     for r in rs {
       let kind = match r.kind {
@@ -821,7 +876,12 @@ impl Analyzer<'_> {
         ast::ReferenceKind::Priv(id) => ReferenceKind::Priv(id.unwrap()),
         ast::ReferenceKind::UnresolvedPriv(ref name) => {
           let lab = self.label_names.enum_iter().rev().find(|p| p.1.as_deref() == Some(name));
-          ReferenceKind::Priv(lab.expect("label not found").0)
+          // A missing label is its own error value: report it once and bail the
+          // justification to a sorry (the enclosing statement stays as its known thesis).
+          match lab {
+            Some(lab) => ReferenceKind::Priv(lab.0),
+            None => return Err(self.err(r.pos, MizError::MissingReference(name.clone()))),
+          }
         }
         ast::ReferenceKind::Global { art, ref refs, .. } => {
           for frag in refs {
@@ -837,7 +897,7 @@ impl Analyzer<'_> {
       };
       out.push(Reference { pos: r.pos, kind })
     }
-    out
+    Ok(out)
   }
 
   fn elab_justification(
@@ -855,20 +915,30 @@ impl Analyzer<'_> {
     debug_assert!(self.g.cfg.analyzer_full);
     match just {
       &mut ast::Justification::Inference { pos, ref kind, ref refs } => {
-        let it = Inference {
-          kind: match kind {
-            ast::InferenceKind::By { link } => InferenceKind::By { linked: link.is_some() },
-            &ast::InferenceKind::From(ast::SchRef::Resolved { art, sch, .. }) =>
-              InferenceKind::From { sch: (art, sch) },
-            ast::InferenceKind::From(ast::SchRef::UnresolvedPriv(name)) => {
-              let sch = *(self.sch_names.0.get(&**name))
-                .unwrap_or_else(|| panic!("local scheme '{name}' not found"));
-              InferenceKind::From { sch: (ArticleId::SELF, sch) }
-            }
-          },
-          pos,
-          refs: self.elab_references(refs),
+        // Resolve references and the scheme name first; a missing label/scheme is an
+        // error value (reported once). Bail to a sorry rather than run the checker.
+        let kind = match kind {
+          ast::InferenceKind::By { link } => InferenceKind::By { linked: link.is_some() },
+          &ast::InferenceKind::From(ast::SchRef::Resolved { art, sch, .. }) =>
+            InferenceKind::From { sch: (art, sch) },
+          ast::InferenceKind::From(ast::SchRef::UnresolvedPriv(name)) =>
+            match self.sch_names.0.get(&**name) {
+              Some(&sch) => InferenceKind::From { sch: (ArticleId::SELF, sch) },
+              None => {
+                self.err(pos, MizError::MissingScheme(name.to_string()));
+                // The caller already opened a proposition, leaving the writer awaiting
+                // an inference; close it with an error placeholder so the enclosing
+                // step's close does not desync (see `WriteXml::error_inference`).
+                self.write_xml.on(|w| w.error_inference());
+                return
+              }
+            },
         };
+        let Ok(refs) = self.elab_references(refs) else {
+          self.write_xml.on(|w| w.error_inference());
+          return
+        };
+        let it = Inference { kind, pos, refs };
         self.write_xml.on(|w| w.write_inference(&it));
         self.r.read_inference(thesis, &it)
       }
@@ -883,7 +953,11 @@ impl Analyzer<'_> {
   ) {
     if self.g.cfg.analyzer_full {
       for cond in conds {
-        let mut thesis = cc.0[cond.kind].take().unwrap();
+        // A condition stated in the source that this definition does not generate.
+        let Some(mut thesis) = cc.0[cond.kind].take() else {
+          self.err(cond.pos, MizError::UnexpectedCorrCond(cond.kind));
+          continue
+        };
         self.write_xml.on(|w| {
           w.start_corr_cond(cond.kind);
           w.write_proposition(&self.r.lc, cond.pos, None, &thesis)
@@ -909,7 +983,14 @@ impl Analyzer<'_> {
       } else {
         self.write_xml.on(|w| w.skip_correctness());
       }
-      assert!(cc.0.iter().all(|p| p.1.is_none()), "{pos:?}: missing correctness condition");
+      // Any correctness condition still present was neither supplied explicitly nor
+      // by a `correctness` block: report it (the definition stands as an unproven
+      // sorry) instead of panicking.
+      for (kind, stmt) in &mut cc.0 {
+        if stmt.take().is_some() {
+          self.err(pos, MizError::MissingCorrectness(kind));
+        }
+      }
     }
   }
 
@@ -977,9 +1058,38 @@ impl Analyzer<'_> {
     self.write_xml.on(|w| w.canceled(kind, n))
   }
 
+  /// True if any argument is itself an error value or has an error type — i.e. a
+  /// notation-dispatch failure here is a cascade from an already-reported error, so
+  /// the caller should recover silently instead of reporting a fresh type error.
+  fn args_tainted(&self, args: &[Term]) -> bool {
+    args.iter().any(|a| {
+      CheckError::get(|ck| ck.visit_term(a))
+        || !matches!(a.get_type_uncached(&self.g, &self.lc).map(|ty| ty.kind), Ok(k) if k != TypeKind::Error)
+    })
+  }
+
+  /// Look up a declared format, reporting `err` if the symbol was never declared at
+  /// this arity.
+  ///
+  /// A miss is the same class of failure as "no applicable notation for these
+  /// argument types" — the caller reports exactly that a few lines below when the
+  /// pattern search comes up empty — so it gets the same diagnostic rather than
+  /// indexing the map and panicking.
+  fn lookup_format(&mut self, pos: Span, fmt: Format, err: MizError) -> Option<FormatId> {
+    match self.formats.get(&fmt) {
+      Some(&fmt) => Some(fmt),
+      None => {
+        self.err(pos, err);
+        None
+      }
+    }
+  }
+
   fn elab_functor_term(&mut self, pos: Span, fmt: FormatFunc, args: &[ast::Term]) -> Term {
     let args = self.elab_terms_qua(args);
-    let fmt = self.formats[&Format::Func(fmt)];
+    let Some(fmt) = self.lookup_format(pos, Format::Func(fmt), MizError::UnknownFunctor) else {
+      return Term::Error
+    };
     for pat in self.notations[PKC::Func].iter().rev() {
       if pat.fmt == fmt {
         if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
@@ -988,18 +1098,25 @@ impl Analyzer<'_> {
           let mut args = subst.trim_to(self.g.constrs.functor[nr].primary.len());
           args.iter_mut().for_each(|t| t.strip_qua_mut());
           let tm = Term::Functor { nr, args };
-          TermCollection::insert(&self.g, &self.lc, &tm, false);
+          // On an error value the cache entry is left poisoned by `insert` itself, which
+          // is what later readers must see; nothing more to do here.
+          let _: Result<usize, ErrorValue> = TermCollection::insert(&self.g, &self.lc, &tm, false);
           return tm
         }
       }
     }
-    panic!("type error")
+    if !self.args_tainted(&args) {
+      self.err(pos, MizError::UnknownFunctor);
+    }
+    Term::Error
   }
 
   fn elab_pred(
     &mut self, pos: Span, fmt: FormatPred, args: Vec<TermQua>, positive: bool,
   ) -> Formula {
-    let fmt = self.formats[&Format::Pred(fmt)];
+    let Some(fmt) = self.lookup_format(pos, Format::Pred(fmt), MizError::UnknownPredicate) else {
+      return Formula::Error
+    };
     for pat in self.r.notations[PKC::Pred].iter().rev() {
       if pat.fmt == fmt {
         if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
@@ -1011,7 +1128,10 @@ impl Analyzer<'_> {
         }
       }
     }
-    panic!("type error")
+    if !self.args_tainted(&args) {
+      self.err(pos, MizError::UnknownPredicate);
+    }
+    Formula::Error
   }
 
   fn elab_const(&self, nr: ConstId) -> Term {
@@ -1035,19 +1155,28 @@ impl Analyzer<'_> {
     }
   }
 
-  fn resolve_const(&self, var: &mut ast::Variable) -> ConstId {
-    *var.var.get_or_insert_with(|| {
-      let Some(&(mut kind)) = self.lookup.var.get(&var.spelling) else {
-        panic!("{:?}: unknown variable '{}'", var.pos, var.spelling)
-      };
-      loop {
-        match kind {
-          VarKind::Bound(_) => unreachable!(),
-          VarKind::Const(nr) => break nr,
-          VarKind::Reserved(n) => kind = self.reserved_lookup[&n],
-        }
+  /// The constant a variable refers to, or `None` if it does not resolve.
+  ///
+  /// Name checking already reports unresolved variables, but it runs ahead of
+  /// elaboration and does not stop it, so the analyzer can still reach one. Returning
+  /// `None` rather than a placeholder id matters: a fabricated `ConstId` indexes
+  /// `fixed_var` out of bounds further along, which just moves the crash.
+  fn resolve_const(&self, var: &mut ast::Variable) -> Option<ConstId> {
+    if let Some(c) = var.var {
+      return Some(c)
+    }
+    let Some(&(mut kind)) = self.lookup.var.get(&var.spelling) else {
+      MizError::UnknownVariable(var.spelling.to_string()).report(var.pos, &self.g);
+      return None
+    };
+    let c = loop {
+      match kind {
+        VarKind::Bound(_) => unreachable!(),
+        VarKind::Const(nr) => break nr,
+        VarKind::Reserved(n) => kind = self.reserved_lookup[&n],
       }
-    })
+    };
+    Some(*var.var.insert(c))
   }
 
   fn push_nameck_scope(&mut self, scope: &NameckScope, check: impl FnMut(&mut Self, &Type)) {
@@ -1073,14 +1202,27 @@ impl Analyzer<'_> {
     let more_insertion_len = self.reserved_more_insertion.len();
     let scope_info = (self.lookup.clone(), self.reserved_lookup.clone(), self.reserved_extra_depth);
     if let Some(nameck) = nameck {
-      self.push_nameck_scope(&nameck.scope, |this, dom| {
-        assert!(dom.is_set(&this.g, &this.lc, &this.properties))
-      })
+      // Sethood is (re)checked and reported in the elaboration loop below.
+      self.push_nameck_scope(&nameck.scope, |_, _| {})
     }
     for var in vars {
       assert!(!var.vars.is_empty());
-      let dom = self.elab_type(var.ty.as_deref().unwrap());
-      assert!(dom.is_set(&self.g, &self.lc, &self.properties));
+      // A `where` binder needs a type; an untyped one (`{ x where x : … }`) is reported
+      // and given an error type so the rest of the comprehension still elaborates.
+      let dom = match var.ty.as_deref() {
+        Some(ty) => self.elab_type(ty),
+        None => {
+          self.err(var.vars[0].pos, MizError::MissingVarType);
+          Type::new(TypeKind::Error)
+        }
+      };
+      // The domain of a Fraenkel set must have sethood (else it is a proper class).
+      if !matches!(dom.kind, TypeKind::Error)
+        && dom.is_set(&self.g, &self.lc, &self.properties) == Ok(false)
+      {
+        let pos = var.vars[0].pos;
+        self.err(pos, MizError::NotSethood);
+      }
       self.push_many_bound(dom, &var.vars);
     }
     let scope = Box::new(self.elab_term(scope));
@@ -1109,7 +1251,10 @@ impl Analyzer<'_> {
       ast::Term::Var { pos, kind, ref spelling } =>
         match kind.or_else(|| self.lookup.var.get(&**spelling).copied()) {
           Some(kind) => self.elab_var_kind(kind),
-          None => panic!("{pos:?}: unresolved variable '{spelling}'"),
+          None => {
+            self.err(pos, MizError::UnknownVariable(spelling.to_string()));
+            Term::Error
+          }
         },
       ast::Term::Numeral { value, .. } => Term::Numeral(value),
       ast::Term::Infix { pos, sym, left, ref args, .. } => {
@@ -1126,7 +1271,10 @@ impl Analyzer<'_> {
         {
           Some(PrivFuncKind::PrivFunc(nr)) => {
             let def = &self.lc.priv_func[nr];
-            assert!(agrees(&self.g, &self.lc, &args, &def.primary));
+            if !agrees(&self.g, &self.lc, &args, &def.primary) {
+              self.err(pos, MizError::ArgTypeMismatch);
+              return Term::Error
+            }
             args.iter_mut().for_each(|t| t.strip_qua_mut());
             let base = self.lc.bound_var.len() as u32;
             let mut inst = Inst::new(&self.g.constrs, &self.lc, &args, base);
@@ -1134,16 +1282,25 @@ impl Analyzer<'_> {
             Term::PrivFunc { nr, args, value }
           }
           Some(PrivFuncKind::SchFunc(nr)) => {
-            assert!(agrees(&self.g, &self.lc, &args, &self.sch_func_args[nr]));
+            if !agrees(&self.g, &self.lc, &args, &self.sch_func_args[nr]) {
+              self.err(pos, MizError::ArgTypeMismatch);
+              return Term::Error
+            }
             args.iter_mut().for_each(|t| t.strip_qua_mut());
             Term::SchFunc { nr, args }
           }
-          None => panic!("{pos:?}: unresolved private functor '{spelling}'"),
+          None => {
+            self.err(pos, MizError::UnresolvedPrivFunc(spelling.to_string()));
+            Term::Error
+          }
         }
       }
       ast::Term::Aggregate { pos, sym, ref args, .. } => {
         let args = self.elab_terms_qua(args);
-        let fmt = self.formats[&Format::Aggr(FormatAggr { sym, args: args.len() as u8 })];
+        let fmt = Format::Aggr(FormatAggr { sym, args: args.len() as u8 });
+        let Some(fmt) = self.lookup_format(pos, fmt, MizError::UnknownStructure) else {
+          return Term::Error
+        };
         for pat in self.notations[PKC::Aggr].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
@@ -1152,31 +1309,46 @@ impl Analyzer<'_> {
               let mut args = subst.trim_to(self.g.constrs.aggregate[nr].primary.len());
               args.iter_mut().for_each(|t| t.strip_qua_mut());
               let tm = Term::Aggregate { nr, args };
-              TermCollection::insert(&self.g, &self.lc, &tm, false);
+              let _: Result<usize, ErrorValue> =
+                TermCollection::insert(&self.g, &self.lc, &tm, false);
               return tm
             }
           }
         }
-        panic!("type error")
+        if !self.args_tainted(&args) {
+          self.err(pos, MizError::UnknownStructure);
+        }
+        Term::Error
       }
       ast::Term::SubAggr { pos, sym, ref arg, .. } => {
         let arg = self.elab_term_qua(arg);
-        let fmt = self.formats[&Format::SubAggr(sym)];
+        let Some(fmt) = self.lookup_format(pos, Format::SubAggr(sym), MizError::UnknownStructure)
+        else {
+          return Term::Error
+        };
         for pat in self.notations[PKC::SubAggr].iter().rev() {
           if pat.fmt == fmt
             && pat.check_types(&self.g, &self.lc, std::slice::from_ref(&arg)).is_some()
           {
             let PatternKind::SubAggr(nr) = pat.kind else { unreachable!() };
             self.write_mpt.on(|w| w.write(pos, fmt, nr));
-            let ty = arg.get_type_uncached(&self.g, &self.lc);
+            let ty = arg
+              .get_type_uncached(&self.g, &self.lc)
+              .unwrap_or_else(|_| Type::new(TypeKind::Error));
             return Term::mk_aggr(&self.g, &self.lc, nr, &arg.strip_qua(), &ty)
           }
         }
-        panic!("type error")
+        if !self.args_tainted(std::slice::from_ref(&arg)) {
+          self.err(pos, MizError::UnknownStructure);
+        }
+        Term::Error
       }
       ast::Term::Selector { pos, sym, ref arg, .. } => {
         let arg = self.elab_term_qua(arg);
-        let fmt = self.formats[&Format::Sel(sym)];
+        let Some(fmt) = self.lookup_format(pos, Format::Sel(sym), MizError::IllegalProjection)
+        else {
+          return Term::Error
+        };
         for pat in self.notations[PKC::Sel].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, std::slice::from_ref(&arg)) {
@@ -1185,29 +1357,42 @@ impl Analyzer<'_> {
               let mut args = subst.trim_to(self.g.constrs.selector[nr].primary.len());
               args.iter_mut().for_each(|t| t.strip_qua_mut());
               let tm = Term::Selector { nr, args };
-              TermCollection::insert(&self.g, &self.lc, &tm, false);
+              let _: Result<usize, ErrorValue> =
+                TermCollection::insert(&self.g, &self.lc, &tm, false);
               return tm
             }
           }
         }
-        panic!("type error")
+        if !self.args_tainted(std::slice::from_ref(&arg)) {
+          self.err(pos, MizError::IllegalProjection);
+        }
+        Term::Error
       }
       ast::Term::InternalSelector { pos, sym, id, .. } => {
-        // only occurs inside elab_struct_def, ensured by parser
-        Term::Const(
-          id.or_else(|| self.internal_selectors.get(&sym).copied())
-            .unwrap_or_else(|| panic!("{pos:?}: this struct does not have this field")),
-        )
+        // Only occurs inside a struct definition. The parser admits `the <selector>` for
+        // any selector symbol in scope and defers the membership check to here, so a
+        // reference to a selector that is not (yet) a field of this struct lands with
+        // nothing in `internal_selectors`: report rather than panic.
+        match id.or_else(|| self.internal_selectors.get(&sym).copied()) {
+          Some(c) => Term::Const(c),
+          None => {
+            self.err(pos, MizError::NoSuchField);
+            Term::Error
+          }
+        }
       }
       ast::Term::The { ref ty, .. } => Term::The { ty: Box::new(self.elab_type(ty)) },
       ast::Term::Fraenkel { ref vars, ref scope, ref compr, ref nameck, .. } =>
         self.elab_fraenkel(vars, scope, compr.as_deref(), nameck.as_deref()),
       ast::Term::Qua { ref term, ref ty, .. } =>
         Term::Qua { value: Box::new(self.elab_term(term)), ty: Box::new(self.elab_type(ty)) },
-      ast::Term::It { .. } => {
-        assert!(self.lc.it_type.is_some(), "unexpected 'it'");
-        Term::It
-      }
+      ast::Term::It { pos } =>
+        if self.lc.it_type.is_some() {
+          Term::It
+        } else {
+          self.err(pos, MizError::UnexpectedIt);
+          Term::Error
+        },
     })();
     vprintln!("elab_term {tm:?}\n -> {res:?}");
     res
@@ -1227,7 +1412,10 @@ impl Analyzer<'_> {
         let args = (args.iter().map(|t| self.elab_term_qua(t)))
           .chain(std::iter::once(tm.clone()))
           .collect_vec();
-        let fmt = self.formats[&Format::Attr(FormatAttr { sym, args: args.len() as u8 })];
+        let fmt = Format::Attr(FormatAttr { sym, args: args.len() as u8 });
+        let Some(fmt) = self.lookup_format(pos, fmt, MizError::UnknownAttribute) else {
+          return Formula::Error
+        };
         for pat in self.r.notations[PKC::Attr].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
@@ -1241,13 +1429,17 @@ impl Analyzer<'_> {
             }
           }
         }
-        panic!("type error")
+        if !self.args_tainted(&args) {
+          self.err(pos, MizError::UnknownAttribute);
+        }
+        Formula::Error
       }
     }
   }
 
-  /// AnalyzeAttribute
-  fn elab_attr(&mut self, attr: &ast::Attr, mut positive: bool, ty: &mut Type) -> Attr {
+  /// AnalyzeAttribute. Returns `None` (leaving `ty` restored) when no attribute
+  /// notation applies, so the caller can skip it rather than the analyzer panicking.
+  fn elab_attr(&mut self, attr: &ast::Attr, mut positive: bool, ty: &mut Type) -> Option<Attr> {
     match attr {
       ast::Attr::Non { attr, .. } => self.elab_attr(attr, !positive, ty),
       &ast::Attr::Attr { pos, sym, ref args, .. } => {
@@ -1256,7 +1448,11 @@ impl Analyzer<'_> {
         let args = (args.iter().map(|t| self.elab_term_qua(t)))
           .chain(std::iter::once(Term::Bound(v)))
           .collect_vec();
-        let fmt = self.formats[&Format::Attr(FormatAttr { sym, args: args.len() as u8 })];
+        let fmt = Format::Attr(FormatAttr { sym, args: args.len() as u8 });
+        let Some(fmt) = self.lookup_format(pos, fmt, MizError::UnknownAttribute) else {
+          *ty = self.r.lc.bound_var.0.pop().unwrap().1;
+          return None
+        };
         for pat in self.r.notations[PKC::Attr].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
@@ -1274,11 +1470,18 @@ impl Analyzer<'_> {
               assert!(matches!(ty.attrs.0, Attrs::Consistent(_)));
               let out = Attr { nr, pos: positive, args };
               // vprintln!("elab_attr {attr:?} <- {ty:?}\n  -> {out:?}");
-              return out
+              return Some(out)
             }
           }
         }
-        panic!("type error")
+        // No applicable attribute notation: restore `ty`, report (unless the inputs
+        // are already error values), and signal failure to the caller.
+        let tainted = self.args_tainted(&args);
+        *ty = self.r.lc.bound_var.0.pop().unwrap().1;
+        if !tainted {
+          self.err(pos, MizError::UnknownAttribute);
+        }
+        None
       }
     }
   }
@@ -1289,7 +1492,10 @@ impl Analyzer<'_> {
       ast::Type::Error { .. } => Type::new(TypeKind::Error),
       &ast::Type::Mode { pos, sym, ref args, .. } => {
         let args = self.elab_terms_qua(args);
-        let fmt = self.formats[&Format::Mode(FormatMode { sym, args: args.len() as u8 })];
+        let fmt = Format::Mode(FormatMode { sym, args: args.len() as u8 });
+        let Some(fmt) = self.lookup_format(pos, fmt, MizError::UnknownMode) else {
+          return Type::new(TypeKind::Error)
+        };
         for pat in self.notations[PKC::Mode].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
@@ -1305,7 +1511,10 @@ impl Analyzer<'_> {
                 PatternKind::ExpandableMode { ref expansion } => {
                   // FIXME: write_mpt?
                   ty = (**expansion).clone();
-                  let mut args = subst.finish();
+                  let Some(mut args) = subst.finish() else {
+                    self.err(pos, MizError::UnknownMode);
+                    return Type::new(TypeKind::Error)
+                  };
                   args.iter_mut().for_each(|t| t.strip_qua_mut());
                   ty.visit(&mut Inst::new(&self.g.constrs, &self.lc, &args, base));
                 }
@@ -1322,17 +1531,23 @@ impl Analyzer<'_> {
                   )
                 }
               }
-              attrs.round_up_with(&self.g, &self.lc, &ty, false);
+              if attrs.round_up_with(&self.g, &self.lc, &ty, false).is_err() {
+                return Type::new(TypeKind::Error)
+              }
               ty.attrs.1 = attrs;
               return ty
             }
           }
         }
-        panic!("type error")
+        self.err(pos, MizError::UnknownMode);
+        Type::new(TypeKind::Error)
       }
       &ast::Type::Struct { pos, sym, ref args, .. } => {
         let args = self.elab_terms_qua(args);
-        let fmt = self.formats[&Format::Struct(FormatStruct { sym, args: args.len() as u8 })];
+        let fmt = Format::Struct(FormatStruct { sym, args: args.len() as u8 });
+        let Some(fmt) = self.lookup_format(pos, fmt, MizError::UnknownStructure) else {
+          return Type::new(TypeKind::Error)
+        };
         for pat in self.notations[PKC::Struct].iter().rev() {
           if pat.fmt == fmt {
             if let Some(subst) = pat.check_types(&self.g, &self.lc, &args) {
@@ -1344,34 +1559,48 @@ impl Analyzer<'_> {
             }
           }
         }
-        panic!("type error")
+        self.err(pos, MizError::UnknownStructure);
+        Type::new(TypeKind::Error)
       }
-      ast::Type::Cluster { attrs, ty, .. } => {
+      &ast::Type::Cluster { pos, ref attrs, ref ty, .. } => {
         let mut ty = self.elab_type(ty);
         let mut ty2 = ty.clone();
-        attrs.iter().rev().for_each(|attr| {
-          let attr = self.elab_attr(attr, true, &mut ty2);
+        for attr in attrs.iter().rev() {
+          let Some(attr) = self.elab_attr(attr, true, &mut ty2) else {
+            // attribute already reported; the attributed type is unusable
+            return Type::new(TypeKind::Error)
+          };
           ty2.attrs.0.insert(Some(&self.g.constrs), &self.lc, attr.clone());
           ty2.attrs.1.insert(Some(&self.g.constrs), &self.lc, attr);
-          ty2.round_up_with_self(&self.g, &self.lc, false);
-          assert!(matches!(ty2.attrs.0, Attrs::Consistent(_)));
-        });
+          if ty2.round_up_with_self(&self.g, &self.lc, false).is_err() {
+            return Type::new(TypeKind::Error)
+          }
+          // Contradictory attributes (e.g. `empty non empty`); report and use error type.
+          if !matches!(ty2.attrs.0, Attrs::Consistent(_)) {
+            self.err(pos, MizError::InconsistentType);
+            return Type::new(TypeKind::Error)
+          }
+        }
         for cl in self.g.clusters.registered.iter().rev() {
           let mut subst = Subst::new(cl.primary.len());
-          if subst.eq_radices(&mut subst.eq_ctx(&self.g, &self.lc), &cl.ty, &ty)
+          if subst.eq_radices(&mut subst.eq_ctx(&self.g, &self.lc), &cl.ty, &ty) == Ok(true)
             && (ty2.attrs.0)
-              .is_subset_of(&cl.consequent.1, |a2, a1| subst.eq(&self.g, &self.lc, a1, a2))
-            && subst.check_loci_types::<false>(&self.g, &self.lc, &cl.primary, false)
+              .try_is_subset_of(&cl.consequent.1, |a2, a1| subst.eq(&self.g, &self.lc, a1, a2))
+              == Ok(true)
+            && subst.check_loci_types::<false>(&self.g, &self.lc, &cl.primary, false) == Ok(true)
           {
             let mut attrs = ty2.attrs.0.clone();
             attrs.enlarge_by(&self.g.constrs, &self.lc, &ty.attrs.1);
-            attrs.round_up_with(&self.g, &self.lc, &ty, false);
+            if attrs.round_up_with(&self.g, &self.lc, &ty, false).is_err() {
+              return Type::new(TypeKind::Error)
+            }
             assert!(matches!(ty2.attrs.0, Attrs::Consistent(_)));
             ty.attrs = (ty2.attrs.0, attrs);
             return ty
           }
         }
-        panic!("non registered cluster \"{ty2:?}\"")
+        self.err(pos, MizError::UnregisteredCluster);
+        Type::new(TypeKind::Error)
       }
       ast::Type::Reservation { group, subst, .. } => {
         let mut ty = self.res_groups[*group].ty.clone();
@@ -1385,7 +1614,9 @@ impl Analyzer<'_> {
     res
   }
 
-  fn elab_flex_and(&mut self, f1: &ast::Formula, f2: &ast::Formula, pos: bool) -> Formula {
+  fn elab_flex_and(
+    &mut self, span: Span, f1: &ast::Formula, f2: &ast::Formula, pos: bool,
+  ) -> Formula {
     #[derive(Clone, Copy, Default)]
     enum OneDiff<'a> {
       #[default]
@@ -1507,7 +1738,7 @@ impl Analyzer<'_> {
       fn eq_type(
         ctx: &mut EqCtx<'_>, ic: &'a IdxVec<InferId, Assignment>, ty1: &'a Type, ty2: &'a Type,
       ) -> Self {
-        Self::then(().eq_attrs(ctx, ty1, ty2) && ty1.kind == ty2.kind, || {
+        Self::then(().eq_attrs(ctx, ty1, ty2) == Ok(true) && ty1.kind == ty2.kind, || {
           Self::eq_terms(ctx, ic, &ty1.args, &ty2.args)
         })
       }
@@ -1562,14 +1793,14 @@ impl Analyzer<'_> {
       fn fail() -> ! { panic!("flex-and construction failed") }
       fn term(&mut self, ctx: &mut EqCtx<'a>, t1: &Term, t2: &Term) -> Term {
         use Term::*;
-        if ().eq_term(ctx, t1, t2) {
+        if ().eq_term(ctx, t1, t2) == Ok(true) {
           return t1.visit_cloned(&mut OnVarMut(|nr| {
             if *nr >= self.base {
               *nr += 1
             }
           }))
         }
-        if ().eq_term(ctx, self.t1, t1) && ().eq_term(ctx, self.t2, t2) {
+        if ().eq_term(ctx, self.t1, t1) == Ok(true) && ().eq_term(ctx, self.t2, t2) == Ok(true) {
           return Term::Bound(BoundId(self.base))
         }
         match (t1, t2) {
@@ -1622,7 +1853,7 @@ impl Analyzer<'_> {
       }
 
       fn ty(&mut self, ctx: &mut EqCtx<'a>, ty1: &Type, ty2: &Type) -> Type {
-        assert!(().eq_attrs(ctx, ty1, ty2) && ty1.kind == ty2.kind);
+        assert!(().eq_attrs(ctx, ty1, ty2) == Ok(true) && ty1.kind == ty2.kind);
         let attrs = ty1.attrs.visit_cloned(&mut OnVarMut(|nr| {
           if *nr >= self.base {
             *nr += 1
@@ -1633,7 +1864,7 @@ impl Analyzer<'_> {
 
       fn formula(&mut self, ctx: &mut EqCtx<'a>, f1: &Formula, f2: &Formula) -> Formula {
         use Formula::*;
-        if ().eq_formula(ctx, f1, f2) {
+        if ().eq_formula(ctx, f1, f2) == Ok(true) {
           return f1.visit_cloned(&mut OnVarMut(|nr| {
             if *nr >= self.base {
               *nr += 1
@@ -1677,35 +1908,53 @@ impl Analyzer<'_> {
       }
     }
 
-    let Some(natural) = self.g.reqs.natural() else { panic!("requirement NUMERALS missing") };
-    let Some(le) = self.g.reqs.less_or_equal() else { panic!("requirement REAL missing") };
+    // `…` needs the number requirements (NUMERALS gives `natural`, REAL gives `≤`).
+    let (Some(natural), Some(le)) = (self.g.reqs.natural(), self.g.reqs.less_or_equal()) else {
+      self.err(span, MizError::FlexaryRequirement);
+      return Formula::Error
+    };
     let f1 = self.elab_formula(f1, pos);
     let f2 = self.elab_formula(f2, pos);
-    let (t1, t2) = self.g.with_eq(&self.lc, |ctx| {
+    let diff = self.g.with_eq(&self.lc, |ctx| {
       let ic = self.lc.infer_const.borrow();
-      let OneDiff::One(t1, t2) = OneDiff::eq_formula(ctx, &ic, &f1, &f2) else {
-        panic!("can't abstract flex-and term, must have exactly one difference")
-      };
-      (t1.clone(), t2.clone())
+      match OneDiff::eq_formula(ctx, &ic, &f1, &f2) {
+        OneDiff::One(t1, t2) => Some((t1.clone(), t2.clone())),
+        // The two sides are identical, structurally different in more than one place, or
+        // an error value: the `…` boundary cannot be inferred.
+        _ => None,
+      }
     });
+    let Some((t1, t2)) = diff else {
+      self.err(span, MizError::BadFlexary);
+      return Formula::Error
+    };
     let base = self.lc.bound_var.len() as u32;
     let only_constant = !CheckBound::get(base..u32::MAX, |cb| {
       cb.visit_term(&t1);
       cb.visit_term(&t2);
     });
-    assert!(only_constant, "can't abstract flex-and term, contains bound variables");
+    if !only_constant {
+      self.err(span, MizError::BadFlexary);
+      return Formula::Error
+    }
     let natural = Attrs::Consistent(vec![Attr::new0(natural, true)]);
     let is_natural = |t: &Term| {
-      let attrs = &t.get_type(&self.g, &self.lc, false).attrs.1;
-      natural.is_subset_of(attrs, |a1, a2| self.g.eq(&self.lc, a1, a2))
+      let Ok(ty) = t.get_type(&self.g, &self.lc, false) else { return false };
+      natural.try_is_subset_of(&ty.attrs.1, |a1, a2| self.g.eq(&self.lc, a1, a2)) == Ok(true)
     };
-    assert!(
-      is_natural(&t1) && is_natural(&t2),
-      "can't abstract flex-and term, boundary variable does not have 'natural' adjective"
-    );
+    if !(is_natural(&t1) && is_natural(&t2)) {
+      // The `…` boundary must be indexed by a `natural` number.
+      self.err(span, MizError::BadFlexary);
+      return Formula::Error
+    }
     let mut nat =
       Box::new(Type { kind: ModeId::SET.into(), attrs: (natural.clone(), natural), args: vec![] });
-    nat.round_up_with_self(&self.g, &self.lc, false);
+    // The `natural` type is built from the requirement's own attribute; a round-up
+    // failure means an error value slipped in, so report rather than build a bad term.
+    if nat.round_up_with_self(&self.g, &self.lc, false).is_err() {
+      self.err(span, MizError::BadFlexary);
+      return Formula::Error
+    }
     let scope =
       self.g.with_eq(&self.lc, |ctx| Apply { t1: &t1, t2: &t2, base }.formula(ctx, &f1, &f2));
     Formula::FlexAnd { terms: Box::new([t1, t2]), scope: Box::new(scope), nat, le }
@@ -1793,10 +2042,10 @@ impl Analyzer<'_> {
         self.elab_and(f1, f2, true, true).maybe_neg(positive),
       ast::Formula::Binop { kind: FormulaBinop::Or, f1, f2, .. } =>
         self.elab_and(f1, f2, false, false).maybe_neg(!positive),
-      ast::Formula::Binop { kind: FormulaBinop::FlexAnd, f1, f2, .. } =>
-        self.elab_flex_and(f1, f2, true).maybe_neg(positive),
-      ast::Formula::Binop { kind: FormulaBinop::FlexOr, f1, f2, .. } =>
-        self.elab_flex_and(f1, f2, false).maybe_neg(!positive),
+      ast::Formula::Binop { kind: FormulaBinop::FlexAnd, pos: sp, f1, f2 } =>
+        self.elab_flex_and(*sp, f1, f2, true).maybe_neg(positive),
+      ast::Formula::Binop { kind: FormulaBinop::FlexOr, pos: sp, f1, f2 } =>
+        self.elab_flex_and(*sp, f1, f2, false).maybe_neg(!positive),
       ast::Formula::Binop { kind: FormulaBinop::Imp, f1, f2, .. } =>
         self.elab_and(f1, f2, true, false).maybe_neg(!positive),
       ast::Formula::Binop { kind: FormulaBinop::Iff, f1, f2, .. } =>
@@ -1831,18 +2080,27 @@ impl Analyzer<'_> {
         {
           Some(PrivPredKind::PrivPred(nr)) => {
             let (ty, value) = &self.priv_pred[nr];
-            assert!(agrees(&self.g, &self.lc, &args, ty));
+            if !agrees(&self.g, &self.lc, &args, ty) {
+              self.err(pos, MizError::ArgTypeMismatch);
+              return Formula::Error
+            }
             args.iter_mut().for_each(|t| t.strip_qua_mut());
             let base = self.lc.bound_var.len() as u32;
             let value = value.visit_cloned(&mut Inst::new(&self.g.constrs, &self.lc, &args, base));
             Formula::PrivPred { nr, args, value }.maybe_neg(positive)
           }
           Some(PrivPredKind::SchPred(nr)) => {
-            assert!(agrees(&self.g, &self.lc, &args, &self.sch_pred_args[nr]));
+            if !agrees(&self.g, &self.lc, &args, &self.sch_pred_args[nr]) {
+              self.err(pos, MizError::ArgTypeMismatch);
+              return Formula::Error
+            }
             args.iter_mut().for_each(|t| t.strip_qua_mut());
             Formula::SchPred { nr, args }.maybe_neg(positive)
           }
-          None => panic!("{pos:?}: unresolved private predicate '{spelling}'"),
+          None => {
+            self.err(pos, MizError::UnresolvedPrivPred(spelling.to_string()));
+            Formula::Error
+          }
         }
       }
       ast::Formula::Attr { positive: positive2, term, attrs, .. } => {
@@ -1862,15 +2120,17 @@ impl Analyzer<'_> {
       ast::Formula::Binder { kind: FormulaBinder::Exists, vars, st, scope, .. } =>
         self.elab_forall(vars, st.as_deref(), scope, false).maybe_neg(!positive),
       ast::Formula::False { .. } => Formula::True.maybe_neg(!positive),
-      ast::Formula::Thesis { pos: loc } => self
-        .thesis
-        .as_deref()
+      ast::Formula::Thesis { pos: loc } => match (self.thesis.as_deref())
         // this step is super sketchy, but Mizar actually lets you access the
         // `thesis` of outer `proof` scopes in a `now` block
         .or_else(|| self.thesis_stack.iter().rev().find_map(Option::as_deref))
-        .unwrap_or_else(|| panic!("at {}:{loc:?}: thesis is not known", self.article))
-        .clone()
-        .maybe_neg(positive),
+      {
+        Some(f) => f.clone().maybe_neg(positive),
+        None => {
+          self.err(*loc, MizError::UnexpectedThesis);
+          Formula::Error
+        }
+      },
     };
     vprintln!("elab_formula {positive:?} {f:?}\n -> {res:?}");
     res
@@ -1887,12 +2147,18 @@ impl Analyzer<'_> {
   }
 
   fn elab_term_no_reserve(&mut self, tm: &mut ast::Term) -> Term {
-    assert!(self.collect_reserved(|cr| cr.visit_term(tm)).is_empty());
+    if !self.collect_reserved(|cr| cr.visit_term(tm)).is_empty() {
+      self.err(tm.pos(), MizError::ReservedVarNotAllowed);
+      return Term::Error
+    }
     self.elab_term(tm)
   }
 
   fn elab_type_no_reserve(&mut self, tm: &mut ast::Type) -> Type {
-    assert!(self.collect_reserved(|cr| cr.visit_type(tm)).is_empty());
+    if !self.collect_reserved(|cr| cr.visit_type(tm)).is_empty() {
+      self.err(tm.pos(), MizError::ReservedVarNotAllowed);
+      return Type::new(TypeKind::Error)
+    }
     self.elab_type(tm)
   }
 
@@ -1917,7 +2183,7 @@ impl Analyzer<'_> {
   fn try_unfold(
     &self, up: bool, def: &Definiens, pos: bool, kind: ConstrKind, args: &[Term],
   ) -> Option<(bool, Formula)> {
-    let subst = def.matches(&self.g, &self.lc, kind, args)?.finish();
+    let subst = def.matches(&self.g, &self.lc, kind, args).ok()??.finish()?;
     let mut inst = Inst::new(&self.g.constrs, &self.lc, &subst, 0);
     let DefValue::Formula(value) = &def.value else { unreachable!() };
     let (pos2, f2) = if value.cases.is_empty() {
@@ -2034,13 +2300,29 @@ impl Analyzer<'_> {
     &self, term: &Term, widenable: bool, up: bool, f: &mut (bool, Box<Formula>),
     expansions: Option<&mut BTreeMap<DefiniensId, u32>>,
   ) {
+    // An error-value thesis was already reported upstream; don't process or re-report.
+    if matches!(&*f.1, Formula::Error) {
+      return
+    }
     self.whnf(up, MAX_EXPANSIONS, f, expansions);
     vprintln!("inst_forall {term:?}, {widenable}, {up}, {f:?}");
     let (true, Formula::ForAll { id: _, dom, scope }) = (f.0, &mut *f.1) else {
-      panic!("not a forall")
+      // `let`/`take` against a thesis that isn't universally quantified/existential.
+      // Render the thesis (the user cannot see it) only here, on the error path.
+      let thesis = self.lc.pp(&(*f.1).clone().maybe_neg(f.0)).to_string();
+      MizError::BadVarIntro(thesis).report(self.pos, &self.g);
+      f.0 = true;
+      *f.1 = Formula::Error;
+      return
     };
-    let ty = term.get_type(&self.g, &self.lc, false);
+    let ty = term.get_type(&self.g, &self.lc, false).unwrap_or_else(|_| Type::new(TypeKind::Error));
     vprintln!("inst_forall {term:?}: {ty:?}");
+    // The introduced term is itself an error value (already reported); bail silently.
+    if matches!(ty.kind, TypeKind::Error) {
+      f.0 = true;
+      *f.1 = Formula::Error;
+      return
+    }
     Inst0(0, term).visit_formula(scope);
     let ok = if !widenable {
       self.g.eq(&self.lc, &**dom, &ty)
@@ -2049,16 +2331,17 @@ impl Analyzer<'_> {
     } else {
       ty.is_wider_than(&self.g, &self.lc, dom)
     };
-    *f.1 = if ok {
+    *f.1 = if ok == Ok(true) {
       std::mem::take(scope)
-    } else {
-      assert!(ty.is_wider_than(&self.g, &self.lc, dom));
-      assert!(self.g.eq_attrs(&self.lc, &ty, dom));
+    } else if ty.is_wider_than(&self.g, &self.lc, dom) == Ok(true)
+      && self.g.eq_attrs(&self.lc, &ty, dom) == Ok(true)
+    {
       Formula::mk_and_with(|conds| {
         loop {
           conds.push(Formula::Is { term: Box::new(term.clone()), ty: dom.clone() });
-          *dom = dom.widening(&self.g, &self.lc).unwrap();
-          if self.g.eq_radices(&self.lc, &ty, dom) {
+          let Some(w) = dom.widening(&self.g, &self.lc) else { break };
+          *dom = w;
+          if self.g.eq_radices(&self.lc, &ty, dom) == Ok(true) {
             break
           }
         }
@@ -2066,6 +2349,16 @@ impl Analyzer<'_> {
         std::mem::take(scope).mk_neg().append_conjuncts_to(conds);
       })
       .mk_neg()
+    } else if matches!(dom.kind, TypeKind::Error) {
+      // The quantifier domain is itself an error value (already reported upstream);
+      // poison silently rather than cascading a spurious VarTypeMismatch.
+      Formula::Error
+    } else {
+      // The variable's type is incompatible with the type the thesis quantifies over;
+      // show that type (rendered only here, on the error path).
+      let dom = self.lc.pp(dom).to_string();
+      MizError::VarTypeMismatch(dom).report(self.pos, &self.g);
+      Formula::Error
     }
   }
 
@@ -2101,7 +2394,7 @@ impl Analyzer<'_> {
       };
       let mut f2 = (true, Box::new(iter2.next().unwrap_or(Formula::True)));
       loop {
-        if f1.0 == f2.0 && self.g.eq(&self.lc, &f1.1, &f2.1) {
+        if f1.0 == f2.0 && self.g.eq(&self.lc, &f1.1, &f2.1) == Ok(true) {
           continue 'ok
         }
         match (&mut f1.1, &mut *f2.1) {
@@ -2161,8 +2454,14 @@ impl Analyzer<'_> {
 
   fn elab_spec(&mut self, spec: Option<&ast::Type>, tgt: &Type) -> Type {
     if let Some(ty) = spec {
+      let pos = ty.pos();
       let ty = self.elab_type(ty);
-      assert!(tgt.is_wider_than(&self.g, &self.lc, &ty));
+      // A redefinition's specified type must be a subtype of the inherited one.
+      if !matches!(ty.kind, TypeKind::Error)
+        && tgt.is_wider_than(&self.g, &self.lc, &ty) == Ok(false)
+      {
+        self.err(pos, MizError::InvalidSpecification);
+      }
       ty
     } else {
       tgt.clone()
@@ -2174,8 +2473,16 @@ impl Analyzer<'_> {
     let mut attrs1 = attrs.clone();
     attrs1.enlarge_by(&self.g.constrs, &self.lc, &ty.attrs.1); // lower cluster? [from original]
     attrs.enlarge_by(&self.g.constrs, &self.lc, &ty.attrs.1);
-    attrs.round_up_with(&self.g, &self.lc, &ty, false);
-    let Attrs::Consistent(_) = attrs else { panic!("inconsistent existential cluster") };
+    // The registration is built around an error value; it was already reported, and
+    // registering a partly-rounded cluster would be worse than registering none.
+    if attrs.round_up_with(&self.g, &self.lc, &ty, false).is_err() {
+      return
+    }
+    let Attrs::Consistent(_) = attrs else {
+      let pos = self.pos;
+      self.err(pos, MizError::InconsistentCluster);
+      return
+    };
     ty.attrs = (Attrs::EMPTY, Attrs::EMPTY);
     self.read_registered_cluster(RegisteredCluster {
       cl: Cluster { primary, consequent: (attrs1, attrs) },
@@ -2340,7 +2647,7 @@ impl<'a> PropertiesBuilder<'a> {
       [v1, v2] => {
         let c1 = to_const[v1];
         let c2 = to_const[v2];
-        if g.eq(lc, &lc.fixed_var[c1].ty, &lc.fixed_var[c2].ty) {
+        if g.eq(lc, &lc.fixed_var[c1].ty, &lc.fixed_var[c2].ty) == Ok(true) {
           self.props.arg1 = v1.0;
           self.props.arg2 = v2.0;
           self.kind = f(Args::Binary([c1, c2]));
@@ -2353,7 +2660,10 @@ impl<'a> PropertiesBuilder<'a> {
   fn the_formula<const N: usize>(
     &self, args: [ConstId; N], lift: u32, it: u32, tgt: [u32; N],
   ) -> Formula {
-    let f = self.formula.as_deref().unwrap();
+    // A property attached to a definition that has no definiens (e.g. `pred P[a,b];`
+    // with a `symmetry`): there is no formula to instantiate. Yield an error value so
+    // the property degrades to a sorry rather than aborting.
+    let Some(f) = self.formula.as_deref() else { return Formula::Error };
     f.visit_cloned(&mut InstN::new(args, lift, it, tgt))
   }
 
@@ -2376,6 +2686,7 @@ impl<'a> PropertiesBuilder<'a> {
     for prop in props {
       let (g, lc) = (&elab.g, &elab.lc);
       if g.cfg.analyzer_full {
+        let mut prop_err = None;
         let thesis = match (prop.kind, &self.kind) {
           (PropertyKind::Symmetry, &PropertyDeclKind::Pred(Args::Binary(args), pos)) =>
             self.asymmetry(lc, args, pos, !pos),
@@ -2412,30 +2723,53 @@ impl<'a> PropertiesBuilder<'a> {
           }
           (PropertyKind::Idempotence, &PropertyDeclKind::Func(_, Args::Binary(args))) => {
             let FixedVar { id, ty, .. } = &lc.fixed_var[args[0]];
-            assert!(lc.it_type.as_ref().unwrap().is_wider_than(g, lc, ty));
-            Formula::forall(*id, ty.clone(), self.the_formula(args, 1, 0, [0, 0]))
+            // `== Ok(false)`, not `!= Ok(true)`: an error-valued type makes the
+            // comparison `Err` (already reported upstream) — treat that as "no extra
+            // error" rather than a spurious second `PropertyTypeMismatch`, matching
+            // Projectivity's `!= Ok(false)` idiom below.
+            if lc.it_type.as_ref().unwrap().is_wider_than(g, lc, ty) == Ok(false) {
+              prop_err = Some(MizError::PropertyTypeMismatch(prop.kind));
+              Formula::Error
+            } else {
+              Formula::forall(*id, ty.clone(), self.the_formula(args, 1, 0, [0, 0]))
+            }
           }
           (PropertyKind::Involutiveness, &PropertyDeclKind::Func(_, Args::Unary(args))) => {
             let FixedVar { id, ty, .. } = &lc.fixed_var[args[0]];
             let it_ty = lc.it_type.as_deref().unwrap();
-            assert!(g.eq(lc, it_ty, ty));
-            let f = Formula::mk_and_with(|conj| {
-              self.the_formula(args, 2, 0, [1]).append_conjuncts_to(conj);
-              self.the_formula(args, 2, 1, [0]).mk_neg().append_conjuncts_to(conj);
-            });
-            Formula::forall0(it_ty.clone(), Formula::forall(*id, it_ty.clone(), f.mk_neg()))
+            // `!= Ok(false)`: suppress the dependent mismatch when a type is an error
+            // value (already reported), same as Idempotence above / Projectivity below.
+            if g.eq(lc, it_ty, ty) != Ok(false) {
+              let f = Formula::mk_and_with(|conj| {
+                self.the_formula(args, 2, 0, [1]).append_conjuncts_to(conj);
+                self.the_formula(args, 2, 1, [0]).mk_neg().append_conjuncts_to(conj);
+              });
+              Formula::forall0(it_ty.clone(), Formula::forall(*id, it_ty.clone(), f.mk_neg()))
+            } else {
+              prop_err = Some(MizError::PropertyTypeMismatch(prop.kind));
+              Formula::Error
+            }
           }
           (PropertyKind::Projectivity, &PropertyDeclKind::Func(_, Args::Unary(args))) => {
             let FixedVar { id, ty, .. } = &lc.fixed_var[args[0]];
             let it_ty = lc.it_type.as_deref().unwrap();
-            let wty = &*ty.widening_of(g, lc, it_ty).unwrap();
-            assert!(g.eq_radices(lc, wty, ty));
-            assert!(ty.attrs.0.is_subset_of(&wty.attrs.1, |a1, a2| g.eq(lc, a1, a2)));
-            let f = Formula::mk_and_with(|conj| {
-              self.the_formula(args, 2, 0, [1]).append_conjuncts_to(conj);
-              self.the_formula(args, 2, 0, [0]).mk_neg().append_conjuncts_to(conj);
+            // The result type must widen to the argument type, at equal radix and with
+            // compatible attributes. Unlike Idempotence/Involutiveness this had no guard;
+            // report a type mismatch rather than unwrapping/asserting on bad input.
+            let ok = ty.widening_of(g, lc, it_ty).is_some_and(|wty| {
+              g.eq_radices(lc, &wty, ty) != Ok(false)
+                && ty.attrs.0.try_is_subset_of(&wty.attrs.1, |a1, a2| g.eq(lc, a1, a2)) != Ok(false)
             });
-            Formula::forall0(it_ty.clone(), Formula::forall(*id, ty.clone(), f.mk_neg()))
+            if !ok {
+              prop_err = Some(MizError::PropertyTypeMismatch(prop.kind));
+              Formula::Error
+            } else {
+              let f = Formula::mk_and_with(|conj| {
+                self.the_formula(args, 2, 0, [1]).append_conjuncts_to(conj);
+                self.the_formula(args, 2, 0, [0]).mk_neg().append_conjuncts_to(conj);
+              });
+              Formula::forall0(it_ty.clone(), Formula::forall(*id, ty.clone(), f.mk_neg()))
+            }
           }
           (PropertyKind::Sethood, PropertyDeclKind::Mode(value)) => {
             let it_ty = lc.it_type.as_deref().unwrap();
@@ -2453,13 +2787,26 @@ impl<'a> PropertiesBuilder<'a> {
             });
             f.mk_neg()
           }
-          (PropertyKind::Associativity, PropertyDeclKind::Func(_, Args::Binary(_))) =>
-            panic!("associativity declarations are not supported"),
-          (PropertyKind::Transitivity, &PropertyDeclKind::Pred(Args::Binary(_), _)) =>
-            panic!("transitivity declarations are not supported"),
+          (PropertyKind::Associativity, PropertyDeclKind::Func(_, Args::Binary(_))) => {
+            prop_err = Some(MizError::UnsupportedProperty(prop.kind));
+            Formula::Error
+          }
+          (PropertyKind::Transitivity, &PropertyDeclKind::Pred(Args::Binary(_), _)) => {
+            prop_err = Some(MizError::UnsupportedProperty(prop.kind));
+            Formula::Error
+          }
           (PropertyKind::Abstractness, _) => unreachable!(),
-          (k, tgt) => panic!("property {k:?} is not applicable to {tgt:?}"),
+          _ => {
+            prop_err = Some(MizError::InapplicableProperty(prop.kind));
+            Formula::Error
+          }
         };
+        // The property's shape doesn't match its target (or isn't supported):
+        // report once and skip it rather than checking a bogus thesis.
+        if let Some(e) = prop_err {
+          elab.err(prop.pos, e);
+          continue
+        }
         elab.write_xml.on(|w| {
           w.start_property(prop.kind);
           w.write_proposition(&elab.r.lc, prop.pos, None, &thesis)
@@ -2476,20 +2823,36 @@ impl<'a> PropertiesBuilder<'a> {
   }
 }
 
-struct Exportable;
+/// Detects anything that cannot leave the scope it was elaborated in: a local
+/// constant, or a private functor/predicate. Well-formed input never produces one
+/// in an exported item, but malformed input can, so this reports rather than
+/// panicking. Same shape as [`CheckError`]: collect a flag, let the caller report
+/// it at a position it knows.
+#[derive(Default)]
+struct Exportable(bool);
+
+impl Exportable {
+  /// Whether the visited item mentions something scope-local.
+  fn check(f: impl FnOnce(&mut Self)) -> bool {
+    let mut e = Self::default();
+    f(&mut e);
+    e.0
+  }
+}
 
 impl Visit for Exportable {
+  fn abort(&self) -> bool { self.0 }
+
   fn visit_term(&mut self, tm: &Term) {
     match tm {
-      Term::Const(_) => panic!("local constant in exportable item"),
-      Term::PrivFunc { .. } => panic!("private function in exportable item"),
+      Term::Const(_) | Term::PrivFunc { .. } => self.0 = true,
       _ => self.super_visit_term(tm),
     }
   }
 
   fn visit_formula(&mut self, f: &Formula) {
     match f {
-      Formula::PrivPred { .. } => panic!("private predicate in exportable item"),
+      Formula::PrivPred { .. } => self.0 = true,
       _ => self.super_visit_formula(f),
     }
   }
@@ -2668,10 +3031,11 @@ impl CollectReserved<'_> {
   fn use_reserved(&mut self, pos: Span, n: ReservedId) {
     for &m in &self.res_groups[self.reserved[n].1].fvars.as_ref().unwrap().0 {
       if let Some(k) = self.local_lookup.get(&m) {
-        assert!(
-          k.1 < self.level,
-          "{pos:?}: can't use reserved variable because it would result in an invalid type"
-        )
+        // Expanding this reserved variable here would build a type mentioning a variable
+        // bound at this very level — an invalid type. Report rather than assert.
+        if k.1 >= self.level {
+          self.reporter.error(Diagnostic::error(pos, MizError::ReservedVarNotAllowed));
+        }
       } else if !self.reserved_lookup.contains_key(&m) {
         self.uses.insert(m, false);
       }
@@ -2703,9 +3067,22 @@ impl CollectReserved<'_> {
             .insert(v.spelling.clone(), VarKind::Bound(self.depth.fresh()));
         }
       } else {
-        assert!(vars.len() == 1);
-        let Some(&i) = self.reserved_by_name.get(&*vars[0].spelling) else {
-          panic!("{:?}: variable missing type", vars[0].pos)
+        let resv = (vars.len() == 1)
+          .then(|| self.reserved_by_name.get(&*vars[0].spelling).copied())
+          .flatten();
+        let Some(i) = resv else {
+          // Untyped binder that is not a single reserved variable: report and give it
+          // an error type, which the elaboration pass then handles without panicking.
+          self.reporter.error(Diagnostic::error(
+            vars[0].pos,
+            "variable has no type and is not a reserved variable",
+          ));
+          *ty = Some(Box::new(ast::Type::Error { pos: vars[0].pos }));
+          for v in &*vars {
+            let d = self.depth.fresh();
+            Rc::make_mut(&mut self.lookup).var.insert(v.spelling.clone(), VarKind::Bound(d));
+          }
+          continue
         };
         let group = self.reserved[i].1;
         let subst = (self.res_groups[group].fvars.as_ref().unwrap().0.iter())
@@ -2739,15 +3116,24 @@ impl CollectReserved<'_> {
       ast::Term::Error { .. } => {}
       ast::Term::Var { pos, kind, ref spelling } =>
         if kind.is_none() {
-          let Some(kind2) = (self.lookup.var.get(&**spelling).copied())
+          match (self.lookup.var.get(&**spelling).copied())
             .or_else(|| Some(VarKind::Reserved(*self.reserved_by_name.get(&**spelling)?)))
-          else {
-            panic!("{pos:?}: unresolved variable '{spelling}'")
-          };
-          if let VarKind::Reserved(n) = kind2 {
-            self.use_reserved(*pos, n)
+          {
+            Some(kind2) => {
+              if let VarKind::Reserved(n) = kind2 {
+                self.use_reserved(*pos, n)
+              }
+              *kind = Some(kind2)
+            }
+            None => {
+              // Unknown variable name: report once and replace with an error node.
+              let pos = *pos;
+              self
+                .reporter
+                .error(Diagnostic::error(pos, format!("unresolved variable '{spelling}'")));
+              *tm = ast::Term::Error { pos };
+            }
           }
-          *kind = Some(kind2)
         },
       ast::Term::Placeholder { .. }
       | ast::Term::Numeral { .. }
@@ -2949,7 +3335,9 @@ trait ReadProof {
         for ast::TakeDecl { var, term } in its {
           let term = elab.elab_intern_term_no_reserve(term);
           if let Some(var) = var {
-            let ty = term.get_type(&elab.g, &elab.lc, false);
+            let ty = term
+              .get_type(&elab.g, &elab.lc, false)
+              .unwrap_or_else(|_| Type::new(TypeKind::Error));
             let id = elab.intern_id(&var.spelling);
             elab.write_xml.on(|w| w.take_as_var(&elab.r.lc, id, &ty, &term));
             let v = elab.lc.fixed_var.push(FixedVar { id, ty, def: Some((Box::new(term), false)) });
@@ -3265,10 +3653,32 @@ impl ReadProof for WithThesis {
   }
 
   fn assume(&mut self, elab: &mut Analyzer, conjs: Vec<Formula>, log: bool) {
-    let thesis = elab.thesis.take().unwrap().mk_neg().into_conjuncts();
+    let thesis = elab.thesis.take().unwrap();
+    let thesis_was_error = matches!(&*thesis, Formula::Error);
     let mut expansions = Default::default();
     let eref = elab.write_xml.on(|_| Some(&mut expansions));
-    let args = elab.and_telescope(conjs, true, thesis, eref).unwrap_or_else(|t| panic!("{t:?}"));
+    // Pass a clone to the telescope so `thesis` stays alive and can be rendered in the
+    // error arm below — only there, never on the success path.
+    let neg_thesis = (*thesis).clone().mk_neg().into_conjuncts();
+    let args = match elab.and_telescope(conjs, true, neg_thesis, eref) {
+      Ok(args) => args,
+      // The assumption isn't the thesis antecedent. Report once (unless the thesis
+      // was already an error value) and leave a sorry thesis.
+      Err(_) => {
+        if !thesis_was_error {
+          let pos = elab.r.pos;
+          let thesis = elab.lc.pp(&*thesis).to_string();
+          elab.err(pos, MizError::ThesisMismatch(thesis));
+        }
+        // Mirror the success path's writer step (guarded by `log`, exactly as below)
+        // with the error thesis, so the state machine stays balanced on recovery.
+        if log {
+          elab.write_xml.on(|w| w.write_thesis(&elab.r.lc, &Formula::Error, &expansions))
+        }
+        elab.thesis = Some(Box::new(Formula::Error));
+        return
+      }
+    };
     let f = Formula::mk_and(args).mk_neg();
     if log {
       elab.write_xml.on(|w| w.write_thesis(&elab.r.lc, &f, &expansions))
@@ -3281,62 +3691,121 @@ impl ReadProof for WithThesis {
     let mut expansions = Default::default();
     let eref = elab.write_xml.on(|_| Some(&mut expansions));
     elab.inst_forall(&term, true, true, &mut thesis, eref);
+    // Keep the sorry thesis canonical (exactly `Error`, not `¬Error`) so downstream
+    // steps recognise it and don't re-report; `inst_forall` already reported.
+    if matches!(&*thesis.1, Formula::Error) {
+      // Drive the same writer step as the success path (see `thus`), so the block
+      // close does not desync on the skipped `AfterReasoning -> Block` transition.
+      elab.write_xml.on(|w| w.write_thesis(&elab.r.lc, &Formula::Error, &expansions));
+      elab.thesis = Some(Box::new(Formula::Error));
+      return
+    }
     let f = thesis.1.maybe_neg(!thesis.0);
     elab.write_xml.on(|w| w.write_thesis(&elab.r.lc, &f, &expansions));
     elab.thesis = Some(Box::new(f));
   }
 
   fn thus(&mut self, elab: &mut Analyzer, f: Vec<Formula>) {
-    let thesis = elab.thesis.take().unwrap().into_conjuncts();
+    let thesis = elab.thesis.take().unwrap();
+    // A recovery upstream replaces the whole thesis with `Formula::Error`; in that
+    // case the failure was already reported, so don't report the follow-on mismatch.
+    let thesis_was_error = matches!(&*thesis, Formula::Error);
     let mut expansions = Default::default();
     let eref = elab.write_xml.on(|_| Some(&mut expansions));
-    let args = elab.and_telescope(f, false, thesis, eref).unwrap_or_else(|t| panic!("{t:?}"));
+    // Clone for the telescope so `thesis` survives to be rendered only in the error arm.
+    let thesis_conjs = (*thesis).clone().into_conjuncts();
+    let args = match elab.and_telescope(f, false, thesis_conjs, eref) {
+      Ok(args) => args,
+      // The concluded formula does not match the running thesis. Report once
+      // (unless the thesis was already an error value) and leave a sorry thesis.
+      Err(_) => {
+        if !thesis_was_error {
+          let pos = elab.r.pos;
+          let thesis = elab.lc.pp(&*thesis).to_string();
+          elab.err(pos, MizError::ThesisMismatch(thesis));
+        }
+        // Drive the same writer step the success path does, with the error thesis:
+        // it renders `<Thesis><ErrorFrm/>…` (Class 1) *and*, crucially, performs the
+        // `AfterReasoning -> Block` state transition that the block close (`end_pos`)
+        // depends on. Skipping it desyncs the state machine and truncates the `.xml`.
+        elab.write_xml.on(|w| w.write_thesis(&elab.r.lc, &Formula::Error, &expansions));
+        elab.thesis = Some(Box::new(Formula::Error));
+        return
+      }
+    };
     let f = Formula::mk_and(args);
     elab.write_xml.on(|w| w.write_thesis(&elab.r.lc, &f, &expansions));
     elab.thesis = Some(Box::new(f))
   }
 
   fn unfold(&mut self, elab: &mut Analyzer, refs: &[ast::Reference]) {
-    let refs = elab.elab_references(refs);
+    // Reference resolution is fallible (reported already on failure); resolve before
+    // taking the thesis so an early return leaves it untouched. The resolved refs
+    // drive both the `<Unfolding>` writer and the expansion loop.
+    let refs = match elab.elab_references(refs) {
+      Ok(refs) => refs,
+      Err(_) => return,
+    };
     elab.write_xml.on(|w| w.unfold(&refs));
     let mut f = (true, elab.thesis.take().unwrap());
+    // Each unfold failure reports its own diagnostic, then drives a sorry thesis so the
+    // `-X` writer stays balanced after `<Unfolding>` (cf. take/thus), and bails.
+    macro_rules! fail {
+      ($pos:expr, $err:expr) => {{
+        elab.err($pos, $err);
+        elab.write_xml.on(|w| w.write_thesis(&elab.r.lc, &Formula::Error, &Default::default()));
+        elab.thesis = Some(Box::new(Formula::Error));
+        return
+      }};
+    }
     for r in refs {
-      let def = match r.kind {
-        ReferenceKind::Priv(label) => elab.local_def_map.get(&label),
-        ReferenceKind::Thm(_) => panic!("288: A reference to a definitional theorem required"),
-        ReferenceKind::Def(r) => elab.def_map.get(&r),
+      // A theorem reference is not a definition (288); a definition reference that does
+      // not resolve is inaccessible — not imported, or out of range (199).
+      let def_idx = match r.kind {
+        ReferenceKind::Priv(label) => elab.local_def_map.get(&label).copied(),
+        ReferenceKind::Thm(_) => fail!(r.pos, MizError::NotADefinition),
+        ReferenceKind::Def(rr) => elab.def_map.get(&rr).copied(),
       };
-      let def =
-        &elab.definitions[*def.expect("199: Inaccessible definitional theorem (or not imported)")];
-      let fail = || panic!("61: Thesis is not expandable");
+      let Some(def_idx) = def_idx else { fail!(r.pos, MizError::InaccessibleDefinition) };
+      // Peel the thesis down to the atom the definition would expand; `None` means
+      // the thesis has the wrong shape for this definition.
       let mut args_buf;
-      let (kind, args) = loop {
+      let found = loop {
         match &mut *f.1 {
           Formula::Neg { f: f2 } => f = (!f.0, std::mem::take(f2)),
           Formula::PrivPred { value, .. } => f.1 = std::mem::take(value),
           Formula::Pred { nr, args } => {
             let (n, args) = Formula::adjust_pred(*nr, args, Some(&elab.g.constrs));
-            break (ConstrKind::Pred(n), args)
+            break Some((ConstrKind::Pred(n), args))
           }
           Formula::Attr { nr, args } => {
             let (n, args) = Formula::adjust_attr(*nr, args, Some(&elab.g.constrs));
-            break (ConstrKind::Attr(n), args)
+            break Some((ConstrKind::Attr(n), args))
           }
           Formula::Is { term, ty } => {
-            let TypeKind::Mode(n) = ty.kind else { fail() };
+            let TypeKind::Mode(n) = ty.kind else { break None };
             if !matches!(&ty.attrs.0, Attrs::Consistent(attrs) if attrs.is_empty()) {
-              fail()
+              break None
             }
             let (n, args) = Type::adjust(n, &ty.args, &elab.g.constrs);
             args_buf = args.to_vec();
             args_buf.push((**term).clone());
-            break (ConstrKind::Mode(n), &*args_buf)
+            break Some((ConstrKind::Mode(n), &*args_buf))
           }
-          _ => fail(),
+          _ => break None,
         }
       };
+      // `None` means the thesis is not an expandable atomic formula (61). Render the
+      // thesis (the user cannot see it) only here, on the error path.
+      let Some((kind, args)) = found else {
+        let thesis = elab.lc.pp(&(*f.1).clone().maybe_neg(f.0)).to_string();
+        fail!(r.pos, MizError::ThesisNotExpandable(thesis))
+      };
+      // The definiens does not match the peeled thesis (67).
+      let def = &elab.definitions[def_idx];
       let Some((pos, f2)) = elab.try_unfold(false, def, true, kind, args) else {
-        panic!("67: Expanded definition does not match thesis")
+        let thesis = elab.lc.pp(&(*f.1).clone().maybe_neg(f.0)).to_string();
+        fail!(r.pos, MizError::BadUnfold(thesis))
       };
       f.0 = pos;
       *f.1 = f2;
@@ -3363,8 +3832,15 @@ impl ReadProof for WithThesis {
         match elab.and_telescope(f.to_vec(), false, conjs, Some(expansions)) {
           Ok(args) => break 'next args,
           Err(e) => {
-            let e = err.get_or_insert(e);
-            assert!(elab.whnf(false, 1, &mut thesis, Some(expansions)) == 0, "{e:?}");
+            err.get_or_insert(e);
+            // Unfolding made progress, so the telescope cannot be matched against this
+            // case at all. Report and give the case an empty (trivially true) thesis
+            // instead of looping or asserting.
+            if elab.whnf(false, 1, &mut thesis, Some(expansions)) != 0 {
+              let thesis = elab.lc.pp(&(*thesis.1).clone().maybe_neg(thesis.0)).to_string();
+              elab.err(Span::NONE, MizError::InvalidCase(thesis));
+              break 'next vec![]
+            }
             if !thesis.0 && matches!(*thesis.1, Formula::And { .. }) {
               iter.push_front(thesis.1.into_conjuncts().into_iter());
               continue 'next
@@ -3379,7 +3855,10 @@ impl ReadProof for WithThesis {
   }
 
   fn end_cases(&mut self, elab: &mut Analyzer, (mut case, expansions): Self::CaseIter, end: Span) {
-    assert!(case.next().is_none());
+    // Remaining cases mean the `per cases` block did not cover the whole thesis.
+    if case.next().is_some() {
+      elab.err(end, MizError::IncompleteCases);
+    }
     self.end_supposes(elab, expansions, end)
   }
 
@@ -3409,13 +3888,15 @@ impl ReadProof for WithThesis {
 
   fn end_block(&mut self, elab: &mut Analyzer, end: Span) {
     let f = elab.thesis.as_deref().unwrap();
-    if !matches!(f, Formula::True) {
-      eprintln!(
-        "error at {}:{end:?}: block incomplete; thesis at end of block:\n  {f:?}",
-        elab.article
-      );
-      panic!("{end:?}: block incomplete")
+    // A discharged thesis (`True`) is the success case. An error-value thesis means
+    // the failure was already reported upstream, so accept the block as a silent
+    // sorry. Otherwise the proof genuinely did not discharge its thesis: report it
+    // once (the enclosing item becomes a sorry) rather than panicking.
+    if matches!(f, Formula::True) || CheckError::get(|ck| ck.visit_formula(f)) {
+      return
     }
+    let thesis = elab.lc.pp(f).to_string();
+    elab.err(end, MizError::IncompleteProof(thesis));
   }
 }
 
@@ -3517,7 +3998,10 @@ impl ReadProof for ReconstructThesis {
     self.stack.push(ProofStep::Assume { conjs })
   }
 
-  fn take(&mut self, _: &mut Analyzer, _: Term) { panic!("take steps are not reconstructible") }
+  fn take(&mut self, elab: &mut Analyzer, _: Term) {
+    let pos = elab.r.pos;
+    elab.err(pos, MizError::BadNowStep);
+  }
 
   fn take_as_var(&mut self, elab: &mut Analyzer, v: ConstId) {
     match self.stack.last_mut() {
@@ -3538,8 +4022,9 @@ impl ReadProof for ReconstructThesis {
     }
   }
 
-  fn unfold(&mut self, _: &mut Analyzer, _: &[ast::Reference]) {
-    panic!("unfolding steps are not reconstructable")
+  fn unfold(&mut self, elab: &mut Analyzer, _: &[ast::Reference]) {
+    let pos = elab.r.pos;
+    elab.err(pos, MizError::BadNowStep);
   }
 
   fn new_cases(&mut self, _: &mut Analyzer) { self.stack.push(ProofStep::Break(false)) }
@@ -3569,7 +4054,11 @@ impl ReadProof for ReconstructThesis {
 
   fn end_suppose(&mut self, elab: &mut Analyzer, recv: &mut Self::SupposeRecv, f: Formula) {
     if let Some(thesis) = recv {
-      assert!(elab.eq(&**thesis, &f))
+      // Every branch of a `now … per cases` must prove the same thesis; if a later
+      // branch disagrees, report once and keep the first branch's thesis.
+      if elab.eq(&**thesis, &f) == Ok(false) {
+        elab.err(Span::NONE, MizError::InconsistentCaseThesis);
+      }
     } else {
       *recv = Some(Box::new(f))
     }
@@ -3609,14 +4098,27 @@ impl ReadProof for ReconstructThesis {
 }
 
 struct ToLocus<'a> {
+  /// Set when a constant had no locus; see [`ToLocus::get`].
+  missing: bool,
   infer_const: &'a IdxVec<InferId, Assignment>,
   to_locus: &'a IdxVec<ConstId, Option<LocusId>>,
   it: LocusId,
 }
 
 impl ToLocus<'_> {
-  fn get(&self, c: ConstId) -> LocusId {
-    self.to_locus.get(c).and_then(|l| *l).expect("local constant in exported item")
+  /// The locus for a constant. A miss means a constant local to an enclosing scope
+  /// reached an item being exported; this is a `VisitMut` and cannot propagate, so it
+  /// records the fact for [`BlockReader::to_locus`] to report and substitutes locus 0.
+  /// The substituted id only lands in a term of an item that the reported error keeps
+  /// from being exported.
+  fn get(&mut self, c: ConstId) -> LocusId {
+    match self.to_locus.get(c).and_then(|l| *l) {
+      Some(l) => l,
+      None => {
+        self.missing = true;
+        LocusId::default()
+      }
+    }
   }
 }
 
@@ -3687,25 +4189,44 @@ struct BlockReader {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct CheckAccess(u64);
 impl CheckAccess {
-  const fn new(n: usize) -> Self {
-    assert!(n < u64::BITS as usize);
-    Self(0)
+  const fn new(_n: usize) -> Self { Self(0) }
+
+  // The occurrence set is a u64 bitfield; loci ≥64 cannot be represented, so the shifts
+  // are guarded (a locus that far out is treated as unset rather than overflowing). A
+  // definition with that many parameters is pathological; `with` skips the lint for it.
+  const fn get(&self, n: LocusId) -> bool {
+    (n.0 as u32) < u64::BITS && self.0 & (1 << n.0 as u64) != 0
+  }
+  fn set(&mut self, n: LocusId) {
+    if (n.0 as u32) < u64::BITS {
+      self.0 |= 1 << n.0 as u64
+    }
   }
 
-  const fn get(&self, n: LocusId) -> bool { self.0 & (1 << n.0 as u64) != 0 }
-  fn set(&mut self, n: LocusId) { self.0 |= 1 << n.0 as u64 }
-
-  fn with(primary: &[Type], f: impl FnOnce(&mut Self)) {
+  /// Whether some locus in `primary` is never reached. Well-formed input never
+  /// leaves a gap, but malformed input can; this has no reporter of its own, so it
+  /// returns the fact and the caller reports it at a position it knows.
+  #[must_use]
+  fn with(primary: &[Type], f: impl FnOnce(&mut Self)) -> bool {
+    // Cannot track more than 64 loci in a u64; skip the lint rather than overflow.
+    if primary.len() > u64::BITS as usize {
+      return false
+    }
     let mut occ = Self::new(primary.len());
     f(&mut occ);
+    let mut unused = false;
     for (i, ty) in primary.iter().enumerate().rev() {
-      assert!(occ.get(LocusId::from_usize(i)));
+      unused |= !occ.get(LocusId::from_usize(i));
       occ.visit_type(ty)
     }
+    unused
   }
 }
 impl<F> Pattern<F> {
-  fn check_access(&self) {
+  /// Whether some locus is never reached by the visible arguments.
+  /// See [`CheckAccess::with`].
+  #[must_use]
+  fn check_access(&self) -> bool {
     CheckAccess::with(&self.primary, |occ| self.visible.iter().for_each(|&v| occ.set(v)))
   }
 }
@@ -3740,15 +4261,48 @@ impl BlockReader {
   }
 
   fn to_locus<R>(&self, elab: &Analyzer, f: impl FnOnce(&mut ToLocus<'_>) -> R) -> R {
-    f(&mut ToLocus {
+    let mut to_locus = ToLocus {
+      missing: false,
       infer_const: &elab.lc.infer_const.borrow(),
       to_locus: &self.to_locus,
       it: LocusId(self.primary.len() as _),
-    })
+    };
+    let r = f(&mut to_locus);
+    if to_locus.missing {
+      // No position is available here; the diagnostic is still counted.
+      MizError::NotExportable.report(Span::NONE, &elab.g);
+    }
+    r
   }
 
-  fn locus(&self, c: ConstId) -> LocusId {
-    self.to_locus.get(c).and_then(|l| *l).expect("local constant in exported item")
+  /// The locus a constant maps to, if it has one. A miss means a constant local to
+  /// an enclosing scope reached an item being exported.
+  fn locus(&self, c: ConstId) -> Option<LocusId> { self.to_locus.get(c).and_then(|l| *l) }
+
+  /// The locus for a pattern argument: resolve the variable, then map it into this
+  /// block's loci.
+  ///
+  /// This is the single point where either failure becomes a reported error, so call
+  /// sites only have to propagate `None`. Both halves used to invent a placeholder id
+  /// instead, which did not avoid the crash — it moved it to whatever indexed the id
+  /// later (`fixed_var` out of bounds, or a `visible` locus outside `primary`).
+  fn locus_of(&self, elab: &Analyzer<'_>, v: &mut ast::Variable) -> Option<LocusId> {
+    // `resolve_const` reports its own failure.
+    let c = elab.resolve_const(v)?;
+    match self.locus(c) {
+      Some(l) => Some(l),
+      None => {
+        MizError::NotExportable.report(v.pos, &elab.g);
+        None
+      }
+    }
+  }
+
+  /// [`Self::locus_of`] over a pattern's arguments; `None` if any fails to resolve.
+  fn loci_of<'x>(
+    &self, elab: &Analyzer<'_>, vars: impl IntoIterator<Item = &'x mut ast::Variable>,
+  ) -> Option<Box<[LocusId]>> {
+    vars.into_iter().map(|v| self.locus_of(elab, v)).collect()
   }
 
   fn after_scope(self, elab: &mut Analyzer) {
@@ -3826,40 +4380,44 @@ impl BlockReader {
     })
   }
 
-  fn check_compatible_args(&self, lc: &LocalContext, subst: &Subst<'_>) {
-    let n = self.primary.len().checked_sub(subst.subst_term.len()).expect("too many args");
+  /// True if `subst` maps the redefinition's loci to the plain constructor arguments
+  /// in order. A `false` result means this pattern is not a valid redefinition target
+  /// (the caller then reports a type error rather than panicking).
+  fn check_compatible_args(&self, lc: &LocalContext, subst: &Subst<'_>) -> bool {
+    let Some(n) = self.primary.len().checked_sub(subst.subst_term.len()) else { return false };
     let ic = lc.infer_const.borrow();
     'next: for ((i, _), tm) in self.primary.enum_iter().skip(n).zip(&*subst.subst_term) {
       if let Some(mut tm) = tm.as_deref() {
         loop {
           match *tm {
-            Term::Const(c) if self.locus(c) == i => continue 'next,
+            Term::Const(c) if self.locus(c) == Some(i) => continue 'next,
             Term::Infer(n) => tm = &ic[n].def,
             _ => break,
           }
         }
       }
-      panic!("incorrect args to redefinition")
+      return false
     }
+    true
   }
 
   fn elab_func_def(
     &mut self, elab: &mut Analyzer, loc: Span, pat: &mut ast::PatternFunc,
     it: &mut ast::DefinitionBody, spec: Option<&ast::Type>, def: &mut Option<Box<ast::Definiens>>,
   ) {
-    elab.write_xml.on(|w| {
-      let label = def.as_ref().map(|d| {
-        (d.label.as_ref())
-          .map(|l| (elab.label_names.peek(), elab.r.lc.formatter.intern_id(&l.spelling)))
-      });
-      w.start_def(DefinitionKind::Func, loc, label, it.redef)
-    });
-    let fmt = elab.formats[&Format::Func(pat.to_format())];
+    // `start_def` is deferred until the definition is known well-formed enough to emit
+    // a complete `<Definition>`. Opening it up front and closing on an early failure
+    // (unknown redefinition target, bad loci) would leave a malformed childless
+    // element; instead these bail before anything is opened, as `elab_mode_def` does.
+    let fmt = Format::Func(pat.to_format());
+    let Some(fmt) = elab.lookup_format(pat.pos(), fmt, MizError::RedefUnknownFunctor) else {
+      return
+    };
     let mut cc = CorrConds::new();
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     let pos = pat.pos();
     let args = pat.args_mut();
-    let visible: Box<[_]> = args.iter_mut().map(|v| self.locus(elab.resolve_const(v))).collect();
+    let Some(visible) = self.loci_of(elab, args.iter_mut()) else { return };
     let mut properties = PropertiesBuilder::new(&visible);
     let (redefines, superfluous, it_type);
     if it.redef {
@@ -3869,9 +4427,12 @@ impl BlockReader {
           && !matches!(pat.kind, PatternKind::Func(nr)
             if elab.g.constrs.functor[nr].redefines.is_some())
           && matches!(pat.check_types(&elab.g, &elab.lc, &args),
-            Some(subst) if { self.check_compatible_args(&elab.lc, &subst); true })
+            Some(subst) if self.check_compatible_args(&elab.lc, &subst))
       });
-      let pat = pat.expect("type error");
+      let Some(pat) = pat else {
+        elab.err(pos, MizError::RedefUnknownFunctor);
+        return
+      };
       let PatternKind::Func(nr) = pat.kind else { unreachable!() };
       elab.write_mpt.on(|w| w.write(pos, fmt, nr));
       let c = &elab.g.constrs.functor[nr];
@@ -3902,15 +4463,27 @@ impl BlockReader {
       }
       properties.formula = Some(value.as_formula(&elab.g))
     }
-    if !it.redef {
-      match value.as_ref().unwrap() {
-        DefValue::Term(value) => cc.0[CorrCondKind::Coherence] = Some(value.mk_coherence(&it_type)),
-        DefValue::Formula(value) => {
-          cc.0[CorrCondKind::Existence] = Some(value.mk_existence(&it_type));
-          cc.0[CorrCondKind::Uniqueness] = Some(value.mk_uniqueness(&elab.g, &it_type));
-        }
+    // A non-redefinition must have a definiens to derive its correctness conditions
+    // from. Without one there is nothing to generate, so report rather than assume.
+    match (it.redef, value.as_ref()) {
+      (false, None) => {
+        elab.err(loc, MizError::MissingCorrectness(CorrCondKind::Coherence));
       }
+      (false, Some(DefValue::Term(value))) =>
+        cc.0[CorrCondKind::Coherence] = Some(value.mk_coherence(&it_type)),
+      (false, Some(DefValue::Formula(value))) => {
+        cc.0[CorrCondKind::Existence] = Some(value.mk_existence(&it_type));
+        cc.0[CorrCondKind::Uniqueness] = Some(value.mk_uniqueness(&elab.g, &it_type));
+      }
+      (true, _) => {}
     }
+    elab.write_xml.on(|w| {
+      let label = def.as_ref().map(|d| {
+        (d.label.as_ref())
+          .map(|l| (elab.label_names.peek(), elab.r.lc.formatter.intern_id(&l.spelling)))
+      });
+      w.start_def(DefinitionKind::Func, loc, label, it.redef)
+    });
     elab.elab_corr_conds(loc, cc, &mut it.conds, &mut it.corr);
     if !self.has_assums() {
       properties.load_args(&elab.g, &elab.lc, &self.to_const, |args| {
@@ -3993,18 +4566,14 @@ impl BlockReader {
     &mut self, elab: &mut Analyzer, loc: Span, pat: &mut ast::PatternPred,
     it: &mut ast::DefinitionBody, def: &mut Option<Box<ast::Definiens>>,
   ) {
-    elab.write_xml.on(|w| {
-      let label = def.as_ref().map(|d| {
-        (d.label.as_ref())
-          .map(|l| (elab.label_names.peek(), elab.r.lc.formatter.intern_id(&l.spelling)))
-      });
-      w.start_def(DefinitionKind::Pred, loc, label, it.redef)
-    });
-    let fmt = elab.formats[&Format::Pred(pat.to_format())];
+    // `start_def` is deferred until the definition is known well-formed (see elab_func_def).
+    let fmt = Format::Pred(pat.to_format());
+    let Some(fmt) = elab.lookup_format(pat.pos, fmt, MizError::RedefUnknownPredicate) else {
+      return
+    };
     let mut cc = CorrConds::new();
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
-    let visible: Box<[_]> =
-      pat.args.iter_mut().map(|v| self.locus(elab.resolve_const(v))).collect();
+    let Some(visible) = self.loci_of(elab, pat.args.iter_mut()) else { return };
     let mut properties = PropertiesBuilder::new(&visible);
     let (redefines, superfluous, positive);
     if it.redef {
@@ -4015,9 +4584,12 @@ impl BlockReader {
           && !matches!(pat.kind, PatternKind::Pred(nr)
             if elab.g.constrs.predicate[nr].redefines.is_some())
           && matches!(pat.check_types(&elab.g, &elab.lc, &args),
-            Some(subst) if { self.check_compatible_args(&elab.lc, &subst); true })
+            Some(subst) if self.check_compatible_args(&elab.lc, &subst))
       });
-      let pat = pat.expect("type error");
+      let Some(pat) = pat else {
+        elab.err(pos, MizError::RedefUnknownPredicate);
+        return
+      };
       let PatternKind::Pred(nr) = pat.kind else { unreachable!() };
       elab.write_mpt.on(|w| w.write(pos, fmt, nr));
       let c = &elab.g.constrs.predicate[nr];
@@ -4041,6 +4613,13 @@ impl BlockReader {
       let args = self.to_const.0[superfluous as usize..].iter().map(|c| Term::Const(*c)).collect();
       properties.formula = Some(Box::new(Formula::Pred { nr, args }))
     }
+    elab.write_xml.on(|w| {
+      let label = def.as_ref().map(|d| {
+        (d.label.as_ref())
+          .map(|l| (elab.label_names.peek(), elab.r.lc.formatter.intern_id(&l.spelling)))
+      });
+      w.start_def(DefinitionKind::Pred, loc, label, it.redef)
+    });
     elab.elab_corr_conds(loc, cc, &mut it.conds, &mut it.corr);
     if !self.has_assums() {
       properties.load_args(&elab.g, &elab.lc, &self.to_const, |args| {
@@ -4066,26 +4645,33 @@ impl BlockReader {
       n = elab.g.constrs.predicate.push(c);
       elab.push_constr(ConstrKind::Pred(n));
     }
-    if let Some(value) = value {
-      let DefValue::Formula(mut value) = value else { panic!("expected formula") };
-      self.to_locus(elab, |l| value.visit(l));
-      let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect();
-      let mut f = value.defthm_for(&elab.g, &Formula::Pred { nr: n, args: formals });
-      AbstractLocus(self.primary.len() as u32).visit_formula(&mut f);
-      let thm = self.forall_locus(elab, f);
-      let df = Box::new(Definiens {
-        essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
-        c: ConstrDef {
-          article: elab.article,
-          def_nr: elab.defthms.fresh(),
-          constr: ConstrKind::Pred(redefines.unwrap_or(n)),
-          primary: primary.clone(),
-        },
-        assumptions: self.assums(),
-        value: DefValue::Formula(value),
-      });
-      let label = def.as_deref_mut().unwrap().label.as_ref().map(|l| (l.id, l.spelling.clone()));
-      self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Pred(n), df, label, thm })));
+    match value {
+      Some(DefValue::Formula(mut value)) => {
+        self.to_locus(elab, |l| value.visit(l));
+        let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect();
+        let mut f = value.defthm_for(&elab.g, &Formula::Pred { nr: n, args: formals });
+        AbstractLocus(self.primary.len() as u32).visit_formula(&mut f);
+        let thm = self.forall_locus(elab, f);
+        let df = Box::new(Definiens {
+          essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
+          c: ConstrDef {
+            article: elab.article,
+            def_nr: elab.defthms.fresh(),
+            constr: ConstrKind::Pred(redefines.unwrap_or(n)),
+            primary: primary.clone(),
+          },
+          assumptions: self.assums(),
+          value: DefValue::Formula(value),
+        });
+        let label = def.as_deref_mut().unwrap().label.as_ref().map(|l| (l.id, l.spelling.clone()));
+        self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Pred(n), df, label, thm })));
+      }
+      // A predicate defined with `equals` (a term) instead of `means`: report and emit
+      // no definitional theorem, but keep the (already-opened) `<Definition>` balanced.
+      Some(DefValue::Term(_)) => {
+        elab.err(loc, MizError::DefiniensMustBeFormula);
+      }
+      None => {}
     }
     elab.push_mk_pattern(true, PKC::Pred, PatternKind::Pred(n), fmt, primary, visible, positive);
     elab.write_xml.on(|w| w.end_def())
@@ -4095,11 +4681,17 @@ impl BlockReader {
     &mut self, elab: &mut Analyzer, loc: Span, pat: &mut ast::PatternMode,
     kind: &mut ast::DefModeKind, it: &mut ast::DefinitionBody,
   ) {
-    let fmt = elab.formats[&Format::Mode(pat.to_format())];
+    let fmt = Format::Mode(pat.to_format());
+    let Some(fmt) = elab.lookup_format(pat.pos, fmt, MizError::RedefUnknownMode) else {
+      // No `<Definition>` opened yet (that happens per-kind below), so nothing to close.
+      return
+    };
     let mut cc = CorrConds::new();
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
-    let visible: Box<[_]> =
-      pat.args.iter_mut().map(|v| self.locus(elab.resolve_const(v))).collect();
+    let Some(visible) = self.loci_of(elab, pat.args.iter_mut()) else {
+      // No `<Definition>` opened yet (that happens per-kind below), so nothing to close.
+      return
+    };
     let mut properties = PropertiesBuilder::new(&visible);
     match kind {
       ast::DefModeKind::Expandable { expansion } => {
@@ -4113,14 +4705,7 @@ impl BlockReader {
         elab.push_mk_pattern(true, PKC::Mode, kind, fmt, primary, visible, true)
       }
       ast::DefModeKind::Standard { spec, def } => {
-        elab.write_xml.on(|w| {
-          let label = def.as_deref().map(|d| {
-            d.label
-              .as_ref()
-              .map(|l| (elab.label_names.peek(), elab.r.lc.formatter.intern_id(&l.spelling)))
-          });
-          w.start_def(DefinitionKind::Mode, loc, label, it.redef)
-        });
+        // `start_def` is deferred until the definition is known well-formed (see elab_func_def).
         let (redefines, superfluous, it_type);
         if it.redef {
           let pos = pat.pos;
@@ -4130,10 +4715,16 @@ impl BlockReader {
               && !matches!(pat.kind, PatternKind::Mode(nr)
               if elab.g.constrs.mode[nr].redefines.is_some())
               && matches!(pat.check_types(&elab.g, &elab.lc, &args),
-              Some(subst) if { self.check_compatible_args(&elab.lc, &subst); true })
+              Some(subst) if self.check_compatible_args(&elab.lc, &subst))
           });
-          let pat = pat.expect("type error");
-          let PatternKind::Mode(nr) = pat.kind else { panic!("redefining expandable mode") };
+          let Some(pat) = pat else {
+            elab.err(pos, MizError::RedefUnknownMode);
+            return
+          };
+          let PatternKind::Mode(nr) = pat.kind else {
+            elab.err(pos, MizError::RedefUnknownMode);
+            return
+          };
           elab.write_mpt.on(|w| w.write(pos, fmt, nr));
           let c = &elab.g.constrs.mode[nr];
           (redefines, superfluous) = (Some(nr), (self.primary.len() - c.primary.len()) as u8);
@@ -4171,15 +4762,33 @@ impl BlockReader {
           }
         }
         if !it.redef {
-          let Some(DefValue::Formula(value)) = &value else { panic!("expected formula") };
-          cc.0[CorrCondKind::Existence] = Some(value.mk_existence(&it_type));
-          properties.kind = PropertyDeclKind::Mode(value);
+          match &value {
+            Some(DefValue::Formula(value)) => {
+              cc.0[CorrCondKind::Existence] = Some(value.mk_existence(&it_type));
+              properties.kind = PropertyDeclKind::Mode(value);
+            }
+            // `equals` (a term) is the wrong definiens shape here; that is reported at
+            // the definitional-theorem site below (avoids a double diagnostic).
+            Some(DefValue::Term(_)) => {}
+            // No definiens at all (`mode M -> T;`): no existence condition can be derived.
+            None => {
+              elab.err(loc, MizError::MissingCorrectness(CorrCondKind::Existence));
+            }
+          }
         }
         if let TypeKind::Mode(nr) = it_type.kind {
           if elab.g.constrs.mode[nr].properties.get(PropertyKind::Sethood) {
             properties.props.set(PropertyKind::Sethood)
           }
         }
+        elab.write_xml.on(|w| {
+          let label = def.as_deref().map(|d| {
+            d.label
+              .as_ref()
+              .map(|l| (elab.label_names.peek(), elab.r.lc.formatter.intern_id(&l.spelling)))
+          });
+          w.start_def(DefinitionKind::Mode, loc, label, it.redef)
+        });
         elab.elab_corr_conds(loc, cc, &mut it.conds, &mut it.corr);
         elab.lc.it_type = Some(it_type);
         properties.elab_properties(elab, &mut it.props);
@@ -4206,41 +4815,47 @@ impl BlockReader {
           n = elab.g.constrs.mode.push(c);
           elab.push_constr(ConstrKind::Mode(n));
         }
-        if let Some(value) = value {
-          let DefValue::Formula(mut value) = value else { panic!("expected formula") };
-          self.to_locus(elab, |l| value.visit(l));
-          let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect_vec();
-          let mut it_type2 = (*it_type).clone();
-          it_type2.adjust_mut(&elab.g.constrs);
-          let primary: Box<[_]> = self.primary.0.iter().cloned().chain([it_type2]).collect();
-          it_type.visit(&mut Inst::new(&elab.g.constrs, &elab.lc, &formals, 0));
-          let ty = Box::new(Type {
-            kind: TypeKind::Mode(n),
-            attrs: (Attrs::EMPTY, it_type.attrs.1.clone()),
-            args: formals,
-          });
-          let depth = self.primary.len() as u32;
-          let defined = Formula::Is { term: Box::new(Term::Locus(LocusId(depth as _))), ty };
-          let mut f = value.defthm_for(&elab.g, &defined);
-          AbstractLocus(depth + 1).visit_formula(&mut f);
-          AbstractLocus(depth).visit_type(&mut it_type);
-          let thm = self.forall_locus(
-            elab,
-            Box::new(Formula::ForAll { id: IdentId::NONE, dom: it_type, scope: f }),
-          );
-          let df = Box::new(Definiens {
-            essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
-            c: ConstrDef {
-              article: elab.article,
-              def_nr: elab.defthms.fresh(),
-              constr: ConstrKind::Mode(redefines.unwrap_or(n)),
-              primary,
-            },
-            assumptions: self.assums(),
-            value: DefValue::Formula(value),
-          });
-          let label = def.as_ref().unwrap().label.as_ref().map(|l| (l.id, l.spelling.clone()));
-          self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Mode(n), df, label, thm })));
+        match value {
+          Some(DefValue::Formula(mut value)) => {
+            self.to_locus(elab, |l| value.visit(l));
+            let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect_vec();
+            let mut it_type2 = (*it_type).clone();
+            it_type2.adjust_mut(&elab.g.constrs);
+            let primary: Box<[_]> = self.primary.0.iter().cloned().chain([it_type2]).collect();
+            it_type.visit(&mut Inst::new(&elab.g.constrs, &elab.lc, &formals, 0));
+            let ty = Box::new(Type {
+              kind: TypeKind::Mode(n),
+              attrs: (Attrs::EMPTY, it_type.attrs.1.clone()),
+              args: formals,
+            });
+            let depth = self.primary.len() as u32;
+            let defined = Formula::Is { term: Box::new(Term::Locus(LocusId(depth as _))), ty };
+            let mut f = value.defthm_for(&elab.g, &defined);
+            AbstractLocus(depth + 1).visit_formula(&mut f);
+            AbstractLocus(depth).visit_type(&mut it_type);
+            let thm = self.forall_locus(
+              elab,
+              Box::new(Formula::ForAll { id: IdentId::NONE, dom: it_type, scope: f }),
+            );
+            let df = Box::new(Definiens {
+              essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
+              c: ConstrDef {
+                article: elab.article,
+                def_nr: elab.defthms.fresh(),
+                constr: ConstrKind::Mode(redefines.unwrap_or(n)),
+                primary,
+              },
+              assumptions: self.assums(),
+              value: DefValue::Formula(value),
+            });
+            let label = def.as_ref().unwrap().label.as_ref().map(|l| (l.id, l.spelling.clone()));
+            self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Mode(n), df, label, thm })));
+          }
+          // A mode defined with `equals` (a term) instead of `means`: report, no theorem.
+          Some(DefValue::Term(_)) => {
+            elab.err(loc, MizError::DefiniensMustBeFormula);
+          }
+          None => {}
         }
         elab.push_mk_pattern(true, PKC::Mode, PatternKind::Mode(n), fmt, primary, visible, true)
       }
@@ -4252,18 +4867,14 @@ impl BlockReader {
     &mut self, elab: &mut Analyzer, loc: Span, pat: &mut ast::PatternAttr,
     it: &mut ast::DefinitionBody, mut def: Option<&mut ast::Definiens>,
   ) {
-    elab.write_xml.on(|w| {
-      let label = def.as_deref().map(|d| {
-        (d.label.as_ref())
-          .map(|l| (elab.label_names.peek(), elab.r.lc.formatter.intern_id(&l.spelling)))
-      });
-      w.start_def(DefinitionKind::Attr, loc, label, it.redef)
-    });
-    let fmt = elab.formats[&Format::Attr(pat.to_format())];
+    // `start_def` is deferred until the definition is known well-formed (see elab_func_def).
+    let fmt = Format::Attr(pat.to_format());
+    let Some(fmt) = elab.lookup_format(pat.pos, fmt, MizError::RedefUnknownAttribute) else {
+      return
+    };
     let mut cc = CorrConds::new();
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
-    let visible: Box<[_]> =
-      pat.args.iter_mut().map(|v| self.locus(elab.resolve_const(v))).collect();
+    let Some(visible) = self.loci_of(elab, pat.args.iter_mut()) else { return };
     let (redefines, superfluous, pos) = if it.redef {
       let pos = pat.pos;
       let args: Box<[_]> = pat.args.iter().map(|v| Term::Const(v.var())).collect();
@@ -4272,9 +4883,12 @@ impl BlockReader {
           && !matches!(pat.kind, PatternKind::Attr(nr)
               if elab.g.constrs.attribute[nr].redefines.is_some())
           && matches!(pat.check_types(&elab.g, &elab.lc, &args),
-            Some(subst) if { self.check_compatible_args(&elab.lc, &subst); true })
+            Some(subst) if self.check_compatible_args(&elab.lc, &subst))
       });
-      let pat = pat.expect("type error");
+      let Some(pat) = pat else {
+        elab.err(pos, MizError::RedefUnknownAttribute);
+        return
+      };
       let PatternKind::Attr(nr) = pat.kind else { unreachable!() };
       elab.write_mpt.on(|w| w.write(pos, fmt, nr));
       let c = &elab.g.constrs.attribute[nr];
@@ -4292,6 +4906,13 @@ impl BlockReader {
           Some(value.mk_compatibility(&elab.g, None, &Formula::Attr { nr, args }));
       }
     }
+    elab.write_xml.on(|w| {
+      let label = def.as_deref().map(|d| {
+        (d.label.as_ref())
+          .map(|l| (elab.label_names.peek(), elab.r.lc.formatter.intern_id(&l.spelling)))
+      });
+      w.start_def(DefinitionKind::Attr, loc, label, it.redef)
+    });
     elab.elab_corr_conds(loc, cc, &mut it.conds, &mut it.corr);
     let mut properties = PropertiesBuilder::new(&visible);
     properties.elab_properties(elab, &mut it.props);
@@ -4316,47 +4937,83 @@ impl BlockReader {
       n = elab.g.constrs.attribute.push(c);
       elab.push_constr(ConstrKind::Attr(n));
     }
-    if let Some(value) = value {
-      let DefValue::Formula(mut value) = value else { panic!("expected formula") };
-      self.to_locus(elab, |l| value.visit(l));
-      let formals = (superfluous..self.primary.len() as u8).map(LocusId).map(Term::Locus).collect();
-      let mut f =
-        value.defthm_for(&elab.g, &Formula::Attr { nr: redefines.unwrap_or(n), args: formals });
-      AbstractLocus(self.primary.len() as u32).visit_formula(&mut f);
-      let thm = self.forall_locus(elab, f);
-      let df = Box::new(Definiens {
-        essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
-        c: ConstrDef {
-          article: elab.article,
-          def_nr: elab.defthms.fresh(),
-          constr: ConstrKind::Attr(redefines.unwrap_or(n)),
-          primary: primary.clone(),
-        },
-        assumptions: self.assums(),
-        value: DefValue::Formula(value),
-      });
-      let label = def.as_ref().unwrap().label.as_ref().map(|l| (l.id, l.spelling.clone()));
-      self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Attr(n), df, label, thm })));
+    match value {
+      Some(DefValue::Formula(mut value)) => {
+        self.to_locus(elab, |l| value.visit(l));
+        let formals =
+          (superfluous..self.primary.len() as u8).map(LocusId).map(Term::Locus).collect();
+        let mut f =
+          value.defthm_for(&elab.g, &Formula::Attr { nr: redefines.unwrap_or(n), args: formals });
+        AbstractLocus(self.primary.len() as u32).visit_formula(&mut f);
+        let thm = self.forall_locus(elab, f);
+        let df = Box::new(Definiens {
+          essential: (superfluous..primary.len() as u8).map(LocusId).collect(),
+          c: ConstrDef {
+            article: elab.article,
+            def_nr: elab.defthms.fresh(),
+            constr: ConstrKind::Attr(redefines.unwrap_or(n)),
+            primary: primary.clone(),
+          },
+          assumptions: self.assums(),
+          value: DefValue::Formula(value),
+        });
+        let label = def.as_ref().unwrap().label.as_ref().map(|l| (l.id, l.spelling.clone()));
+        self.defs.push((loc, Some(PendingDef { kind: ConstrKind::Attr(n), df, label, thm })));
+      }
+      // An attribute defined with `equals` (a term) instead of `means`: report, no theorem.
+      Some(DefValue::Term(_)) => {
+        elab.err(loc, MizError::DefiniensMustBeFormula);
+      }
+      None => {}
     }
     elab.push_mk_pattern(true, PKC::Attr, PatternKind::Attr(n), fmt, primary, visible, pos);
     elab.write_xml.on(|w| w.end_def())
   }
 
   fn elab_struct_def(&mut self, elab: &mut Analyzer, loc: Span, it: &mut ast::DefStruct) {
-    elab.write_xml.on(|w| w.start_struct_def(loc));
+    // `start_struct_def` is deferred until all structural validation has passed and we
+    // are about to emit the constructors (below). An early bail — bad parent, duplicate
+    // field, bad loci — then opens no `<Definition>`, and neither can the incremental
+    // builder's asserts truncate one.
     let mut parents: Box<[_]> = it.parents.iter().map(|ty| elab.elab_type(ty)).collect();
+    // Validate up front so the incremental builder below can't hit a panic: every
+    // parent must be an attribute-free structure type, and field names must be
+    // distinct. On any violation report once and abort the whole struct definition.
+    for (ty, ast_ty) in parents.iter().zip(&it.parents) {
+      if matches!(ty.kind, TypeKind::Error) {
+        // parent type already reported as an error
+        return
+      }
+      if !matches!(ty.kind, TypeKind::Struct(_)) || !ty.attrs.0.attrs().is_empty() {
+        elab.err(ast_ty.pos(), MizError::NotAStructParent);
+        return
+      }
+    }
+    {
+      let mut seen = vec![];
+      for field in it.fields.iter().flat_map(|group| &group.vars) {
+        if seen.contains(&field.sym) {
+          elab.err(field.pos, MizError::DuplicateField);
+          return
+        }
+        seen.push(field.sym);
+      }
+    }
     let formals = self.primary.enum_iter().map(|(i, _)| Term::Locus(i)).collect_vec();
     let struct_primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     let struct_id = elab.g.constrs.struct_mode.peek();
+    let Some(struct_visible) = self.loci_of(elab, it.pat.args.iter_mut()) else { return };
     let struct_pat = elab.mk_pattern(
       PKC::Struct,
       PatternKind::Struct(struct_id),
       elab.formats[&Format::Struct(it.pat.to_mode_format())],
       struct_primary.clone(),
-      it.pat.args.iter_mut().map(|v| self.locus(elab.resolve_const(v))).collect(),
+      struct_visible,
       true,
     );
-    struct_pat.check_access();
+    if struct_pat.check_access() {
+      elab.err(Span::NONE, MizError::UnusedLocus);
+    }
 
     let struct_ty = Type {
       kind: TypeKind::Struct(struct_id),
@@ -4398,7 +5055,9 @@ impl BlockReader {
       (base..cur_locus.0).map(LocusId).collect(),
       true,
     );
-    aggr_pat.check_access();
+    if aggr_pat.check_access() {
+      elab.err(Span::NONE, MizError::UnusedLocus);
+    }
     self.to_locus.0.truncate(fixed_vars);
 
     let mut prefixes = vec![];
@@ -4442,7 +5101,9 @@ impl BlockReader {
               let args = subst.trim_to(elab.g.constrs.selector[nr].primary.len());
               let mut inst = Inst::new(&elab.g.constrs, &elab.lc, &args, 0);
               let ty2 = elab.g.constrs.selector[nr].ty.visit_cloned(&mut inst);
-              assert!(elab.eq(&ty, &ty2), "field type mismatch:\n  {ty:?} =?=\n  {ty2:?}");
+              if elab.eq(&ty, &ty2) == Ok(false) {
+                elab.err(v.pos, MizError::FieldTypeMismatch);
+              }
               elab.lc.fixed_var.0.pop();
               fields.retain(|&x| x != nr);
               return Some((nr, args))
@@ -4453,7 +5114,14 @@ impl BlockReader {
         None
       });
       if let Some((sel_id, args)) = iter.next() {
-        assert!(iter.all(|(nr, _)| sel_id == nr), "overlapping parent fields");
+        if !iter.all(|(nr, _)| sel_id == nr) {
+          // This field is inherited from more than one parent as different selectors.
+          // Restore the scratch entry pushed before the loop (mirrors the pops below).
+          self.to_locus.0.pop();
+          self.to_const.0.pop();
+          elab.err(loc, MizError::AmbiguousParentField);
+          return
+        }
         mk_sel.terms.push(Ok(Box::new(Term::Selector { nr: sel_id, args })));
         fields.push(sel_id);
       } else {
@@ -4469,7 +5137,9 @@ impl BlockReader {
           Box::new([LocusId(base)]),
           true,
         );
-        sel_pat.check_access();
+        if sel_pat.check_access() {
+          elab.err(Span::NONE, MizError::UnusedLocus);
+        }
         field_pats.push(sel_pat);
         mk_sel.terms.push(Err(sel_id));
         fields.push(sel_id);
@@ -4478,7 +5148,11 @@ impl BlockReader {
     self.to_locus.0.pop();
     self.to_const.0.pop();
 
-    assert!(prefixes.iter().all(|prefix| prefix.is_empty()), "structure does not extend parent");
+    // Every field inherited from a parent structure must be re-listed by this structure.
+    if !prefixes.iter().all(|prefix| prefix.is_empty()) {
+      elab.err(loc, MizError::StructMissingParentField);
+      return
+    }
     self.to_locus(elab, |l| parents.visit(l));
 
     let mut c = TyConstructor {
@@ -4486,6 +5160,10 @@ impl BlockReader {
       ty: struct_ty.clone(),
     };
     c.c.properties.set(PropertyKind::Abstractness);
+    // Deferred from the top of the function: everything above is validation and
+    // constructor computation that emits no XML, so `<Definition kind="G">` opens here,
+    // right before its first child constructor.
+    elab.write_xml.on(|w| w.start_struct_def(loc));
     elab.write_xml.on(|w| {
       w.write_attr_constructor(
         elab.export.constrs_base.attribute,
@@ -4572,7 +5250,7 @@ impl BlockReader {
     let mut attrs = ty.attrs.0.clone();
     let f = Formula::mk_and_with(|conjs| {
       for attr in concl {
-        let attr = elab.elab_attr(attr, true, &mut ty);
+        let Some(attr) = elab.elab_attr(attr, true, &mut ty) else { continue };
         let args = attr.args.iter().cloned().chain([Term::Bound(BoundId(0))]).collect();
         conjs.push(Formula::Attr { nr: attr.nr, args }.maybe_neg(attr.pos));
         attrs.insert(Some(&elab.g.constrs), &elab.lc, attr);
@@ -4597,10 +5275,12 @@ impl BlockReader {
     cc.0[CorrCondKind::Existence] = Some(Box::new(Formula::forall0(ty, f.mk_neg()).mk_neg()));
     elab.elab_corr_conds(pos, cc, conds, corr);
 
-    CheckAccess::with(&primary, |occ| {
+    if CheckAccess::with(&primary, |occ| {
       occ.visit_attrs(&attrs);
       occ.visit_terms(&ty2.args);
-    });
+    }) {
+      elab.err(pos, MizError::UnusedLocus);
+    }
     std::mem::swap(&mut self.primary, &mut elab.lc.locus_ty);
     elab.register_cluster(attrs, primary, ty2);
     std::mem::swap(&mut self.primary, &mut elab.lc.locus_ty);
@@ -4625,14 +5305,14 @@ impl BlockReader {
     let (mut attrs1, mut attrs2) = (ty.attrs.0.clone(), ty.attrs.0.clone());
     let f = Formula::mk_and_with(|conjs| {
       for attr in antecedent {
-        let attr = elab.elab_attr(attr, true, &mut ty);
+        let Some(attr) = elab.elab_attr(attr, true, &mut ty) else { continue };
         let args = attr.args.iter().cloned().chain([Term::Bound(BoundId(0))]).collect();
         conjs.push(Formula::Attr { nr: attr.nr, args }.maybe_neg(attr.pos));
         attrs1.insert(Some(&elab.g.constrs), &elab.lc, attr);
       }
       let f = Formula::mk_and_with(|conjs| {
         for attr in concl {
-          let attr = elab.elab_attr(attr, true, &mut ty);
+          let Some(attr) = elab.elab_attr(attr, true, &mut ty) else { continue };
           let args = attr.args.iter().cloned().chain([Term::Bound(BoundId(0))]).collect();
           conjs.push(Formula::Attr { nr: attr.nr, args }.maybe_neg(attr.pos));
           attrs2.insert(Some(&elab.g.constrs), &elab.lc, attr);
@@ -4652,12 +5332,19 @@ impl BlockReader {
     cc.0[CorrCondKind::Coherence] = Some(Box::new(Formula::forall0(ty, f.mk_neg())));
     elab.elab_corr_conds(pos, cc, conds, corr);
 
-    CheckAccess::with(&primary, |occ| {
+    if CheckAccess::with(&primary, |occ| {
       occ.visit_attrs(&attrs1);
       occ.visit_terms(&ty2.args);
-    });
-    let Attrs::Consistent(_) = attrs1 else { panic!("inconsistent cluster antecedent") };
-    let Attrs::Consistent(_) = attrs2 else { panic!("inconsistent cluster consequent") };
+    }) {
+      elab.err(pos, MizError::UnusedLocus);
+    }
+    let (Attrs::Consistent(_), Attrs::Consistent(_)) = (&attrs1, &attrs2) else {
+      elab.err(pos, MizError::InconsistentCluster);
+      // `start_ccluster` opened a `<Registration>` and `elab_corr_conds` already ran,
+      // so the writer is awaiting the registration close; emit it before bailing.
+      elab.write_xml.on(|w| w.end_registration());
+      return
+    };
     elab.read_conditional_cluster(ConditionalCluster {
       cl: Cluster { primary, consequent: (attrs2.clone(), attrs2) },
       ty: Box::new(ty2),
@@ -4681,13 +5368,17 @@ impl BlockReader {
       Term::Aggregate { .. } | Term::Selector { .. } => term.clone(),
       // Error target already reported; otherwise report and skip the registration.
       Term::Error => return,
-      _ => panic!("invalid functor registration target"),
+      _ => {
+        elab.err(pos, MizError::BadFunctorRegistration);
+        return
+      }
     };
     let mut ty = match oty {
-      None => term2.get_type(&elab.g, &elab.lc, false),
+      None =>
+        term2.get_type(&elab.g, &elab.lc, false).unwrap_or_else(|_| Type::new(TypeKind::Error)),
       Some(ty) => elab.elab_type(ty),
     };
-    let concl = concl.iter().map(|attr| elab.elab_attr(attr, true, &mut ty)).collect_vec();
+    let concl = concl.iter().filter_map(|attr| elab.elab_attr(attr, true, &mut ty)).collect_vec();
     let mut cc = CorrConds::new();
     cc.0[CorrCondKind::Coherence] = Some(Box::new(if oty.is_some() {
       let f = Formula::mk_and_with(|conj| {
@@ -4718,8 +5409,14 @@ impl BlockReader {
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
     let mut attrs1 = attrs.clone();
     attrs.enlarge_by(&elab.g.constrs, &elab.lc, &ty.attrs.1);
-    attrs.round_up_with(&elab.g, &elab.lc, &ty, false);
-    let Attrs::Consistent(_) = attrs else { panic!("inconsistent functor registration") };
+    // See `register_cluster`: skip the registration rather than register a partial one.
+    if attrs.round_up_with(&elab.g, &elab.lc, &ty, false).is_err() {
+      return
+    }
+    let Attrs::Consistent(_) = attrs else {
+      elab.err(pos, MizError::InconsistentCluster);
+      return
+    };
     self.to_locus(elab, |l| {
       term2.visit(l);
       attrs1.visit(l);
@@ -4729,7 +5426,9 @@ impl BlockReader {
     elab.write_xml.on(|w| w.start_fcluster(&primary, &term2, &attrs1, oty.map(|_| &ty)));
     elab.elab_corr_conds(pos, cc, conds, corr);
 
-    CheckAccess::with(&primary, |occ| occ.visit_term(&term2));
+    if CheckAccess::with(&primary, |occ| occ.visit_term(&term2)) {
+      elab.err(pos, MizError::UnusedLocus);
+    }
     elab.read_functor_cluster(FunctorCluster {
       cl: Cluster { primary, consequent: (attrs1, attrs) },
       ty: oty.map(|_| Box::new(ty)),
@@ -4737,18 +5436,17 @@ impl BlockReader {
     });
     self.needs_round_up = true;
     std::mem::swap(&mut self.primary, &mut elab.lc.locus_ty);
-    elab.r.g.round_up_term_cache(&mut elab.r.lc);
+    let _: Result<(), ErrorValue> = elab.r.g.round_up_term_cache(&mut elab.r.lc);
     std::mem::swap(&mut self.primary, &mut elab.lc.locus_ty);
     elab.write_xml.on(|w| w.end_registration());
   }
 
   fn elab_identify_pattern_func(
     &self, elab: &mut Analyzer, pat: &mut ast::PatternFunc,
-  ) -> PatternFuncResult {
+  ) -> Option<PatternFuncResult> {
     let pos = pat.pos();
     let fmt = elab.formats[&Format::Func(pat.to_format())];
-    let visible: Box<[_]> =
-      pat.args_mut().iter_mut().map(|v| self.locus(elab.resolve_const(v))).collect();
+    let visible = self.loci_of(elab, pat.args_mut().iter_mut())?;
     let args: Box<[_]> = pat.args().iter().map(|v| Term::Const(v.var())).collect();
     for pat in elab.r.notations[PKC::Func].iter().rev() {
       if pat.fmt == fmt {
@@ -4761,38 +5459,59 @@ impl BlockReader {
             var_set.set(i);
             var_set.visit_type(&self.primary[i]);
           }
-          return PatternFuncResult { nr, args, var_set }
+          return Some(PatternFuncResult { nr, args, var_set })
         }
       }
     }
-    panic!("type error")
+    elab.err(pos, MizError::UnknownFunctor);
+    None
   }
 
   fn elab_identify_func(&mut self, elab: &mut Analyzer, pos: Span, it: &mut ast::IdentifyFunc) {
-    let lhs_pat = self.elab_identify_pattern_func(elab, &mut it.lhs);
-    let rhs_pat = self.elab_identify_pattern_func(elab, &mut it.rhs);
-    assert!(
-      (lhs_pat.var_set.0 | rhs_pat.var_set.0) == (1 << self.primary.len() as u64) - 1,
-      "Unused locus"
-    );
+    let Some(lhs_pat) = self.elab_identify_pattern_func(elab, &mut it.lhs) else { return };
+    let Some(rhs_pat) = self.elab_identify_pattern_func(elab, &mut it.rhs) else { return };
+    // The locus bitsets below (and `CheckAccess`) are u64; more than 64 parameters
+    // cannot be tracked — report rather than overflow the shift / trip the bitset assert.
+    if self.primary.len() >= 64 {
+      elab.err(pos, MizError::TooManyLoci);
+      return
+    }
+    // Every locus of the identification must be used by the left or right pattern.
+    if lhs_pat.var_set.0 | rhs_pat.var_set.0 != (1 << self.primary.len() as u64) - 1 {
+      elab.err(pos, MizError::UnusedLocus);
+      return
+    }
     let mut eq_args = vec![];
     let mut occ = CheckAccess::new(self.primary.len() as _);
     occ.0 |= lhs_pat.var_set.0 & rhs_pat.var_set.0;
     for (v1, v2) in &mut it.eqs {
-      let (c1, c2) = (elab.resolve_const(v1), elab.resolve_const(v2));
-      let (v1, v2) = (self.locus(c1), self.locus(c2));
+      let (Some(c1), Some(c2)) = (elab.resolve_const(v1), elab.resolve_const(v2)) else { return };
+      let (Some(v1), Some(v2)) = (self.locus(c1), self.locus(c2)) else {
+        elab.err(pos, MizError::NotExportable);
+        return
+      };
       let (c1, c2, v1) = match (
         lhs_pat.var_set.get(v1) as i8 - rhs_pat.var_set.get(v1) as i8,
         lhs_pat.var_set.get(v2) as i8 - rhs_pat.var_set.get(v2) as i8,
       ) {
         (1, -1) => (c1, c2, v1),
         (-1, 1) => (c2, c1, v2),
-        (1, 1) | (-1, -1) => panic!("Cannot mix left and right pattern arguments"),
-        _ => panic!("The argument(s) must belong to the left or right pattern"),
+        // Each equated pair must join one left-pattern argument with one right-pattern
+        // argument; both-on-one-side, or a shared/foreign argument, is malformed.
+        _ => {
+          elab.err(pos, MizError::BadIdentify);
+          return
+        }
       };
       eq_args.push((c1, c2));
       occ.set(v1);
-      assert!(elab.lc.fixed_var[c2].ty.is_wider_than(&elab.g, &elab.lc, &elab.lc.fixed_var[c1].ty));
+      // The right argument's type must widen the left's, else they cannot be identified.
+      if elab.lc.fixed_var[c2].ty.is_wider_than(&elab.g, &elab.lc, &elab.lc.fixed_var[c1].ty)
+        == Ok(false)
+      {
+        elab.err(pos, MizError::BadIdentify);
+        return
+      }
     }
     eq_args.sort_unstable();
 
@@ -4801,10 +5520,12 @@ impl BlockReader {
         occ.visit_type(ty)
       }
     }
-    assert!(
-      occ == lhs_pat.var_set,
-      "Left and right pattern must have the same number of arguments"
-    );
+    // The reconciled argument set must equal the left pattern's — otherwise the two
+    // patterns take different numbers of arguments.
+    if occ != lhs_pat.var_set {
+      elab.err(pos, MizError::BadIdentify);
+      return
+    }
     let mut cc = CorrConds::new();
     let (lhs_args, rhs_args) =
       self.to_locus(elab, |l| (lhs_pat.args.visit_cloned(l), rhs_pat.args.visit_cloned(l)));
@@ -4821,8 +5542,12 @@ impl BlockReader {
     cc.0[CorrCondKind::Compatibility] = Some(Box::new(f.mk_neg()));
     let lhs = Term::Functor { nr: lhs_pat.nr, args: lhs_args };
     let rhs = Term::Functor { nr: rhs_pat.nr, args: rhs_args };
-    let eq_args: Box<[_]> =
-      eq_args.into_iter().map(|(c1, c2)| (self.locus(c1), self.locus(c2))).collect();
+    let eq_args: Option<Box<[_]>> =
+      (eq_args.into_iter().map(|(c1, c2)| Some((self.locus(c1)?, self.locus(c2)?)))).collect();
+    let Some(eq_args) = eq_args else {
+      elab.err(pos, MizError::NotExportable);
+      return
+    };
     let primary = self.primary.0.iter().cloned().collect();
     let id = IdentifyFunc { primary, lhs, rhs, eq_args };
     elab.write_xml.on(|w| w.start_identify_func(&id));
@@ -4835,7 +5560,8 @@ impl BlockReader {
     fn is_ssubterm(ctx: &mut EqCtx<'_>, sup: &Term, sub: &Term) -> bool {
       use Term::*;
       match sup {
-        Numeral(_) | Locus(_) | Bound(_) | Const(_) | Infer(_) => ().eq_term(ctx, sup, sub),
+        Numeral(_) | Locus(_) | Bound(_) | Const(_) | Infer(_) =>
+          ().eq_term(ctx, sup, sub) == Ok(true),
         PrivFunc { value, .. } => is_ssubterm(ctx, value, sub),
         Functor { args, .. }
         | SchFunc { args, .. }
@@ -4849,19 +5575,26 @@ impl BlockReader {
       }
     }
     fn subterm_list(ctx: &mut EqCtx<'_>, args: &[Term], sub: &Term) -> bool {
-      args.iter().any(|t| ().eq_term(ctx, t, sub) || is_ssubterm(ctx, t, sub))
+      args.iter().any(|t| ().eq_term(ctx, t, sub) == Ok(true) || is_ssubterm(ctx, t, sub))
     }
 
     let mut from = elab.elab_term(&it.from);
     let mut to = elab.elab_term(&it.to);
     let reduction_allowed = {
       let Term::Functor { nr, ref args } = from else {
-        panic!("reduction must have a functor term on the LHS")
+        // Error LHS already reported; otherwise report and skip the reduction.
+        if !matches!(from, Term::Error) {
+          elab.err(pos, MizError::BadReduction);
+        }
+        return
       };
       let args = Term::adjust(nr, args, Some(&elab.g.constrs)).1;
       elab.with_eq(|ctx| subterm_list(ctx, args, to.skip_priv_func(Some(ctx.lc))))
     };
-    assert!(reduction_allowed, "Right term must be a subterm of the left term");
+    if !reduction_allowed {
+      elab.err(pos, MizError::BadReduction);
+      return
+    }
     let mut cc = CorrConds::new();
     cc.0[CorrCondKind::Reducibility] = Some(Box::new(elab.g.reqs.mk_eq(from.clone(), to.clone())));
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
@@ -4869,7 +5602,9 @@ impl BlockReader {
       from.visit(l);
       to.visit(l)
     });
-    CheckAccess::with(&primary, |occ| occ.visit_term(&from));
+    if CheckAccess::with(&primary, |occ| occ.visit_term(&from)) {
+      elab.err(pos, MizError::UnusedLocus);
+    }
     let red = Reduction { primary, terms: [from, to] };
     elab.write_xml.on(|w| w.start_reduction(&red));
     elab.elab_corr_conds(pos, cc, &mut it.conds, &mut it.corr);
@@ -4905,7 +5640,9 @@ impl BlockReader {
     } else {
       self.to_locus(elab, |l| prop.ty.visit(l));
     }
-    CheckAccess::with(&prop.primary, |occ| occ.visit_type(&prop.ty));
+    if CheckAccess::with(&prop.primary, |occ| occ.visit_type(&prop.ty)) {
+      elab.err(Span::NONE, MizError::UnusedLocus);
+    }
     elab.properties.push(prop)
   }
 
@@ -4913,30 +5650,39 @@ impl BlockReader {
     &mut self, elab: &mut Analyzer, new: &mut ast::PatternPred, orig: &mut ast::PatternPred,
     pos: bool,
   ) {
-    let fmt_orig = elab.formats[&Format::Pred(orig.to_format())];
+    let fmt_orig = Format::Pred(orig.to_format());
+    let Some(fmt_orig) = elab.lookup_format(orig.pos, fmt_orig, MizError::RedefUnknownPredicate)
+    else {
+      return
+    };
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
-    CheckAccess::with(&primary, |occ| {
-      orig.args.iter_mut().for_each(|v| occ.set(self.locus(elab.resolve_const(v))))
-    });
+    let Some(orig_loci) = self.loci_of(elab, orig.args.iter_mut()) else { return };
+    if CheckAccess::with(&primary, |occ| orig_loci.iter().for_each(|&l| occ.set(l))) {
+      elab.err(orig.pos, MizError::UnusedLocus);
+    }
     let args: Box<[_]> = orig.args.iter().map(|v| Term::Const(v.var())).collect();
     let pat = elab.r.notations[PKC::Pred].iter().rev().find(|pat| {
       pat.fmt == fmt_orig
         && !matches!(pat.kind, PatternKind::Pred(nr)
             if elab.g.constrs.predicate[nr].redefines.is_some())
         && matches!(pat.check_types(&elab.g, &elab.lc, &args),
-            Some(subst) if { self.check_compatible_args(&elab.lc, &subst); true })
+            Some(subst) if self.check_compatible_args(&elab.lc, &subst))
     });
-    let pat = pat.expect("type error");
+    let Some(pat) = pat else {
+      elab.err(orig.pos, MizError::RedefUnknownPredicate);
+      return
+    };
     let PatternKind::Pred(nr) = pat.kind else { unreachable!() };
     elab.write_mpt.on(|w| w.write(orig.pos, fmt_orig, nr));
     let c = &elab.g.constrs.predicate[nr];
+    let Some(new_visible) = self.loci_of(elab, new.args.iter_mut()) else { return };
     elab.push_mk_pattern(
       true,
       PKC::Pred,
       PatternKind::Pred(c.redefines.unwrap_or(nr)),
       elab.formats[&Format::Pred(new.to_format())],
       primary,
-      new.args.iter_mut().map(|v| self.locus(elab.resolve_const(v))).collect(),
+      new_visible,
       pos == pat.pos,
     )
   }
@@ -4944,30 +5690,39 @@ impl BlockReader {
   fn elab_func_notation(
     &mut self, elab: &mut Analyzer, new: &mut ast::PatternFunc, orig: &mut ast::PatternFunc,
   ) {
-    let fmt_orig = elab.formats[&Format::Func(orig.to_format())];
+    let fmt_orig = Format::Func(orig.to_format());
+    let Some(fmt_orig) = elab.lookup_format(orig.pos(), fmt_orig, MizError::RedefUnknownFunctor)
+    else {
+      return
+    };
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
-    CheckAccess::with(&primary, |occ| {
-      orig.args_mut().iter_mut().for_each(|v| occ.set(self.locus(elab.resolve_const(v))))
-    });
+    let Some(orig_loci) = self.loci_of(elab, orig.args_mut().iter_mut()) else { return };
+    if CheckAccess::with(&primary, |occ| orig_loci.iter().for_each(|&l| occ.set(l))) {
+      elab.err(orig.pos(), MizError::UnusedLocus);
+    }
     let args: Box<[_]> = orig.args().iter().map(|v| Term::Const(v.var())).collect();
     let pat = elab.r.notations[PKC::Func].iter().rev().find(|pat| {
       pat.fmt == fmt_orig
         && !matches!(pat.kind, PatternKind::Func(nr)
             if elab.g.constrs.functor[nr].redefines.is_some())
         && matches!(pat.check_types(&elab.g, &elab.lc, &args),
-            Some(subst) if { self.check_compatible_args(&elab.lc, &subst); true })
+            Some(subst) if self.check_compatible_args(&elab.lc, &subst))
     });
-    let pat = pat.expect("type error");
+    let Some(pat) = pat else {
+      elab.err(orig.pos(), MizError::RedefUnknownFunctor);
+      return
+    };
     let PatternKind::Func(nr) = pat.kind else { unreachable!() };
     elab.write_mpt.on(|w| w.write(orig.pos(), fmt_orig, nr));
     let c = &elab.g.constrs.functor[nr];
+    let Some(new_visible) = self.loci_of(elab, new.args_mut().iter_mut()) else { return };
     elab.push_mk_pattern(
       true,
       PKC::Func,
       PatternKind::Func(c.redefines.unwrap_or(nr)),
       elab.formats[&Format::Func(new.to_format())],
       primary,
-      new.args_mut().iter_mut().map(|v| self.locus(elab.resolve_const(v))).collect(),
+      new_visible,
       true,
     )
   }
@@ -4975,30 +5730,41 @@ impl BlockReader {
   fn elab_mode_notation(
     &mut self, elab: &mut Analyzer, new: &mut ast::PatternMode, orig: &mut ast::PatternMode,
   ) {
-    let fmt_orig = elab.formats[&Format::Mode(orig.to_format())];
+    let fmt_orig = Format::Mode(orig.to_format());
+    let Some(fmt_orig) = elab.lookup_format(orig.pos, fmt_orig, MizError::RedefUnknownMode) else {
+      return
+    };
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
-    CheckAccess::with(&primary, |occ| {
-      orig.args.iter_mut().for_each(|v| occ.set(self.locus(elab.resolve_const(v))))
-    });
+    let Some(orig_loci) = self.loci_of(elab, orig.args.iter_mut()) else { return };
+    if CheckAccess::with(&primary, |occ| orig_loci.iter().for_each(|&l| occ.set(l))) {
+      elab.err(orig.pos, MizError::UnusedLocus);
+    }
     let args: Box<[_]> = orig.args.iter().map(|v| Term::Const(v.var())).collect();
     let pat = elab.r.notations[PKC::Mode].iter().rev().find(|pat| {
       pat.fmt == fmt_orig
         && !matches!(pat.kind, PatternKind::Mode(nr)
             if elab.g.constrs.mode[nr].redefines.is_some())
         && matches!(pat.check_types(&elab.g, &elab.lc, &args),
-            Some(subst) if { self.check_compatible_args(&elab.lc, &subst); true })
+            Some(subst) if self.check_compatible_args(&elab.lc, &subst))
     });
-    let pat = pat.expect("type error");
-    let PatternKind::Mode(nr) = pat.kind else { panic!("redefining expandable mode") };
+    let Some(pat) = pat else {
+      elab.err(orig.pos, MizError::RedefUnknownMode);
+      return
+    };
+    let PatternKind::Mode(nr) = pat.kind else {
+      elab.err(orig.pos, MizError::RedefUnknownMode);
+      return
+    };
     elab.write_mpt.on(|w| w.write(orig.pos, fmt_orig, nr));
     let c = &elab.g.constrs.mode[nr];
+    let Some(new_visible) = self.loci_of(elab, new.args.iter_mut()) else { return };
     elab.push_mk_pattern(
       true,
       PKC::Mode,
       PatternKind::Mode(c.redefines.unwrap_or(nr)),
       elab.formats[&Format::Mode(new.to_format())],
       primary,
-      new.args.iter_mut().map(|v| self.locus(elab.resolve_const(v))).collect(),
+      new_visible,
       true,
     )
   }
@@ -5007,29 +5773,38 @@ impl BlockReader {
     &mut self, elab: &mut Analyzer, new: &mut ast::PatternAttr, orig: &mut ast::PatternAttr,
     pos: bool,
   ) {
-    let fmt_orig = elab.formats[&Format::Attr(orig.to_format())];
+    let fmt_orig = Format::Attr(orig.to_format());
+    let Some(fmt_orig) = elab.lookup_format(orig.pos, fmt_orig, MizError::RedefUnknownAttribute)
+    else {
+      return
+    };
     let primary: Box<[_]> = self.primary.0.iter().cloned().collect();
-    CheckAccess::with(&primary, |occ| {
-      orig.args.iter_mut().for_each(|v| occ.set(self.locus(elab.resolve_const(v))))
-    });
+    let Some(orig_loci) = self.loci_of(elab, orig.args.iter_mut()) else { return };
+    if CheckAccess::with(&primary, |occ| orig_loci.iter().for_each(|&l| occ.set(l))) {
+      elab.err(orig.pos, MizError::UnusedLocus);
+    }
     let args: Box<[_]> = orig.args.iter().map(|v| Term::Const(v.var())).collect();
     let pat = elab.r.notations[PKC::Attr].iter().rev().find(|pat| {
       pat.fmt == fmt_orig
         && !matches!(pat.kind, PatternKind::Attr(nr)
             if elab.g.constrs.attribute[nr].redefines.is_some())
         && matches!(pat.check_types(&elab.g, &elab.lc, &args),
-            Some(subst) if { self.check_compatible_args(&elab.lc, &subst); true })
+            Some(subst) if self.check_compatible_args(&elab.lc, &subst))
     });
-    let pat = pat.expect("type error");
+    let Some(pat) = pat else {
+      elab.err(orig.pos, MizError::RedefUnknownAttribute);
+      return
+    };
     let PatternKind::Attr(nr) = pat.kind else { unreachable!() };
     elab.write_mpt.on(|w| w.write(orig.pos, fmt_orig, nr));
+    let Some(new_visible) = self.loci_of(elab, new.args.iter_mut()) else { return };
     elab.push_mk_pattern(
       true,
       PKC::Attr,
       PatternKind::Attr(elab.g.constrs.attribute[nr].redefines.unwrap_or(nr)),
       elab.formats[&Format::Attr(new.to_format())],
       primary,
-      new.args.iter_mut().map(|v| self.locus(elab.resolve_const(v))).collect(),
+      new_visible,
       pos == pat.pos,
     )
   }
@@ -5052,20 +5827,28 @@ impl ReadProof for BlockReader {
     if !matches!(self.assums.last(), Some(ReconstructAssum::Let { .. })) {
       self.assums.push(ReconstructAssum::Let { start: self.primary.peek() })
     }
-    for fv in &elab.r.lc.fixed_var.0[start..] {
-      let mut ty = fv.ty.clone();
+    let mut leaks = false;
+    for i in start..elab.r.lc.fixed_var.len() {
+      let mut ty = elab.r.lc.fixed_var.0[i].ty.clone();
       ty.adjust_mut(&elab.g.constrs);
       self.to_locus(elab, |l| ty.visit(l));
-      Exportable.visit_type(&ty);
+      leaks |= Exportable::check(|e| e.visit_type(&ty));
       let i = self.primary.push(ty);
       self.to_const.0.push(self.to_locus.push(Some(i)));
+    }
+    // No position is available here (the `ReadProof` callbacks do not carry one), so
+    // this reports without a snippet. It is still counted, which is what gates export.
+    if leaks {
+      elab.err(Span::NONE, MizError::NotExportable);
     }
   }
 
   fn assume(&mut self, elab: &mut Analyzer, mut conjs: Vec<Formula>, _: bool) {
     if !conjs.is_empty() {
       self.to_locus(elab, |l| conjs.visit(l));
-      conjs.iter().for_each(|f| Exportable.visit_formula(f));
+      if Exportable::check(|e| conjs.iter().for_each(|f| e.visit_formula(f))) {
+        elab.err(Span::NONE, MizError::NotExportable);
+      }
       if let Some(ReconstructAssum::Assum(assums)) = self.assums.last_mut() {
         assums.append(&mut conjs)
       } else {
@@ -5076,7 +5859,11 @@ impl ReadProof for BlockReader {
 
   fn take(&mut self, _: &mut Analyzer, _: Term) { panic!("invalid item") }
   fn thus(&mut self, _: &mut Analyzer, _: Vec<Formula>) { panic!("invalid item") }
-  fn unfold(&mut self, _: &mut Analyzer, _: &[ast::Reference]) { panic!("invalid item") }
+  fn unfold(&mut self, elab: &mut Analyzer, _: &[ast::Reference]) {
+    // `unfolding` is parseable in any block but is only meaningful inside a proof.
+    let pos = elab.r.pos;
+    elab.err(pos, MizError::UnexpectedItem);
+  }
   fn new_cases(&mut self, _: &mut Analyzer) -> Self::CaseIter { panic!("invalid item") }
 
   fn new_supposes(&mut self, _: &mut Analyzer) -> Self::SupposeRecv { panic!("invalid item") }
@@ -5084,13 +5871,15 @@ impl ReadProof for BlockReader {
   fn end_block(&mut self, elab: &mut Analyzer, _: Span) {
     if self.needs_round_up {
       let mut attrs = elab.g.numeral_type.attrs.1.clone();
-      attrs.round_up_with(&elab.g, &elab.lc, &elab.g.numeral_type, false);
+      // See `register_cluster`: an error value here was already reported.
+      let _: Result<(), ErrorValue> =
+        attrs.round_up_with(&elab.g, &elab.lc, &elab.g.numeral_type, false);
       elab.g.numeral_type.attrs.1 = attrs;
       for i in 0..elab.g.clusters.registered.len() {
         let cl = &elab.r.g.clusters.registered[i];
         let mut attrs = cl.consequent.1.clone();
         elab.r.lc.with_locus_tys(&cl.primary, |lc| {
-          attrs.round_up_with(&elab.r.g, lc, &cl.ty, false);
+          let _: Result<(), ErrorValue> = attrs.round_up_with(&elab.r.g, lc, &cl.ty, false);
         });
         elab.r.g.clusters.registered[i].consequent.1 = attrs;
       }

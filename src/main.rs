@@ -261,6 +261,11 @@ struct CliPasses {
 
 #[derive(Debug, clap::Args)]
 struct CliOther {
+  /// Write diagnostics to a Mizar-compatible `<article>.err` file (`line col code`)
+  /// instead of rendering them
+  #[arg(long)]
+  err_file: bool,
+
   /// Panic on the first error
   #[arg(long, num_args = 0..=1, action = ArgAction::Set, default_value = bool_to_str(DEBUG),
     require_equals = true, default_missing_value = "true", hide_possible_values = true)]
@@ -430,6 +435,7 @@ pub struct Config {
   pub attr_sort_bug: bool,
 
   pub panic_on_fail: bool,
+  pub err_file: bool,
   pub first_verbose_line: Option<u32>,
   pub one_item: bool,
   pub skip_to_verbose: bool,
@@ -472,6 +478,27 @@ fn mizbin() -> &'static str {
 fn mml_lar_path() -> String { format!("{}/mml.lar", mizfiles()) }
 fn mml_vct_path() -> String { format!("{}/mml.vct", mizfiles()) }
 
+/// Report a failed read of a library index file (`mml.lar` / `mml.vct`) and exit.
+///
+/// These are read at startup before any article-level reporter exists, and a failure
+/// almost always means `MIZFILES` points at the wrong place (or is unset), so the
+/// message names the file, the underlying error, and how `MIZFILES` is resolved —
+/// then exits cleanly rather than `abort()`ing with a bare IO line.
+fn library_read_failed(what: &str, path: &str, e: std::io::Error) -> ! {
+  eprintln!("error: could not read the Mizar library {what} at '{path}': {e}");
+  match std::env::var("MIZFILES") {
+    Ok(v) => eprintln!(
+      "  MIZFILES is set to '{v}' — it should be your Mizar installation's 'mizshare' directory."
+    ),
+    Err(_) => eprintln!(
+      "  MIZFILES is not set (using the default '{}'). Set it to your Mizar installation's \
+       'mizshare' directory.",
+      mizfiles()
+    ),
+  }
+  std::process::exit(2)
+}
+
 fn main() {
   let cli = Cli::parse();
   let enable = cli.passes.analyzer || cli.passes.checker || cli.passes.export;
@@ -513,6 +540,7 @@ fn main() {
     attr_sort_bug: cli.unsound.attr_sort_bug,
 
     panic_on_fail: cli.other.panic_on_fail,
+    err_file: cli.other.err_file,
     first_verbose_line: cli.first_verbose_line, // None,
     one_item: cli.one_item,
     skip_to_verbose: cli.skip_to_verbose,
@@ -537,16 +565,12 @@ fn main() {
   }
   let one_file = cli.one_file;
 
-  let file = std::fs::read_to_string(mml_lar_path()).unwrap_or_else(|e| {
-    println!("IO error reading {}: {e}", mml_lar_path());
-    std::process::abort()
-  });
+  let file = std::fs::read_to_string(mml_lar_path())
+    .unwrap_or_else(|e| library_read_failed("index mml.lar", &mml_lar_path(), e));
   let mml_vct = &if cfg.accom_enabled {
     let mml_vct_path = mml_vct_path();
-    std::fs::read(&mml_vct_path).unwrap_or_else(|e| {
-      println!("IO error reading {mml_vct_path}: {e}");
-      std::process::abort()
-    })
+    std::fs::read(&mml_vct_path)
+      .unwrap_or_else(|e| library_read_failed("vocabulary index mml.vct", &mml_vct_path, e))
   } else {
     vec![]
   };

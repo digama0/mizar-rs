@@ -843,7 +843,15 @@ impl MizWriter {
   }
 
   fn write_attrs(&mut self, lc: Option<&LocalContext>, attrs: &Attrs) {
-    let Attrs::Consistent(attrs) = attrs else { unreachable!() };
+    let Attrs::Consistent(attrs) = attrs else {
+      // An inconsistent (contradictory) attribute set is an error value, in the same
+      // family as `Term::Error`/`Formula::Error`: malformed input can round attributes
+      // up to a contradiction that then reaches the writer. Emit Pascal's
+      // `<ErrorCluster/>` placeholder rather than panicking, keeping the `.xml`
+      // well-formed and honestly marking the cluster as erroneous.
+      self.with0("ErrorCluster", |_| {});
+      return
+    };
     self.with0("Cluster", |w| {
       for attr in attrs {
         let attrs = |w: &mut Elem| {
@@ -859,6 +867,21 @@ impl MizWriter {
   }
 
   fn write_type(&mut self, lc: Option<&LocalContext>, id: IdentId, ty: &Type) {
+    // An error type is emitted as `<Typ kind="errortyp" nr="0"/>` with no children,
+    // matching the Pascal `ikError` case in `iocorrel.pas` (`kind='errortyp'`, nr 0).
+    // Encoding it keeps the `.xml` well-formed rather than aborting the writer.
+    if let TypeKind::Error = ty.kind {
+      self.with(
+        "Typ",
+        |w: &mut Elem| {
+          w.attr(b"kind", &b"errortyp"[..]);
+          w.attr_str(b"nr", 0);
+          w.vid(id)
+        },
+        |_| {},
+      );
+      return
+    }
     let attrs = |w: &mut Elem| {
       let (kind, n) = match ty.kind {
         TypeKind::Struct(n) => (b'G', n.0),
@@ -1589,6 +1612,17 @@ impl WriteXml {
         self.w.with("From", attrs, |w| w.write_references(&it.refs))
       }
     };
+  }
+
+  /// A justification failed to elaborate (an unresolved reference or scheme name), so
+  /// the analyzer bails without a real inference. Emit Pascal's `<ErrorInf/>`
+  /// placeholder (`iocorrel.pas`) and perform the same `pop_justification` transition
+  /// [`write_inference`] does, so the enclosing close (`end_thus`, `end_corr_cond`,
+  /// `end_reconsider`, the next `write_proposition`, …) stays on a state it accepts.
+  pub fn error_inference(&mut self) {
+    let State::Justification = self.state else { unreachable!() };
+    self.pop_justification();
+    self.w.with0("ErrorInf", |_| {})
   }
 
   pub fn start_theorem(

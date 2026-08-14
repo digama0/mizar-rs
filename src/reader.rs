@@ -1,9 +1,42 @@
 use crate::accom::Accomodator;
 use crate::checker::Checker;
 use crate::error::MizError;
-use crate::parser::{JsonParser, MizParser, Parser, ParserCore};
+use crate::parser::{JsonParser, MizParser, ParseError, Parser, ParserCore};
 use crate::*;
 use std::io;
+
+/// Load a required article artifact, or report and abandon this article.
+///
+/// The `-P` / `-c` startup chain reads a set of pre-accommodated files
+/// (`.evl`, `.atr`, `.ere`, `.frx`, `.eno`, ...). These used to be `.unwrap()`ed, so a
+/// missing or malformed one panicked; now the failure is reported and
+/// `with_reader` returns `Ok(true)` ("this article had errors"), matching how the
+/// accommodator already degrades.
+///
+/// * `try_load!(reporter, path expr)` — the error already carries its own path (`PathResult`).
+/// * `try_load!(reporter, self, "ext", expr)` — a `ParseError` or `io::Error` without a path;
+///   report it against `<article>.<ext>`.
+macro_rules! try_load {
+  ($reporter:expr, path $e:expr) => {
+    match $e {
+      Ok(v) => v,
+      Err((path, err)) => {
+        $reporter.emit(err.to_diagnostic(&path));
+        return Ok(true)
+      }
+    }
+  };
+  ($reporter:expr, $self:expr, $ext:expr, $e:expr) => {
+    match $e {
+      Ok(v) => v,
+      Err(err) => {
+        let path = $self.to_path(true, false, $ext);
+        $reporter.emit(ParseError::from(err).to_diagnostic(&path));
+        return Ok(true)
+      }
+    }
+  };
+}
 
 enum PendingDef {
   Constr(ConstrKind),
@@ -66,23 +99,57 @@ impl MizPath {
     // source-snippet diagnostics), and the XML readers/writer (to translate the
     // legacy `line:col` positions against it). The `.miz` parser requires it;
     // other modes read it best-effort so translation still works when present.
-    let data: Option<Vec<u8>> = if cfg.parser_enabled && !cfg.json_parse_in {
-      Some(self.read_miz().unwrap())
+    // Read before building the reporter so it can carry the source, but report a
+    // *required* read failure through that same reporter (so it is counted) rather
+    // than out-of-band.
+    let read = self.read_miz();
+    let source = read.as_deref().ok().map(|b| String::from_utf8_lossy(b).into_owned());
+    let lines = read.as_deref().ok().map(|b| std::sync::Arc::new(LineMap::new(b)));
+    // `--err-file` swaps the human-facing sink for one that writes a
+    // Mizar-compatible `<article>.err`; it writes the file when it is dropped.
+    let reporter: std::sync::Arc<dyn Reporter> = if cfg.err_file {
+      std::sync::Arc::new(crate::report::ErrFileReporter::new(
+        self.to_path(true, false, "err"),
+        lines.clone(),
+      ))
     } else {
-      self.read_miz().ok()
+      std::sync::Arc::new(WriteReporter::new(
+        self.to_path(true, false, "miz"),
+        source,
+        lines.clone(),
+      ))
     };
-    let source = data.as_deref().map(|b| String::from_utf8_lossy(b).into_owned());
-    let lines = data.as_deref().map(|b| std::sync::Arc::new(LineMap::new(b)));
-    let reporter: std::sync::Arc<dyn Reporter> = std::sync::Arc::new(WriteReporter::new(
-      self.to_path(true, false, "miz"),
-      source,
-      lines.clone(),
-    ));
+    if let Some(accom) = &mut accom {
+      accom.reporter = Some(reporter.clone());
+      // `article` is what `write_eth`/`write_esh` name their output after; left at
+      // the default it resolves to an empty stem (and `prel()`'s `&s[..1]` panics).
+      accom.article = self.art;
+    }
+    let data: Option<Vec<u8>> = match read {
+      // The `.miz` scanner assumes valid UTF-8 (it does `from_utf8` on token spellings).
+      // Validate once here and report+bail on a stray non-UTF-8 byte, rather than letting
+      // the scanner panic. Only matters for the `.miz` parser path.
+      Ok(data) if cfg.parser_enabled && !cfg.json_parse_in => match std::str::from_utf8(&data) {
+        Ok(_) => Some(data),
+        Err(e) => {
+          let path = self.to_path(true, false, "miz");
+          reporter.emit(ParseError::BadUtf8(e.valid_up_to()).to_diagnostic(&path));
+          return Ok(true)
+        }
+      },
+      Ok(data) => Some(data),
+      Err(err) if cfg.parser_enabled && !cfg.json_parse_in => {
+        let path = self.to_path(true, false, "miz");
+        reporter.emit(ParseError::from(err).to_diagnostic(&path));
+        return Ok(true)
+      }
+      Err(_) => None,
+    };
 
     let mut parser = if cfg.parser_enabled {
       let core = ParserCore::new(self.art, self.write_json(cfg.json_parse_out), reporter.clone());
       if cfg.json_parse_in {
-        let jv = self.read_miz_json().unwrap();
+        let jv = try_load!(reporter, self, "miz.json", self.read_miz_json());
         Some(Box::new(Parser::Json(JsonParser::new(core, jv))))
       } else {
         Some(Box::new(Parser::Miz(MizParser::new(core, progress, data.as_deref().unwrap()))))
@@ -92,9 +159,13 @@ impl MizPath {
     };
     if let Some(accom) = &mut accom {
       if let Some(parser) = &mut parser {
-        parser.parse_env(&mut accom.dirs);
+        // A fatal environment error (only the JSON front-end reports one) is already
+        // emitted; abandon the article before the downstream requirement invariants.
+        if parser.parse_env(&mut accom.dirs) {
+          return Ok(true)
+        }
       } else {
-        self.read_evl(&mut accom.dirs).unwrap();
+        try_load!(reporter, path self.read_evl(&mut accom.dirs));
       }
     }
 
@@ -104,7 +175,7 @@ impl MizPath {
       None
     } else {
       if cfg.checker_enabled {
-        self.read_ref(&mut refs).unwrap();
+        try_load!(reporter, self, "ref", self.read_ref(&mut refs));
       }
       Some(&refs)
     };
@@ -115,14 +186,14 @@ impl MizPath {
     v.lc.formatter.dump = cfg.dump.formatter;
     let old = v.lc.start_stash();
     if let Some(accom) = &mut v.accom {
-      accom.accom_constructors(&mut v.g.constrs).unwrap();
-      accom.accom_requirements(&v.g.constrs, &mut v.g.reqs).unwrap();
+      try_load!(reporter, self, "miz", accom.accom_constructors(&mut v.g.constrs));
+      try_load!(reporter, self, "miz", accom.accom_requirements(&v.g.constrs, &mut v.g.reqs));
       if cfg.xml_internals {
         self.write_atr(&accom.sig, &v.g.constrs)
       }
     } else {
-      self.read_atr(&mut v.g.constrs).unwrap();
-      self.read_ere(&mut v.g.reqs).unwrap();
+      try_load!(reporter, path self.read_atr(&mut v.g.constrs));
+      try_load!(reporter, self, "ere", self.read_ere(&mut v.g.reqs));
     }
     v.g.reqs.init_rev();
     let mut has_omega = false;
@@ -152,7 +223,7 @@ impl MizPath {
       cfg.analyzer_enabled || v.lc.formatter.cfg.enable_formatter || cfg.exporter_enabled;
     if needs_formats && !cfg.parser_enabled {
       let mut fmts = Default::default();
-      self.read_formats("frx", &mut fmts).unwrap();
+      try_load!(reporter, path self.read_formats("frx", &mut fmts));
       v.formats.extend(fmts.formats.enum_iter().map(|(id, f)| (*f, id)));
       *v.lc.formatter.formats = fmts.formats;
     }
@@ -160,22 +231,32 @@ impl MizPath {
       if let Some(parser) = &mut parser {
         let mut fmts = Default::default();
         let mut fmt_map = Default::default();
-        accom.accom_notations(&mut fmt_map, Some(&mut fmts), &mut notations).unwrap();
+        try_load!(
+          reporter,
+          self,
+          "miz",
+          accom.accom_notations(&mut fmt_map, Some(&mut fmts), &mut notations)
+        );
         parser.read_formats(&fmts.formats.0);
         v.formats.extend(fmts.formats.enum_iter().map(|(id, f)| (*f, id)));
         *v.lc.formatter.formats = fmts.formats;
       } else {
-        accom.accom_notations(&mut v.formats, None, &mut notations).unwrap();
+        try_load!(
+          reporter,
+          self,
+          "miz",
+          accom.accom_notations(&mut v.formats, None, &mut notations)
+        );
       }
     } else {
-      self.read_eno(&mut notations).unwrap();
+      try_load!(reporter, path self.read_eno(&mut notations));
     }
     if cfg.exporter_enabled {
       v.formats_base = if cfg.parser_enabled {
         v.lc.formatter.formats.len()
       } else {
         let mut f = Default::default();
-        self.read_formats("frm", &mut f).unwrap();
+        try_load!(reporter, path self.read_formats("frm", &mut f));
         f.formats.len()
       }
     }
@@ -195,9 +276,9 @@ impl MizPath {
       v.g.reqs.dump(&v.g.constrs)
     }
     if let Some(accom) = &mut v.accom {
-      accom.accom_clusters(&v.g.constrs, &mut v.g.clusters).unwrap();
+      try_load!(reporter, self, "miz", accom.accom_clusters(&v.g.constrs, &mut v.g.clusters));
     } else {
-      self.read_ecl(&v.g.constrs, &mut v.g.clusters).unwrap();
+      try_load!(reporter, path self.read_ecl(&v.g.constrs, &mut v.g.clusters));
     }
     v.g.clusters.functor.sort_all(|a, b| FunctorCluster::cmp_term(&a.term, &v.g.constrs, &b.term));
     if cfg.dump.clusters {
@@ -213,17 +294,20 @@ impl MizPath {
         attrs.push(Attr::new0(positive, true))
       }
     }
-    attrs.round_up_with(&v.g, &v.lc, &v.g.numeral_type, false);
+    // Environment data (imported constructors and clusters) contains no error values, so
+    // these cannot fail in practice; if one ever did, the article has already failed and
+    // skipping the derived round-up is the safe direction.
+    let _: Result<(), ErrorValue> = attrs.round_up_with(&v.g, &v.lc, &v.g.numeral_type, false);
     v.g.numeral_type.attrs.1 = attrs;
     v.lc.clear_term_cache();
-    v.g.round_up_clusters(&mut v.lc);
+    let _: Result<(), ErrorValue> = v.g.round_up_clusters(&mut v.lc);
 
     if cfg.analyzer_enabled {
       // LoadSGN
       for mut pat in notations {
         if let PatternKind::ExpandableMode { expansion } = &mut pat.kind {
           v.lc.load_locus_tys(&pat.primary);
-          expansion.round_up_with_self(&v.g, &v.lc, false);
+          let _: Result<(), ErrorValue> = expansion.round_up_with_self(&v.g, &v.lc, false);
           v.lc.unload_locus_tys();
         }
         v.notations[pat.kind.class()].push(pat)
@@ -236,14 +320,17 @@ impl MizPath {
     // LoadDefinitions
     if cfg.analyzer_enabled {
       if let Some(accom) = &mut v.accom {
-        accom
-          .accom_definitions(&v.g.constrs, DirectiveKind::Definitions, &mut v.definitions.0)
-          .unwrap();
+        try_load!(
+          reporter,
+          self,
+          "miz",
+          accom.accom_definitions(&v.g.constrs, DirectiveKind::Definitions, &mut v.definitions.0)
+        );
         if cfg.xml_internals {
           self.write_dfs(&v.definitions.0)
         }
       } else {
-        self.read_definitions(&v.g.constrs, false, "dfs", None, &mut v.definitions.0).unwrap();
+        try_load!(reporter, path self.read_definitions(&v.g.constrs, false, "dfs", None, &mut v.definitions.0));
       }
       if cfg.dump.definitions {
         for d in &v.definitions.0 {
@@ -255,11 +342,14 @@ impl MizPath {
     // LoadEqualities
     if cfg.checker_enabled {
       if let Some(accom) = &mut v.accom {
-        accom
-          .accom_definitions(&v.g.constrs, DirectiveKind::Equalities, &mut v.equalities)
-          .unwrap();
+        try_load!(
+          reporter,
+          self,
+          "miz",
+          accom.accom_definitions(&v.g.constrs, DirectiveKind::Equalities, &mut v.equalities)
+        );
       } else {
-        self.read_definitions(&v.g.constrs, false, "dfe", None, &mut v.equalities).unwrap();
+        try_load!(reporter, path self.read_definitions(&v.g.constrs, false, "dfe", None, &mut v.equalities));
       }
       if cfg.dump.definitions {
         for d in &v.equalities {
@@ -271,11 +361,14 @@ impl MizPath {
     // LoadExpansions
     if cfg.checker_enabled {
       if let Some(accom) = &mut v.accom {
-        accom
-          .accom_definitions(&v.g.constrs, DirectiveKind::Expansions, &mut v.expansions)
-          .unwrap();
+        try_load!(
+          reporter,
+          self,
+          "miz",
+          accom.accom_definitions(&v.g.constrs, DirectiveKind::Expansions, &mut v.expansions)
+        );
       } else {
-        self.read_definitions(&v.g.constrs, false, "dfx", None, &mut v.expansions).unwrap();
+        try_load!(reporter, path self.read_definitions(&v.g.constrs, false, "dfx", None, &mut v.expansions));
       }
       if cfg.dump.definitions {
         for d in &v.expansions {
@@ -286,24 +379,29 @@ impl MizPath {
 
     // LoadPropertiesReg
     if let Some(accom) = &mut v.accom {
-      accom.accom_properties(&v.g.constrs, &mut v.properties).unwrap();
+      try_load!(reporter, self, "miz", accom.accom_properties(&v.g.constrs, &mut v.properties));
     } else {
-      self.read_properties(&v.g.constrs, false, "epr", None, &mut v.properties).unwrap();
+      try_load!(reporter, path self.read_properties(&v.g.constrs, false, "epr", None, &mut v.properties));
     }
 
     // LoadIdentify, LoadReductions
     if cfg.checker_enabled || cfg.exporter_enabled {
       if let Some(accom) = &mut v.accom {
-        accom.accom_identify_regs(&v.g.constrs, &mut v.identify).unwrap();
-        accom.accom_reduction_regs(&v.g.constrs, &mut v.reductions).unwrap();
+        try_load!(reporter, self, "miz", accom.accom_identify_regs(&v.g.constrs, &mut v.identify));
+        try_load!(
+          reporter,
+          self,
+          "miz",
+          accom.accom_reduction_regs(&v.g.constrs, &mut v.reductions)
+        );
       } else {
-        self.read_identify_regs(&v.g.constrs, false, "eid", None, &mut v.identify).unwrap();
-        self.read_reduction_regs(&v.g.constrs, false, "erd", None, &mut v.reductions).unwrap();
+        try_load!(reporter, path self.read_identify_regs(&v.g.constrs, false, "eid", None, &mut v.identify));
+        try_load!(reporter, path self.read_reduction_regs(&v.g.constrs, false, "erd", None, &mut v.reductions));
       }
     }
 
     // in mizar this was done inside the parser
-    RoundUpTypes::with(&v.g, &mut v.lc, |rr| {
+    let _: Result<(), ErrorValue> = RoundUpTypes::with(&v.g, &mut v.lc, |rr| {
       v.definitions.visit(rr);
       v.equalities.visit(rr);
       v.expansions.visit(rr);
@@ -324,7 +422,7 @@ impl MizPath {
     for id in &mut v.identify {
       for i in 0..id.primary.len() {
         v.lc.load_locus_tys(&id.primary);
-        id.primary[i].round_up_with_self(&v.g, &v.lc, false);
+        let _: Result<(), ErrorValue> = id.primary[i].round_up_with_self(&v.g, &v.lc, false);
         v.lc.unload_locus_tys();
       }
     }
@@ -358,19 +456,29 @@ impl MizPath {
     // InLibraries
     if cfg.checker_enabled {
       if let Some(accom) = &mut v.accom {
-        accom.accom_theorems(cfg.xml_internals, &v.g.constrs, &mut v.def_map, &mut v.libs).unwrap();
+        try_load!(
+          reporter,
+          self,
+          "miz",
+          accom.accom_theorems(cfg.xml_internals, &v.g.constrs, &mut v.def_map, &mut v.libs)
+        );
       } else {
-        self.read_eth(&v.g.constrs, refs, &mut v.libs).unwrap();
+        try_load!(reporter, path self.read_eth(&v.g.constrs, refs, &mut v.libs));
       }
       let cc = &mut InternConst::new(&v.g, &v.lc, &v.equals, &v.identify, &v.func_ids);
       v.libs.thm.values_mut().for_each(|f| f.visit(cc));
       v.libs.def.values_mut().for_each(|f| f.visit(cc));
       if let Some(accom) = &mut v.accom {
-        accom.accom_schemes(cfg.xml_internals, &v.g.constrs, &mut v.libs).unwrap();
+        try_load!(
+          reporter,
+          self,
+          "miz",
+          accom.accom_schemes(cfg.xml_internals, &v.g.constrs, &mut v.libs)
+        );
       } else {
-        self.read_esh(&v.g.constrs, refs, &mut v.libs).unwrap();
+        try_load!(reporter, path self.read_esh(&v.g.constrs, refs, &mut v.libs));
       }
-      RoundUpTypes::with(&v.g, &mut v.lc, |rr| v.libs.visit(rr));
+      let _: Result<(), ErrorValue> = RoundUpTypes::with(&v.g, &mut v.lc, |rr| v.libs.visit(rr));
 
       if cfg.dump.libraries {
         for (&(ar, nr), th) in &v.libs.thm {
@@ -451,7 +559,9 @@ impl Reader {
     }
   }
 
-  pub fn err(&mut self, pos: Span, msg: MizError) { msg.report(pos, &self.g); }
+  pub fn err(&mut self, pos: Span, msg: MizError) -> crate::ErrorReported {
+    msg.report(pos, &self.g)
+  }
 
   pub fn intern<'a, T: Clone + Visitable<InternConst<'a>>>(&'a self, t: &T) -> T {
     let mut t = t.clone();
@@ -798,7 +908,18 @@ impl Reader {
               if f == nr {
                 let args = &args.to_owned();
                 drop(ic);
-                if let Some(mut t) = func.expand_if_equal(&self.g, &self.lc, args, 0) {
+                // An error value here means an earlier phase already reported a
+                // problem, so the article fails regardless. Skip this derived
+                // registration rather than record one built around an error value.
+                //
+                // Skipping (not poisoning) is the right layer here: unlike the
+                // checker — where a wrong comparison directly changes what is
+                // reported proved, so an error value must poison — a registration
+                // built on an error can only ever be *consulted* by a later item,
+                // and that item is already doomed by the reported error. Declining
+                // to record it cannot select a wrong result; it just omits one that
+                // nothing may trust.
+                if let Ok(Some(mut t)) = func.expand_if_equal(&self.g, &self.lc, args, 0) {
                   t.visit(&mut self.intern_const());
                   let Term::Infer(nr) = t else { unreachable!() };
                   self.lc.infer_const.borrow_mut().0[i].insert_eq_const(nr);
@@ -818,7 +939,12 @@ impl Reader {
       Justification::Simple(it) => self.read_inference(thesis, it),
       Justification::Proof { label, thesis: block_thesis, items, .. } => {
         let block_thesis = self.intern(block_thesis);
-        assert!(self.g.eq(&self.lc, thesis, &block_thesis), "\n{thesis:?}\n !=\n{block_thesis:?}");
+        // `Err` (an error value in either formula) is not an assertion failure: the
+        // problem was already reported and the article fails anyway.
+        assert!(
+          self.g.eq(&self.lc, thesis, &block_thesis) != Ok(false),
+          "\n{thesis:?}\n !=\n{block_thesis:?}"
+        );
         self.scope(*label, false, |this| {
           for it in items {
             this.read_item(&it.0);
@@ -882,7 +1008,8 @@ impl Reader {
     for i in 0..ic.len() {
       let asgn = &ic.0[i];
       if matches!(asgn.def, Term::Functor { .. }) {
-        if let Some(subst) = id.try_apply_lhs(&self.g, &self.lc, &id.lhs, &asgn.def) {
+        // See `read_definiens`: skip the derived registration on an error value.
+        if let Ok(Some(subst)) = id.try_apply_lhs(&self.g, &self.lc, &id.lhs, &asgn.def) {
           let mut tm = subst.inst_term(&self.g.constrs, &self.lc, &id.rhs, 0);
           drop(ic);
           tm.visit(&mut self.intern_const());
@@ -912,17 +1039,28 @@ impl Reader {
         | Term::Aggregate { args, .. }
         | Term::SchFunc { args, .. } => {
           if args.iter().any(|t| matches!(t, Term::Infer(i) if rounded_up.contains_key(i))) {
-            let mut ty = asgn.def.round_up_type(&self.g, &self.lc, false).to_owned();
-            ty.attrs.1.round_up_with(&self.g, &self.lc, &asgn.ty, false);
-            drop(ic);
-            ty.attrs.1.visit(&mut self.intern_const());
-            self.lc.infer_const.borrow_mut()[i].ty = *ty;
-            ic = self.lc.infer_const.borrow();
+            // See `read_definiens`: leave the type as it stands on an error value
+            // rather than install a partly-rounded one.
+            if let Ok(ty) = asgn.def.round_up_type(&self.g, &self.lc, false) {
+              let mut ty = ty.to_owned();
+              if ty.attrs.1.round_up_with(&self.g, &self.lc, &asgn.ty, false).is_ok() {
+                drop(ic);
+                ty.attrs.1.visit(&mut self.intern_const());
+                self.lc.infer_const.borrow_mut()[i].ty = *ty;
+                ic = self.lc.infer_const.borrow();
+              } else {
+                ic = self.lc.infer_const.borrow();
+              }
+            }
           }
         }
         Term::Numeral(_) => {
           let mut attrs = asgn.ty.attrs.1.clone();
-          attrs.round_up_with(&self.g, &self.lc, &asgn.ty, false);
+          // See `read_definiens`: skip the derived round-up on an error value.
+          if attrs.round_up_with(&self.g, &self.lc, &asgn.ty, false).is_err() {
+            i.0 += 1;
+            continue
+          }
           attrs.visit(&mut self.intern_const());
           drop(ic);
           self.lc.infer_const.borrow_mut()[i].ty.attrs.1 = attrs;
@@ -955,14 +1093,23 @@ impl Reader {
     cl.consequent.1.visit(&mut self.intern_const());
     let mut rounded_up = BTreeMap::new();
     for (i, asgn) in self.lc.infer_const.borrow().enum_iter() {
-      if let Some(subst) = cl.try_apply(&self.g, &self.lc, &asgn.ty.attrs.1, &asgn.ty, false) {
+      // See `read_definiens`: skip the derived registration on an error value.
+      if let Ok(Some(subst)) = cl.try_apply(&self.g, &self.lc, &asgn.ty.attrs.1, &asgn.ty, false) {
         let mut attrs = asgn.ty.attrs.1.clone();
         let orig = attrs.attrs().len();
         // eprintln!("enlarge {:?} by {:?}", self, cl.consequent.1);
         let mut inst = Inst::new(&self.g.constrs, &self.lc, &subst, 0);
         attrs.visit_enlarge_by(&self.g.constrs, &self.lc, &cl.consequent.1, &mut inst);
-        assert!(matches!(attrs, Attrs::Consistent(_)));
-        attrs.round_up_with(&self.g, &self.lc, &asgn.ty, false);
+        // Applying a (contradictory) cluster can make the rounded-up attributes
+        // inconsistent; skip this constant rather than panicking. The offending
+        // registration was already reported.
+        if !matches!(attrs, Attrs::Consistent(_)) {
+          continue
+        }
+        // See `read_definiens`: skip the derived round-up on an error value.
+        if attrs.round_up_with(&self.g, &self.lc, &asgn.ty, false).is_err() {
+          continue
+        }
         if attrs.attrs().len() > orig {
           rounded_up.insert(i, attrs);
         }
@@ -984,9 +1131,18 @@ impl Reader {
     for (i, asgn) in self.lc.infer_const.borrow().enum_iter() {
       let mut attrs = asgn.ty.attrs.1.clone();
       let orig = attrs.attrs().len();
-      cl.round_up_with(&self.g, &self.lc, &asgn.def, &asgn.ty, &mut attrs, false);
-      assert!(matches!(attrs, Attrs::Consistent(_)));
-      attrs.round_up_with(&self.g, &self.lc, &asgn.ty, false);
+      // See `read_definiens`: skip the derived round-up on an error value.
+      if cl.round_up_with(&self.g, &self.lc, &asgn.def, &asgn.ty, &mut attrs, false).is_err() {
+        continue
+      }
+      // Applying a (contradictory) cluster can make the rounded-up attributes
+      // inconsistent; skip this constant rather than panicking (cf. `read_cluster` above).
+      if !matches!(attrs, Attrs::Consistent(_)) {
+        continue
+      }
+      if attrs.round_up_with(&self.g, &self.lc, &asgn.ty, false).is_err() {
+        continue
+      }
       if attrs.attrs().len() > orig {
         rounded_up.insert(i, attrs);
       }
@@ -1011,11 +1167,31 @@ impl Reader {
       return
     }
     self.set_pos(it.pos);
-    let refs = it.refs.iter().map(|r| match r.kind {
-      ReferenceKind::Priv(lab) => &self.props[self.labels[lab].unwrap()],
-      ReferenceKind::Thm(thm) => &self.libs.thm[&thm],
-      ReferenceKind::Def(def) => &self.libs.def[&def],
-    });
+    // Resolve references eagerly. A reference can fail to resolve on the live path —
+    // e.g. `by ART:999` cites a theorem number that is out of range for an imported
+    // article (the analyzer only checked the article was imported), or a private label
+    // is out of scope. Report each unresolved reference and leave the step unjustified,
+    // mirroring the `From { sch }` arm below, rather than indexing a missing key.
+    let mut refs = Vec::with_capacity(it.refs.len());
+    let mut refs_ok = true;
+    for r in &it.refs {
+      let resolved = match r.kind {
+        ReferenceKind::Priv(lab) => self.labels.get(lab).and_then(|l| *l).map(|i| &self.props[i]),
+        ReferenceKind::Thm(thm) => self.libs.thm.get(&thm),
+        ReferenceKind::Def(def) => self.libs.def.get(&def),
+      };
+      match resolved {
+        Some(f) => refs.push(f),
+        None => {
+          MizError::UnresolvedReference.report(it.pos, &self.g);
+          refs_ok = false;
+        }
+      }
+    }
+    if !refs_ok {
+      return
+    }
+    let refs = refs.into_iter();
     let mut ck = Checker {
       g: &mut self.g,
       lc: &mut self.lc,
@@ -1033,15 +1209,30 @@ impl Reader {
           // eprintln!("thesis: {thesis:?}");
           let neg_thesis = thesis.clone().mk_neg();
           let mut premises = vec![&neg_thesis];
-          if linked {
-            premises.push(self.props.last().unwrap());
-          }
+          let linked_prop = match (linked, self.props.last()) {
+            (true, None) => {
+              // `then` with nothing before it. The parser reports this as
+              // `LinkNotAllowed` when it can tell syntactically; here the link
+              // survived to the checker, so report and leave the step unjustified.
+              MizError::NothingToLink.report(it.pos, &self.g);
+              return
+            }
+            (true, prop) => prop,
+            (false, _) => None,
+          };
+          premises.extend(linked_prop);
           premises.extend(refs);
           ck.justify(premises);
         }
       }
-      InferenceKind::From { sch } =>
-        ck.justify_scheme(&self.libs.sch[&sch], refs.collect(), thesis),
+      InferenceKind::From { sch } => match self.libs.sch.get(&sch) {
+        Some(sch) => ck.justify_scheme(sch, refs.collect(), thesis),
+        // The scheme reference did not resolve to a loaded scheme; report and leave
+        // the step unjustified rather than indexing the map.
+        None => {
+          MizError::MissingScheme(format!("{sch:?}")).report(it.pos, &self.g);
+        }
+      },
     }
   }
 

@@ -55,20 +55,20 @@ impl Global {
     })]
   }
 
-  pub fn round_up_clusters(&mut self, lc: &mut LocalContext) {
+  pub fn round_up_clusters(&mut self, lc: &mut LocalContext) -> Result<(), ErrorValue> {
     for k in 0..self.clusters.registered.len() {
       let mut cl = &self.clusters.registered[k];
       for l in 0..cl.primary.len() {
         lc.load_locus_tys(&cl.primary);
         let mut attrs = cl.primary[l].attrs.1.clone();
-        attrs.round_up_with(self, lc, &cl.primary[l], false);
+        attrs.round_up_with(self, lc, &cl.primary[l], false)?;
         self.clusters.registered[k].primary[l].attrs.1 = attrs;
         cl = &self.clusters.registered[k];
         lc.unload_locus_tys();
       }
       lc.load_locus_tys(&cl.primary);
       let mut attrs = cl.consequent.1.clone();
-      attrs.round_up_with(self, lc, &cl.ty, false);
+      attrs.round_up_with(self, lc, &cl.ty, false)?;
       self.clusters.registered[k].consequent.1 = attrs;
       lc.unload_locus_tys();
     }
@@ -78,11 +78,11 @@ impl Global {
       lc.load_locus_tys(&cl.primary);
       let mut attrs = cl.consequent.1.clone();
       let ty = match &cl.ty {
-        None => cl.term.round_up_type(self, lc, false),
+        None => cl.term.round_up_type(self, lc, false)?,
         Some(ty) => CowBox::Borrowed(&**ty),
       };
       attrs.enlarge_by(&self.constrs, lc, &ty.attrs.1);
-      attrs.round_up_with(self, lc, &ty, false);
+      attrs.round_up_with(self, lc, &ty, false)?;
       self.clusters.functor[k].consequent.1 = attrs;
       lc.unload_locus_tys();
     }
@@ -90,17 +90,18 @@ impl Global {
     macro_rules! round_up_constrs {
       ($($x:ident),*) => {$(
         for k in 0..self.constrs.$x.0.len() {
-          self.constrs.$x.0[k].ty.attrs.1 = self.constrs.$x.0[k].round_up(self, lc);
+          self.constrs.$x.0[k].ty.attrs.1 = self.constrs.$x.0[k].round_up(self, lc)?;
         }
       )*};
     }
     // TODO: why not round up aggregate too? (copied from original source)
     round_up_constrs! { mode, functor, selector };
     lc.term_cache.get_mut().terms = vec![];
+    Ok(())
   }
 
   // RoundUpItem
-  pub fn round_up_term_cache(&self, lc: &mut LocalContext) {
+  pub fn round_up_term_cache(&self, lc: &mut LocalContext) -> Result<(), ErrorValue> {
     let mut n = 0;
     while let Some((tm, ty, _)) = lc.term_cache.get_mut().terms.get(n) {
       let fcs = self.matching_func_clusters(tm);
@@ -109,12 +110,13 @@ impl Global {
         let mut attrs = ty.attrs.1.clone();
         for &i in fcs {
           let fc = &self.clusters.functor.vec[i];
-          fc.round_up_with(self, lc, &tm, &ty, &mut attrs, false);
+          fc.round_up_with(self, lc, &tm, &ty, &mut attrs, false)?;
         }
         lc.term_cache.get_mut().terms[n].1.attrs.1 = attrs;
       }
       n += 1;
     }
+    Ok(())
   }
 
   /// MotherStructNr
@@ -157,13 +159,26 @@ impl Global {
 pub struct RoundUpTypes<'a> {
   g: &'a Global,
   lc: &'a mut LocalContext,
+  /// Poison channel. `VisitMut::visit_type` returns `()` and cannot carry an error, so a
+  /// failed round-up is recorded here and surfaced by [`RoundUpTypes::with`]. The visitor
+  /// keeps running after poisoning -- the types it produces from then on are not to be
+  /// trusted, which is exactly why `with` reports `Err` and its callers must discard them.
+  err: Option<ErrorValue>,
 }
 
 impl RoundUpTypes<'_> {
-  pub fn with(g: &Global, lc: &mut LocalContext, f: impl FnOnce(&mut RoundUpTypes<'_>)) {
+  pub fn with(
+    g: &Global, lc: &mut LocalContext, f: impl FnOnce(&mut RoundUpTypes<'_>),
+  ) -> Result<(), ErrorValue> {
     lc.term_cache.get_mut().open_scope();
-    f(&mut RoundUpTypes { g, lc });
+    let mut this = RoundUpTypes { g, lc, err: None };
+    f(&mut this);
+    let err = this.err;
     lc.term_cache.get_mut().close_scope();
+    match err {
+      Some(e) => Err(e),
+      None => Ok(()),
+    }
   }
 }
 
@@ -182,7 +197,9 @@ impl VisitMut for RoundUpTypes<'_> {
       let new = self.g.constrs.mode[n].ty.attrs.1.visit_cloned(&mut inst);
       ty.attrs.1.enlarge_by(&self.g.constrs, self.lc, &new);
     }
-    ty.round_up_with_self(self.g, self.lc, false)
+    if let Err(e) = ty.round_up_with_self(self.g, self.lc, false) {
+      self.err = Some(e)
+    }
   }
 
   fn visit_flex_and(
@@ -369,8 +386,12 @@ impl Term {
           Fraenkel { args: args1, scope: sc1, compr: c1 },
           Fraenkel { args: args2, scope: sc2, compr: c2 },
         ) => sc1.cmp(ctx, lc, sc2, style).then_with(|| {
-          c1.cmp(ctx, lc, c2, style)
-            .then_with(|| cmp_list(args1, args2, |ty1, ty2| ty1.1.cmp(ctx, lc, &ty2.1, style)))
+          c1.cmp(ctx, lc, c2, style).then_with(|| {
+            // Two Fraenkel terms can have different binder counts; order by arity first,
+            // since `cmp_list` requires equal lengths (mirrors the guard in `eq_term`).
+            (args1.len().cmp(&args2.len()))
+              .then_with(|| cmp_list(args1, args2, |ty1, ty2| ty1.1.cmp(ctx, lc, &ty2.1, style)))
+          })
         }),
         (It, It) => Ordering::Equal,
         (Qua { value: val1, ty: ty1 }, Qua { value: val2, ty: ty2 }) =>
@@ -496,9 +517,13 @@ impl Type {
   fn size(&self) -> u32 { self.args.iter().map(|t| t.size()).sum::<u32>() + 1 }
 
   /// TypObj.DecreasingAttrs but with f flipped
-  pub fn decreasing_attrs(&self, other: &Self, f: impl FnMut(&Attr, &Attr) -> bool) -> bool {
-    matches!(&other.attrs.0, Attrs::Consistent(attrs) if attrs.is_empty())
-      || other.attrs.0.is_subset_of(&self.attrs.1, f)
+  pub fn decreasing_attrs(
+    &self, other: &Self, f: impl FnMut(&Attr, &Attr) -> Result<bool, ErrorValue>,
+  ) -> Result<bool, ErrorValue> {
+    if matches!(&other.attrs.0, Attrs::Consistent(attrs) if attrs.is_empty()) {
+      return Ok(true)
+    }
+    other.attrs.0.try_is_subset_of(&self.attrs.1, f)
   }
 
   /// TypObj.Widening
@@ -583,9 +608,11 @@ impl Type {
   }
 
   /// TypObj.IsWiderThan
-  pub fn is_wider_than(&self, g: &Global, lc: &LocalContext, other: &Self) -> bool {
-    if !other.decreasing_attrs(self, |a1, a2| g.eq(lc, a1, a2)) {
-      return false
+  pub fn is_wider_than(
+    &self, g: &Global, lc: &LocalContext, other: &Self,
+  ) -> Result<bool, ErrorValue> {
+    if !other.decreasing_attrs(self, |a1, a2| g.eq(lc, a1, a2))? {
+      return Ok(false)
     }
     match self.kind {
       TypeKind::Mode(n) => {
@@ -593,36 +620,45 @@ impl Type {
         let mut w = CowBox::Borrowed(other);
         while let TypeKind::Mode(n2) = w.kind {
           let true = n2 >= n else { break };
-          if g.eq_radices(lc, self, &w) {
-            return true
+          if g.eq_radices(lc, self, &w)? {
+            return Ok(true)
           }
           let Some(w2) = w.widening(g, lc) else { break };
           w = CowBox::Owned(w2)
         }
-        matches!(w.kind, TypeKind::Struct(_)) && (n == ModeId::SET || n == ModeId::ANY)
+        Ok(matches!(w.kind, TypeKind::Struct(_)) && (n == ModeId::SET || n == ModeId::ANY))
       }
       TypeKind::Struct(_) => {
-        let Some(w) = self.widening_of(g, lc, other) else { return false };
+        let Some(w) = self.widening_of(g, lc, other) else { return Ok(false) };
         g.eq_radices(lc, self, &w)
       }
-      TypeKind::Error => todo!(),
+      // Value op: an error type is not comparable by widening. Already reported.
+      TypeKind::Error => Err(ErrorValue),
     }
   }
 
   /// TypObj.RoundUp
-  pub fn round_up_with_self(&mut self, g: &Global, lc: &LocalContext, recursive: bool) {
+  pub fn round_up_with_self(
+    &mut self, g: &Global, lc: &LocalContext, recursive: bool,
+  ) -> Result<(), ErrorValue> {
     // vprintln!("[{:?}] round_up_with_self {:?}", lc.infer_const.borrow().len(), self);
     let mut attrs = self.attrs.1.clone();
-    attrs.round_up_with(g, lc, self, recursive);
+    let res = attrs.round_up_with(g, lc, self, recursive);
+    // Install whatever rounding did complete before propagating, so that `self` is never
+    // left holding the pre-round-up attribute set on the error path.
     self.attrs.1 = attrs;
+    res?;
     // vprintln!("[{:?}] round_up_with_self -> {:?}", lc.infer_const.borrow().len(), self);
+    Ok(())
   }
 
   /// FrOpVarTypeOK
-  pub fn is_set(&self, g: &Global, lc: &LocalContext, props: &[Property]) -> bool {
+  pub fn is_set(
+    &self, g: &Global, lc: &LocalContext, props: &[Property],
+  ) -> Result<bool, ErrorValue> {
     if let TypeKind::Mode(n) = self.kind {
       if g.constrs.mode[n].properties.get(PropertyKind::Sethood) {
-        return true
+        return Ok(true)
       }
     }
     // is_SethoodType
@@ -632,14 +668,14 @@ impl Type {
       }
       let mut subst = Subst::new(prop.primary.len());
       let Some(ty) = prop.ty.widening_of(g, lc, self) else { continue };
-      if subst.eq_radices(&mut subst.eq_ctx(g, lc), &prop.ty, &ty)
-        && prop.ty.attrs.0.is_subset_of(&ty.attrs.1, |a1, a2| subst.eq(g, lc, a1, a2))
-        && subst.check_loci_types::<false>(g, lc, &prop.primary, false)
+      if subst.eq_radices(&mut subst.eq_ctx(g, lc), &prop.ty, &ty)?
+        && prop.ty.attrs.0.try_is_subset_of(&ty.attrs.1, |a1, a2| subst.eq(g, lc, a1, a2))?
+        && subst.check_loci_types::<false>(g, lc, &prop.primary, false)?
       {
-        return true
+        return Ok(true)
       }
     }
-    false
+    Ok(false)
   }
 }
 
@@ -768,42 +804,78 @@ impl<'a> EqCtx<'a> {
   }
 }
 
+/// A comparison which cannot be performed *poisons*: it propagates as
+/// [`Err(ErrorValue)`](ErrorValue) rather than answering `false`. See [`ErrorValue`] for why
+/// answering `false` would be wrong for both the checker and the analyzer.
 pub trait Equate {
   const ADJUST_LEFT: bool = true;
   const IGNORE_MARKS: bool = true;
 
-  fn locus_var_left(&mut self, _: &mut EqCtx<'_>, _nr: LocusId, _t2: &Term) -> bool { false }
-  fn eq_locus_var(&mut self, _: &mut EqCtx<'_>, n1: LocusId, n2: LocusId) -> bool { n1 == n2 }
-
-  fn eq_terms(&mut self, ctx: &mut EqCtx<'_>, t1: &[Term], t2: &[Term]) -> bool {
-    t1.len() == t2.len() && t1.iter().zip(t2).all(|(t1, t2)| self.eq_term(ctx, t1, t2))
+  fn locus_var_left(
+    &mut self, _: &mut EqCtx<'_>, _nr: LocusId, _t2: &Term,
+  ) -> Result<bool, ErrorValue> {
+    Ok(false)
+  }
+  fn eq_locus_var(
+    &mut self, _: &mut EqCtx<'_>, n1: LocusId, n2: LocusId,
+  ) -> Result<bool, ErrorValue> {
+    Ok(n1 == n2)
   }
 
-  fn eq_class_right(&mut self, _: &mut EqCtx<'_>, _t1: &Term, _ec: EqClassId) -> bool { false }
+  fn eq_terms(
+    &mut self, ctx: &mut EqCtx<'_>, t1: &[Term], t2: &[Term],
+  ) -> Result<bool, ErrorValue> {
+    if t1.len() != t2.len() {
+      return Ok(false)
+    }
+    for (t1, t2) in t1.iter().zip(t2) {
+      if !self.eq_term(ctx, t1, t2)? {
+        return Ok(false)
+      }
+    }
+    Ok(true)
+  }
+
+  fn eq_class_right(
+    &mut self, _: &mut EqCtx<'_>, _t1: &Term, _ec: EqClassId,
+  ) -> Result<bool, ErrorValue> {
+    Ok(false)
+  }
 
   /// on (): EqTrm(fTrm1 = t1, fTrm2 = t2)
   /// on Subst: EsTrm(fTrm = t1, aTrm = t2)
-  fn eq_term(&mut self, ctx: &mut EqCtx<'_>, t1: &Term, t2: &Term) -> bool {
+  fn eq_term(&mut self, ctx: &mut EqCtx<'_>, t1: &Term, t2: &Term) -> Result<bool, ErrorValue> {
     use Term::*;
     // vprintln!("{t1:?} [{}] =? {t2:?} [{}]", ctx.depth1, ctx.depth2);
+    // These were match guards on `(&Locus(nr), _)` and `(&Locus(n1), &Locus(n2))`; they are
+    // hoisted here because a guard cannot host a `?`. `t1 = Locus` matches no earlier arm,
+    // and falling through here is the same fallthrough the guards had.
+    if let &Locus(n1) = t1 {
+      if self.locus_var_left(ctx, n1, t2)? {
+        return Ok(true)
+      }
+      if let &Locus(n2) = t2 {
+        if self.eq_locus_var(ctx, n1, n2)? {
+          return Ok(true)
+        }
+      }
+    }
     match (t1, t2) {
       (&EqMark(nr), _) if !Self::IGNORE_MARKS =>
-        matches!(*t2, Term::EqMark(nr2) if ctx.lc.marks[nr].1 == ctx.lc.marks[nr2].1),
-      (&Locus(nr), _) if self.locus_var_left(ctx, nr, t2) => true,
-      (&Locus(n1), &Locus(n2)) if self.eq_locus_var(ctx, n1, n2) => true,
-      (Bound(n1), Bound(n2)) => n1.0 + ctx.lift1 == n2.0 + ctx.lift2,
+        Ok(matches!(*t2, Term::EqMark(nr2) if ctx.lc.marks[nr].1 == ctx.lc.marks[nr2].1)),
+      (Bound(n1), Bound(n2)) => Ok(n1.0 + ctx.lift1 == n2.0 + ctx.lift2),
       (Const(ConstId(n1)), Const(ConstId(n2)))
       | (FreeVar(FVarId(n1)), FreeVar(FVarId(n2)))
-      | (Numeral(n1), Numeral(n2)) => n1 == n2,
+      | (Numeral(n1), Numeral(n2)) => Ok(n1 == n2),
       (EqClass(EqClassId(n1)), EqClass(EqClassId(n2)))
       | (EqMark(EqMarkId(n1)), EqMark(EqMarkId(n2)))
       | (Infer(InferId(n1)), Infer(InferId(n2)))
         if n1 == n2 =>
-        true,
+        Ok(true),
       (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) => {
         let (n1, args1) = Term::adjust(*n1, args1, Some(&ctx.g.constrs));
         let (n2, args2) = Term::adjust(*n2, args2, Some(&ctx.g.constrs));
-        n1 == n2 && self.eq_terms(ctx, args1, args2)
+        Ok(n1 == n2 && self.eq_terms(ctx, args1, args2)?)
       }
       (SchFunc { nr: SchFuncId(n1), args: args1 }, SchFunc { nr: SchFuncId(n2), args: args2 })
       | (Aggregate { nr: AggrId(n1), args: args1 }, Aggregate { nr: AggrId(n2), args: args2 })
@@ -812,26 +884,34 @@ pub trait Equate {
         PrivFunc { nr: PrivFuncId(n2), args: args2, .. },
       )
       | (Selector { nr: SelId(n1), args: args1 }, Selector { nr: SelId(n2), args: args2 }) =>
-        n1 == n2 && self.eq_terms(ctx, args1, args2),
+        Ok(n1 == n2 && self.eq_terms(ctx, args1, args2)?),
       (The { ty: ty1 }, The { ty: ty2 }) => self.eq_type(ctx, ty1, ty2),
       (
         Fraenkel { args: args1, scope: sc1, compr: c1 },
         Fraenkel { args: args2, scope: sc2, compr: c2 },
       ) =>
-        args1.len() == args2.len() && {
+        if args1.len() != args2.len() {
+          Ok(false)
+        } else {
           let (depth1, depth2) = (ctx.depth1, ctx.depth2);
-          let res = args1.iter().zip(&**args2).all(|(ty1, ty2)| {
-            let r = self.eq_type(ctx, &ty1.1, &ty2.1);
-            ctx.depth1 += 1;
-            ctx.depth2 += 1;
-            r
-          }) && self.eq_term(ctx, sc1, sc2)
-            && self.eq_formula(ctx, c1, c2);
+          let res = (|| {
+            for (ty1, ty2) in args1.iter().zip(&**args2) {
+              let r = self.eq_type(ctx, &ty1.1, &ty2.1);
+              ctx.depth1 += 1;
+              ctx.depth2 += 1;
+              if !r? {
+                return Ok(false)
+              }
+            }
+            Ok(self.eq_term(ctx, sc1, sc2)? && self.eq_formula(ctx, c1, c2)?)
+          })();
           (ctx.depth1, ctx.depth2) = (depth1, depth2);
           res
         },
-      (It, It) => true,
-      (Qua { .. }, _) | (_, Qua { .. }) => panic!("invalid qua"),
+      (It, It) => Ok(true),
+      // `qua` should be stripped before terms reach comparison; if a stray one survives
+      // (only possible on a malformed/recovery path), poison rather than abort.
+      (Qua { .. }, _) | (_, Qua { .. }) => Err(ErrorValue),
       (_, &Infer(nr)) =>
         ctx.lift2(|ctx| self.eq_term(ctx, t1, &ctx.lc.infer_const.borrow()[nr].def)),
       (&Infer(nr), _) =>
@@ -841,14 +921,19 @@ pub trait Equate {
       (_, &EqClass(nr)) => self.eq_class_right(ctx, t1, nr),
       (PrivFunc { .. }, _) | (_, PrivFunc { .. }) =>
         self.eq_term(ctx, t1.skip_priv_func(Some(ctx.lc)), t2.skip_priv_func(Some(ctx.lc))),
-      (Error, _) | (_, Error) => todo!(),
-      _ => false,
+      // Last before the catch-all, so that every arm which would have *decided* the
+      // comparison still does; only the cases which would have fallen through to
+      // `false` now poison.
+      (Error, _) | (_, Error) => Err(ErrorValue),
+      _ => Ok(false),
     }
   }
 
   /// for (): TypObj.EqRadices
   /// for Subst: CompEsTyp (with fExactly = false)
-  fn eq_radices(&mut self, ctx: &mut EqCtx<'_>, ty1: &Type, ty2: &Type) -> bool {
+  fn eq_radices(
+    &mut self, ctx: &mut EqCtx<'_>, ty1: &Type, ty2: &Type,
+  ) -> Result<bool, ErrorValue> {
     // vprintln!("{ty1:?} [{}] =r? {ty2:?} [{}]", ctx.depth1, ctx.depth2);
     match (ty1.kind, ty2.kind) {
       (TypeKind::Mode(n1), TypeKind::Mode(n2)) if !Self::ADJUST_LEFT && n1 == n2 =>
@@ -860,116 +945,144 @@ pub trait Equate {
           (n1, &*ty1.args)
         };
         let (n2, args2) = Type::adjust(n2, &ty2.args, &ctx.g.constrs);
-        n1 == n2 && self.eq_terms(ctx, args1, args2)
+        Ok(n1 == n2 && self.eq_terms(ctx, args1, args2)?)
       }
       (TypeKind::Struct(n1), TypeKind::Struct(n2)) =>
-        n1 == n2 && self.eq_terms(ctx, &ty1.args, &ty2.args),
-      _ => false,
+        Ok(n1 == n2 && self.eq_terms(ctx, &ty1.args, &ty2.args)?),
+      (TypeKind::Error, _) | (_, TypeKind::Error) => Err(ErrorValue),
+      _ => Ok(false),
     }
   }
 
-  fn eq_attrs(&mut self, ctx: &mut EqCtx<'_>, ty1: &Type, ty2: &Type) -> bool {
-    ty1.attrs.0.is_subset_of(&ty2.attrs.1, |a1, a2| self.eq_attr(ctx, a1, a2))
-      && ty2.attrs.0.is_subset_of(&ty1.attrs.1, |a2, a1| self.eq_attr(ctx, a1, a2))
+  fn eq_attrs(&mut self, ctx: &mut EqCtx<'_>, ty1: &Type, ty2: &Type) -> Result<bool, ErrorValue> {
+    Ok(
+      ty1.attrs.0.try_is_subset_of(&ty2.attrs.1, |a1, a2| self.eq_attr(ctx, a1, a2))?
+        && ty2.attrs.0.try_is_subset_of(&ty1.attrs.1, |a2, a1| self.eq_attr(ctx, a1, a2))?,
+    )
   }
 
-  fn eq_type(&mut self, ctx: &mut EqCtx<'_>, ty1: &Type, ty2: &Type) -> bool {
-    self.eq_attrs(ctx, ty1, ty2) && self.eq_radices(ctx, ty1, ty2)
+  fn eq_type(&mut self, ctx: &mut EqCtx<'_>, ty1: &Type, ty2: &Type) -> Result<bool, ErrorValue> {
+    Ok(self.eq_attrs(ctx, ty1, ty2)? && self.eq_radices(ctx, ty1, ty2)?)
   }
 
   /// on (): EqAttr
   /// on Subst: EsAttr
-  fn eq_attr(&mut self, ctx: &mut EqCtx<'_>, a1: &Attr, a2: &Attr) -> bool {
+  fn eq_attr(&mut self, ctx: &mut EqCtx<'_>, a1: &Attr, a2: &Attr) -> Result<bool, ErrorValue> {
     // vprintln!("{a1:?} =? {a2:?}");
     let (n1, args1) = a1.adjust(Some(&ctx.g.constrs));
     let (n2, args2) = a2.adjust(Some(&ctx.g.constrs));
-    n1 == n2 && a1.pos == a2.pos && self.eq_terms(ctx, args1, args2)
+    Ok(n1 == n2 && a1.pos == a2.pos && self.eq_terms(ctx, args1, args2)?)
   }
 
-  fn eq_formulas(&mut self, ctx: &mut EqCtx<'_>, args1: &[Formula], args2: &[Formula]) -> bool {
-    args1.len() == args2.len()
-      && args1.iter().zip(args2).all(|(f1, f2)| self.eq_formula(ctx, f1, f2))
+  fn eq_formulas(
+    &mut self, ctx: &mut EqCtx<'_>, args1: &[Formula], args2: &[Formula],
+  ) -> Result<bool, ErrorValue> {
+    if args1.len() != args2.len() {
+      return Ok(false)
+    }
+    for (f1, f2) in args1.iter().zip(args2) {
+      if !self.eq_formula(ctx, f1, f2)? {
+        return Ok(false)
+      }
+    }
+    Ok(true)
   }
 
-  fn eq_and(&mut self, ctx: &mut EqCtx<'_>, args1: &[Formula], args2: &[Formula]) -> bool {
+  fn eq_and(
+    &mut self, ctx: &mut EqCtx<'_>, args1: &[Formula], args2: &[Formula],
+  ) -> Result<bool, ErrorValue> {
     self.eq_formulas(ctx, args1, args2)
   }
 
   fn eq_pred(
     &mut self, ctx: &mut EqCtx<'_>, n1: PredId, n2: PredId, args1: &[Term], args2: &[Term],
-  ) -> bool {
+  ) -> Result<bool, ErrorValue> {
     let (n1, args1) = if Self::ADJUST_LEFT {
       Formula::adjust_pred(n1, args1, Some(&ctx.g.constrs))
     } else {
       (n1, args1)
     };
     let (n2, args2) = Formula::adjust_pred(n2, args2, Some(&ctx.g.constrs));
-    n1 == n2 && self.eq_terms(ctx, args1, args2)
+    Ok(n1 == n2 && self.eq_terms(ctx, args1, args2)?)
   }
 
   fn eq_forall(
     &mut self, ctx: &mut EqCtx<'_>, dom1: &Type, dom2: &Type, sc1: &Formula, sc2: &Formula,
-  ) -> bool {
-    self.eq_type(ctx, dom1, dom2) && ctx.enter(1, |ctx| self.eq_formula(ctx, sc1, sc2))
+  ) -> Result<bool, ErrorValue> {
+    Ok(self.eq_type(ctx, dom1, dom2)? && ctx.enter(1, |ctx| self.eq_formula(ctx, sc1, sc2))?)
   }
 
   /// on (): EqFrm
   /// on Subst: EsFrm
-  fn eq_formula(&mut self, ctx: &mut EqCtx<'_>, f1: &Formula, f2: &Formula) -> bool {
+  fn eq_formula(
+    &mut self, ctx: &mut EqCtx<'_>, f1: &Formula, f2: &Formula,
+  ) -> Result<bool, ErrorValue> {
     use Formula::*;
     match (f1.skip_priv_pred(), f2.skip_priv_pred()) {
-      (True, True) => true,
+      (True, True) => Ok(true),
       (Neg { f: f1 }, Neg { f: f2 }) => self.eq_formula(ctx, f1, f2),
       (Is { term: t1, ty: ty1 }, Is { term: t2, ty: ty2 }) =>
-        self.eq_term(ctx, t1, t2) && self.eq_type(ctx, ty1, ty2),
+        Ok(self.eq_term(ctx, t1, t2)? && self.eq_type(ctx, ty1, ty2)?),
       (And { args: args1 }, And { args: args2 }) => self.eq_and(ctx, args1, args2),
       (SchPred { nr: SchPredId(n1), args: args1 }, SchPred { nr: SchPredId(n2), args: args2 })
       | (
         PrivPred { nr: PrivPredId(n1), args: args1, .. },
         PrivPred { nr: PrivPredId(n2), args: args2, .. },
-      ) => n1 == n2 && self.eq_terms(ctx, args1, args2),
+      ) => Ok(n1 == n2 && self.eq_terms(ctx, args1, args2)?),
       (Attr { nr: n1, args: args1 }, Attr { nr: n2, args: args2 }) => {
         let (n1, args1) = Formula::adjust_attr(*n1, args1, Some(&ctx.g.constrs));
         let (n2, args2) = Formula::adjust_attr(*n2, args2, Some(&ctx.g.constrs));
-        n1 == n2 && self.eq_terms(ctx, args1, args2)
+        Ok(n1 == n2 && self.eq_terms(ctx, args1, args2)?)
       }
       (Pred { nr: n1, args: args1 }, Pred { nr: n2, args: args2 }) =>
         self.eq_pred(ctx, *n1, *n2, args1, args2),
       (ForAll { id: _, dom: dom1, scope: sc1 }, ForAll { id: _, dom: dom2, scope: sc2 }) =>
         self.eq_forall(ctx, dom1, dom2, sc1, sc2),
       (FlexAnd { terms: t1, scope: sc1, .. }, FlexAnd { terms: t2, scope: sc2, .. }) =>
-        self.eq_terms(ctx, &**t1, &**t2) && self.eq_formula(ctx, sc1, sc2),
+        Ok(self.eq_terms(ctx, &**t1, &**t2)? && self.eq_formula(ctx, sc1, sc2)?),
       (
         LegacyFlexAnd { orig: args1, expansion: e1, .. },
         LegacyFlexAnd { orig: args2, expansion: e2, .. },
-      ) => self.eq_formulas(ctx, &**args1, &**args2) && self.eq_formula(ctx, e1, e2),
-      (Error, _) | (_, Error) => todo!(),
-      _ => false,
+      ) => Ok(self.eq_formulas(ctx, &**args1, &**args2)? && self.eq_formula(ctx, e1, e2)?),
+      (Error, _) | (_, Error) => Err(ErrorValue),
+      _ => Ok(false),
     }
     // vprintln!("eq_formula {f1:?} <> {f2:?} -> {res}");
   }
 
   fn eq_ctx<'a>(&self, g: &'a Global, lc: &'a LocalContext) -> EqCtx<'a> { EqCtx::new(g, lc) }
 
-  fn eq<T: Equatable + ?Sized>(&mut self, g: &Global, lc: &LocalContext, a: &T, b: &T) -> bool {
+  fn eq<T: Equatable + ?Sized>(
+    &mut self, g: &Global, lc: &LocalContext, a: &T, b: &T,
+  ) -> Result<bool, ErrorValue> {
     let mut ctx = self.eq_ctx(g, lc);
     a.equate(self, &mut ctx, b)
   }
 }
 
 impl Equate for () {
-  fn eq_and(&mut self, ctx: &mut EqCtx<'_>, args1: &[Formula], args2: &[Formula]) -> bool {
+  fn eq_and(
+    &mut self, ctx: &mut EqCtx<'_>, args1: &[Formula], args2: &[Formula],
+  ) -> Result<bool, ErrorValue> {
     // vprintln!("eq_and {args1:?} <> {args2:?}");
     if args1.len() == args2.len() {
-      args1.iter().zip(args2).all(|(f1, f2)| self.eq_formula(ctx, f1, f2))
+      for (f1, f2) in args1.iter().zip(args2) {
+        if !self.eq_formula(ctx, f1, f2)? {
+          return Ok(false)
+        }
+      }
+      Ok(true)
     } else {
       let mut conjs1 = ConjIter(args1.iter(), None);
       let mut conjs2 = ConjIter(args2.iter(), None);
       loop {
         match (conjs1.next(), conjs2.next()) {
-          (None, None) => break true,
-          (Some(f1), Some(f2)) if self.eq_formula(ctx, f1, f2) => {}
-          _ => break false,
+          (None, None) => break Ok(true),
+          (Some(f1), Some(f2)) =>
+            if !self.eq_formula(ctx, f1, f2)? {
+              break Ok(false)
+            },
+          _ => break Ok(false),
         }
       }
     }
@@ -977,32 +1090,40 @@ impl Equate for () {
 
   fn eq_pred(
     &mut self, ctx: &mut EqCtx<'_>, n1: PredId, n2: PredId, args1: &[Term], args2: &[Term],
-  ) -> bool {
+  ) -> Result<bool, ErrorValue> {
     let (n1, args1) = Formula::adjust_pred(n1, args1, Some(&ctx.g.constrs));
     let (n2, args2) = Formula::adjust_pred(n2, args2, Some(&ctx.g.constrs));
-    n1 == n2
-      && (self.eq_terms(ctx, args1, args2)
-        || Some(n1) == ctx.g.reqs.equals_to()
-          && if let ([l1, r1], [l2, r2]) = (args1, args2) {
-            self.eq_term(ctx, r1, l2) && self.eq_term(ctx, l1, r2)
-          } else {
-            unreachable!()
-          })
+    Ok(
+      n1 == n2
+        && (self.eq_terms(ctx, args1, args2)?
+          || Some(n1) == ctx.g.reqs.equals_to()
+            && if let ([l1, r1], [l2, r2]) = (args1, args2) {
+              self.eq_term(ctx, r1, l2)? && self.eq_term(ctx, l1, r2)?
+            } else {
+              unreachable!()
+            }),
+    )
   }
 }
 
 pub trait Equatable {
-  fn equate<T: Equate + ?Sized>(&self, t: &mut T, ctx: &mut EqCtx<'_>, other: &Self) -> bool;
+  fn equate<T: Equate + ?Sized>(
+    &self, t: &mut T, ctx: &mut EqCtx<'_>, other: &Self,
+  ) -> Result<bool, ErrorValue>;
 }
 impl<A: Equatable + ?Sized> Equatable for Box<A> {
-  fn equate<T: Equate + ?Sized>(&self, t: &mut T, ctx: &mut EqCtx<'_>, other: &Self) -> bool {
+  fn equate<T: Equate + ?Sized>(
+    &self, t: &mut T, ctx: &mut EqCtx<'_>, other: &Self,
+  ) -> Result<bool, ErrorValue> {
     (**self).equate(t, ctx, other)
   }
 }
 macro_rules! impl_equatable {
   ($($name:ident($ty:ty),)*) => {$(
     impl Equatable for $ty {
-      fn equate<T: Equate + ?Sized>(&self, t: &mut T, ctx: &mut EqCtx<'_>, other: &Self) -> bool {
+      fn equate<T: Equate + ?Sized>(
+        &self, t: &mut T, ctx: &mut EqCtx<'_>, other: &Self,
+      ) -> Result<bool, ErrorValue> {
         t.$name(ctx, self, other)
       }
     }
@@ -1021,13 +1142,19 @@ impl Global {
   pub fn with_eq<'a, R>(&'a self, lc: &'a LocalContext, f: impl FnOnce(&mut EqCtx<'a>) -> R) -> R {
     f(&mut EqCtx::new(self, lc))
   }
-  pub fn eq<'a, T: Equatable + ?Sized>(&'a self, lc: &'a LocalContext, a: &T, b: &T) -> bool {
+  pub fn eq<'a, T: Equatable + ?Sized>(
+    &'a self, lc: &'a LocalContext, a: &T, b: &T,
+  ) -> Result<bool, ErrorValue> {
     self.with_eq(lc, |ctx| a.equate(&mut (), ctx, b))
   }
-  pub fn eq_radices<'a>(&'a self, lc: &'a LocalContext, a: &Type, b: &Type) -> bool {
+  pub fn eq_radices<'a>(
+    &'a self, lc: &'a LocalContext, a: &Type, b: &Type,
+  ) -> Result<bool, ErrorValue> {
     self.with_eq(lc, |ctx| ().eq_radices(ctx, a, b))
   }
-  pub fn eq_attrs<'a>(&'a self, lc: &'a LocalContext, a: &Type, b: &Type) -> bool {
+  pub fn eq_attrs<'a>(
+    &'a self, lc: &'a LocalContext, a: &Type, b: &Type,
+  ) -> Result<bool, ErrorValue> {
     self.with_eq(lc, |ctx| ().eq_attrs(ctx, a, b))
   }
 }
@@ -1037,10 +1164,12 @@ pub trait WithGlobalLocal {
   fn with_eq<'a, R>(&'a self, f: impl FnOnce(&mut EqCtx<'a>) -> R) -> R {
     f(&mut EqCtx::new(self.global(), self.local()))
   }
-  fn eq<T: Equatable + ?Sized>(&self, a: &T, b: &T) -> bool {
+  fn eq<T: Equatable + ?Sized>(&self, a: &T, b: &T) -> Result<bool, ErrorValue> {
     self.with_eq(|ctx| a.equate(&mut (), ctx, b))
   }
-  fn eq_radices(&self, a: &Type, b: &Type) -> bool { self.with_eq(|ctx| ().eq_radices(ctx, a, b)) }
+  fn eq_radices(&self, a: &Type, b: &Type) -> Result<bool, ErrorValue> {
+    self.with_eq(|ctx| ().eq_radices(ctx, a, b))
+  }
 }
 impl WithGlobalLocal for (&Global, &LocalContext) {
   fn global(&self) -> &Global { self.0 }
@@ -1129,7 +1258,7 @@ macro_rules! mk_visit {
         }
       }
 
-      fn visit_type(&mut self, ty: &$($mutbl)? Type) {
+      fn super_visit_type(&mut self, ty: &$($mutbl)? Type) {
         if self.abort() { return }
         self.visit_attr_pair(&$($mutbl)? ty.attrs);
         match &$($mutbl)? ty.kind {
@@ -1138,6 +1267,10 @@ macro_rules! mk_visit {
           TypeKind::Error => {}
         }
         self.visit_terms(&$($mutbl)? ty.args);
+      }
+
+      fn visit_type(&mut self, ty: &$($mutbl)? Type) {
+        self.super_visit_type(ty)
       }
 
       fn visit_types(&mut self, tys: &$($mutbl)? [Type]) {
@@ -1307,6 +1440,42 @@ impl Visit for CheckLocus {
   }
 }
 
+/// Detects whether a term/type/formula contains an error value (`Term::Error`,
+/// `TypeKind::Error`, or `Formula::Error`). Used at the checker boundary to bail
+/// on already-reported errors instead of feeding them to the deep machinery.
+pub struct CheckError(pub bool);
+impl CheckError {
+  pub fn get(f: impl FnOnce(&mut Self)) -> bool {
+    let mut cb = Self(false);
+    f(&mut cb);
+    cb.0
+  }
+}
+impl Visit for CheckError {
+  fn abort(&self) -> bool { self.0 }
+  fn visit_term(&mut self, tm: &Term) {
+    if let Term::Error = tm {
+      self.0 = true
+    } else {
+      self.super_visit_term(tm)
+    }
+  }
+  fn visit_type(&mut self, ty: &Type) {
+    if let TypeKind::Error = ty.kind {
+      self.0 = true
+    } else {
+      self.super_visit_type(ty)
+    }
+  }
+  fn visit_formula(&mut self, f: &Formula) {
+    if let Formula::Error = f {
+      self.0 = true
+    } else {
+      self.super_visit_formula(f)
+    }
+  }
+}
+
 struct OnFunc<F: FnMut(FuncId, &[Term])>(F);
 impl<F: FnMut(FuncId, &[Term])> Visit for OnFunc<F> {
   fn visit_term(&mut self, tm: &Term) {
@@ -1390,16 +1559,16 @@ impl Term {
   /// RoundUpTrmType(fTrm = self)
   pub fn round_up_type<'a>(
     &self, g: &Global, lc: &'a LocalContext, recursive: bool,
-  ) -> CowBox<'a, Type> {
+  ) -> Result<CowBox<'a, Type>, ErrorValue> {
     let tm = self.skip_priv_func(Some(lc));
-    let ty = Box::new(tm.get_type_uncached(g, lc));
+    let ty = Box::new(tm.get_type_uncached(g, lc)?);
     tm.round_up_type_from(g, lc, CowBox::Owned(ty), recursive)
   }
 
   /// RoundUpTrmTypeWithType(lTyp = ty, fTrm = self)
   fn round_up_type_from<'a>(
     &self, g: &Global, lc: &'a LocalContext, mut ty: CowBox<'a, Type>, recursive: bool,
-  ) -> CowBox<'a, Type> {
+  ) -> Result<CowBox<'a, Type>, ErrorValue> {
     // vprintln!("RoundUpTrmTypeWithType {self:?}, {ty:?}");
     if let Term::Functor { .. } | Term::Selector { .. } | Term::Aggregate { .. } = self {
       let mut attrs = ty.attrs.1.clone();
@@ -1422,8 +1591,8 @@ impl Term {
               continue
             }
             let fc = &g.clusters.functor.vec[i];
-            if fc.round_up_with(g, lc, self, &ty, &mut attrs, recursive) {
-              attrs.round_up_with(g, lc, &ty, recursive);
+            if fc.round_up_with(g, lc, self, &ty, &mut attrs, recursive)? {
+              attrs.round_up_with(g, lc, &ty, recursive)?;
               let mut ty2 = ty.to_owned();
               ty2.attrs.1 = attrs.clone();
               ty = CowBox::Owned(ty2);
@@ -1442,21 +1611,23 @@ impl Term {
         }
       }
     }
-    ty
+    Ok(ty)
   }
 
   /// GetTrmType(self = fTrm)
-  pub fn get_type(&self, g: &Global, lc: &LocalContext, round_up: bool) -> Type {
+  pub fn get_type(
+    &self, g: &Global, lc: &LocalContext, round_up: bool,
+  ) -> Result<Type, ErrorValue> {
     // vprintln!("GetTrmType {self:?}");
     match self {
       Term::Functor { .. } | Term::Selector { .. } | Term::Aggregate { .. } => {
         let cache = lc.term_cache.borrow();
         if let Ok(i) = cache.find(&g.constrs, self) {
-          return cache.terms[i].1.clone()
+          return Ok(cache.terms[i].1.clone())
         }
         drop(cache);
-        let i = TermCollection::insert(g, lc, self, round_up);
-        lc.term_cache.borrow().terms[i].1.clone()
+        let i = TermCollection::insert(g, lc, self, round_up)?;
+        Ok(lc.term_cache.borrow().terms[i].1.clone())
       }
       &Term::EqMark(m) => lc.marks[m].0.get_type(g, lc, round_up),
       _ => self.get_type_uncached(g, lc),
@@ -1464,7 +1635,7 @@ impl Term {
   }
 
   /// CopyTrmType(self = fTrm)
-  pub fn get_type_uncached(&self, g: &Global, lc: &LocalContext) -> Type {
+  pub fn get_type_uncached(&self, g: &Global, lc: &LocalContext) -> Result<Type, ErrorValue> {
     let ty = match *self {
       Term::Bound(nr) => lc.bound_var[nr].1.clone(),
       Term::Const(nr) => {
@@ -1486,13 +1657,13 @@ impl Term {
       Term::Fraenkel { .. } => Type::SET,
       Term::It => lc.it_type.as_deref().expect("unexpected 'it'").clone(),
       Term::The { ref ty } | Term::Qua { ref ty, .. } => (**ty).clone(),
-      Term::EqMark(m) => lc.marks[m].0.get_type_uncached(g, lc),
+      Term::EqMark(m) => lc.marks[m].0.get_type_uncached(g, lc)?,
       Term::EqClass(_) | Term::FreeVar(_) => unreachable!("get_type_uncached(EqClass | FreeVar)"),
       // Value op: the type of an error term is the error type. Already reported.
       Term::Error => Type::new(TypeKind::Error),
     };
     // vprintln!("[{:?}] get_type {:?} -> {:?}", lc.infer_const.borrow().len(), self, ty);
-    ty
+    Ok(ty)
   }
 }
 
@@ -1539,7 +1710,16 @@ impl TermCollection {
   }
 
   /// InsertTermInTTColl(fTrm = tm)
-  pub fn insert(g: &Global, lc: &LocalContext, tm: &Term, round_up: bool) -> usize {
+  ///
+  /// On an error value the entry is left in the cache with type `TypeKind::Error` rather
+  /// than removed: `insert` hands out an index into a `Vec`, other code can already observe
+  /// the provisional entry (see below), and removing it would shift every later index. An
+  /// error type is safe to leave behind because it cannot be mistaken for a real one --
+  /// whoever reads it next poisons at the point of touch. A *half-rounded* type is the
+  /// thing we must never leave behind, since it is well-formed enough to be used silently.
+  pub fn insert(
+    g: &Global, lc: &LocalContext, tm: &Term, round_up: bool,
+  ) -> Result<usize, ErrorValue> {
     // eprintln!("[{}] InsertTermInTTColl {tm:?}", lc.term_cache.borrow().scope);
     if let Term::Functor { args, .. } | Term::Selector { args, .. } | Term::Aggregate { args, .. } =
       tm
@@ -1547,12 +1727,12 @@ impl TermCollection {
       for tm in &**args {
         let tm = tm.skip_priv_func(Some(lc));
         if let Term::Functor { .. } | Term::Selector { .. } | Term::Aggregate { .. } = tm {
-          Self::insert(g, lc, tm, round_up);
+          Self::insert(g, lc, tm, round_up)?;
         }
       }
     }
     if let Ok(i) = lc.term_cache.borrow().find(&g.constrs, tm) {
-      return i
+      return Ok(i)
     }
 
     // There are some horrible race conditions here. round_up_type_from() and round_up_with_self()
@@ -1561,8 +1741,15 @@ impl TermCollection {
     // and we also have to search anew for the term every time
     // because it might have been shuffled about.
 
+    /// Overwrite the (already inserted) entry for `tm` with the error type and poison.
+    /// Searches anew, like every other write here: `i` does not survive a borrow.
+    fn poison(g: &Global, lc: &LocalContext, tm: &Term) -> ErrorValue {
+      lc.term_cache.borrow_mut().get_mut(&g.constrs, tm).1 = Type::new(TypeKind::Error);
+      ErrorValue
+    }
+
     // Get the type of the term.
-    let ty = tm.get_type_uncached(g, lc);
+    let ty = tm.get_type_uncached(g, lc)?;
 
     // 1. Insert the term with its type provisionally into the cache
     let base = lc.bound_var.len() as u32;
@@ -1571,14 +1758,19 @@ impl TermCollection {
     // clone the type so that we don't hold on to the cache for the next bit
     let ty = Box::new(lc.term_cache.borrow().terms[i].1.clone());
     // Round up the type using the term we inserted
-    let mut ty = tm.round_up_type_from(g, lc, CowBox::Owned(ty), round_up).to_owned();
+    let mut ty = match tm.round_up_type_from(g, lc, CowBox::Owned(ty), round_up) {
+      Ok(ty) => ty.to_owned(),
+      Err(ErrorValue) => return Err(poison(g, lc, tm)),
+    };
     // 2. Put the new type into the cache.
     // (Yes, stuff between (1) and (2) can see the term with the unrounded type...)
     // also clone the type *again*
     lc.term_cache.borrow_mut().get_mut(&g.constrs, tm).1 = (*ty).clone();
 
     // Round up the type using its own attributes
-    ty.round_up_with_self(g, lc, round_up);
+    if ty.round_up_with_self(g, lc, round_up).is_err() {
+      return Err(poison(g, lc, tm))
+    }
     // eprintln!("[{}] caching {tm:?} : {ty:?}", lc.term_cache.borrow().scope);
     let cache = &mut *lc.term_cache.borrow_mut();
     // search for the term one last time and return the index.
@@ -1589,7 +1781,7 @@ impl TermCollection {
 
     // Note: the original source doesn't do the two clones above,
     // but that's definitely a segfault hazard.
-    i
+    Ok(i)
   }
 
   fn clear(&mut self) { self.terms.clear() }
@@ -1618,8 +1810,12 @@ impl<'a> Subst<'a> {
   }
 
   /// InitInst
-  pub fn finish(self) -> Box<[Term]> {
-    self.subst_term.into_vec().into_iter().map(|t| *t.unwrap().to_owned()).collect()
+  ///
+  /// `None` if any locus was left unbound. Well-formed input always binds every
+  /// locus by the time a match succeeds; malformed input need not, and inventing a
+  /// term here would be no better than the placeholder ids this used to hand out.
+  pub fn finish(self) -> Option<Box<[Term]>> {
+    self.subst_term.into_vec().into_iter().map(|t| Some(*t?.to_owned())).collect()
   }
 
   pub fn trim_to(self, len: usize) -> Box<[TermQua]> {
@@ -1628,7 +1824,12 @@ impl<'a> Subst<'a> {
   }
 
   pub fn inst_term_mut(self, ctx: &Constructors, lc: &LocalContext, tm: &mut Term, base: u32) {
-    Inst::new(ctx, lc, &self.finish(), base).visit_term(tm)
+    // An incomplete substitution leaves the term alone: there is nothing to report
+    // from here, and substituting a made-up term would be worse than substituting
+    // nothing. Only reachable on input that is already in error.
+    if let Some(subst) = self.finish() {
+      Inst::new(ctx, lc, &subst, base).visit_term(tm)
+    }
   }
 
   /// InstSubstTrm
@@ -1640,7 +1841,10 @@ impl<'a> Subst<'a> {
 
   /// InstSubstFrm
   pub fn inst_formula_mut(self, ctx: &Constructors, lc: &LocalContext, f: &mut Formula, base: u32) {
-    Inst::new(ctx, lc, &self.finish(), base).visit_formula(f)
+    // See `inst_term_mut`.
+    if let Some(subst) = self.finish() {
+      Inst::new(ctx, lc, &subst, base).visit_formula(f)
+    }
   }
 
   fn snapshot(&self) -> Box<[bool]> { self.subst_term.iter().map(Option::is_some).collect() }
@@ -1660,7 +1864,7 @@ impl<'a> Subst<'a> {
   /// round_up: ItIsChecker
   pub fn check_loci_types<const NEW: bool>(
     &mut self, g: &Global, lc: &LocalContext, tys: &[Type], round_up: bool,
-  ) -> bool {
+  ) -> Result<bool, ErrorValue> {
     let mut i = tys.len();
     assert!(self.subst_term.len() == i);
     let mut subst_ty = vec![None; i];
@@ -1682,7 +1886,7 @@ impl<'a> Subst<'a> {
       let tm = loop {
         if i == 0 {
           // vprintln!("[{n}] -> true");
-          return true
+          return Ok(true)
         }
         i -= 1;
         if let Some(t) = &self.subst_term[i] {
@@ -1694,14 +1898,14 @@ impl<'a> Subst<'a> {
       let mut snap = self.snapshot();
       // let wty be the type of subst_term[i]
       let wty = if round_up {
-        tm.round_up_type(g, lc, round_up)
+        tm.round_up_type(g, lc, round_up)?
       } else {
-        CowBox::Owned(Box::new(tm.get_type(g, lc, round_up)))
+        CowBox::Owned(Box::new(tm.get_type(g, lc, round_up)?))
       };
       // vprintln!("[{n}] main {i:?}, subst = {:?} : {subst_ty:?}, wty = {wty:?}", self.subst_term);
       // Are the attributes of tys[i] all contained in wty's?
       // This is a necessary condition for wty <: tys[i].
-      let mut ok = if wty.decreasing_attrs(&tys[i], |a1, a2| self.eq(g, lc, a1, a2)) {
+      let mut ok = if wty.decreasing_attrs(&tys[i], |a1, a2| self.eq(g, lc, a1, a2))? {
         if NEW {
           snap = self.snapshot();
         }
@@ -1723,7 +1927,7 @@ impl<'a> Subst<'a> {
           };
 
           // Unify subst(tys[i]) and wty, which can assign some entries in subst_term.
-          let comp = self.eq_radices(&mut self.eq_ctx(g, lc), &tys[i], &wty);
+          let comp = self.eq_radices(&mut self.eq_ctx(g, lc), &tys[i], &wty)?;
           // Record that subst_ty[i] := wty
           subst_ty[i] = Some(wty.to_owned());
           if comp {
@@ -1740,7 +1944,7 @@ impl<'a> Subst<'a> {
             if NEW {
               if i >= self.subst_term.len() {
                 // vprintln!("[{n}] -> false");
-                return false
+                return Ok(false)
               }
             } else {
               // Increase i to the beginning of the last run of Nones in subst_term,
@@ -1749,7 +1953,7 @@ impl<'a> Subst<'a> {
                 match self.subst_term.get(i) {
                   None => {
                     // vprintln!("[{n}] -> false");
-                    return false
+                    return Ok(false)
                   }
                   Some(Some(_)) => break,
                   _ => {}
@@ -1784,47 +1988,62 @@ impl<'a> Subst<'a> {
   /// CheckArgType
   /// this seems to be essentially the same as CheckLociTypes,
   /// but written as a recursive backtracking algorithm which seems a lot more sensible.
-  pub fn check_types(&mut self, g: &Global, lc: &LocalContext, tys: &[Type]) -> bool {
-    let [tys @ .., ty] = tys else { return true };
+  pub fn check_types(
+    &mut self, g: &Global, lc: &LocalContext, tys: &[Type],
+  ) -> Result<bool, ErrorValue> {
+    let [tys @ .., ty] = tys else { return Ok(true) };
     let i = tys.len();
-    let mut wty = self.subst_term[i].as_ref().unwrap().get_type(g, lc, false);
-    wty.round_up_with_self(g, lc, false);
+    // For a well-formed pattern `eq_radices` binds every locus top-down before the
+    // recursion reads it, so an unbound slot here can only come from a malformed
+    // pattern (a recovered/partial definition item). Decline the match rather than
+    // unwrap, exactly as `finish`/`CheckLociTypes` do for the same condition:
+    // declining a notation is the safe direction, and the enclosing item is untrusted.
+    let Some(subst_i) = self.subst_term[i].as_ref() else { return Ok(false) };
+    let mut wty = subst_i.get_type(g, lc, false)?;
+    wty.round_up_with_self(g, lc, false)?;
     // vprintln!("check_types {i}: {:?} : {wty:?} <:? {ty:?}", self.subst_term[i]);
-    if !wty.decreasing_attrs(ty, |a1, a2| self.eq(g, lc, a1, a2)) {
-      return false
+    if !wty.decreasing_attrs(ty, |a1, a2| self.eq(g, lc, a1, a2))? {
+      return Ok(false)
     }
-    let Some(mut wty) = ty.widening_of(g, lc, &wty) else { return false };
+    let Some(mut wty) = ty.widening_of(g, lc, &wty) else { return Ok(false) };
     let snap = self.snapshot();
-    if self.eq_radices(&mut self.eq_ctx(g, lc), ty, &wty) && self.check_types(g, lc, tys) {
-      return true
+    if self.eq_radices(&mut self.eq_ctx(g, lc), ty, &wty)? && self.check_types(g, lc, tys)? {
+      return Ok(true)
     }
     self.rollback(&snap, i);
     if matches!(ty.kind, TypeKind::Mode(n) if g.constrs.mode[n].redefines.is_none()) {
       while let Some(sty) = wty.widening(g, lc) {
         let Some(wty2) = ty.widening_of(g, lc, &sty) else { break };
-        if self.eq_radices(&mut self.eq_ctx(g, lc), ty, &wty2) && self.check_types(g, lc, tys) {
-          return true
+        if self.eq_radices(&mut self.eq_ctx(g, lc), ty, &wty2)? && self.check_types(g, lc, tys)? {
+          return Ok(true)
         }
         self.rollback(&snap, i);
         wty = CowBox::Owned(wty2.to_owned());
       }
     }
-    false
+    Ok(false)
   }
 }
 
 impl Equate for Subst<'_> {
   const ADJUST_LEFT: bool = false;
 
-  fn eq_locus_var(&mut self, _: &mut EqCtx<'_>, _: LocusId, _: LocusId) -> bool { false }
-  fn locus_var_left(&mut self, ctx: &mut EqCtx<'_>, nr: LocusId, t2: &Term) -> bool {
+  fn eq_locus_var(
+    &mut self, _: &mut EqCtx<'_>, _: LocusId, _: LocusId,
+  ) -> Result<bool, ErrorValue> {
+    Ok(false)
+  }
+  fn locus_var_left(
+    &mut self, ctx: &mut EqCtx<'_>, nr: LocusId, t2: &Term,
+  ) -> Result<bool, ErrorValue> {
     // vprintln!("{self:?} @ v{nr:?} =? {t2:?}");
     match &mut self.subst_term[Idx::into_usize(nr)] {
-      x @ None =>
+      x @ None => Ok(
         ctx.depth1 == 0 && {
           *x = Some(CowBox::Owned(Box::new(t2.clone())));
           true
         },
+      ),
       Some(tm) => ().eq_term(ctx, t2, tm.unqua()),
     }
   }
@@ -1889,12 +2108,35 @@ impl Attrs {
 
   /// MAttrCollection.IsSubsetOf(self = self, aClu = other, aEqAttr(x, y) = eq(y, x))
   pub fn is_subset_of(&self, other: &Self, mut eq: impl FnMut(&Attr, &Attr) -> bool) -> bool {
+    match self.try_is_subset_of::<std::convert::Infallible>(other, |a1, a2| Ok(eq(a1, a2))) {
+      Ok(v) => v,
+      Err(e) => match e {},
+    }
+  }
+
+  /// [`Attrs::is_subset_of`], with a fallible comparison. Short-circuiting is unchanged:
+  /// `eq` is called in the same order and no more often.
+  pub fn try_is_subset_of<E>(
+    &self, other: &Self, mut eq: impl FnMut(&Attr, &Attr) -> Result<bool, E>,
+  ) -> Result<bool, E> {
     // let n = CALLS2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     // vprintln!("{n:?}: {self:?} <:? {other:?}");
     match (self, other) {
-      (Attrs::Inconsistent, Attrs::Consistent(_)) => false,
-      (Attrs::Consistent(this), Attrs::Consistent(other)) =>
-        other.len() >= this.len() && this.iter().all(|i| other.iter().any(|j| eq(i, j))),
+      (Attrs::Inconsistent, Attrs::Consistent(_)) => Ok(false),
+      (Attrs::Consistent(this), Attrs::Consistent(other)) => {
+        if other.len() < this.len() {
+          return Ok(false)
+        }
+        'outer: for i in this {
+          for j in other {
+            if eq(i, j)? {
+              continue 'outer
+            }
+          }
+          return Ok(false)
+        }
+        Ok(true)
+      }
       (_, Attrs::Inconsistent) => {
         // You would think this case is just "true", but we use this function to
         // construct substitutions by unification, and so we have to report "false"
@@ -1911,7 +2153,7 @@ impl Attrs {
         }
         let mut v = ContainsLocusVar(false);
         v.visit_attrs(self);
-        !v.0
+        Ok(!v.0)
       }
     }
   }
@@ -2055,7 +2297,9 @@ impl Attrs {
 
   /// MCondClList.RoundUpCluster(aCluster = self, aTyp = ty)
   /// MAttrCollection.RoundUpWith(self = self, aTyp = ty)
-  pub fn round_up_with(&mut self, g: &Global, lc: &LocalContext, ty: &Type, round_up: bool) {
+  pub fn round_up_with(
+    &mut self, g: &Global, lc: &LocalContext, ty: &Type, round_up: bool,
+  ) -> Result<(), ErrorValue> {
     struct State<'a> {
       cl_fire: Vec<u32>,
       jobs: Vec<u32>,
@@ -2119,47 +2363,50 @@ impl Attrs {
       let last = if let Some(last) = state.jobs.pop() { last } else { break };
       // vprintln!("job {last}");
       let cl = &g.clusters.conditional.vec[last as usize];
-      if let Some(subst) = cl.try_apply(g, lc, self, ty, round_up) {
+      if let Some(subst) = cl.try_apply(g, lc, self, ty, round_up)? {
         // vprintln!("enlarge {:?} by {:?}\n  {cl:?}", self, cl.consequent.1);
         let mut inst = Inst::new(&g.constrs, lc, &subst, 0);
         self.visit_enlarge_by(&g.constrs, lc, &cl.consequent.1, &mut inst);
         state.handle_usage_and_fire(g, self)
       }
     }
+    Ok(())
   }
 }
 
 impl ConditionalCluster {
   pub fn try_apply(
     &self, g: &Global, lc: &LocalContext, attrs: &Attrs, ty: &Type, round_up: bool,
-  ) -> Option<Box<[Term]>> {
+  ) -> Result<Option<Box<[Term]>>, ErrorValue> {
     if !g.type_reachable(&self.ty, ty) {
-      return None
+      return Ok(None)
     }
     let mut subst = Subst::new(self.primary.len());
     // TryRounding()
-    if !self.antecedent.is_subset_of(attrs, |a1, a2| subst.eq(g, lc, a1, a2))
+    if !self.antecedent.try_is_subset_of(attrs, |a1, a2| subst.eq(g, lc, a1, a2))?
       || self.consequent.1.is_subset_of(attrs, |a1, a2| {
         (a1.adjusted_nr(&g.constrs), a1.pos) == (a2.adjusted_nr(&g.constrs), a2.pos)
       })
     {
-      return None
+      return Ok(None)
     }
     // vprintln!("try rounding: {self:?} in {ty:?}");
-    let ty = self.ty.widening_of(g, lc, ty)?;
-    if subst.eq_radices(&mut subst.eq_ctx(g, lc), &self.ty, &ty)
-      && self.ty.attrs.0.is_subset_of(&ty.attrs.1, |a1, a2| subst.eq(g, lc, a1, a2))
-      && subst.check_loci_types::<false>(g, lc, &self.primary, round_up)
-    {
-      Some(subst.finish())
-    } else {
-      None
-    }
+    let Some(ty) = self.ty.widening_of(g, lc, ty) else { return Ok(None) };
+    Ok(
+      if subst.eq_radices(&mut subst.eq_ctx(g, lc), &self.ty, &ty)?
+        && self.ty.attrs.0.try_is_subset_of(&ty.attrs.1, |a1, a2| subst.eq(g, lc, a1, a2))?
+        && subst.check_loci_types::<false>(g, lc, &self.primary, round_up)?
+      {
+        subst.finish()
+      } else {
+        None
+      },
+    )
   }
 }
 
 impl<I> TyConstructor<I> {
-  fn round_up(&self, g: &Global, lc: &mut LocalContext) -> Attrs {
+  fn round_up(&self, g: &Global, lc: &mut LocalContext) -> Result<Attrs, ErrorValue> {
     let mut attrs = self.ty.attrs.0.clone();
     if let TypeKind::Mode(nr) = self.ty.kind {
       let mut inst = Inst::new(&g.constrs, lc, &self.ty.args, 0);
@@ -2167,9 +2414,10 @@ impl<I> TyConstructor<I> {
       attrs.enlarge_by(&g.constrs, lc, &cl)
     }
     lc.load_locus_tys(&self.primary);
-    attrs.round_up_with(g, lc, &self.ty, false);
+    let res = attrs.round_up_with(g, lc, &self.ty, false);
     lc.unload_locus_tys();
-    attrs
+    res?;
+    Ok(attrs)
   }
 }
 
@@ -2178,11 +2426,11 @@ impl FunctorCluster {
   pub fn round_up_with(
     &self, g: &Global, lc: &LocalContext, term: &Term, ty: &Type, attrs: &mut Attrs,
     recursive: bool,
-  ) -> bool {
+  ) -> Result<bool, ErrorValue> {
     // vprintln!("RoundUpWith {term:?}, {ty:?} <- {attrs:?} in {self:#?}");
     let mut subst = Subst::new(self.primary.len());
-    let mut eq = subst.eq(g, lc, &*self.term, term)
-      && subst.check_loci_types::<false>(g, lc, &self.primary, recursive);
+    let mut eq = subst.eq(g, lc, &*self.term, term)?
+      && subst.check_loci_types::<false>(g, lc, &self.primary, recursive)?;
     if !eq {
       if let Term::Functor { nr, ref args } = *term {
         let props = g.constrs.functor[nr].properties;
@@ -2191,27 +2439,34 @@ impl FunctorCluster {
           args.swap(props.arg1 as usize, props.arg2 as usize);
           let term = Term::Functor { nr, args };
           subst.clear();
-          eq = subst.eq(g, lc, &*self.term, &term)
-            && subst.check_loci_types::<false>(g, lc, &self.primary, recursive);
+          eq = subst.eq(g, lc, &*self.term, &term)?
+            && subst.check_loci_types::<false>(g, lc, &self.primary, recursive)?;
         }
       }
     }
     if eq {
       if let Some(cluster_ty) = &self.ty {
         match cluster_ty.widening_of(g, lc, ty) {
-          Some(ty)
-            if subst.eq_radices(&mut subst.eq_ctx(g, lc), cluster_ty, &ty)
-              && cluster_ty.attrs.0.is_subset_of(&ty.attrs.1, |a1, a2| subst.eq(g, lc, a1, a2))
-              && subst.check_loci_types::<false>(g, lc, &self.primary, recursive) => {}
-          _ => return false,
+          Some(ty) => {
+            let matched = subst.eq_radices(&mut subst.eq_ctx(g, lc), cluster_ty, &ty)?
+              && cluster_ty
+                .attrs
+                .0
+                .try_is_subset_of(&ty.attrs.1, |a1, a2| subst.eq(g, lc, a1, a2))?
+              && subst.check_loci_types::<false>(g, lc, &self.primary, recursive)?;
+            if !matched {
+              return Ok(false)
+            }
+          }
+          _ => return Ok(false),
         }
       }
-      let subst = subst.finish();
+      let Some(subst) = subst.finish() else { return Ok(false) };
       let mut inst = Inst::new(&g.constrs, lc, &subst, 0);
       attrs.visit_enlarge_by(&g.constrs, lc, &self.consequent.1, &mut inst);
       // vprintln!("enlarged -> {attrs:?}");
     }
-    eq
+    Ok(eq)
   }
 }
 
@@ -2232,15 +2487,15 @@ impl Definiens {
   /// Matches (in identify)
   pub fn matches<'a>(
     &self, g: &Global, lc: &LocalContext, kind: ConstrKind, args: &'a [Term],
-  ) -> Option<Subst<'a>> {
+  ) -> Result<Option<Subst<'a>>, ErrorValue> {
     if self.constr != kind {
-      return None
+      return Ok(None)
     }
     let mut subst = Subst::from_essential(self.primary.len(), &self.essential, args);
-    if !subst.check_loci_types::<true>(g, lc, &self.primary, false) {
-      return None
+    if !subst.check_loci_types::<true>(g, lc, &self.primary, false)? {
+      return Ok(None)
     }
-    Some(subst)
+    Ok(Some(subst))
   }
 }
 
@@ -2248,28 +2503,36 @@ impl EqualsDef {
   /// ExpandTrmIfEqual
   pub fn expand_if_equal(
     &self, g: &Global, lc: &LocalContext, args: &[Term], depth: u32,
-  ) -> Option<Term> {
+  ) -> Result<Option<Term>, ErrorValue> {
     let mut subst = Subst::from_essential(self.primary.len(), &self.essential, args);
-    let true = subst.check_loci_types::<true>(g, lc, &self.primary, false) else { return None };
-    Some(subst.inst_term(&g.constrs, lc, &self.expansion, depth))
+    if !subst.check_loci_types::<true>(g, lc, &self.primary, false)? {
+      return Ok(None)
+    }
+    Ok(Some(subst.inst_term(&g.constrs, lc, &self.expansion, depth)))
   }
 }
 
 impl IdentifyFunc {
   pub fn try_apply_lhs(
     &self, g: &Global, lc: &LocalContext, lhs: &Term, tm: &Term,
-  ) -> Option<Subst<'static>> {
+  ) -> Result<Option<Subst<'static>>, ErrorValue> {
     let mut subst = Subst::new(self.primary.len());
-    subst.eq(g, lc, lhs, tm).then_some(())?;
-    subst.check_loci_types::<false>(g, lc, &self.primary, false).then_some(())?;
+    if !subst.eq(g, lc, lhs, tm)? {
+      return Ok(None)
+    }
+    if !subst.check_loci_types::<false>(g, lc, &self.primary, false)? {
+      return Ok(None)
+    }
     #[allow(clippy::assigning_clones)]
     for &(x, y) in &*self.eq_args {
       let (ux, uy) = (Idx::into_usize(x), Idx::into_usize(y));
       assert!(subst.subst_term[uy].is_none());
-      self.primary[uy].is_wider_than(g, lc, &self.primary[ux]).then_some(())?;
+      if !self.primary[uy].is_wider_than(g, lc, &self.primary[ux])? {
+        return Ok(None)
+      }
       subst.subst_term[uy] = subst.subst_term[ux].clone();
     }
-    Some(subst)
+    Ok(Some(subst))
   }
 }
 pub struct ExpandPrivFunc<'a>(pub &'a Constructors, pub &'a LocalContext);
@@ -2321,18 +2584,22 @@ impl Term {
       Term::Numeral(n) => Some(n.into()),
       Term::Functor { nr, ref args } => {
         let (nr, args) = Term::adjust(nr, args, Some(&g.constrs));
+        // An argument of a numeric-requirement functor that is not an interned constant
+        // (e.g. a `Term::Error` from malformed input like `<garbage> + 1`, or a functor
+        // whose requirement was registered with the wrong arity) means "not a numeric
+        // constant": return `None` rather than aborting on the poison value.
         macro_rules! op {
           (|$x:ident, $y:ident| $e:expr) => {{
-            let [arg1, arg2] = args else { unreachable!() };
-            let Term::Infer(i1) = *arg1.skip_priv_func(Some(lc)) else { unreachable!() };
-            let Term::Infer(i2) = *arg2.skip_priv_func(Some(lc)) else { unreachable!() };
+            let [arg1, arg2] = args else { return None };
+            let Term::Infer(i1) = *arg1.skip_priv_func(Some(lc)) else { return None };
+            let Term::Infer(i2) = *arg2.skip_priv_func(Some(lc)) else { return None };
             let ic = lc.infer_const.borrow();
             let ($x, $y) = (ic[i1].number.clone()?, ic[i2].number.clone()?);
             $e
           }};
           (|$x:ident| $e:expr) => {{
-            let [arg1] = args else { unreachable!() };
-            let Term::Infer(i1) = *arg1.skip_priv_func(Some(lc)) else { unreachable!() };
+            let [arg1] = args else { return None };
+            let Term::Infer(i1) = *arg1.skip_priv_func(Some(lc)) else { return None };
             let ic = lc.infer_const.borrow();
             let $x = ic[i1].number.clone()?;
             $e
@@ -2369,6 +2636,9 @@ pub struct InternConst<'a> {
   depth: u32,
   /// InferConsts
   infer_consts: BTreeSet<FuncId>,
+  /// Poison channel; see [`RoundUpTypes::err`]. `VisitMut` cannot carry an error, so a
+  /// failed round-up during interning is recorded here and surfaced by [`Self::into_result`].
+  err: Option<ErrorValue>,
 }
 
 impl<'a> InternConst<'a> {
@@ -2386,6 +2656,15 @@ impl<'a> InternConst<'a> {
       equals_expansion_level: 0,
       depth: 0,
       infer_consts: Default::default(),
+      err: None,
+    }
+  }
+
+  /// Surface anything recorded on the poison channel. Call this after driving the visitor.
+  pub fn into_result(self) -> Result<(), ErrorValue> {
+    match self.err {
+      Some(e) => Err(e),
+      None => Ok(()),
     }
   }
 
@@ -2399,9 +2678,17 @@ impl<'a> InternConst<'a> {
         Ok(nr) => nr,
         Err(i) => {
           drop(ic);
-          let mut ty = *tm.round_up_type(self.g, self.lc, false).to_owned();
+          let mut ty = match tm.round_up_type(self.g, self.lc, false) {
+            Ok(ty) => *ty.to_owned(),
+            Err(e) => {
+              self.err = Some(e);
+              Type::new(TypeKind::Error)
+            }
+          };
           // vprintln!("collect_infer_const {tm:?} : {ty:?}");
-          ty.round_up_with_self(self.g, self.lc, false);
+          if let Err(e) = ty.round_up_with_self(self.g, self.lc, false) {
+            self.err = Some(e)
+          }
           let def = std::mem::take(tm);
           let number = def.try_to_number(self.g, self.lc);
           ic = self.lc.infer_const.borrow_mut();
@@ -2442,14 +2729,22 @@ impl<'a> InternConst<'a> {
       this.depth = depth;
       this.equals_expansion_level -= 1;
       this.infer_consts.remove(&nr);
-      let Term::Infer(nr) = tm else { unreachable!("{:?}", tm) };
+      // `visit_term` leaves `Term::Error` uninterned (it is not a real term), so an
+      // error anywhere in an `equals` expansion body breaks the "everything interns to
+      // an Infer" postcondition. There is nothing to register in that case; the error
+      // was already reported and fails the article.
+      let Term::Infer(nr) = tm else { return };
       eq.push(nr);
     };
     if let Some(eq_defs) = self.equals.get(&ConstrKind::Func(nr)) {
       for eq_def in eq_defs {
-        if let Some(tm2) = eq_def.expand_if_equal(self.g, self.lc, args, 0) {
-          // vprintln!("{tm:?} -> {tm2:?} using {eq_def:?}");
-          insert_one(self, tm2);
+        match eq_def.expand_if_equal(self.g, self.lc, args, 0) {
+          Ok(Some(tm2)) => {
+            // vprintln!("{tm:?} -> {tm2:?} using {eq_def:?}");
+            insert_one(self, tm2);
+          }
+          Ok(None) => {}
+          Err(e) => self.err = Some(e),
         }
       }
     }
@@ -2457,9 +2752,13 @@ impl<'a> InternConst<'a> {
       for &id in ids {
         let id = &self.identify[id];
         // vprintln!("applying {tm:?} <- {id:?}");
-        if let Some(subst) = id.try_apply_lhs(self.g, self.lc, &id.lhs, tm) {
-          let tm = subst.inst_term(&self.g.constrs, self.lc, &id.rhs, 0);
-          insert_one(self, tm);
+        match id.try_apply_lhs(self.g, self.lc, &id.lhs, tm) {
+          Ok(Some(subst)) => {
+            let tm = subst.inst_term(&self.g.constrs, self.lc, &id.rhs, 0);
+            insert_one(self, tm);
+          }
+          Ok(None) => {}
+          Err(e) => self.err = Some(e),
         }
       }
     }
@@ -2486,8 +2785,11 @@ impl VisitMut for InternConst<'_> {
           let mut fv = (**fv).visit_cloned(&mut ExpandPrivFunc(&self.g.constrs, self.lc));
           self.visit_term(&mut fv);
           if self.only_constants {
-            let Term::Infer(nr) = fv else { unreachable!() };
-            eq = Some(nr);
+            // Well-formed input always interns to an `Infer` here; malformed input
+            // need not, in which case there is no equality to register.
+            if let Term::Infer(nr) = fv {
+              eq = Some(nr);
+            }
           }
           self.only_constants = true;
         }
@@ -2599,6 +2901,9 @@ impl VisitMut for ExpandConsts<'_> {
 pub struct Descope {
   num_consts: u32,
   infer_const: u32,
+  /// Set when a constant from an enclosing scope survived here. Well-formed input
+  /// never produces one; the caller reports it (this is a `VisitMut`, so it cannot).
+  pub nongeneralizable: bool,
   pub remap: HashMap<InferId, InferId>,
   // The entries in remap are Assignment::default() (which is invalid)
   old: Vec<Assignment>,
@@ -2608,7 +2913,7 @@ impl VisitMut for Descope {
   fn visit_term(&mut self, tm: &mut Term) {
     loop {
       match *tm {
-        Term::Const(c) => assert!(c.0 < self.num_consts, "nongeneralizable variable"),
+        Term::Const(c) => self.nongeneralizable |= c.0 >= self.num_consts,
         Term::Infer(ref mut nr) =>
           if let Some(i) = nr.0.checked_sub(self.infer_const) {
             if let Some(nr2) = self.remap.get(nr) {
@@ -2737,6 +3042,7 @@ impl LocalContext {
   ) -> Descope {
     let ic = self.infer_const.get_mut();
     let mut descope = Descope {
+      nongeneralizable: false,
       remap: HashMap::new(),
       num_consts: self.fixed_var.len() as u32,
       infer_const: len as u32,
@@ -2865,8 +3171,15 @@ impl VisitMut for Abstract<'_> {
       Term::Bound(nr) => nr.0 += self.lift,
       Term::Const(nr) if nr.0 >= self.base => {
         let i = nr.0 - self.base;
-        assert!(i < self.lift, "invalid local constant in thesis");
-        *tm = Term::Bound(BoundId(i))
+        if i < self.lift {
+          *tm = Term::Bound(BoundId(i))
+        } else {
+          // A constant from outside the range being generalized has leaked into the
+          // formula. This cannot happen for a well-formed proof skeleton, but malformed
+          // input (e.g. a garbled step in a `now` block) can produce it; poison the term
+          // with an error value so the block degrades to a sorry rather than aborting.
+          *tm = Term::Error
+        }
       }
       Term::Infer(nr) =>
         if nr.0 >= self.istart {

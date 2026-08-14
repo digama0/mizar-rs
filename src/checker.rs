@@ -1,12 +1,13 @@
 use crate::equate::Equalizer;
+use crate::error::MizError;
 use crate::types::*;
 use crate::unify::Unifier;
 use crate::util::RetainMutFrom;
 #[allow(unused)]
 use crate::vprintln;
 use crate::{
-  set_verbose, stat, Assignment, CheckBound, Diagnostic, ExpandPrivFunc, FixedVar, Global, Inst,
-  Inst0, InternConst, LocalContext, OnVarMut, Visit, VisitMut, WithGlobalLocal,
+  set_verbose, stat, Assignment, CheckBound, CheckError, Diagnostic, ExpandPrivFunc, FixedVar,
+  Global, Inst, Inst0, InternConst, LocalContext, OnVarMut, Visit, VisitMut, WithGlobalLocal,
 };
 use itertools::Itertools;
 use std::borrow::Cow;
@@ -37,6 +38,14 @@ impl<'a> Checker<'a> {
     if self.g.cfg.skip_to_verbose && !crate::verbose() {
       return
     }
+    // Decision boundary: a premise carrying an error value means an earlier phase
+    // already reported the problem and left a sorry with (partial) known statement.
+    // Bail rather than feed error values to the equalizer/unifier, and don't emit a
+    // duplicate diagnostic (the error was reported when it was first generated).
+    if premises.iter().any(|f| CheckError::get(|ck| ck.visit_formula(f))) {
+      stat("skipped (error value)", false);
+      return
+    }
     self.lc.term_cache.get_mut().open_scope();
     let infer_const = self.lc.infer_const.get_mut().len();
     let fixed_var = self.lc.fixed_var.len();
@@ -44,13 +53,18 @@ impl<'a> Checker<'a> {
     if self.g.cfg.checker_inputs {
       eprintln!();
     }
+    // Poison channel for `expand`, which runs inside a `mk_and_with` closure returning `()`.
+    let mut expand_err = None;
     let mut check_f = Formula::mk_and_with(|conjs| {
       for f in premises {
         if self.g.cfg.checker_inputs {
           eprintln!("input: {f:?}");
         }
         let mut f = f.clone();
-        Expand { g: self.g, lc: self.lc, expansions: self.expansions }.expand(&mut f, true);
+        let mut exp = Expand { g: self.g, lc: self.lc, expansions: self.expansions };
+        if let Err(e) = exp.expand(&mut f, true) {
+          expand_err = Some(e);
+        }
         if self.g.cfg.legacy_flex_handling {
           ExpandLegacyFlex { depth: 0 }.visit_formula(&mut f);
         }
@@ -60,6 +74,14 @@ impl<'a> Checker<'a> {
         f.append_conjuncts_to(conjs);
       }
     });
+    // An error surfaced during normalization (the `CheckError` gate above does not look
+    // inside the types of constants). Discard the partly-expanded formula rather than
+    // refute over it -- same treatment as the gate.
+    if expand_err.is_some() {
+      stat("skipped (error value)", false);
+      self.lc.term_cache.get_mut().close_scope();
+      return
+    }
     if self.g.cfg.checker_header {
       eprintln!("refuting {:?}:{:?}:\n  {check_f:?}", self.article, self.pos);
     }
@@ -71,13 +93,41 @@ impl<'a> Checker<'a> {
     // vprintln!("interned {:?}:{:?}:\n  {check_f:?}", self.article, self.pos);
 
     let mut atoms = Atoms::default();
-    let Dnf::Or(mut normal_form) = atoms.normalize(self.g, self.lc, check_f, true).unwrap() else {
-      panic!("it is not true")
+    // Normalize + process_is can return `Overflow` (the DNF exceeded MAX_DISJUNCTS),
+    // and normalization can collapse to `Dnf::True` (the negated goal is a tautology).
+    // Both mean the goal cannot be refuted here, so treat them as a justification
+    // failure rather than panicking. (Overflow deeper in the equalizer/unifier is
+    // rarer and backstopped by the per-file catch_unwind.)
+    let normalized = (|| {
+      let Dnf::Or(mut normal_form) = atoms.normalize(self.g, self.lc, check_f, true)? else {
+        return Ok(None)
+      };
+      self.process_is(&mut atoms, &mut normal_form)?;
+      Ok(Some(normal_form))
+    })();
+    let normal_form = match normalized {
+      Ok(Some(normal_form)) => normal_form,
+      other => {
+        if matches!(other, Err(Bail::Overflow)) {
+          stat("overflow", true);
+          self.g.reporter.emit(Diagnostic::error(self.pos, TOO_COMPLEX));
+        } else {
+          stat("failure", true);
+          self.g.reporter.emit(Diagnostic::error(
+            self.pos,
+            "this step does not follow from the references given",
+          ));
+        }
+        if self.g.cfg.panic_on_fail {
+          panic!("failed to justify {:?}:{:?}", self.article, self.pos);
+        }
+        self.lc.fixed_var.0.truncate(fixed_var);
+        self.lc.infer_const.get_mut().truncate(infer_const);
+        self.lc.term_cache.get_mut().close_scope();
+        return
+      }
     };
-    // vprintln!("normalized {:?}:{:?}:\n  {normal_form:?}", self.article, self.pos);
-
-    self.process_is(&mut atoms, &mut normal_form).unwrap();
-    // vprintln!("process_is {:?}:{:?}:\n  {normal_form:?}", self.article, self.pos);
+    // vprintln!("normalized/process_is {:?}:{:?}:\n  {normal_form:?}", self.article, self.pos);
 
     let mut err = false;
     for (i, f) in normal_form.into_iter().enumerate() {
@@ -94,32 +144,51 @@ impl<'a> Checker<'a> {
         let res = eq.run(&atoms, &f)?;
         Unifier::new(eq, &res).run()
       })();
-      // assert!(sat.is_err(), "failed to justify");
-      if sat.is_err() {
-        if self.g.cfg.checker_result {
-          eprintln!(
-            "proved {:?}:{:?}.{i}! {:#?}",
-            self.article,
-            self.pos,
-            f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
-          );
+      match sat {
+        // The conjunct was refuted: this disjunct of the goal holds.
+        Err(Unsat::Refuted) =>
+          if self.g.cfg.checker_result {
+            eprintln!(
+              "proved {:?}:{:?}.{i}! {:#?}",
+              self.article,
+              self.pos,
+              f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
+            );
+          },
+        // Could not refute: either genuinely unprovable (Ok), or the decision
+        // procedure gave up because a DNF exceeded MAX_DISJUNCTS (Overflow).
+        res => {
+          err = true;
+          let overflow = matches!(res, Err(Unsat::Overflow));
+          let from_error = matches!(res, Err(Unsat::Error));
+          if self.g.cfg.checker_result {
+            eprintln!(
+              "FAILED TO JUSTIFY{} {:?}:{:?}.{i}: {:#?}",
+              if overflow { " (overflow)" } else { "" },
+              self.article,
+              self.pos,
+              f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
+            );
+          }
+          if from_error {
+            // Already reported where the error value was created; the step just stays
+            // unjustified. Emitting again would double-report one problem.
+            stat("skipped (error value)", false);
+          } else if overflow {
+            stat("overflow", true);
+            self.g.reporter.emit(Diagnostic::error(self.pos, TOO_COMPLEX));
+          } else {
+            stat("failure", true);
+            self.g.reporter.emit(Diagnostic::error(
+              self.pos,
+              "this step does not follow from the references given",
+            ));
+          }
+          if self.g.cfg.panic_on_fail && !from_error {
+            panic!("failed to justify {:?}:{:?}.{i}", self.article, self.pos);
+          }
+          break
         }
-      } else {
-        err = true;
-        if self.g.cfg.checker_result {
-          eprintln!(
-            "FAILED TO JUSTIFY {:?}:{:?}.{i}: {:#?}",
-            self.article,
-            self.pos,
-            f.0.iter().map(|(&a, &val)| atoms.0[a].clone().maybe_neg(val)).collect_vec()
-          );
-        }
-        stat("failure", true);
-        self.g.reporter.emit(Diagnostic::error(self.pos, "failed to justify"));
-        if self.g.cfg.panic_on_fail {
-          panic!("failed to justify {:?}:{:?}.{i}", self.article, self.pos);
-        }
-        break
       }
     }
     if !err {
@@ -132,7 +201,7 @@ impl<'a> Checker<'a> {
 
   fn process_is(
     &self, atoms: &mut Atoms, normal_form: &mut Vec<Conjunct<AtomId, bool>>,
-  ) -> Result<(), Overflow> {
+  ) -> Result<(), Bail> {
     let (mut i, mut len) = (0, normal_form.len());
     while i < len {
       let conj = &normal_form[i];
@@ -153,10 +222,14 @@ impl<'a> Checker<'a> {
       let mut inst = Dnf::single(conj1);
       for a in is_ats {
         let Formula::Is { term, ty } = &atoms.0[a].clone() else { unreachable!() };
-        let Attrs::Consistent(attrs) = ty.attrs.0.clone() else { unreachable!() };
+        // An inconsistent lower cluster is an ungated error value (`CheckError` inspects
+        // only `*::Error`, not `Attrs`; and it can form at intern time when two attribute
+        // arguments collapse to equal terms of opposite polarity). The type is then
+        // uninhabited; poison to a can't-verify rather than aborting — rejecting is sound.
+        let Attrs::Consistent(attrs) = ty.attrs.0.clone() else { return Err(Bail::ErrorValue) };
         let ty2 = Type { kind: ty.kind, attrs: Default::default(), args: ty.args.clone() };
         let f2 = Formula::Is { term: term.clone(), ty: Box::new(ty2) };
-        let a2 = atoms.insert(self.g, self.lc, Cow::Owned(f2));
+        let a2 = atoms.insert(self.g, self.lc, Cow::Owned(f2))?;
         let mut inst1 = vec![];
         for attr in attrs {
           let c = &self.g.constrs.attribute[attr.nr];
@@ -167,12 +240,12 @@ impl<'a> Checker<'a> {
           attrs.visit(&mut self.intern_const());
           let ty3 = Type { kind: ty.kind, attrs: (attrs.clone(), attrs), args: ty.args.clone() };
           let f3 = Formula::Is { term: term.clone(), ty: Box::new(ty3) };
-          let a3 = atoms.insert(self.g, self.lc, Cow::Owned(f3));
+          let a3 = atoms.insert(self.g, self.lc, Cow::Owned(f3))?;
           Dnf::insert_and_absorb(&mut inst1, Conjunct::single(a3, true))?;
         }
         let mut inst2 = vec![Conjunct::single(a2, false)];
         if let TypeKind::Struct(n) = ty.kind {
-          let orig = term.get_type_uncached(self.g, self.lc);
+          let orig = term.get_type_uncached(self.g, self.lc)?;
           if let Some(w) = ty.widening_of(self.g, self.lc, &orig).as_deref() {
             let c = &self.g.constrs.struct_mode[n];
             let mut inst3 = vec![];
@@ -180,9 +253,9 @@ impl<'a> Checker<'a> {
               let tm2 = Term::mk_select(self.g, self.lc, sel, term, ty);
               let f3 = Formula::Is {
                 term: Box::new(Term::mk_select(self.g, self.lc, sel, term, w)),
-                ty: Box::new(tm2.get_type_uncached(self.g, self.lc)),
+                ty: Box::new(tm2.get_type_uncached(self.g, self.lc)?),
               };
-              let a3 = atoms.insert(self.g, self.lc, Cow::Owned(f3));
+              let a3 = atoms.insert(self.g, self.lc, Cow::Owned(f3))?;
               Dnf::insert_and_absorb(&mut inst3, Conjunct::single(a3, false))?;
             }
             Dnf::mk_and_core(&mut inst2, &inst3)?
@@ -207,6 +280,13 @@ impl<'a> Checker<'a> {
     if self.g.cfg.skip_to_verbose && !crate::verbose() {
       return
     }
+    // Decision boundary: bail on error values (see `justify`); already reported.
+    if CheckError::get(|ck| ck.visit_formula(thesis))
+      || premises.iter().any(|f| CheckError::get(|ck| ck.visit_formula(f)))
+    {
+      stat("skipped (error value)", false);
+      return
+    }
     self.lc.term_cache.get_mut().open_scope();
 
     if self.g.cfg.checker_inputs {
@@ -217,12 +297,33 @@ impl<'a> Checker<'a> {
       eprintln!("thesis: {thesis:?}");
       eprintln!("scheme: {sch:#?}");
     }
-    assert!(premises.len() == sch.prems.len());
+    // A `from` step whose premise count does not match the scheme's. Nothing between
+    // reference elaboration and here checks that, so it is input-reachable.
+    if premises.len() != sch.prems.len() {
+      MizError::SchemeMismatch.report(self.pos, self.g);
+      return
+    }
     let mut ctx =
       SchemeCtx { primary: &sch.sch_funcs, g: self.g, lc: self.lc, subst: Default::default() };
-    if ctx.eq_formula(&sch.thesis, thesis, true)
-      && (sch.prems.iter().zip(premises.iter())).all(|(f1, f2)| ctx.eq_formula(f1, f2, true))
-    {
+    let matched = (|| -> Result<bool, ErrorValue> {
+      if !ctx.eq_formula(&sch.thesis, thesis, true)? {
+        return Ok(false)
+      }
+      for (f1, f2) in sch.prems.iter().zip(premises.iter()) {
+        if !ctx.eq_formula(f1, f2, true)? {
+          return Ok(false)
+        }
+      }
+      Ok(true)
+    })();
+    // An error value surfaced inside a constant's type (the `CheckError` gate above does
+    // not look there). Skip rather than record a failure: nothing was decided.
+    let Ok(matched) = matched else {
+      stat("skipped (error value)", false);
+      self.lc.term_cache.get_mut().close_scope();
+      return
+    };
+    if matched {
       stat("success", false);
       if self.g.cfg.checker_result {
         eprintln!("proved sch {:?}:{:?}!", self.article, self.pos);
@@ -232,7 +333,10 @@ impl<'a> Checker<'a> {
       if self.g.cfg.checker_result {
         eprintln!("FAILED TO JUSTIFY sch {:?}:{:?}", self.article, self.pos);
       }
-      self.g.reporter.emit(Diagnostic::error(self.pos, "failed to justify scheme"));
+      self.g.reporter.emit(Diagnostic::error(
+        self.pos,
+        "this scheme application does not follow from the references given",
+      ));
       if self.g.cfg.panic_on_fail {
         panic!("failed to justify sch {:?}:{:?}", self.article, self.pos);
       }
@@ -242,8 +346,36 @@ impl<'a> Checker<'a> {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct Unsat;
+pub enum Unsat {
+  /// The conjunct was refuted — the goal holds along this branch.
+  Refuted,
+  /// The decision procedure gave up: a DNF exceeded `MAX_DISJUNCTS`. This is NOT a
+  /// proof; it must never be treated as `Refuted`.
+  Overflow,
+  /// An error value reached the decision procedure, so it cannot conclude anything.
+  /// Like `Overflow` this is NOT a proof and must never be treated as `Refuted`;
+  /// unlike it, the cause was already reported where the error value was created, so
+  /// it needs no diagnostic of its own.
+  Error,
+}
 pub type OrUnsat<T> = Result<T, Unsat>;
+
+impl From<ErrorValue> for Bail {
+  fn from(_: ErrorValue) -> Self { Bail::ErrorValue }
+}
+
+impl From<ErrorValue> for Unsat {
+  fn from(_: ErrorValue) -> Self { Unsat::Error }
+}
+
+impl From<Bail> for Unsat {
+  fn from(e: Bail) -> Self {
+    match e {
+      Bail::Overflow => Unsat::Overflow,
+      Bail::ErrorValue => Unsat::Error,
+    }
+  }
+}
 
 struct Expand<'a> {
   g: &'a Global,
@@ -252,34 +384,42 @@ struct Expand<'a> {
 }
 
 impl Expand<'_> {
-  fn expand(&mut self, f: &mut Formula, pos: bool) {
+  fn expand(&mut self, f: &mut Formula, pos: bool) -> Result<(), ErrorValue> {
     match f {
       Formula::Neg { f: arg } => {
-        self.expand(arg, !pos);
+        self.expand(arg, !pos)?;
         if let Formula::Neg { f: f2 } = &mut **arg {
           *f = std::mem::take(&mut **f2)
         }
       }
-      Formula::And { args } =>
+      Formula::And { args } => {
+        // `mk_and_with` takes a `-> ()` closure, so collect the error and surface it after.
+        let mut err = None;
         *f = Formula::mk_and_with(|new_args| {
           for mut f in std::mem::take(args) {
-            self.expand(&mut f, pos);
+            if let Err(e) = self.expand(&mut f, pos) {
+              err = Some(e);
+            }
             f.append_conjuncts_to(new_args);
           }
-        }),
+        });
+        if let Some(e) = err {
+          return Err(e)
+        }
+      }
       Formula::ForAll { id, dom, scope } if !pos => {
         self.lc.bound_var.push((*id, (**dom).clone()));
-        self.expand(scope, pos);
+        self.expand(scope, pos)?;
         self.lc.bound_var.0.pop().unwrap();
       }
       Formula::Pred { nr, args } => {
         let (n2, args2) = Formula::adjust_pred(*nr, args, Some(&self.g.constrs));
-        let expansions = self.well_matched_expansions(ConstrKind::Pred(n2), args2);
+        let expansions = self.well_matched_expansions(ConstrKind::Pred(n2), args2)?;
         f.conjdisj_many(pos, expansions);
       }
       Formula::Attr { nr, args } => {
         let n2 = Formula::adjust_attr(*nr, args, Some(&self.g.constrs)).0;
-        let expansions = self.well_matched_expansions(ConstrKind::Attr(n2), args);
+        let expansions = self.well_matched_expansions(ConstrKind::Attr(n2), args)?;
         f.conjdisj_many(pos, expansions);
       }
       Formula::FlexAnd { nat, le, terms, scope } =>
@@ -313,6 +453,7 @@ impl Expand<'_> {
       | Formula::True
       | Formula::Error => {}
     }
+    Ok(())
   }
 
   /// ExpandFlex
@@ -344,25 +485,30 @@ impl Expand<'_> {
     let Some(right) = get_number(self.g, &ic, &terms[1], &mut zero) else { return };
     if right.saturating_sub(left) <= 100 {
       for i in left..=right {
-        let i = if i == 0 { zero.take().unwrap() } else { Term::Numeral(i) };
+        // `i == 0` is reached either via a zero *functor* (captured in `zero`) or a
+        // literal `Numeral(0)` lower bound (which sets no `zero`); in the latter case
+        // `Numeral(0)` is the correct term. Never unwrap `None`.
+        let i = if i == 0 { zero.take().unwrap_or(Term::Numeral(0)) } else { Term::Numeral(i) };
         scope.visit_cloned(&mut Inst0(0, &i)).append_conjuncts_to(conjs);
       }
     }
   }
 
-  fn well_matched_expansions(&self, kind: ConstrKind, args: &[Term]) -> Vec<Formula> {
+  fn well_matched_expansions(
+    &self, kind: ConstrKind, args: &[Term],
+  ) -> Result<Vec<Formula>, ErrorValue> {
     let mut expansions = vec![];
     for exp in self.expansions.iter().rev() {
       let Formula::True = exp.assumptions else { continue };
       let DefValue::Formula(body) = &exp.value else { continue };
       let [] = *body.cases else { continue };
-      let Some(subst) = exp.matches(self.g, self.lc, kind, args) else { continue };
+      let Some(subst) = exp.matches(self.g, self.lc, kind, args)? else { continue };
       let base = self.lc.bound_var.len() as u32;
       let mut result = body.otherwise.as_ref().expect("no cases and no otherwise?").clone();
       subst.inst_formula_mut(&self.g.constrs, self.lc, &mut result, base);
       expansions.push(result)
     }
-    expansions
+    Ok(expansions)
   }
 }
 
@@ -530,15 +676,24 @@ impl<O: Open + ?Sized> VisitMut for SetVar<O> {
 pub struct Atoms(pub IdxVec<AtomId, Formula>);
 
 impl Atoms {
-  pub fn find(&self, g: &Global, lc: &LocalContext, f: &Formula) -> Option<AtomId> {
-    self.0.enum_iter().find(|(_, atom)| g.eq(lc, f, atom)).map(|p| p.0)
+  pub fn find(
+    &self, g: &Global, lc: &LocalContext, f: &Formula,
+  ) -> Result<Option<AtomId>, ErrorValue> {
+    for (i, atom) in self.0.enum_iter() {
+      if g.eq(lc, f, atom)? {
+        return Ok(Some(i))
+      }
+    }
+    Ok(None)
   }
 
-  pub fn insert(&mut self, g: &Global, lc: &LocalContext, f: Cow<'_, Formula>) -> AtomId {
-    match self.find(g, lc, &f) {
+  pub fn insert(
+    &mut self, g: &Global, lc: &LocalContext, f: Cow<'_, Formula>,
+  ) -> Result<AtomId, ErrorValue> {
+    Ok(match self.find(g, lc, &f)? {
       Some(i) => i,
       None => self.0.push(f.into_owned()),
-    }
+    })
   }
 }
 
@@ -622,6 +777,10 @@ pub enum Dnf<K, V> {
 // so if we go past it using MML inputs then something must have gone wrong
 const MAX_DISJUNCTS: usize = 6000;
 
+/// Diagnostic shown when a justification exceeds `MAX_DISJUNCTS` (a DNF blow-up).
+const TOO_COMPLEX: &str = "unable to check this step: it is too complex (the disjunctive \
+  normal form exceeded the internal limit); try splitting it into smaller steps";
+
 impl<K, V> std::fmt::Debug for Dnf<K, V>
 where Conjunct<K, V>: std::fmt::Debug
 {
@@ -633,8 +792,20 @@ where Conjunct<K, V>: std::fmt::Debug
   }
 }
 
-#[derive(Debug)]
-pub struct Overflow;
+/// Why a decision-procedure step gave up. Neither variant is a proof.
+///
+/// `ErrorValue` exists because the checker is **not monotonic in information**:
+/// leaving an error value in place and letting a match "just fail" would change the
+/// conjunct structure a refutation runs over, and a differently-shaped branch can be
+/// refuted for the wrong reason. So an error value poisons — every operation that
+/// pattern-matches a term carrying one must bail rather than continue.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Bail {
+  /// A DNF exceeded `MAX_DISJUNCTS`.
+  Overflow,
+  /// An error value reached a pattern match. Already reported at its origin.
+  ErrorValue,
+}
 
 impl<K: Ord + Clone, V: PartialEq + Clone> Dnf<K, V>
 where Conjunct<K, V>: std::fmt::Debug
@@ -664,7 +835,7 @@ where Conjunct<K, V>: std::fmt::Debug
   /// PreInstCollection.InsertAndAbsorb
   pub fn insert_and_absorb(
     this: &mut Vec<Conjunct<K, V>>, conj: Conjunct<K, V>,
-  ) -> Result<bool, Overflow> {
+  ) -> Result<bool, Bail> {
     for (i, conj1) in this.iter_mut().enumerate() {
       if conj1.weaker_than(&conj) {
         return Ok(false)
@@ -677,13 +848,13 @@ where Conjunct<K, V>: std::fmt::Debug
     }
     this.push(conj);
     if this.len() > MAX_DISJUNCTS {
-      return Err(Overflow)
+      return Err(Bail::Overflow)
     }
     Ok(true)
   }
 
   /// PreInstCollection.UnionWith
-  pub fn mk_or(&mut self, other: Self) -> Result<(), Overflow> {
+  pub fn mk_or(&mut self, other: Self) -> Result<(), Bail> {
     let Dnf::Or(this) = self else { return Ok(()) };
     let Dnf::Or(other) = other else {
       *self = Dnf::True;
@@ -697,9 +868,7 @@ where Conjunct<K, V>: std::fmt::Debug
 
   /// PreInstCollection.UnionWith
   #[inline]
-  pub fn mk_or_else(
-    &mut self, other: impl FnOnce() -> Result<Self, Overflow>,
-  ) -> Result<(), Overflow> {
+  pub fn mk_or_else(&mut self, other: impl FnOnce() -> Result<Self, Bail>) -> Result<(), Bail> {
     if matches!(self, Dnf::Or(_)) {
       self.mk_or(other()?)?
     }
@@ -715,7 +884,7 @@ where Conjunct<K, V>: std::fmt::Debug
     }
   }
 
-  fn mk_and_core(this: &mut Vec<Conjunct<K, V>>, other: &[Conjunct<K, V>]) -> Result<(), Overflow> {
+  fn mk_and_core(this: &mut Vec<Conjunct<K, V>>, other: &[Conjunct<K, V>]) -> Result<(), Bail> {
     if let [conj2] = other {
       this.retain_mut(|conj1| conj1.mk_and(conj2).is_ok())
     } else {
@@ -726,7 +895,7 @@ where Conjunct<K, V>: std::fmt::Debug
           if let Ok(()) = conj.mk_and(conj2) {
             Self::insert_and_absorb(this, conj)?;
             if this.len() > MAX_DISJUNCTS {
-              return Err(Overflow)
+              return Err(Bail::Overflow)
             }
           }
         }
@@ -736,7 +905,7 @@ where Conjunct<K, V>: std::fmt::Debug
   }
 
   /// PreInstCollection.JoinWith
-  pub fn mk_and(&mut self, other: Self) -> Result<(), Overflow> {
+  pub fn mk_and(&mut self, other: Self) -> Result<(), Bail> {
     match self {
       Dnf::True => *self = other,
       Dnf::Or(this) => match other {
@@ -749,9 +918,7 @@ where Conjunct<K, V>: std::fmt::Debug
     Ok(())
   }
 
-  pub fn mk_and_then(
-    &mut self, other: impl FnOnce() -> Result<Self, Overflow>,
-  ) -> Result<(), Overflow> {
+  pub fn mk_and_then(&mut self, other: impl FnOnce() -> Result<Self, Bail>) -> Result<(), Bail> {
     if !self.is_false() {
       self.mk_and(other()?)?
     }
@@ -760,7 +927,7 @@ where Conjunct<K, V>: std::fmt::Debug
 
   /// PreInstCollection.JoinInstList
   /// Constructs the AND of a set of (nontrivial) DNF expressions.
-  pub fn and_many(mut dnfs: Vec<Vec<Conjunct<K, V>>>) -> Result<Self, Overflow> {
+  pub fn and_many(mut dnfs: Vec<Vec<Conjunct<K, V>>>) -> Result<Self, Bail> {
     'restart: loop {
       // We sort the DNFs by length to prioritize a small accumulator
       dnfs.sort_unstable_by_key(|dnf| !dnf.len());
@@ -786,7 +953,7 @@ impl Atoms {
   /// * pos = false: PreInstCollection.NormalizeAsFalse
   pub fn normalize(
     &mut self, g: &Global, lc: &LocalContext, f: Formula, pos: bool,
-  ) -> Result<Dnf<AtomId, bool>, Overflow> {
+  ) -> Result<Dnf<AtomId, bool>, Bail> {
     match f {
       Formula::Neg { f } => self.normalize(g, lc, *f, !pos),
       Formula::And { args } => {
@@ -800,7 +967,7 @@ impl Atoms {
       }
       Formula::True => Ok(Dnf::mk_bool(pos)),
       _ => {
-        let a = self.insert(g, lc, Cow::Owned(f));
+        let a = self.insert(g, lc, Cow::Owned(f))?;
         Ok(Dnf::Or(vec![Conjunct::single(a, pos)]))
       }
     }
@@ -840,108 +1007,133 @@ impl WithGlobalLocal for SchemeCtx<'_> {
 }
 
 impl<'a> SchemeCtx<'a> {
-  fn observing(&mut self, f: impl FnOnce(&mut Self) -> bool) -> bool {
+  fn observing(
+    &mut self, f: impl FnOnce(&mut Self) -> Result<bool, ErrorValue>,
+  ) -> Result<bool, ErrorValue> {
     let orig = self.subst.clone();
-    f(self) || {
-      self.subst = orig;
-      false
+    // Restore on `Err` as well as on `false`: a poisoned attempt must not leave a
+    // half-built substitution behind for the next candidate to observe.
+    match f(self) {
+      Ok(true) => Ok(true),
+      Ok(false) => {
+        self.subst = orig;
+        Ok(false)
+      }
+      Err(e) => {
+        self.subst = orig;
+        Err(e)
+      }
     }
   }
 
-  fn eq_formula(&mut self, f1: &Formula, f2: &Formula, pos: bool) -> bool {
+  fn eq_formula(&mut self, f1: &Formula, f2: &Formula, pos: bool) -> Result<bool, ErrorValue> {
     use Formula::*;
     // vprintln!("sch {pos}. {f1:?} <> {f2:?}");
     let res = match (f1, f2) {
-      (Neg { f: f1 }, _) => self.eq_formula(f1, f2, !pos),
-      (_, Neg { f: f2 }) => self.eq_formula(f1, f2, !pos),
+      (Neg { f: f1 }, _) => self.eq_formula(f1, f2, !pos)?,
+      (_, Neg { f: f2 }) => self.eq_formula(f1, f2, !pos)?,
       (SchPred { nr: n1, args: args1 }, _) => {
         let (kind, args2) = match f2 {
           Pred { nr, args } => (PredKind::Pred(*nr), args),
           SchPred { nr, args } => (PredKind::SchPred(*nr), args),
           PrivPred { nr, args, .. } => (PredKind::PrivPred(*nr), args),
-          _ => return false,
+          _ => return Ok(false),
         };
         match self.subst.pred.get_mut_extending(*n1) {
           Some(asgn) if *asgn == (pos, kind) => {}
-          Some(_) => return false,
+          Some(_) => return Ok(false),
           x @ None => *x = Some((pos, kind)),
         }
-        self.eq_terms(args1, args2)
+        self.eq_terms(args1, args2)?
       }
       (True, True) if pos => true,
       (Is { term: t1, ty: ty1 }, Is { term: t2, ty: ty2 }) if pos =>
-        self.eq_term(t1, t2) && self.eq_type(ty1, ty2),
-      (And { args: args1 }, And { args: args2 }) if pos => self.eq_formulas(args1, args2),
+        self.eq_term(t1, t2)? && self.eq_type(ty1, ty2)?,
+      (And { args: args1 }, And { args: args2 }) if pos => self.eq_formulas(args1, args2)?,
       (
         PrivPred { nr: PrivPredId(n1), args: args1, .. },
         PrivPred { nr: PrivPredId(n2), args: args2, .. },
-      ) if pos => n1 == n2 && self.eq_terms(args1, args2),
+      ) if pos => n1 == n2 && self.eq_terms(args1, args2)?,
       (Attr { nr: n1, args: args1 }, Attr { nr: n2, args: args2 }) if pos => {
         let (n1, args1) = Formula::adjust_attr(*n1, args1, Some(&self.g.constrs));
         let (n2, args2) = Formula::adjust_attr(*n2, args2, Some(&self.g.constrs));
-        n1 == n2 && self.eq_terms(args1, args2)
+        n1 == n2 && self.eq_terms(args1, args2)?
       }
       (Pred { nr: n1, args: args1 }, Pred { nr: n2, args: args2 }) if pos => {
         let (n1, args1) = Formula::adjust_pred(*n1, args1, Some(&self.g.constrs));
         let (n2, args2) = Formula::adjust_pred(*n2, args2, Some(&self.g.constrs));
-        n1 == n2 && self.eq_terms(args1, args2)
+        n1 == n2 && self.eq_terms(args1, args2)?
       }
       (ForAll { id: _, dom: dom1, scope: sc1 }, ForAll { id, dom: dom2, scope: sc2 }) if pos =>
-        self.eq_type(dom1, dom2) && {
+        self.eq_type(dom1, dom2)? && {
           self.lc.term_cache.get_mut().open_scope();
           self.lc.bound_var.0.push((*id, (**dom2).clone()));
           let r = self.eq_formula(sc1, sc2, true);
           self.lc.bound_var.0.pop();
           self.lc.term_cache.get_mut().close_scope();
-          r
+          r?
         },
       #[allow(clippy::explicit_auto_deref)]
       (FlexAnd { nat, terms: t1, scope: sc1, .. }, FlexAnd { terms: t2, scope: sc2, .. })
         if pos =>
-        self.eq_terms(&**t1, &**t2) && {
+        self.eq_terms(&**t1, &**t2)? && {
           self.lc.term_cache.get_mut().open_scope();
           self.lc.bound_var.0.push((IdentId::NONE, (**nat).clone()));
           let r = self.eq_formula(sc1, sc2, true);
           self.lc.bound_var.0.pop();
           self.lc.term_cache.get_mut().close_scope();
-          r
+          r?
         },
-      (_, PrivPred { value, .. }) => self.eq_formula(f1, value, pos),
+      (_, PrivPred { value, .. }) => self.eq_formula(f1, value, pos)?,
       _ => false,
     };
     // vprintln!("sch {pos}. {f1:?} <> {f2:?} -> {res}");
-    res
+    Ok(res)
   }
 
-  fn eq_terms(&mut self, t1: &[Term], t2: &[Term]) -> bool {
-    t1.len() == t2.len() && t1.iter().zip(t2).all(|(t1, t2)| self.eq_term(t1, t2))
+  fn eq_terms(&mut self, t1: &[Term], t2: &[Term]) -> Result<bool, ErrorValue> {
+    if t1.len() != t2.len() {
+      return Ok(false)
+    }
+    for (t1, t2) in t1.iter().zip(t2) {
+      if !self.eq_term(t1, t2)? {
+        return Ok(false)
+      }
+    }
+    Ok(true)
   }
 
-  fn wider(&mut self, tgt: &Type, src: &Type) -> bool {
+  fn wider(&mut self, tgt: &Type, src: &Type) -> Result<bool, ErrorValue> {
     // vprintln!("sch {tgt:?}\n  wider than {src:?}");
-    self.is_subset_of(&tgt.attrs.0, &src.attrs.1, |this, a1, a2| this.eq_attr(a1, a2))
-      && (self.observing(|this| this.eq_radices(tgt, src))
-        || tgt.kind != src.kind
-          && if let TypeKind::Mode(n1) = tgt.kind {
-            let mut src = CowBox::Borrowed(src);
-            loop {
-              let Some(w) = src.widening(self.g, self.lc) else { return false };
-              let Some(w) = tgt.widening_of(self.g, self.lc, &w) else { return false };
-              if self.observing(|this| this.eq_radices(tgt, &w)) {
-                return true
-              }
-              if self.g.constrs.mode[n1].redefines.is_some() {
-                return false
-              }
-              src = CowBox::Owned(w.to_owned());
-            }
-          } else {
-            let Some(src) = tgt.widening_of(self.g, self.lc, src) else { return false };
-            tgt.kind == src.kind && self.eq_radices(tgt, &src)
-          })
+    if !self.is_subset_of(&tgt.attrs.0, &src.attrs.1, |this, a1, a2| this.eq_attr(a1, a2))? {
+      return Ok(false)
+    }
+    if self.observing(|this| this.eq_radices(tgt, src))? {
+      return Ok(true)
+    }
+    if tgt.kind == src.kind {
+      return Ok(false)
+    }
+    if let TypeKind::Mode(n1) = tgt.kind {
+      let mut src = CowBox::Borrowed(src);
+      loop {
+        let Some(w) = src.widening(self.g, self.lc) else { return Ok(false) };
+        let Some(w) = tgt.widening_of(self.g, self.lc, &w) else { return Ok(false) };
+        if self.observing(|this| this.eq_radices(tgt, &w))? {
+          return Ok(true)
+        }
+        if self.g.constrs.mode[n1].redefines.is_some() {
+          return Ok(false)
+        }
+        src = CowBox::Owned(w.to_owned());
+      }
+    } else {
+      let Some(src) = tgt.widening_of(self.g, self.lc, src) else { return Ok(false) };
+      Ok(tgt.kind == src.kind && self.eq_radices(tgt, &src)?)
+    }
   }
 
-  fn eq_term(&mut self, t1: &Term, t2: &Term) -> bool {
+  fn eq_term(&mut self, t1: &Term, t2: &Term) -> Result<bool, ErrorValue> {
     use Term::*;
     // vprintln!("sch {t1:?} <> {t2:?}");
     let res = match (t1, t2) {
@@ -949,19 +1141,20 @@ impl<'a> SchemeCtx<'a> {
         if args1.is_empty() {
           let depth = self.lc.bound_var.len() as u32;
           if CheckBound::get(0..depth, |cb| cb.visit_term(t2)) {
-            return false
+            return Ok(false)
           }
           let t2 = t2.visit_cloned(&mut OnVarMut(|n| *n -= depth));
           if let Some(tm) = self.subst.cnst.get_mut_extending(*n1) {
-            self.g.eq(self.lc, &t2, tm)
-          } else if self
-            .wider(&self.primary[Idx::into_usize(*n1)], &t2.get_type(self.g, self.lc, false))
-          {
-            // vprintln!("assign S{n1:?}() := {t2:?}");
-            self.subst.cnst[*n1] = Some(t2);
-            true
+            self.g.eq(self.lc, &t2, tm)?
           } else {
-            false
+            let ty = t2.get_type(self.g, self.lc, false)?;
+            if self.wider(&self.primary[Idx::into_usize(*n1)], &ty)? {
+              // vprintln!("assign S{n1:?}() := {t2:?}");
+              self.subst.cnst[*n1] = Some(t2);
+              true
+            } else {
+              false
+            }
           }
         } else {
           let (kind, args2) = match t2 {
@@ -973,26 +1166,27 @@ impl<'a> SchemeCtx<'a> {
                 .visit_cloned(&mut OnVarMut(|v| *v += self.lc.bound_var.len() as u32));
               return self.eq_term(t1, &tm)
             }
-            _ => return false,
+            _ => return Ok(false),
           };
           // Binding a scheme functor requires its result type to conform, exactly as in
           // the nullary case above: the substituted functor's type must widen to the
           // declared `primary[n1]`. (Mizar: `SchWidennings` in `SchEqTrm`, schemes.pas.)
           // A scheme functor's type is a constant of `n1`, not a function of its args, so
           // only the result type is checked here; the args are matched structurally below.
+          // Deref-copy the slot so the mutable borrow ends before the `wider` call.
           match *self.subst.func.get_mut_extending(*n1) {
             Some(asgn) if asgn == kind => {}
-            Some(_) => return false,
+            Some(_) => return Ok(false),
             None => {
               if !self
-                .wider(&self.primary[Idx::into_usize(*n1)], &t2.get_type(self.g, self.lc, false))
+                .wider(&self.primary[Idx::into_usize(*n1)], &t2.get_type(self.g, self.lc, false)?)?
               {
-                return false
+                return Ok(false)
               }
               self.subst.func[*n1] = Some(kind);
             }
           }
-          self.eq_terms(args1, args2)
+          self.eq_terms(args1, args2)?
         },
       (Locus(LocusId(n1)), Locus(LocusId(n2))) => n1 == n2,
       (Bound(BoundId(n1)), Bound(BoundId(n2)))
@@ -1003,12 +1197,12 @@ impl<'a> SchemeCtx<'a> {
       (Functor { nr: n1, args: args1 }, Functor { nr: n2, args: args2 }) => {
         let (n1, args1) = Term::adjust(*n1, args1, Some(&self.g.constrs));
         let (n2, args2) = Term::adjust(*n2, args2, Some(&self.g.constrs));
-        n1 == n2 && self.eq_terms(args1, args2)
+        n1 == n2 && self.eq_terms(args1, args2)?
       }
       (Aggregate { nr: AggrId(n1), args: args1 }, Aggregate { nr: AggrId(n2), args: args2 })
       | (Selector { nr: SelId(n1), args: args1 }, Selector { nr: SelId(n2), args: args2 }) =>
-        n1 == n2 && self.eq_terms(args1, args2),
-      (The { ty: ty1 }, The { ty: ty2 }) => self.eq_type(ty1, ty2),
+        n1 == n2 && self.eq_terms(args1, args2)?,
+      (The { ty: ty1 }, The { ty: ty2 }) => self.eq_type(ty1, ty2)?,
       (
         Fraenkel { args: args1, scope: sc1, compr: c1 },
         Fraenkel { args: args2, scope: sc2, compr: c2 },
@@ -1016,73 +1210,101 @@ impl<'a> SchemeCtx<'a> {
         args1.len() == args2.len() && {
           self.lc.term_cache.get_mut().open_scope();
           let n = self.lc.bound_var.len();
-          let r = args1.iter().zip(&**args2).all(|(ty1, ty2)| {
-            let r = self.eq_type(&ty1.1, &ty2.1);
-            self.lc.bound_var.0.push(ty2.clone());
-            r
-          }) && self.eq_term(sc1, sc2)
-            && self.eq_formula(c1, c2, true);
+          let r = (|this: &mut Self| -> Result<bool, ErrorValue> {
+            for (ty1, ty2) in args1.iter().zip(&**args2) {
+              let r = this.eq_type(&ty1.1, &ty2.1);
+              this.lc.bound_var.0.push(ty2.clone());
+              if !r? {
+                return Ok(false)
+              }
+            }
+            Ok(this.eq_term(sc1, sc2)? && this.eq_formula(c1, c2, true)?)
+          })(self);
+          // Restore the scope before propagating, exactly as on the success path.
           self.lc.bound_var.0.truncate(n);
           self.lc.term_cache.get_mut().close_scope();
-          r
+          r?
         },
       (_, &Infer(nr)) => {
         let t = (self.lc.infer_const.get_mut()[nr].def)
           .visit_cloned(&mut OnVarMut(|v| *v += self.lc.bound_var.len() as u32));
-        self.eq_term(t1, &t)
+        self.eq_term(t1, &t)?
       }
       (&Infer(nr), _) => {
         let t = (self.lc.infer_const.get_mut()[nr].def)
           .visit_cloned(&mut OnVarMut(|v| *v += self.lc.bound_var.len() as u32));
-        self.eq_term(&t, t2)
+        self.eq_term(&t, t2)?
       }
       _ => false,
     };
     // vprintln!("sch {t1:?} <> {t2:?} -> {res}");
-    res
+    Ok(res)
   }
 
-  fn eq_radices(&mut self, ty1: &Type, ty2: &Type) -> bool {
+  fn eq_radices(&mut self, ty1: &Type, ty2: &Type) -> Result<bool, ErrorValue> {
     match (ty1.kind, ty2.kind) {
       (TypeKind::Mode(n1), TypeKind::Mode(n2)) => {
         let (n1, args1) = Type::adjust(n1, &ty1.args, &self.g.constrs);
         let (n2, args2) = Type::adjust(n2, &ty2.args, &self.g.constrs);
-        n1 == n2 && self.eq_terms(args1, args2)
+        Ok(n1 == n2 && self.eq_terms(args1, args2)?)
       }
       (TypeKind::Struct(n1), TypeKind::Struct(n2)) =>
-        n1 == n2 && self.eq_terms(&ty1.args, &ty2.args),
-      _ => false,
+        Ok(n1 == n2 && self.eq_terms(&ty1.args, &ty2.args)?),
+      _ => Ok(false),
     }
   }
 
   fn is_subset_of(
-    &mut self, attrs1: &Attrs, attrs2: &Attrs, mut eq: impl FnMut(&mut Self, &Attr, &Attr) -> bool,
-  ) -> bool {
+    &mut self, attrs1: &Attrs, attrs2: &Attrs,
+    mut eq: impl FnMut(&mut Self, &Attr, &Attr) -> Result<bool, ErrorValue>,
+  ) -> Result<bool, ErrorValue> {
     let res = match (attrs1, attrs2) {
       (Attrs::Inconsistent, Attrs::Consistent(_)) => false,
       (Attrs::Consistent(this), Attrs::Consistent(other)) =>
-        other.len() >= this.len()
-          && this.iter().all(|i| other.iter().any(|j| self.observing(|this| eq(this, i, j)))),
+        if other.len() < this.len() {
+          false
+        } else {
+          let mut all = true;
+          'outer: for i in this {
+            for j in other {
+              if self.observing(|this| eq(this, i, j))? {
+                continue 'outer
+              }
+            }
+            all = false;
+            break
+          }
+          all
+        },
       (_, Attrs::Inconsistent) => true,
     };
     // vprintln!("sch {attrs1:?} c= {attrs2:?} -> {res}");
-    res
+    Ok(res)
   }
 
-  fn eq_type(&mut self, ty1: &Type, ty2: &Type) -> bool {
-    self.is_subset_of(&ty1.attrs.0, &ty2.attrs.1, |this, a1, a2| this.eq_attr(a1, a2))
-      && self.is_subset_of(&ty2.attrs.0, &ty1.attrs.1, |this, a2, a1| this.eq_attr(a1, a2))
-      && self.eq_radices(ty1, ty2)
+  fn eq_type(&mut self, ty1: &Type, ty2: &Type) -> Result<bool, ErrorValue> {
+    Ok(
+      self.is_subset_of(&ty1.attrs.0, &ty2.attrs.1, |this, a1, a2| this.eq_attr(a1, a2))?
+        && self.is_subset_of(&ty2.attrs.0, &ty1.attrs.1, |this, a2, a1| this.eq_attr(a1, a2))?
+        && self.eq_radices(ty1, ty2)?,
+    )
   }
 
-  fn eq_attr(&mut self, a1: &Attr, a2: &Attr) -> bool {
+  fn eq_attr(&mut self, a1: &Attr, a2: &Attr) -> Result<bool, ErrorValue> {
     let (n1, args1) = a1.adjust(Some(&self.g.constrs));
     let (n2, args2) = a2.adjust(Some(&self.g.constrs));
-    n1 == n2 && a1.pos == a2.pos && self.eq_terms(args1, args2)
+    Ok(n1 == n2 && a1.pos == a2.pos && self.eq_terms(args1, args2)?)
   }
 
-  fn eq_formulas(&mut self, args1: &[Formula], args2: &[Formula]) -> bool {
-    args1.len() == args2.len()
-      && args1.iter().zip(args2).all(|(f1, f2)| self.eq_formula(f1, f2, true))
+  fn eq_formulas(&mut self, args1: &[Formula], args2: &[Formula]) -> Result<bool, ErrorValue> {
+    if args1.len() != args2.len() {
+      return Ok(false)
+    }
+    for (f1, f2) in args1.iter().zip(args2) {
+      if !self.eq_formula(f1, f2, true)? {
+        return Ok(false)
+      }
+    }
+    Ok(true)
   }
 }

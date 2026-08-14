@@ -68,6 +68,13 @@ impl MizPath {
     read(args, false)
   }
 
+  /// `result` validates what was loaded — for the dependency readers it turns an
+  /// absent-or-empty import into [`ParseError::MissingFile`], which the accommodator
+  /// reports as "<kind> for <article> not found or empty".
+  ///
+  /// It must run on *both* paths. It used to be applied only when copying out of the
+  /// cache, so with caching off (or on a cache miss) a missing dependency silently
+  /// looked fine and the warning never fired.
   fn get_cache_basic<A: Default + Clone, R, E>(
     &self, no: bool, args: &mut A, get: impl FnOnce(&Cache) -> &OnceCell<A>,
     read: impl FnOnce(&mut A) -> Result<R, E>, result: impl Fn(&A) -> Result<R, E>,
@@ -87,7 +94,7 @@ impl MizPath {
         }
       },
       |a, _| std::mem::take(a),
-      |a, t| {
+      move |a, t| {
         a.clone_from(t);
         result(t)
       },

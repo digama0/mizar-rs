@@ -230,7 +230,11 @@ impl<'a, T> MaybeMut<'a, T> {
 #[derive(Debug)]
 pub enum ParseError {
   Xml(Option<usize>, quick_xml::Error),
-  UnexpectedElement { pos: usize, expected: &'static str, found: Option<Cow<'static, str>> },
+  UnexpectedElement {
+    pos: usize,
+    expected: &'static str,
+    found: Option<Cow<'static, str>>,
+  },
   ExpectedEof(usize),
   BadInteger(usize),
   ToArticle(ToArticleError, usize),

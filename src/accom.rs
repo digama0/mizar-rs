@@ -24,13 +24,21 @@ impl VocBuilder {
     i
   }
 
-  fn get_or_push(&mut self, art: Article, val: &SymbolsBase) -> VocId {
-    let res = self.voc.enum_iter().find(|p| p.1 .0 == art);
-    if let Some((i, (_, val2))) = res {
-      assert_eq!(*self.hi(i) - val2, *val);
-      i
-    } else {
-      self.push(art, val)
+  /// `None` when the symbol counts recorded for `art` disagree with `val` — i.e. the
+  /// `.dno` being read is inconsistent with what an earlier import declared.
+  ///
+  /// The check is additive (`val2 + val == hi(i)`) rather than `hi(i) - val2 == val`
+  /// because `SymbolsBase`'s `Sub` is a per-field `-=`, which underflows on exactly
+  /// the malformed input we are trying to diagnose.
+  fn get_or_push(&mut self, art: Article, val: &SymbolsBase) -> Option<VocId> {
+    let found = self.voc.enum_iter().find(|p| p.1 .0 == art).map(|(i, (_, val2))| (i, *val2));
+    match found {
+      Some((i, val2)) => {
+        let mut expect = val2;
+        expect += val;
+        (*self.hi(i) == expect).then_some(i)
+      }
+      None => Some(self.push(art, val)),
     }
   }
 
@@ -206,6 +214,8 @@ impl VisitMut for RenameConstr<'_> {
   }
 }
 
+// The reporter and `has_errors` are passed as separate field borrows so that the
+// wrapped expression may itself borrow other fields of the accommodator.
 macro_rules! try_p {
   ($self:expr, $e:expr) => {
     Accomodator::report_parse_err(&$self.reporter, &mut $self.has_errors, $e)
@@ -272,16 +282,24 @@ impl Accomodator {
     mut infinitives: Option<&mut Vec<(PredSymId, &'a str)>>,
   ) {
     #[allow(clippy::indexing_slicing)]
-    for &ArticleAt { art, .. } in &self.dirs.0[DirectiveKind::Vocabularies] {
+    for &ArticleAt { art, pos } in &self.dirs.0[DirectiveKind::Vocabularies] {
       let mut voc = Default::default();
       match art.read_vct(mml_vct, &mut voc) {
         Ok(true) => {}
         Ok(false) => {
-          // TODO: private vocabularies
-          println!(
-            "error: {}: vocabulary for {art} not found (TODO: private vocabularies)",
-            crate::mml_vct_path()
-          );
+          // TODO: private vocabularies.
+          //
+          // This used to `println!` and set `has_errors` without touching the reporter.
+          // That mattered: the export gate keys off `reporter.errors()` while article
+          // failure keys off `has_errors || reporter.errors() > 0`, so a bare flag here
+          // failed the article but still let it export.
+          self.emit(crate::Diagnostic::error(
+            pos,
+            format!(
+              "vocabulary for {art} not found in {} (TODO: private vocabularies)",
+              crate::mml_vct_path()
+            ),
+          ));
           self.has_errors = true;
           continue
         }
@@ -332,8 +350,13 @@ impl Accomodator {
     let mut id = ArticleId(1); // 0 is reserved for SELF
     self.articles_vec.push(None);
     for &ArticleAt { art, .. } in &self.dirs.0[DirectiveKind::Theorems] {
-      self.articles_vec.push(Some(art));
-      assert!(self.articles.insert(art, id.fresh()).is_none())
+      // A `theorems` directive may name the same article twice (the parser does not
+      // dedup); insert each only once, keeping `articles` and `articles_vec` in step,
+      // rather than asserting uniqueness.
+      self.articles.entry(art).or_insert_with(|| {
+        self.articles_vec.push(Some(art));
+        id.fresh()
+      });
     }
     for &ArticleAt { art, .. } in &self.dirs.0[DirectiveKind::Schemes] {
       self.articles.entry(art).or_insert_with(|| id.fresh());
@@ -373,7 +396,19 @@ impl Accomodator {
       let Some(mut rename) = try_p!(self, self.sig.rename(&dre.sig, Some(ctx))) else { continue };
       for DepRequirement { req, mut kind } in dre.reqs {
         kind.visit(&mut rename);
-        assert!(rename.ok() && kind.lt(&ctx.len()), "inaccessible requirement");
+        // A requirement whose constructor is not accessible — e.g. `requirements FOO;`
+        // without the matching `constructors FOO;`. Report and skip it (the requirement
+        // stays unregistered; its uses are individually guarded) rather than asserting.
+        if !(rename.ok() && kind.lt(&ctx.len())) {
+          self.has_errors = true;
+          self.emit(crate::Diagnostic::error(
+            pos,
+            "this requirement refers to a constructor that is not imported; \
+             add the matching 'constructors' directive"
+              .to_string(),
+          ));
+          continue
+        }
         idx.set(req, kind);
       }
       self.sig.truncate(len);
@@ -429,9 +464,33 @@ impl Accomodator {
       let result = MizPath { art }.read_dno(false, &mut dno);
       let Some(_) = try_p!(self, art, pos => Notations, result) else { continue };
       let mut s_rename = RenameSymbol::default();
-      for &(art, ref val) in &dno.vocs.0 {
-        let i = self.dict.get_or_push(art, val);
-        s_rename.push(val, &self.dict.voc[i].1, i.0 < dict_len as u32);
+      let mut inconsistent = None;
+      for &(voc_art, ref val) in &dno.vocs.0 {
+        match self.dict.get_or_push(voc_art, val) {
+          Some(i) => s_rename.push(val, &self.dict.voc[i].1, i.0 < dict_len as u32),
+          None => {
+            inconsistent = Some(voc_art);
+            break
+          }
+        }
+      }
+      if let Some(voc_art) = inconsistent {
+        let path = MizPath { art }.to_path(false, false, "dno");
+        Self::emit_to(
+          &self.reporter,
+          crate::Diagnostic::in_file(
+            crate::Severity::Error,
+            path,
+            None,
+            format!(
+              "malformed .dno: the symbol counts it declares for {voc_art} disagree with an \
+               earlier import"
+            ),
+          ),
+        );
+        self.has_errors = true;
+        self.dict.truncate(dict_len);
+        continue
       }
       let sig_len = self.sig.sig.len();
       let Some(mut rename) = try_p!(self, self.sig.rename(&dno.sig, None)) else { continue };

@@ -2,9 +2,9 @@
 use super::{ParseError, PathResult, Result, XmlReader};
 use crate::ast::{SchRef, *};
 use crate::types::{
-  Article, ArticleId, AttrSymId, BoundId, ConstId, DefId, FuncSymId, IdxVec, LabelId, LeftBrkSymId,
-  LocusId, ModeSymId, PredSymId, PrivFuncId, PrivPredId, PropertyKind, RightBrkSymId, SchFuncId,
-  SchId, SchPredId, SelSymId, Span, StructSymId, ThmId,
+  ArticleId, AttrSymId, BoundId, ConstId, DefId, FuncSymId, IdxVec, LabelId, LeftBrkSymId, LocusId,
+  ModeSymId, PredSymId, PrivFuncId, PrivPredId, PropertyKind, RightBrkSymId, SchFuncId, SchId,
+  SchPredId, SelSymId, Span, StructSymId, ThmId,
 };
 use crate::{types, LineMap, MizPath};
 use enum_map::Enum;
@@ -990,9 +990,8 @@ impl MsmParser {
             let (start, end) = (Span::at(bl.start), Span::at(bl.end));
             for attr in e.attributes() {
               let attr = attr?;
-              match attr.key.0 {
-                b"kind" => kind = attr.value,
-                _ => {}
+              if attr.key.0 == b"kind" {
+                kind = attr.value
               }
             }
             return Ok(Elem::Block(Box::new(Block {
@@ -1247,9 +1246,8 @@ impl MsmParser {
             let pos = self.r.get_pos(&e)?;
             for attr in e.attributes() {
               let attr = attr?;
-              match attr.key.0 {
-                b"number" => value = self.r.get_attr(&attr.value)?,
-                _ => {}
+              if attr.key.0 == b"number" {
+                value = self.r.get_attr(&attr.value)?
               }
             }
             Elem::Term(Box::new(Term::Numeral { pos, value }))
